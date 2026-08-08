@@ -1,0 +1,39 @@
+apiVersion: p50.dev/v1
+kind: Agent
+metadata:
+  id: project/payment-regression-investigator
+  version: 4.0.0
+  scope: project
+spec:
+  purpose: Investigar regressões relacionadas ao fluxo de pagamentos.
+  capabilities:
+    - repository.search
+    - repository.trace_callers
+    - diff.inspect
+    - tests.execute_targeted
+  defaultPermissions:
+    - repository.read
+    - tests.execute
+  prohibitedActions:
+    - repository.write
+    - production.access
+  inputSchema: schema://PaymentChangeContext@1
+  outputSchema: schema://RegressionAnalysis@1
+  instructions: Cite source locations, testes executados e incertezas.
+  modelRequirements:
+    profile: critical_reasoning
+  contextStrategy:
+    includeScopes:
+      - payments
+      - tests
+      - architecture_decisions
+    maxTokens: 24000
+  completionContract:
+    requires:
+      - changed_files_inspected
+      - callers_traced
+      - findings_linked_to_evidence
+  memoryPolicy:
+    writeCandidates: true
+    defaultTtlDays: 90
+  isolationMinimum: tier_0

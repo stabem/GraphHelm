@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/policy-waiver.schema.json",
+  "title": "P50 Policy Waiver",
+  "type": "object",
+  "required": ["id", "requirement", "executionId", "graphVersion", "actor", "acknowledgedRisks", "scope", "createdAt", "expiresAt"],
+  "properties": {
+    "id": {"type": "string"},
+    "requirement": {"type": "string"},
+    "executionId": {"type": "string"},
+    "graphVersion": {"type": "integer", "minimum": 1},
+    "actor": {"type": "string"},
+    "reason": {"type": "string"},
+    "acknowledgedRisks": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "scope": {"enum": ["node", "branch", "execution"]},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "expiresAt": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

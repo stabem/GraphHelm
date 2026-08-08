@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/context-capsule.schema.json",
-  "title": "P50 Context Capsule",
+  "title": "GraphHelm Context Capsule",
   "type": "object",
   "required": ["id", "version", "nodeId", "objective", "sections", "tokenBudget", "provenance", "dependencyHash"],
   "properties": {

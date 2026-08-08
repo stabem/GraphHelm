@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Definir entidades, relações, eventos e contratos públicos do Programação 5.0. Os JSON Schemas em `/schemas` são exemplos normativos iniciais; implementações podem usar Protobuf, JSON ou outras codificações desde que preservem semantics e versionamento.
+Definir entidades, relações, eventos e contratos públicos do GraphHelm. Os JSON Schemas em `/schemas` são exemplos normativos iniciais; implementações podem usar Protobuf, JSON ou outras codificações desde que preservem semantics e versionamento.
 
 ## 2. Entidades principais
 

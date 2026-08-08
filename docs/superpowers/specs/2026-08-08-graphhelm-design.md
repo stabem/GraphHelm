@@ -1,12 +1,12 @@
-# Programação 5.0 — design aprovado
+# GraphHelm — design aprovado
 
 ## Status
 
-Design consolidado em 2026-08-08. O escopo atual é exclusivamente documentação; nenhuma implementação foi autorizada.
+Design consolidado em 2026-08-08 e aprovado como base normativa para planejamento e implementação incremental. Este repositório ainda não contém implementação.
 
 ## Visão
 
-Programação 5.0 é um sistema operacional open source para agentes de IA. O Studio roda localmente e controla um Runtime instalado via SSH + Docker na VPS do usuário. Todo pedido passa por classificação, capability discovery, síntese/reuso de agentes, compilação de contexto, arquitetura de grafo, policies, lint e execução.
+GraphHelm é um sistema operacional open source para agentes de IA. O Studio roda localmente e controla um Runtime instalado via SSH + Docker na VPS do usuário. Todo pedido passa por classificação, capability discovery, síntese/reuso de agentes, compilação de contexto, arquitetura de grafo, policies, lint e execução.
 
 O harness é criado por tarefa a partir de capabilities atômicas; não existem packs fixos por domínio. O grafo é adaptativo, versionado e editável. O usuário é soberano e pode pausar, remover gates ou forçar deploy, com impact report e waiver. Agentes propostos após intervenção manual não iniciam sem confirmação.
 

@@ -2,7 +2,7 @@
 
 ## 1. Visão geral
 
-Programação 5.0 separa claramente experiência, decisão, execução, dados e integrações. A separação permite self-host, auditoria, substituição de componentes e evolução para equipes/distribuição sem mudar o modelo conceitual.
+GraphHelm separa claramente experiência, decisão, execução, dados e integrações. A separação permite self-host, auditoria, substituição de componentes e evolução para equipes/distribuição sem mudar o modelo conceitual.
 
 ```mermaid
 flowchart TB

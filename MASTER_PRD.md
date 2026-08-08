@@ -1,15 +1,15 @@
-# MASTER PRD — Programação 5.0
+# MASTER PRD — GraphHelm
 
-**Versão:** 0.1.0  
-**Estado:** especificação aprovada para documentação; sem implementação  
-**Categoria:** open-source Agentic Operating System  
+**Versão:** 0.1.1
+**Estado:** especificação aprovada para implementação incremental; sem código neste pacote
+**Categoria:** open-source Agentic Operating System
 **Topologia:** Studio local + Runtime na VPS do usuário
 
 ---
 
 ## 1. Resumo executivo
 
-Programação 5.0 é uma plataforma aberta para organizar, executar e auditar trabalho realizado por agentes de inteligência artificial. O usuário envia uma demanda em linguagem natural. Um harness dinâmico interpreta o objetivo, mede risco, complexidade, incerteza e superfície de impacto, descobre as capacidades disponíveis e compila um grafo específico para aquela tarefa.
+GraphHelm é uma plataforma aberta para organizar, executar e auditar trabalho realizado por agentes de inteligência artificial. O usuário envia uma demanda em linguagem natural. Um harness dinâmico interpreta o objetivo, mede risco, complexidade, incerteza e superfície de impacto, descobre as capacidades disponíveis e compila um grafo específico para aquela tarefa.
 
 O grafo pode combinar investigação, planejamento, execução, testes, crítica, revisão de segurança, documentação, deploy, análise de dados, pesquisa, criação de conteúdo, automação e qualquer outra capacidade registrada. Não existem packs rígidos por domínio. O sistema cria o setup adequado lendo o catálogo real de modelos, agentes, skills, ferramentas, políticas, contexto, infraestrutura e orçamento daquele projeto.
 
@@ -34,7 +34,7 @@ Ferramentas agentivas atuais geralmente sofrem com uma ou mais limitações:
 - criam agentes e prompts descartáveis, sem aprender de maneira auditável dentro do projeto;
 - não transformam a execução em conhecimento reutilizável e documentação viva.
 
-Programação 5.0 resolve isso tratando a orquestração como um problema de compilação, tipagem, políticas, evidência e controle visual.
+GraphHelm resolve isso tratando a orquestração como um problema de compilação, tipagem, políticas, evidência e controle visual.
 
 ---
 

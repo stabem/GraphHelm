@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/extension.schema.json",
-  "title": "P50 Extension Manifest",
+  "title": "GraphHelm Extension Manifest",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "properties": {

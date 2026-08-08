@@ -2,7 +2,7 @@
 
 ## 1. Papel
 
-Graph Engineer é quem amplia o universo de decisões possíveis do Programação 5.0. Ele não escreve workflows rígidos para cada domínio. Ele registra unidades reutilizáveis e verificáveis para que o harness possa montar workflows novos.
+Graph Engineer é quem amplia o universo de decisões possíveis do GraphHelm. Ele não escreve workflows rígidos para cada domínio. Ele registra unidades reutilizáveis e verificáveis para que o harness possa montar workflows novos.
 
 Responsabilidades:
 

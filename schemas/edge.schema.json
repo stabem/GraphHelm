@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/edge.schema.json",
-  "title": "P50 Graph Edge",
+  "title": "GraphHelm Graph Edge",
   "type": "object",
   "required": ["id", "from", "to", "type"],
   "properties": {

@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-O Studio é o control plane local do Programação 5.0. Ele reúne chat, grafo operacional, agentes em execução, documentação, arquivos, artefatos, eventos, políticas e configurações. A interface deve permitir que um usuário não especialista compreenda o workflow, enquanto oferece profundidade suficiente para um Graph Engineer editar contratos e políticas.
+O Studio é o control plane local do GraphHelm. Ele reúne chat, grafo operacional, agentes em execução, documentação, arquivos, artefatos, eventos, políticas e configurações. A interface deve permitir que um usuário não especialista compreenda o workflow, enquanto oferece profundidade suficiente para um Graph Engineer editar contratos e políticas.
 
 O grafo não é uma animação ilustrativa. Cada nó representa uma unidade real de execução e cada aresta representa dependência, dados, evidência, condição ou controle.
 

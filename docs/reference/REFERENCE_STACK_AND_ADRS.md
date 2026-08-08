@@ -210,7 +210,7 @@ A arquitetura normativa é independente de linguagem. Esta seção recomenda uma
 ## 23. Repositório de referência
 
 ```text
-programacao-5.0/
+graphhelm/
 ├── apps/
 │   ├── studio/
 │   └── runtime/

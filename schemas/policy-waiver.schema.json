@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/policy-waiver.schema.json",
-  "title": "P50 Policy Waiver",
+  "title": "GraphHelm Policy Waiver",
   "type": "object",
   "required": ["id", "requirement", "executionId", "graphVersion", "actor", "acknowledgedRisks", "scope", "createdAt", "expiresAt"],
   "properties": {

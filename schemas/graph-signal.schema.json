@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/graph-signal.schema.json",
-  "title": "P50 Graph Signal",
+  "title": "GraphHelm Graph Signal",
   "type": "object",
   "required": ["id", "source", "type", "severity", "description", "evidence", "emittedAt"],
   "properties": {

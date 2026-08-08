@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Programação 5.0 executa modelos, tools, plugins e código potencialmente não confiável na infraestrutura do usuário. O modelo de segurança assume que prompts, repositórios, dependências, fontes externas e extensões podem ser maliciosos ou induzir comportamentos perigosos.
+GraphHelm executa modelos, tools, plugins e código potencialmente não confiável na infraestrutura do usuário. O modelo de segurança assume que prompts, repositórios, dependências, fontes externas e extensões podem ser maliciosos ou induzir comportamentos perigosos.
 
 A segurança não depende de “o agente obedecer”. Ela depende de capability leases, policy enforcement, sandboxes, secret separation, typed tools, audit e limites.
 

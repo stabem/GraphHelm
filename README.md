@@ -1,12 +1,13 @@
-# Programação 5.0 — documentação integral do produto
+# GraphHelm — documentação integral do produto
 
-> **Codinome:** Programação 5.0  
-> **Categoria:** sistema operacional open source para agentes de IA  
-> **Estado deste repositório:** especificação de produto e arquitetura; nenhuma implementação incluída  
-> **Versão da especificação:** 0.1.0  
+> **Nome do produto:** GraphHelm
+> **Codinome original:** Programação 5.0
+> **Categoria:** sistema operacional open source para agentes de IA
+> **Estado deste repositório:** especificação de produto e arquitetura; nenhuma implementação incluída
+> **Versão da especificação:** 0.1.1
 > **Data-base:** 2026-08-08
 
-Programação 5.0 é uma plataforma local-first em que o usuário controla, por uma interface visual, uma infraestrutura agentiva executada em sua própria VPS. Cada pedido é classificado, decomposto e convertido em um grafo de execução específico para o cenário. O sistema seleciona ou cria agentes, modelos, ferramentas, contexto, isolamento, testes e revisões sem depender de workflows fixos por domínio.
+GraphHelm é uma plataforma local-first em que o usuário controla, por uma interface visual, uma infraestrutura agentiva executada em sua própria VPS. Cada pedido é classificado, decomposto e convertido em um grafo de execução específico para o cenário. O sistema seleciona ou cria agentes, modelos, ferramentas, contexto, isolamento, testes e revisões sem depender de workflows fixos por domínio.
 
 O produto é composto por três superfícies abertas:
 
@@ -32,6 +33,8 @@ O produto é composto por três superfícies abertas:
 - [docs/operations/OBSERVABILITY_AND_RECOVERY.md](docs/operations/OBSERVABILITY_AND_RECOVERY.md): métricas, checkpoints, replay e recuperação.
 - [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): AGPLv3, licença comercial, CLA e governança.
 - [docs/product/ROADMAP_AND_ACCEPTANCE.md](docs/product/ROADMAP_AND_ACCEPTANCE.md): fases, critérios de aceite e métricas.
+- [docs/product/NAMING_DECISION.md](docs/product/NAMING_DECISION.md): nome, posicionamento e arquitetura da marca.
+- [CODEX_BOOTSTRAP_PROMPT.md](CODEX_BOOTSTRAP_PROMPT.md): prompt inicial para planejamento e primeira implementação no Codex.
 - [docs/reference/EXAMPLE_EXECUTIONS.md](docs/reference/EXAMPLE_EXECUTIONS.md): exemplos completos de grafos.
 - [docs/reference/REFERENCE_STACK_AND_ADRS.md](docs/reference/REFERENCE_STACK_AND_ADRS.md): stack de referência e decisões arquiteturais.
 - [docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md](docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md): fontes oficiais verificadas.

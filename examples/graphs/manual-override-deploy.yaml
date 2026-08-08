@@ -37,6 +37,7 @@ spec:
       type: deploy
       name: Deploy
       objective: Implantar no ambiente configurado.
+      targetRef: environment://staging
       optionality: required
       input:
         schema: schema://ImplementationResult@1

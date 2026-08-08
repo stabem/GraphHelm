@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Construir Programação 5.0 como framework aberto, confiável e adotável, preservando ao mesmo tempo a possibilidade de licenciamento comercial alternativo sobre a mesma base de código.
+Construir GraphHelm como framework aberto, confiável e adotável, preservando ao mesmo tempo a possibilidade de licenciamento comercial alternativo sobre a mesma base de código.
 
 Este documento é uma estratégia de produto e governança, não aconselhamento jurídico. Os textos finais de licença comercial, ICLA, CCLA, marca e termos precisam de advogado especializado.
 
@@ -105,7 +105,7 @@ Licença de código não concede automaticamente direito de usar nome/logo como 
 - programa de parceiros/certificação opcional;
 - proteção contra malware usando marca.
 
-“Programação 5.0” é codinome; marca final deve passar por busca e registro antes do lançamento.
+“GraphHelm” é o nome selecionado para desenvolvimento; o lançamento público depende de busca jurídica, reserva de namespaces e política de marca.
 
 ## 7. Estrutura de governança
 
@@ -258,7 +258,7 @@ Publicar suite para validar:
 - event semantics;
 - export/replay.
 
-Selo “P50 Compatible” depende de trademark policy e testes públicos.
+Selo “GraphHelm Compatible” depende de trademark policy e testes públicos.
 
 ## 15. Security governance
 

@@ -37,6 +37,7 @@ Este documento consolida as decisões de produto já tomadas. Elas são normativ
 | D-031 | Contribuições | CLA não exclusivo, com ICLA e CCLA, permitindo relicenciamento comercial. |
 | D-032 | Primeira fatia | Fatia vertical developer-first completa, sem limitar a arquitetura generalista. |
 | D-033 | Estado atual | Produzir documentação integral antes de qualquer implementação. |
+| D-034 | Nome | GraphHelm é o nome de produto selecionado para desenvolvimento, sujeito a clearance jurídico e reserva de namespaces antes do lançamento público. |
 
 ## Consequências obrigatórias
 

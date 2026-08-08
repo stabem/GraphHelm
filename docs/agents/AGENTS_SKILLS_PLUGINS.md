@@ -2,7 +2,7 @@
 
 ## 1. Visão
 
-Programação 5.0 trata agentes como configurações temporárias de trabalho, não como personagens permanentes. O valor está na combinação de objetivo, capability, contexto, permissões, modelo, contrato e evidência. Agentes úteis podem ser persistidos no projeto, mas continuam versionados e auditáveis.
+GraphHelm trata agentes como configurações temporárias de trabalho, não como personagens permanentes. O valor está na combinação de objetivo, capability, contexto, permissões, modelo, contrato e evidência. Agentes úteis podem ser persistidos no projeto, mas continuam versionados e auditáveis.
 
 ## 2. Taxonomia
 

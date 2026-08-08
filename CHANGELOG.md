@@ -1,5 +1,12 @@
 # Changelog da especificação
 
+## 0.1.1-spec — 2026-08-08
+
+- Nome de produto selecionado: GraphHelm.
+- Decisão de naming e arquitetura da marca documentadas.
+- Prompt inicial do Codex para o Foundation Graph Kernel.
+- Exemplo de override manual corrigido com destino de deploy explícito.
+
 ## 0.1.0-spec — 2026-08-08
 
 - PRD integral do Programação 5.0.

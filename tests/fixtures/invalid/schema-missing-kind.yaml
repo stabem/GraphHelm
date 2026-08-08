@@ -1,0 +1,19 @@
+apiVersion: p50.dev/graph/v1
+metadata:
+  id: missing-kind
+  name: Missing kind
+  executionId: exec-missing-kind
+  version: 1
+spec:
+  entrypoints: [start]
+  nodes:
+    start:
+      type: tool
+      name: Start
+      objective: Start safely.
+      optionality: required
+  edges: []
+  budgets:
+    maxNodes: 1
+  completion:
+    terminalNodes: [start]

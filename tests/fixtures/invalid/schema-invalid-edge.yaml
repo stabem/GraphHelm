@@ -1,0 +1,29 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: invalid-edge
+  name: Invalid edge
+  executionId: exec-invalid-edge
+  version: 1
+spec:
+  entrypoints: [start]
+  nodes:
+    start:
+      type: tool
+      name: Start
+      objective: Start safely.
+      optionality: required
+    finish:
+      type: tool
+      name: Finish
+      objective: Finish safely.
+      optionality: required
+  edges:
+    - id: invalid
+      from: start
+      to: finish
+      type: teleport
+  budgets:
+    maxNodes: 2
+  completion:
+    terminalNodes: [finish]

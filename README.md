@@ -3,11 +3,23 @@
 > **Nome do produto:** GraphHelm
 > **Codinome original:** Programação 5.0
 > **Categoria:** sistema operacional open source para agentes de IA
-> **Estado deste repositório:** especificação de produto e arquitetura; nenhuma implementação incluída
+> **Estado deste repositório:** especificação integral e Foundation Graph Kernel implementado
 > **Versão da especificação:** 0.1.1
 > **Data-base:** 2026-08-08
 
 GraphHelm é uma plataforma local-first em que o usuário controla, por uma interface visual, uma infraestrutura agentiva executada em sua própria VPS. Cada pedido é classificado, decomposto e convertido em um grafo de execução específico para o cenário. O sistema seleciona ou cria agentes, modelos, ferramentas, contexto, isolamento, testes e revisões sem depender de workflows fixos por domínio.
+
+## Foundation Graph Kernel
+
+O primeiro milestone executável está em Rust 1.97.1. Ele oferece validação YAML/JSON offline, hash semântico, versões imutáveis, lint e policy determinísticos, drafts transacionais, waivers, simulação sem efeitos, Event Store append-only, replay e CLI JSON.
+
+```bash
+cargo run --locked -p graphhelm-cli -- graph validate examples/graphs/software-feature.yaml
+cargo run --locked -p graphhelm-cli -- graph lint examples/graphs/software-feature.yaml
+cargo run --locked -p graphhelm-cli -- graph hash examples/graphs/software-feature.yaml
+```
+
+Consulte [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-graph-kernel.md) para contratos, comandos, códigos de saída, segurança e evidências de aceite.
 
 O produto é composto por três superfícies abertas:
 

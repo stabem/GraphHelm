@@ -1,0 +1,30 @@
+[package]
+name = "graphhelm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "graphhelm"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+clap.workspace = true
+graphhelm-events = { path = "../../core/events" }
+graphhelm-governor = { path = "../../core/governor" }
+graphhelm-graph = { path = "../../core/graph" }
+graphhelm-policy = { path = "../../core/policy" }
+graphhelm-protocols = { path = "../../core/protocols" }
+graphhelm-schema = { path = "../../core/schema" }
+graphhelm-simulation = { path = "../../core/simulation" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true

@@ -4,3 +4,5 @@ Thumbs.db
 *.log
 __pycache__/
 .worktrees/
+target/
+*.jsonl

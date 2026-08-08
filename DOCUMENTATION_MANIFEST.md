@@ -6,7 +6,8 @@
 | `CHANGELOG.md` | 689 | 101 |
 | `MASTER_PRD.md` | 23653 | 3239 |
 | `README.md` | 5271 | 536 |
-| `VERSION` | 11 | - |
+| `SPEC_COMMIT` | 41 | 1 |
+| `VERSION` | 11 | 1 |
 | `docs/DECISION_REGISTER.md` | 4705 | 723 |
 | `docs/GLOSSARY.md` | 3809 | 497 |
 | `docs/INDEX.md` | 1459 | 119 |
@@ -47,5 +48,5 @@
 | `schemas/node.schema.json` | 2132 | 174 |
 | `schemas/policy-waiver.schema.json` | 847 | 69 |
 
-**Total de arquivos:** 44
-**Total de palavras em arquivos textuais contabilizados:** 32911
+**Total de arquivos listados:** 45
+**Total de palavras em arquivos textuais contabilizados:** 32913

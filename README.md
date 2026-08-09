@@ -3,7 +3,7 @@
 > **Nome do produto:** GraphHelm
 > **Codinome original:** Programação 5.0
 > **Categoria:** sistema operacional open source para agentes de IA
-> **Estado deste repositório:** especificação integral e Foundation Graph Kernel implementado
+> **Estado deste repositório:** especificação integral, Foundation Graph Kernel implementado e protocolos `1.0.0` publicados
 > **Versão da especificação:** 0.1.1
 > **Data-base:** 2026-08-08
 
@@ -20,6 +20,19 @@ cargo run --locked -p graphhelm-cli -- graph hash examples/graphs/software-featu
 ```
 
 Consulte [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-graph-kernel.md) para contratos, comandos, códigos de saída, segurança e evidências de aceite.
+
+## Protocolos e evolução de schemas
+
+Os nove JSON Schemas têm catálogo verificável, hashes canônicos, snapshot imutável `1.0.0`, análise conservadora de compatibilidade, regras SemVer exatas, migrações declarativas e limitadas, fixtures públicas de conformidade e CLI JSON. A release inicial não publica nenhuma migração de dados; os identificadores provisórios `p50.dev` foram preservados.
+
+```bash
+cargo run --locked -p graphhelm-cli -- schema catalog --catalog schemas/catalog.json
+cargo run --locked -p graphhelm-cli -- schema check --baseline schemas/releases/1.0.0/catalog.json --candidate schemas/catalog.json
+cargo run --locked -p graphhelm-cli -- schema conformance --catalog schemas/catalog.json --fixtures conformance/manifest.json
+cargo run --locked -p graphhelm-cli -- schema view --catalog schemas/catalog.json --schema graph
+```
+
+Consulte [docs/milestones/protocols-and-schema-evolution.md](docs/milestones/protocols-and-schema-evolution.md) para o contrato do catálogo, limites, matriz de compatibilidade, SemVer, migrações, segurança, rollback e evidências de aceite.
 
 O produto é composto por três superfícies abertas:
 

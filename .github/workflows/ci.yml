@@ -1,4 +1,4 @@
-name: Foundation Graph Kernel CI
+name: GraphHelm CI
 
 on:
   push:
@@ -29,5 +29,13 @@ jobs:
         run: cargo +1.97.1 test --workspace --all-features --locked
       - name: Run CLI acceptance tests
         run: cargo +1.97.1 test -p graphhelm-cli --test cli_smoke --locked
+      - name: Run schema CLI acceptance tests
+        run: cargo +1.97.1 test -p graphhelm-cli --test schema_cli --locked
+      - name: Validate schema catalog
+        run: cargo +1.97.1 run --locked -p graphhelm-cli -- schema catalog --catalog schemas/catalog.json
+      - name: Check schema baseline compatibility
+        run: cargo +1.97.1 run --locked -p graphhelm-cli -- schema check --baseline schemas/releases/1.0.0/catalog.json --candidate schemas/catalog.json
+      - name: Run protocol conformance suite
+        run: cargo +1.97.1 run --locked -p graphhelm-cli -- schema conformance --catalog schemas/catalog.json --fixtures conformance/manifest.json
       - name: Verify locked workspace metadata
         run: cargo +1.97.1 metadata --locked --no-deps --format-version 1

@@ -1,0 +1,4 @@
+{
+  "baseline": {"type": "object", "description": "baseline annotation"},
+  "candidate": {"type": "object", "description": "candidate annotation"}
+}

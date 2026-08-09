@@ -1,0 +1,12 @@
+{
+  "apiVersion": "p50.dev/graph/v1",
+  "kind": "ExecutionGraph",
+  "metadata": {"id": "graph-fixture", "name": "Fixture", "executionId": "execution-fixture", "version": 1},
+  "spec": {
+    "entrypoints": ["start"],
+    "nodes": {"start": {"type": "tool", "name": "Start", "objective": "Complete fixture", "optionality": "required"}},
+    "edges": [],
+    "budgets": {},
+    "completion": {"status": "complete"}
+  }
+}

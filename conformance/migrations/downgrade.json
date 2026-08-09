@@ -1,0 +1,7 @@
+{
+  "schema": "graph",
+  "fromVersion": "3.0.0",
+  "toVersion": "1.0.0",
+  "manifests": [],
+  "expect": {"ok": false, "codes": ["GHM001_MIGRATION_UNSUPPORTED"]}
+}

@@ -1,0 +1,41 @@
+{
+  "manifest": {
+    "formatVersion": 1,
+    "schema": "graph",
+    "fromVersion": "1.0.0",
+    "toVersion": "2.0.0",
+    "sourceSchemaHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "targetSchemaHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "operations": [
+      {"op": "test", "path": "/apiVersion", "value": "p50.dev/graph/v1"},
+      {"op": "replace", "path": "/apiVersion", "value": "p50.dev/graph/v2"},
+      {"op": "add", "path": "/enabled", "value": true},
+      {"op": "remove", "path": "/obsolete"},
+      {"op": "copy", "from": "/pointerKeys/a~1b/~0key", "path": "/escapedCopy"},
+      {"op": "move", "from": "/meta/private", "path": "/moved"},
+      {"op": "add", "path": "/items/-", "value": "c"}
+    ]
+  },
+  "sourceCatalogHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "targetCatalogHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "input": {
+    "apiVersion": "p50.dev/graph/v1",
+    "obsolete": true,
+    "items": ["a", "b"],
+    "meta": {"private": "moved-value"},
+    "pointerKeys": {"a/b": {"~key": "escaped-value"}}
+  },
+  "expect": {
+    "ok": true,
+    "codes": [],
+    "document": {
+      "apiVersion": "p50.dev/graph/v2",
+      "enabled": true,
+      "items": ["a", "b", "c"],
+      "meta": {},
+      "pointerKeys": {"a/b": {"~key": "escaped-value"}},
+      "escapedCopy": "escaped-value",
+      "moved": "moved-value"
+    }
+  }
+}

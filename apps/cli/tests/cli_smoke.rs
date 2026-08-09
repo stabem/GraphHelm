@@ -13,6 +13,21 @@ fn command() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
 }
 
+#[test]
+fn legacy_graph_parse_errors_help_and_version_keep_clap_behavior() {
+    let invalid = command().args(["graph", "validate"]).output().unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(invalid.stdout.is_empty());
+    assert!(!invalid.stderr.is_empty());
+
+    for arguments in [vec!["--help"], vec!["--version"]] {
+        let output = command().args(arguments).output().unwrap();
+        assert!(output.status.success());
+        assert!(!output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+}
+
 fn json(output: &[u8]) -> serde_json::Value {
     serde_json::from_slice(output).unwrap()
 }
@@ -125,6 +140,31 @@ fn secret_values_are_never_echoed_or_persisted_by_cli_preflight() {
         "GHG008_INLINE_SECRET"
     );
     assert!(!events.exists());
+}
+
+#[test]
+fn invalid_schema_payload_is_redacted_from_stdout_and_stderr() {
+    let directory = tempfile::tempdir().unwrap();
+    let graph = graphhelm_schema::load_graph(&root().join("examples/graphs/software-feature.yaml"))
+        .unwrap()
+        .graph;
+    let mut document = serde_json::to_value(graph).unwrap();
+    document["metadata"]["version"] = serde_json::json!("TOP-SECRET-DO-NOT-ECHO");
+    let graph_path = directory.path().join("invalid-secret.json");
+    std::fs::write(&graph_path, serde_json::to_vec(&document).unwrap()).unwrap();
+
+    let output = command()
+        .args(["graph", "validate", graph_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("TOP-SECRET"));
+    assert_eq!(
+        json(&output.stdout)["diagnostics"][0]["code"],
+        "GHS002_SCHEMA"
+    );
 }
 
 #[test]

@@ -1,0 +1,17 @@
+{
+  "id": "capsule-fixture",
+  "version": 0,
+  "nodeId": "node-fixture",
+  "objective": "Exercise the minimum context contract",
+  "sections": {
+    "projectKernel": [],
+    "task": [],
+    "node": [],
+    "evidence": [],
+    "dependencyOutputs": [],
+    "agentExperience": []
+  },
+  "tokenBudget": {"allocated": 1, "expandableTo": 1},
+  "provenance": [],
+  "dependencyHash": "fixture-hash"
+}

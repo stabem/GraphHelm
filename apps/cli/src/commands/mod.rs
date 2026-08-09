@@ -2,6 +2,7 @@ mod draft;
 mod hash;
 mod lint;
 mod replay;
+mod schema;
 mod simulate;
 mod validate;
 
@@ -14,7 +15,7 @@ use graphhelm_protocols::{
     Actor, ActorType, Clock, EventKind, GraphImported, GraphVersionPublished, IdGenerator, NewEvent,
 };
 
-use crate::args::{DraftCommand, GraphCommand, TopLevel};
+use crate::args::{DraftCommand, GraphCommand, SchemaCommand, TopLevel};
 use crate::output::Outcome;
 
 pub fn run(command: TopLevel) -> Outcome {
@@ -37,6 +38,26 @@ pub fn run(command: TopLevel) -> Outcome {
                 } => draft::run(&base_file, &draft_file, &actor, &events),
             },
             GraphCommand::Replay { events } => replay::run(&events),
+        },
+        TopLevel::Schema(schema) => match schema.command {
+            SchemaCommand::Catalog { catalog } => schema::catalog::run(&catalog),
+            SchemaCommand::Check {
+                baseline,
+                candidate,
+            } => schema::check::run(&baseline, &candidate),
+            SchemaCommand::Migrate {
+                catalog,
+                migration,
+                input,
+                output,
+            } => schema::migrate::run(&catalog, &migration, &input, &output),
+            SchemaCommand::Conformance { catalog, fixtures } => {
+                schema::conformance::run(&catalog, &fixtures)
+            }
+            SchemaCommand::View {
+                catalog,
+                schema: name,
+            } => schema::view::run(&catalog, &name),
         },
     }
 }

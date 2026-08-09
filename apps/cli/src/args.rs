@@ -18,6 +18,49 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum TopLevel {
     Graph(GraphArgs),
+    Schema(SchemaArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SchemaArgs {
+    #[command(subcommand)]
+    pub command: SchemaCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SchemaCommand {
+    Catalog {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    Check {
+        #[arg(long)]
+        baseline: PathBuf,
+        #[arg(long)]
+        candidate: PathBuf,
+    },
+    Migrate {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        migration: PathBuf,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Conformance {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        fixtures: PathBuf,
+    },
+    View {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        schema: String,
+    },
 }
 
 #[derive(Debug, Args)]

@@ -1,0 +1,26 @@
+{
+  "schema": "graph",
+  "fromVersion": "1.0.0",
+  "toVersion": "3.0.0",
+  "manifests": [
+    {
+      "formatVersion": 1,
+      "schema": "graph",
+      "fromVersion": "1.0.0",
+      "toVersion": "2.0.0",
+      "sourceSchemaHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "targetSchemaHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "operations": []
+    },
+    {
+      "formatVersion": 1,
+      "schema": "graph",
+      "fromVersion": "2.0.0",
+      "toVersion": "1.0.0",
+      "sourceSchemaHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "targetSchemaHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "operations": []
+    }
+  ],
+  "expect": {"ok": false, "codes": ["GHM001_MIGRATION_UNSUPPORTED"]}
+}

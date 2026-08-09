@@ -1,0 +1,1175 @@
+use std::collections::BTreeSet;
+
+use serde::Serialize;
+use serde_json::Value;
+
+use crate::{
+    CatalogResources, MAX_JSON_DEPTH, canonical_json,
+    reference::{resolve_reference, resolved_schema_references},
+};
+
+const BREAKING_CODE: &str = "GHC003_BREAKING_CHANGE";
+const ANNOTATION_CODE: &str = "GHC101_ANNOTATION_CHANGED";
+const OPTIONAL_PROPERTY_CODE: &str = "GHC102_OPTIONAL_PROPERTY_ADDED";
+const COMPATIBLE_CODE: &str = "GHC103_COMPATIBLE_CHANGE";
+
+/// The most severe compatibility class found in a comparison.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompatibilityClass {
+    #[default]
+    Unchanged,
+    Annotation,
+    Compatible,
+    Breaking,
+}
+
+/// The minimum semantic-version segment required by a compatibility class.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemverImpact {
+    #[default]
+    None,
+    Patch,
+    Minor,
+    Major,
+}
+
+/// A payload-safe explanation of one schema compatibility decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatibilityChange {
+    pub schema: String,
+    pub code: String,
+    pub pointer: String,
+    pub baseline_summary: String,
+    pub candidate_summary: String,
+    pub class: CompatibilityClass,
+    pub impact: SemverImpact,
+}
+
+/// Deterministic aggregate compatibility between two explicit catalogs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatibilityReport {
+    pub compatible: bool,
+    pub class: CompatibilityClass,
+    pub impact: SemverImpact,
+    pub changes: Vec<CompatibilityChange>,
+}
+
+/// Compares already loaded schema catalogs without filesystem or network access.
+#[must_use]
+pub fn compare_catalogs(
+    baseline: &CatalogResources,
+    candidate: &CatalogResources,
+) -> CompatibilityReport {
+    let mut comparison = Comparison {
+        baseline,
+        candidate,
+        changes: Vec::new(),
+    };
+    for (schema, document) in &candidate.schemas {
+        comparison.validate_candidate_references(schema, document);
+    }
+    let schema_names = baseline
+        .schemas
+        .keys()
+        .chain(candidate.schemas.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for schema in schema_names {
+        match (
+            baseline.schemas.get(&schema),
+            candidate.schemas.get(&schema),
+        ) {
+            (Some(left), Some(right)) => {
+                comparison.compare_value(&schema, &schema, left, right, "", 0)
+            }
+            (Some(_), None) => comparison.breaking(&schema, "/", "schema present", "schema absent"),
+            (None, Some(_)) => comparison.compatible(&schema, "/", "schema absent", "schema added"),
+            (None, None) => {}
+        }
+    }
+
+    comparison.changes.sort_by(|left, right| {
+        (&left.schema, &left.pointer, &left.code).cmp(&(&right.schema, &right.pointer, &right.code))
+    });
+    let class = comparison
+        .changes
+        .iter()
+        .map(|change| change.class)
+        .max()
+        .unwrap_or_default();
+    let impact = comparison
+        .changes
+        .iter()
+        .map(|change| change.impact)
+        .max()
+        .unwrap_or_default();
+    CompatibilityReport {
+        compatible: class != CompatibilityClass::Breaking,
+        class,
+        impact,
+        changes: comparison.changes,
+    }
+}
+
+struct Comparison<'a> {
+    baseline: &'a CatalogResources,
+    candidate: &'a CatalogResources,
+    changes: Vec<CompatibilityChange>,
+}
+
+impl Comparison<'_> {
+    #[allow(clippy::too_many_arguments)]
+    fn compare_value(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: &Value,
+        candidate: &Value,
+        pointer: &str,
+        depth: usize,
+    ) {
+        if baseline == candidate {
+            return;
+        }
+        if depth > MAX_JSON_DEPTH {
+            self.breaking(
+                schema,
+                display_pointer(pointer),
+                "schema depth bounded",
+                "schema depth unprovable",
+            );
+            return;
+        }
+
+        match (baseline, candidate) {
+            (Value::Bool(false), Value::Bool(true)) => self.compatible(
+                schema,
+                display_pointer(pointer),
+                "schema rejects all",
+                "schema accepts all",
+            ),
+            (Value::Bool(false), Value::Object(_)) => self.compatible(
+                schema,
+                display_pointer(pointer),
+                "schema rejects all",
+                "schema accepts conditionally",
+            ),
+            (Value::Object(_), Value::Bool(true)) => self.compatible(
+                schema,
+                display_pointer(pointer),
+                "schema accepts conditionally",
+                "schema accepts all",
+            ),
+            (Value::Bool(true), Value::Bool(false)) => self.breaking(
+                schema,
+                display_pointer(pointer),
+                "schema accepts all",
+                "schema rejects all",
+            ),
+            (Value::Bool(true), Value::Object(_)) => self.breaking(
+                schema,
+                display_pointer(pointer),
+                "schema accepts all",
+                "schema accepts conditionally",
+            ),
+            (Value::Object(_), Value::Bool(false)) => self.breaking(
+                schema,
+                display_pointer(pointer),
+                "schema accepts conditionally",
+                "schema rejects all",
+            ),
+            (Value::Object(left), Value::Object(right)) => {
+                let keys = left
+                    .keys()
+                    .chain(right.keys())
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                for keyword in keys {
+                    let left_value = left.get(&keyword);
+                    let right_value = right.get(&keyword);
+                    if left_value == right_value {
+                        continue;
+                    }
+                    let keyword_pointer = join_pointer(pointer, &keyword);
+                    self.compare_keyword(
+                        schema,
+                        owner,
+                        &keyword,
+                        left_value,
+                        right_value,
+                        &keyword_pointer,
+                        depth + 1,
+                    );
+                }
+            }
+            _ => self.breaking(
+                schema,
+                display_pointer(pointer),
+                "schema form present",
+                "schema form changed",
+            ),
+        }
+    }
+
+    fn validate_candidate_references(&mut self, schema: &str, document: &Value) {
+        for invalid_pointer in resolved_schema_references(self.candidate, schema, document)
+            .err()
+            .unwrap_or_default()
+        {
+            self.breaking(
+                schema,
+                &invalid_pointer,
+                "reference absent or unresolved",
+                "reference unresolved",
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compare_keyword(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        keyword: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        depth: usize,
+    ) {
+        match keyword {
+            "title" | "description" | "$comment" | "examples" | "default" | "deprecated"
+            | "readOnly" | "writeOnly" => self.annotation(schema, pointer, baseline, candidate),
+            // Version enforcement is a separate gate; this field cannot classify its own change.
+            "x-graphhelm-schema-version" => {}
+            "properties" => {
+                self.compare_properties(schema, owner, baseline, candidate, pointer, depth)
+            }
+            "$defs" | "definitions" => {
+                self.compare_schema_map(schema, owner, baseline, candidate, pointer, depth)
+            }
+            "required" => self.compare_required(schema, baseline, candidate, pointer),
+            "type" | "enum" => self.compare_set(schema, keyword, baseline, candidate, pointer),
+            "$id" => self.breaking(
+                schema,
+                pointer,
+                "schema identity present",
+                "schema identity changed",
+            ),
+            "$ref" => self.compare_ref(schema, owner, baseline, candidate, pointer),
+            "const" => self.compare_const(schema, baseline, candidate, pointer),
+            "minimum" | "exclusiveMinimum" | "minLength" | "minItems" => {
+                self.compare_bound(schema, baseline, candidate, pointer, BoundDirection::Lower)
+            }
+            "maximum" | "exclusiveMaximum" | "maxLength" | "maxItems" => {
+                self.compare_bound(schema, baseline, candidate, pointer, BoundDirection::Upper)
+            }
+            "pattern" | "format" => {
+                self.compare_opaque_constraint(schema, keyword, baseline, candidate, pointer)
+            }
+            "additionalProperties" | "unevaluatedProperties" => {
+                self.compare_tail_schema(schema, owner, baseline, candidate, pointer, depth)
+            }
+            "items" => self.compare_items(schema, owner, baseline, candidate, pointer, depth),
+            "allOf" | "anyOf" | "oneOf" => {
+                self.compare_composition(schema, owner, keyword, baseline, candidate, pointer)
+            }
+            "not" => self.compare_not(schema, baseline, candidate, pointer),
+            _ => self.breaking(
+                schema,
+                pointer,
+                "keyword unchanged or absent",
+                "keyword change unproven",
+            ),
+        }
+    }
+
+    fn annotation(
+        &mut self,
+        schema: &str,
+        pointer: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+    ) {
+        self.push(
+            schema,
+            pointer,
+            ANNOTATION_CODE,
+            summary_presence(baseline, "annotation"),
+            summary_presence(candidate, "annotation"),
+            CompatibilityClass::Annotation,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compare_properties(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        depth: usize,
+    ) {
+        let Some(left) = baseline.and_then(Value::as_object) else {
+            if baseline.is_none()
+                && let Some(right) = candidate.and_then(Value::as_object)
+            {
+                for property in right.keys() {
+                    self.optional_property(schema, &join_pointer(pointer, property));
+                }
+                return;
+            }
+            self.breaking(
+                schema,
+                pointer,
+                "properties absent",
+                "properties unprovable",
+            );
+            return;
+        };
+        let Some(right) = candidate.and_then(Value::as_object) else {
+            if candidate.is_none() {
+                for property in left.keys() {
+                    self.breaking(
+                        schema,
+                        &join_pointer(pointer, property),
+                        "property present",
+                        "property removed",
+                    );
+                }
+                return;
+            }
+            self.breaking(
+                schema,
+                pointer,
+                "properties present",
+                "properties unprovable",
+            );
+            return;
+        };
+
+        for property in left
+            .keys()
+            .chain(right.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>()
+        {
+            let property_pointer = join_pointer(pointer, &property);
+            match (left.get(&property), right.get(&property)) {
+                (Some(left_schema), Some(right_schema)) => self.compare_value(
+                    schema,
+                    owner,
+                    left_schema,
+                    right_schema,
+                    &property_pointer,
+                    depth,
+                ),
+                (Some(_), None) => self.breaking(
+                    schema,
+                    &property_pointer,
+                    "property present",
+                    "property removed",
+                ),
+                (None, Some(_)) => self.optional_property(schema, &property_pointer),
+                (None, None) => {}
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compare_schema_map(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        depth: usize,
+    ) {
+        let left = baseline.and_then(Value::as_object);
+        let right = candidate.and_then(Value::as_object);
+        let (Some(left), Some(right)) = (left, right) else {
+            self.breaking(
+                schema,
+                pointer,
+                "schema definitions present",
+                "schema definitions changed",
+            );
+            return;
+        };
+        for name in left
+            .keys()
+            .chain(right.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>()
+        {
+            let nested_pointer = join_pointer(pointer, &name);
+            match (left.get(&name), right.get(&name)) {
+                (Some(left_schema), Some(right_schema)) => self.compare_value(
+                    schema,
+                    owner,
+                    left_schema,
+                    right_schema,
+                    &nested_pointer,
+                    depth,
+                ),
+                (Some(_), None) => self.breaking(
+                    schema,
+                    &nested_pointer,
+                    "schema definition present",
+                    "schema definition removed",
+                ),
+                (None, Some(_)) => self.compatible(
+                    schema,
+                    &nested_pointer,
+                    "schema definition absent",
+                    "schema definition added",
+                ),
+                (None, None) => {}
+            }
+        }
+    }
+
+    fn compare_required(
+        &mut self,
+        schema: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        let Some(left) = string_set_or_empty(baseline) else {
+            self.breaking(
+                schema,
+                pointer,
+                "required set present",
+                "required set unprovable",
+            );
+            return;
+        };
+        let Some(right) = string_set_or_empty(candidate) else {
+            self.breaking(
+                schema,
+                pointer,
+                "required set present",
+                "required set unprovable",
+            );
+            return;
+        };
+        if left == right {
+            return;
+        }
+        if left.is_subset(&right) && left != right {
+            self.breaking(
+                schema,
+                pointer,
+                "required set smaller",
+                "required set expanded",
+            );
+        } else if right.is_subset(&left) && left != right {
+            self.compatible(
+                schema,
+                pointer,
+                "required set larger",
+                "required set relaxed",
+            );
+        } else {
+            self.breaking(
+                schema,
+                pointer,
+                "required set changed",
+                "required set ambiguous",
+            );
+        }
+    }
+
+    fn compare_set(
+        &mut self,
+        schema: &str,
+        keyword: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        match (baseline, candidate) {
+            (None, Some(_)) => {
+                self.breaking(
+                    schema,
+                    pointer,
+                    "validation set absent",
+                    "validation set introduced",
+                );
+                return;
+            }
+            (Some(_), None) => {
+                self.compatible(
+                    schema,
+                    pointer,
+                    "validation set present",
+                    "validation set removed",
+                );
+                return;
+            }
+            _ => {}
+        }
+        if keyword == "type" {
+            self.compare_type_domain(schema, baseline, candidate, pointer);
+            return;
+        }
+        let left = validation_set(keyword, baseline);
+        let right = validation_set(keyword, candidate);
+        let (Some(left), Some(right)) = (left, right) else {
+            self.breaking(
+                schema,
+                pointer,
+                "validation set present",
+                "validation set unprovable",
+            );
+            return;
+        };
+        if left == right {
+            return;
+        }
+        if left.is_subset(&right) && left != right {
+            self.compatible(
+                schema,
+                pointer,
+                set_summary(keyword, "narrower"),
+                set_summary(keyword, "widened"),
+            );
+        } else if right.is_subset(&left) && left != right {
+            self.breaking(
+                schema,
+                pointer,
+                set_summary(keyword, "wider"),
+                set_summary(keyword, "narrowed"),
+            );
+        } else {
+            self.breaking(
+                schema,
+                pointer,
+                set_summary(keyword, "changed"),
+                set_summary(keyword, "ambiguous"),
+            );
+        }
+    }
+
+    fn compare_type_domain(
+        &mut self,
+        schema: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        let left = baseline.and_then(type_value_set);
+        let right = candidate.and_then(type_value_set);
+        let (Some(left), Some(right)) = (left, right) else {
+            self.breaking(schema, pointer, "type set present", "type set unprovable");
+            return;
+        };
+        let left_in_right = type_domain_is_subset(&left, &right);
+        let right_in_left = type_domain_is_subset(&right, &left);
+        if left_in_right && right_in_left {
+            return;
+        }
+        if left_in_right {
+            self.compatible(schema, pointer, "type set narrower", "type set widened");
+        } else if right_in_left {
+            self.breaking(schema, pointer, "type set wider", "type set narrowed");
+        } else {
+            self.breaking(schema, pointer, "type set changed", "type set ambiguous");
+        }
+    }
+
+    fn compare_const(
+        &mut self,
+        schema: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        match (baseline, candidate) {
+            (Some(_), None) => self.compatible(
+                schema,
+                pointer,
+                "const constraint present",
+                "const constraint removed",
+            ),
+            _ => self.breaking(
+                schema,
+                pointer,
+                "const constraint absent or different",
+                "const constraint added or changed",
+            ),
+        }
+    }
+
+    fn compare_bound(
+        &mut self,
+        schema: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        direction: BoundDirection,
+    ) {
+        match (baseline, candidate) {
+            (None, Some(_)) => self.breaking(schema, pointer, "bound absent", "bound introduced"),
+            (Some(_), None) => self.compatible(schema, pointer, "bound present", "bound removed"),
+            (Some(left), Some(right)) => {
+                let (Some(left), Some(right)) = (left.as_f64(), right.as_f64()) else {
+                    self.breaking(schema, pointer, "bound present", "bound unprovable");
+                    return;
+                };
+                let relaxed = match direction {
+                    BoundDirection::Lower => right < left,
+                    BoundDirection::Upper => right > left,
+                };
+                if relaxed {
+                    self.compatible(schema, pointer, "bound stricter", "bound relaxed");
+                } else {
+                    self.breaking(schema, pointer, "bound looser", "bound restricted");
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    fn compare_opaque_constraint(
+        &mut self,
+        schema: &str,
+        keyword: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        if baseline.is_some() && candidate.is_none() {
+            self.compatible(
+                schema,
+                pointer,
+                format!("{keyword} constraint present"),
+                format!("{keyword} constraint removed"),
+            );
+        } else {
+            self.breaking(
+                schema,
+                pointer,
+                format!("{keyword} absent or different"),
+                format!("{keyword} introduced or changed"),
+            );
+        }
+    }
+
+    fn compare_ref(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        let left = baseline
+            .and_then(Value::as_str)
+            .and_then(|reference| resolve_reference(self.baseline, owner, reference).ok());
+        let right = candidate
+            .and_then(Value::as_str)
+            .and_then(|reference| resolve_reference(self.candidate, owner, reference).ok());
+        match (baseline, candidate, left, right) {
+            (Some(_), Some(_), Some(left), Some(right)) if left == right => {}
+            (Some(_), None, Some(_), _) => self.breaking(
+                schema,
+                pointer,
+                "reference constraint present",
+                "reference binding removed",
+            ),
+            _ => self.breaking(
+                schema,
+                pointer,
+                "reference absent or resolved",
+                "reference changed or unresolved",
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compare_tail_schema(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        depth: usize,
+    ) {
+        let left = baseline.unwrap_or(&Value::Bool(true));
+        let right = candidate.unwrap_or(&Value::Bool(true));
+        match (left, right) {
+            (Value::Bool(false), Value::Bool(true) | Value::Object(_)) => self.compatible(
+                schema,
+                pointer,
+                "extra properties rejected",
+                "extra properties accepted conditionally",
+            ),
+            (Value::Object(_), Value::Bool(true)) => self.compatible(
+                schema,
+                pointer,
+                "extra properties constrained",
+                "extra properties accepted",
+            ),
+            (Value::Bool(true), Value::Bool(false) | Value::Object(_))
+            | (Value::Object(_), Value::Bool(false)) => self.breaking(
+                schema,
+                pointer,
+                "extra properties more permissive",
+                "extra properties restricted",
+            ),
+            (Value::Object(_), Value::Object(_)) => {
+                self.compare_value(schema, owner, left, right, pointer, depth)
+            }
+            _ => self.breaking(
+                schema,
+                pointer,
+                "extra property policy present",
+                "extra property policy unprovable",
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compare_items(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        depth: usize,
+    ) {
+        match (baseline, candidate) {
+            (None, Some(_)) => {
+                self.breaking(schema, pointer, "items unconstrained", "items constrained")
+            }
+            (Some(_), None) => {
+                self.compatible(schema, pointer, "items constrained", "items unconstrained")
+            }
+            (Some(left), Some(right)) => {
+                self.compare_value(schema, owner, left, right, pointer, depth)
+            }
+            (None, None) => {}
+        }
+    }
+
+    fn compare_composition(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        keyword: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        match (baseline, candidate) {
+            (None, Some(_)) => {
+                self.breaking(
+                    schema,
+                    pointer,
+                    "composition absent",
+                    "composition introduced",
+                );
+                return;
+            }
+            (Some(_), None) => {
+                self.compatible(
+                    schema,
+                    pointer,
+                    "composition present",
+                    "composition removed",
+                );
+                return;
+            }
+            _ => {}
+        }
+        let left = composition_set(self.baseline, owner, baseline);
+        let right = composition_set(self.candidate, owner, candidate);
+        let (Some(left), Some(right)) = (left, right) else {
+            self.breaking(
+                schema,
+                pointer,
+                "composition present",
+                "composition change unprovable",
+            );
+            return;
+        };
+        if left == right
+            && baseline.and_then(Value::as_array).map(Vec::len)
+                == candidate.and_then(Value::as_array).map(Vec::len)
+        {
+            return;
+        }
+        let widening = if keyword == "allOf" {
+            right.is_subset(&left)
+        } else {
+            left.is_subset(&right)
+        };
+        let narrowing = if keyword == "allOf" {
+            left.is_subset(&right)
+        } else {
+            right.is_subset(&left)
+        };
+        if widening && left != right {
+            if keyword == "oneOf"
+                && !one_of_additions_are_disjoint(
+                    self.baseline,
+                    self.candidate,
+                    owner,
+                    baseline,
+                    candidate,
+                    &left,
+                )
+            {
+                self.breaking(
+                    schema,
+                    pointer,
+                    "oneOf branches present",
+                    "oneOf overlap unprovable",
+                );
+                return;
+            }
+            self.compatible(
+                schema,
+                pointer,
+                "composition narrower",
+                "composition widened",
+            );
+        } else if narrowing && left != right {
+            self.breaking(schema, pointer, "composition wider", "composition narrowed");
+        } else {
+            self.breaking(
+                schema,
+                pointer,
+                "composition changed",
+                "composition ambiguous",
+            );
+        }
+    }
+
+    fn compare_not(
+        &mut self,
+        schema: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+    ) {
+        if baseline.is_some() && candidate.is_none() {
+            self.compatible(
+                schema,
+                pointer,
+                "negation constraint present",
+                "negation constraint removed",
+            );
+        } else {
+            self.breaking(
+                schema,
+                pointer,
+                "negation absent or different",
+                "negation introduced or changed",
+            );
+        }
+    }
+
+    fn optional_property(&mut self, schema: &str, pointer: &str) {
+        self.push(
+            schema,
+            pointer,
+            OPTIONAL_PROPERTY_CODE,
+            "property absent",
+            "optional property added",
+            CompatibilityClass::Compatible,
+        );
+    }
+
+    fn compatible(
+        &mut self,
+        schema: &str,
+        pointer: &str,
+        baseline_summary: impl Into<String>,
+        candidate_summary: impl Into<String>,
+    ) {
+        self.push(
+            schema,
+            pointer,
+            COMPATIBLE_CODE,
+            baseline_summary,
+            candidate_summary,
+            CompatibilityClass::Compatible,
+        );
+    }
+
+    fn breaking(
+        &mut self,
+        schema: &str,
+        pointer: &str,
+        baseline_summary: impl Into<String>,
+        candidate_summary: impl Into<String>,
+    ) {
+        self.push(
+            schema,
+            pointer,
+            BREAKING_CODE,
+            baseline_summary,
+            candidate_summary,
+            CompatibilityClass::Breaking,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &mut self,
+        schema: &str,
+        pointer: &str,
+        code: &str,
+        baseline_summary: impl Into<String>,
+        candidate_summary: impl Into<String>,
+        class: CompatibilityClass,
+    ) {
+        if self.changes.iter().any(|change| {
+            change.schema == schema && change.pointer == pointer && change.code == code
+        }) {
+            return;
+        }
+        let impact = match class {
+            CompatibilityClass::Unchanged => SemverImpact::None,
+            CompatibilityClass::Annotation => SemverImpact::Patch,
+            CompatibilityClass::Compatible => SemverImpact::Minor,
+            CompatibilityClass::Breaking => SemverImpact::Major,
+        };
+        self.changes.push(CompatibilityChange {
+            schema: schema.to_owned(),
+            code: code.to_owned(),
+            pointer: display_pointer(pointer).to_owned(),
+            baseline_summary: baseline_summary.into(),
+            candidate_summary: candidate_summary.into(),
+            class,
+            impact,
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BoundDirection {
+    Lower,
+    Upper,
+}
+
+fn string_set_or_empty(value: Option<&Value>) -> Option<BTreeSet<String>> {
+    match value {
+        None => Some(BTreeSet::new()),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect(),
+        Some(_) => None,
+    }
+}
+
+fn validation_set(keyword: &str, value: Option<&Value>) -> Option<BTreeSet<Vec<u8>>> {
+    match value {
+        None => None,
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| canonical_json(value).ok())
+            .collect(),
+        Some(value) if keyword == "type" => Some(BTreeSet::from([canonical_json(value).ok()?])),
+        Some(_) => None,
+    }
+}
+
+fn composition_set(
+    resources: &CatalogResources,
+    owner: &str,
+    value: Option<&Value>,
+) -> Option<BTreeSet<Vec<u8>>> {
+    let values = value?.as_array()?;
+    values
+        .iter()
+        .map(|value| normalized_schema_bytes(resources, owner, value, 0))
+        .collect()
+}
+
+fn one_of_additions_are_disjoint(
+    baseline_resources: &CatalogResources,
+    candidate_resources: &CatalogResources,
+    owner: &str,
+    baseline: Option<&Value>,
+    candidate: Option<&Value>,
+    baseline_fingerprints: &BTreeSet<Vec<u8>>,
+) -> bool {
+    let Some(baseline_branches) = baseline.and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(candidate_branches) = candidate.and_then(Value::as_array) else {
+        return false;
+    };
+    candidate_branches.iter().all(|candidate_branch| {
+        let Some(fingerprint) =
+            normalized_schema_bytes(candidate_resources, owner, candidate_branch, 0)
+        else {
+            return false;
+        };
+        baseline_fingerprints.contains(&fingerprint)
+            || baseline_branches.iter().all(|baseline_branch| {
+                normalized_schema_bytes(baseline_resources, owner, baseline_branch, 0).is_some()
+                    && branch_types_are_disjoint(baseline_branch, candidate_branch)
+            })
+    })
+}
+
+fn branch_types_are_disjoint(left: &Value, right: &Value) -> bool {
+    let Some(left_types) = branch_type_set(left) else {
+        return false;
+    };
+    let Some(right_types) = branch_type_set(right) else {
+        return false;
+    };
+    left_types.iter().all(|left_type| {
+        right_types.iter().all(|right_type| {
+            left_type != right_type
+                && !matches!(
+                    (left_type.as_str(), right_type.as_str()),
+                    ("integer", "number") | ("number", "integer")
+                )
+        })
+    })
+}
+
+fn branch_type_set(value: &Value) -> Option<BTreeSet<String>> {
+    type_value_set(value.as_object()?.get("type")?)
+}
+
+fn type_value_set(value: &Value) -> Option<BTreeSet<String>> {
+    match value {
+        Value::String(value) => Some(BTreeSet::from([value.clone()])),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect(),
+        _ => None,
+    }
+}
+
+fn type_domain_is_subset(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
+    left.iter().all(|left_type| {
+        right.contains(left_type) || (left_type == "integer" && right.contains("number"))
+    })
+}
+
+fn normalized_schema_bytes(
+    resources: &CatalogResources,
+    owner: &str,
+    value: &Value,
+    depth: usize,
+) -> Option<Vec<u8>> {
+    let normalized = normalized_schema_value(resources, owner, value, depth)?;
+    canonical_json(&normalized).ok()
+}
+
+fn normalized_schema_value(
+    resources: &CatalogResources,
+    owner: &str,
+    value: &Value,
+    depth: usize,
+) -> Option<Value> {
+    if depth > MAX_JSON_DEPTH {
+        return None;
+    }
+    let Some(values) = value.as_object() else {
+        return Some(value.clone());
+    };
+    let mut normalized = values.clone();
+
+    if let Some(reference) = values.get("$ref") {
+        normalized.insert(
+            "$ref".into(),
+            Value::String(resolve_reference(resources, owner, reference.as_str()?).ok()?),
+        );
+    }
+
+    for keyword in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+    ] {
+        let Some(children) = values.get(keyword).and_then(Value::as_object) else {
+            continue;
+        };
+        let mut normalized_children = children.clone();
+        for (name, child) in children {
+            normalized_children.insert(
+                name.clone(),
+                normalized_schema_value(resources, owner, child, depth + 1)?,
+            );
+        }
+        normalized.insert(keyword.into(), Value::Object(normalized_children));
+    }
+
+    for keyword in [
+        "additionalProperties",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+        "propertyNames",
+        "items",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+    ] {
+        if let Some(child) = values.get(keyword) {
+            normalized.insert(
+                keyword.into(),
+                normalized_schema_value(resources, owner, child, depth + 1)?,
+            );
+        }
+    }
+
+    for keyword in ["prefixItems", "allOf", "anyOf", "oneOf"] {
+        if let Some(children) = values.get(keyword).and_then(Value::as_array) {
+            let normalized_children = children
+                .iter()
+                .map(|child| normalized_schema_value(resources, owner, child, depth + 1))
+                .collect::<Option<Vec<_>>>()?;
+            normalized.insert(keyword.into(), Value::Array(normalized_children));
+        }
+    }
+
+    Some(Value::Object(normalized))
+}
+
+fn summary_presence(value: Option<&Value>, label: &str) -> String {
+    if value.is_some() {
+        format!("{label} present")
+    } else {
+        format!("{label} absent")
+    }
+}
+
+fn set_summary(keyword: &str, state: &str) -> String {
+    format!("{keyword} set {state}")
+}
+
+fn display_pointer(pointer: &str) -> &str {
+    if pointer.is_empty() { "/" } else { pointer }
+}
+
+fn join_pointer(pointer: &str, segment: &str) -> String {
+    format!("{pointer}/{}", escape_pointer(segment))
+}
+
+fn escape_pointer(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}

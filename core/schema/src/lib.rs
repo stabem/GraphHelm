@@ -4,4 +4,4 @@ mod document;
 mod registry;
 
 pub use document::{LoadedGraph, load_graph};
-pub use registry::{validate_graph_value, validate_waiver};
+pub use registry::{OfflineSchemaSet, validate_graph_value, validate_waiver};

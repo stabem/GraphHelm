@@ -1,0 +1,15 @@
+{
+  "manifest": {
+    "formatVersion": 1,
+    "schema": "graph",
+    "fromVersion": "1.0.0",
+    "toVersion": "2.0.0",
+    "sourceSchemaHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "targetSchemaHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "operations": [{"op": "add", "path": "/schema", "value": {"$ref": "https://example.invalid/remote.schema.json"}}]
+  },
+  "sourceCatalogHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "targetCatalogHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "input": {},
+  "expect": {"ok": false, "codes": ["GHM003_PATCH_INVALID"]}
+}

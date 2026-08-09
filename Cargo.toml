@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "core/protocols",
   "core/schema",
+  "core/schema-evolution",
   "core/graph",
   "core/policy",
   "core/events",
@@ -33,6 +34,8 @@ proptest = "=1.11.0"
 assert_cmd = "=2.2.2"
 predicates = "=3.1.4"
 tempfile = "=3.27.0"
+semver = { version = "=1.0.28", features = ["serde"] }
+windows-sys = "=0.61.2"
 
 [profile.release]
 lto = "thin"

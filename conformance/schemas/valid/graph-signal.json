@@ -1,0 +1,9 @@
+{
+  "id": "signal-fixture",
+  "source": {"type": "test", "id": "conformance-suite"},
+  "type": "fixture-observation",
+  "severity": "low",
+  "description": "A deterministic conformance signal",
+  "evidence": ["fixture-evidence"],
+  "emittedAt": "2026-01-01T00:00:00Z"
+}

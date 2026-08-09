@@ -1,0 +1,50 @@
+{
+  "formatVersion": 1,
+  "validatorResources": {
+    "graph@1.0.0": ["conformance/migrations/schemas/graph-1.0.0.schema.json"],
+    "graph@2.0.0": ["conformance/migrations/schemas/graph-2.0.0.schema.json"]
+  },
+  "cases": [
+    {"id":"compatibility.annotation-only","kind":"compatibility","input":"conformance/compatibility/annotation-only.json","expect":{"ok":true,"codes":["GHC101_ANNOTATION_CHANGED"]}},
+    {"id":"compatibility.breaking-required-property","kind":"compatibility","input":"conformance/compatibility/breaking-required-property.json","expect":{"ok":false,"codes":["GHC003_BREAKING_CHANGE"]}},
+    {"id":"compatibility.breaking-unknown-keyword","kind":"compatibility","input":"conformance/compatibility/breaking-unknown-keyword.json","expect":{"ok":false,"codes":["GHC003_BREAKING_CHANGE"]}},
+    {"id":"compatibility.compatible-optional-property","kind":"compatibility","input":"conformance/compatibility/compatible-optional-property.json","expect":{"ok":true,"codes":["GHC102_OPTIONAL_PROPERTY_ADDED"]}},
+    {"id":"compatibility.unresolved-ref","kind":"compatibility","input":"conformance/compatibility/unresolved-ref.json","expect":{"ok":false,"codes":["GHC003_BREAKING_CHANGE","GHC103_COMPATIBLE_CHANGE"]}},
+
+    {"id":"migration.cycle","kind":"migration","input":"conformance/migrations/cycle.json","expect":{"ok":false,"codes":["GHM001_MIGRATION_UNSUPPORTED"]}},
+    {"id":"migration.destination-invalid","kind":"migration","input":"conformance/migrations/destination-invalid.json","expect":{"ok":false,"codes":["GHM004_DESTINATION_INVALID"]}},
+    {"id":"migration.downgrade","kind":"migration","input":"conformance/migrations/downgrade.json","expect":{"ok":false,"codes":["GHM001_MIGRATION_UNSUPPORTED"]}},
+    {"id":"migration.gap","kind":"migration","input":"conformance/migrations/gap.json","expect":{"ok":false,"codes":["GHM001_MIGRATION_UNSUPPORTED"]}},
+    {"id":"migration.hash-mismatch","kind":"migration","input":"conformance/migrations/hash-mismatch.json","expect":{"ok":false,"codes":["GHM002_SCHEMA_HASH_MISMATCH"]}},
+    {"id":"migration.invalid-pointer","kind":"migration","input":"conformance/migrations/invalid-pointer.json","expect":{"ok":false,"codes":["GHM003_PATCH_INVALID"]}},
+    {"id":"migration.partial-failure","kind":"migration","input":"conformance/migrations/partial-failure.json","expect":{"ok":false,"codes":["GHM003_PATCH_INVALID"]}},
+    {"id":"migration.remote-ref","kind":"migration","input":"conformance/migrations/remote-ref.json","expect":{"ok":false,"codes":["GHM003_PATCH_INVALID"]}},
+    {"id":"migration.source-invalid","kind":"migration","input":"conformance/migrations/source-invalid.json","expect":{"ok":false,"codes":["GHM004_DESTINATION_INVALID"]}},
+    {"id":"migration.success","kind":"migration","input":"conformance/migrations/success.json","expect":{"ok":true,"codes":[]}},
+
+    {"id":"release.breaking-missing-changelog","kind":"release","input":"conformance/compatibility/breaking-missing-changelog.json","comparison":"conformance/compatibility/breaking-required-property.json","schema":"graph","fromVersion":"1.0.0","toVersion":"2.0.0","expect":{"ok":false,"codes":["GHC004_SEMVER_MISMATCH"]}},
+    {"id":"release.breaking-missing-fixture","kind":"release","input":"conformance/compatibility/breaking-missing-fixture.json","comparison":"conformance/compatibility/breaking-required-property.json","schema":"graph","fromVersion":"1.0.0","toVersion":"2.0.0","expect":{"ok":false,"codes":["GHC004_SEMVER_MISMATCH"]}},
+    {"id":"release.breaking-missing-migration","kind":"release","input":"conformance/compatibility/breaking-missing-migration.json","comparison":"conformance/compatibility/breaking-required-property.json","schema":"graph","fromVersion":"1.0.0","toVersion":"2.0.0","expect":{"ok":false,"codes":["GHC004_SEMVER_MISMATCH"]}},
+    {"id":"release.semver-skip","kind":"release","input":"conformance/compatibility/semver-skip.json","expect":{"ok":false,"codes":["GHC004_SEMVER_MISMATCH"]}},
+    {"id":"release.semver-too-small","kind":"release","input":"conformance/compatibility/semver-too-small.json","expect":{"ok":false,"codes":["GHC004_SEMVER_MISMATCH"]}},
+
+    {"id":"schema.agent.invalid.purpose","kind":"schema","schema":"agent","input":"conformance/schemas/invalid/agent.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/purpose"]}},
+    {"id":"schema.agent.valid.minimum","kind":"schema","schema":"agent","input":"conformance/schemas/valid/agent.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.claim.invalid.confidence","kind":"schema","schema":"claim","input":"conformance/schemas/invalid/claim.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/confidence"]}},
+    {"id":"schema.claim.valid.minimum","kind":"schema","schema":"claim","input":"conformance/schemas/valid/claim.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.context-capsule.invalid.version","kind":"schema","schema":"context-capsule","input":"conformance/schemas/invalid/context-capsule.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/version"]}},
+    {"id":"schema.context-capsule.valid.minimum","kind":"schema","schema":"context-capsule","input":"conformance/schemas/valid/context-capsule.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.edge.invalid.type","kind":"schema","schema":"edge","input":"conformance/schemas/invalid/edge.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/type"]}},
+    {"id":"schema.edge.valid.minimum","kind":"schema","schema":"edge","input":"conformance/schemas/valid/edge.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.extension.invalid.kind","kind":"schema","schema":"extension","input":"conformance/schemas/invalid/extension.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/kind"]}},
+    {"id":"schema.extension.valid.minimum","kind":"schema","schema":"extension","input":"conformance/schemas/valid/extension.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.graph-signal.invalid.severity","kind":"schema","schema":"graph-signal","input":"conformance/schemas/invalid/graph-signal.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/severity"]}},
+    {"id":"schema.graph-signal.valid.minimum","kind":"schema","schema":"graph-signal","input":"conformance/schemas/valid/graph-signal.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.graph.invalid.kind","kind":"schema","schema":"graph","input":"conformance/schemas/invalid/graph.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/kind"]}},
+    {"id":"schema.graph.valid.minimum","kind":"schema","schema":"graph","input":"conformance/schemas/valid/graph.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.node.invalid.optionality","kind":"schema","schema":"node","input":"conformance/schemas/invalid/node.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/optionality"]}},
+    {"id":"schema.node.valid.minimum","kind":"schema","schema":"node","input":"conformance/schemas/valid/node.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.policy-waiver.invalid.graph-version","kind":"schema","schema":"policy-waiver","input":"conformance/schemas/invalid/policy-waiver.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/graphVersion"]}},
+    {"id":"schema.policy-waiver.valid.minimum","kind":"schema","schema":"policy-waiver","input":"conformance/schemas/valid/policy-waiver.json","expect":{"ok":true,"codes":[]}}
+  ]
+}

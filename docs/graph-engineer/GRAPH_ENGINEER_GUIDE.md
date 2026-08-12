@@ -1,59 +1,59 @@
-# Guia do Graph Engineer
+# Graph Engineer Guide
 
-## 1. Papel
+## 1. Role
 
-Graph Engineer é quem amplia o universo de decisões possíveis do GraphHelm. Ele não escreve workflows rígidos para cada domínio. Ele registra unidades reutilizáveis e verificáveis para que o harness possa montar workflows novos.
+The Graph Engineer is the one who expands the universe of possible decisions in GraphHelm. They do not write rigid workflows for each domain. They register reusable, verifiable units so the harness can assemble new workflows.
 
-Responsabilidades:
+Responsibilities:
 
-- modelar capabilities atômicas;
-- definir inputs, outputs e evidências;
-- criar skills operacionais;
-- integrar tools e providers;
-- escrever evaluators e policies;
-- definir node types ou visualizers quando necessário;
-- criar conformance tests;
-- medir custo, qualidade e segurança;
-- manter compatibilidade e migrações.
+- modeling atomic capabilities;
+- defining inputs, outputs, and evidence;
+- creating operational skills;
+- integrating tools and providers;
+- writing evaluators and policies;
+- defining node types or visualizers when needed;
+- creating conformance tests;
+- measuring cost, quality, and security;
+- maintaining compatibility and migrations.
 
-## 2. Modelo mental
+## 2. Mental model
 
 ```text
-Capability: o que pode ser feito
-Tool: mecanismo que executa uma ação
-Skill: orientação de como aplicar capabilities
-Agent: trabalhador temporário com objetivo e contrato
-Node: unidade de execução no grafo
-Gate: obrigação verificável
-Policy: regra que exige/restringe algo
-Artifact: resultado persistente
-Evidence: prova referenciável
-Evaluator: mecanismo que julga um contrato
-Graph: composição específica da tarefa
+Capability: what can be done
+Tool: mechanism that executes an action
+Skill: guidance on how to apply capabilities
+Agent: temporary worker with a goal and a contract
+Node: unit of execution in the graph
+Gate: verifiable obligation
+Policy: rule that requires/restricts something
+Artifact: persistent result
+Evidence: referenceable proof
+Evaluator: mechanism that judges a contract
+Graph: task-specific composition
 ```
 
-Evite confundir:
+Avoid confusing:
 
-- skill com permissão;
-- agent com modelo;
-- node com agent persistente;
-- output textual com evidência;
-- template de grafo com policy;
-- policy com sugestão de prompt.
+- skill with permission;
+- agent with model;
+- node with persistent agent;
+- textual output with evidence;
+- graph template with policy;
+- policy with prompt suggestion.
 
-## 3. Princípios de design
+## 3. Design principles
 
-### 3.1 Atomicidade útil
+### 3.1 Useful atomicity
 
-Uma capability deve ser pequena o suficiente para ser composta, mas grande o suficiente para possuir contrato significativo.
+A capability should be small enough to be composable, but large enough to have a meaningful contract.
 
-Ruim:
+Bad:
 
 ```text
 software_engineering
 ```
 
-Melhor:
+Better:
 
 ```text
 repository_symbol_search
@@ -63,62 +63,62 @@ execute_targeted_tests
 inspect_dependency_update
 ```
 
-### 3.2 Contratos antes de prompts
+### 3.2 Contracts before prompts
 
-Defina:
+Define:
 
-- que entrada é necessária;
-- que saída será produzida;
-- como validar;
-- qual evidência é exigida;
-- que permissões são necessárias;
-- como falha;
-- como cancelar.
+- what input is required;
+- what output will be produced;
+- how to validate;
+- what evidence is required;
+- what permissions are required;
+- how it fails;
+- how to cancel.
 
-Depois escreva instruções.
+Then write instructions.
 
-### 3.3 Menor privilégio
+### 3.3 Least privilege
 
-Capabilities e tools declaram o mínimo acesso. Não use `filesystem:*` quando `repository:read` é suficiente.
+Capabilities and tools declare the minimum access. Don't use `filesystem:*` when `repository:read` suffices.
 
-### 3.4 Falha explícita
+### 3.4 Explicit failure
 
-Um componente deve distinguir:
+A component must distinguish:
 
-- falha de input;
-- falha de tool;
-- falta de permissão;
-- contexto insuficiente;
-- output inválido;
-- incerteza;
-- conclusão negativa válida.
+- input failure;
+- tool failure;
+- lack of permission;
+- insufficient context;
+- invalid output;
+- uncertainty;
+- valid negative conclusion.
 
-### 3.5 Evidência externa ao discurso
+### 3.5 Evidence external to discourse
 
-Relatório “está tudo certo” não prova nada. Requerer locations, test IDs, source refs, hashes ou artifacts.
+A "everything is fine" report proves nothing. Require locations, test IDs, source refs, hashes, or artifacts.
 
-### 3.6 Substituibilidade
+### 3.6 Substitutability
 
-Uma capability pode ter vários providers. O grafo depende do contrato, não de uma implementação específica.
+A capability can have multiple providers. The graph depends on the contract, not on a specific implementation.
 
-## 4. Criando uma capability
+## 4. Creating a capability
 
 ### 4.1 Checklist
 
-1. nome em verbo/ação;
-2. propósito único;
+1. verb/action name;
+2. single purpose;
 3. input schema;
 4. output schema;
 5. permissions;
 6. isolation minimum;
-7. determinismo;
+7. determinism;
 8. latency/cost profile;
 9. failure modes;
 10. evidence produced;
 11. conformance tests;
 12. compatibility range.
 
-### 4.2 Exemplo
+### 4.2 Example
 
 ```yaml
 apiVersion: p50.dev/v1
@@ -146,24 +146,24 @@ spec:
     - tests/trace-callers/indirect.yaml
 ```
 
-### 4.3 Granularidade
+### 4.3 Granularity
 
-Divida quando:
+Split when:
 
-- permissions diferem;
-- isolation difere;
-- inputs/outputs não formam unidade;
-- uma parte pode ser deterministicamente testada;
-- providers são diferentes;
-- falhas precisam de tratamento distinto.
+- permissions differ;
+- isolation differs;
+- inputs/outputs don't form a unit;
+- one part can be deterministically tested;
+- providers differ;
+- failures need distinct handling.
 
-Não divida quando o custo de coordenação supera o benefício e o contrato só faz sentido como um todo.
+Don't split when the coordination cost outweighs the benefit and the contract only makes sense as a whole.
 
-## 5. Criando uma tool
+## 5. Creating a tool
 
-Tool é integração executável. Pode ser builtin, processo local, container, WASI module, HTTP service, MCP server ou adapter.
+A tool is an executable integration. It can be builtin, a local process, a container, a WASI module, an HTTP service, an MCP server, or an adapter.
 
-### 5.1 Manifest obrigatório
+### 5.1 Required manifest
 
 ```yaml
 apiVersion: p50.dev/v1
@@ -196,23 +196,23 @@ spec:
     - linux_arm64
 ```
 
-### 5.2 Regras
+### 5.2 Rules
 
-- nunca receber secret bruto se referência serve;
-- validar todos os paths no broker;
-- produzir artifacts para payloads grandes;
-- logs estruturados e redigidos;
-- suportar cancellation quando possível;
-- não depender de stdout como único contrato;
-- declarar efeitos externos;
-- declarar idempotência;
-- declarar compensação ou irreversibilidade.
+- never receive a raw secret when a reference will do;
+- validate every path at the broker;
+- produce artifacts for large payloads;
+- structured and redacted logs;
+- support cancellation when possible;
+- don't rely on stdout as the sole contract;
+- declare external effects;
+- declare idempotency;
+- declare compensation or irreversibility.
 
-## 6. Criando uma skill
+## 6. Creating a skill
 
-Skill codifica técnica e processo. Ela pode orientar um agente, sugerir tools e definir checks, mas não concede permissões.
+A skill codifies technique and process. It can guide an agent, suggest tools, and define checks, but it does not grant permissions.
 
-### 6.1 Estrutura
+### 6.1 Structure
 
 ```yaml
 apiVersion: p50.dev/v1
@@ -221,7 +221,7 @@ metadata:
   id: security.review_auth_boundary
   version: 2.0.0
 spec:
-  purpose: Avaliar mudanças que alteram autenticação e sessão.
+  purpose: Evaluate changes that alter authentication and session handling.
   applicability:
     anySignal:
       - touches_authentication
@@ -246,29 +246,29 @@ spec:
     - conformance/clean-change.yaml
 ```
 
-### 6.2 Boa skill
+### 6.2 Good skill
 
-- descreve objetivo e método;
-- lista armadilhas;
-- exige evidência;
-- diferencia ausência de problema de falta de inspeção;
-- suporta outputs estruturados;
-- evita linguagem de aprovação automática;
-- possui exemplos positivos e negativos.
+- describes goal and method;
+- lists pitfalls;
+- requires evidence;
+- distinguishes absence of a problem from lack of inspection;
+- supports structured outputs;
+- avoids automatic-approval language;
+- has positive and negative examples.
 
-### 6.3 Má skill
+### 6.3 Bad skill
 
-- é um prompt genérico;
-- exige “pense passo a passo” como evidência;
-- concede shell/network;
-- fixa modelo;
-- mistura execução e aprovação;
-- não possui tests;
-- sempre recomenda mais agentes.
+- is a generic prompt;
+- requires "think step by step" as evidence;
+- grants shell/network access;
+- pins a model;
+- mixes execution and approval;
+- has no tests;
+- always recommends more agents.
 
-## 7. Criando um agent template
+## 7. Creating an agent template
 
-Agent template é opcional. O harness pode sintetizar agents sem template. Templates são úteis quando há identidade operacional estável e histórico relevante.
+An agent template is optional. The harness can synthesize agents without a template. Templates are useful when there is a stable operational identity and relevant history.
 
 ```yaml
 apiVersion: p50.dev/v1
@@ -305,11 +305,11 @@ spec:
   completionContract: contracts/payment-review.yaml
 ```
 
-## 8. Criando um evaluator
+## 8. Creating an evaluator
 
-Evaluator verifica output, artifact, claim ou execution.
+An evaluator verifies an output, artifact, claim, or execution.
 
-Tipos:
+Types:
 
 - deterministic;
 - model-based;
@@ -319,7 +319,7 @@ Tipos:
 - statistical;
 - visual.
 
-### 8.1 Contrato
+### 8.1 Contract
 
 ```yaml
 apiVersion: p50.dev/v1
@@ -340,7 +340,7 @@ spec:
 
 ### 8.2 Model evaluator
 
-Deve declarar:
+Must declare:
 
 - model profile;
 - independence requirements;
@@ -350,11 +350,11 @@ Deve declarar:
 - disagreement handling;
 - max cost.
 
-## 9. Criando uma policy
+## 9. Creating a policy
 
-Policy deve ser pequena, legível, determinística e testável.
+A policy must be small, readable, deterministic, and testable.
 
-### 9.1 Exemplo
+### 9.1 Example
 
 ```yaml
 apiVersion: p50.dev/v1
@@ -379,86 +379,86 @@ spec:
     ownerAllowed: false
 ```
 
-### 9.2 Testes de policy
+### 9.2 Policy tests
 
-Cada policy precisa de fixtures:
+Every policy needs fixtures for:
 
-- deve disparar;
-- não deve disparar;
-- waiver permitido;
-- waiver proibido;
-- conflito com outra policy;
-- migration de versão.
+- must trigger;
+- must not trigger;
+- waiver allowed;
+- waiver forbidden;
+- conflict with another policy;
+- version migration.
 
 ## 10. Node types
 
-Node types built-in devem cobrir primitives universais. Crie novo tipo apenas quando lifecycle, UI ou semantics diferirem substancialmente.
+Built-in node types must cover universal primitives. Create a new type only when lifecycle, UI, or semantics differ substantially.
 
 ### 10.1 `agent`
 
-Executa modelo/runtimes com tools.
+Runs a model/runtime with tools.
 
 ### 10.2 `tool`
 
-Executa chamada direta sem agente.
+Executes a direct call without an agent.
 
 ### 10.3 `classifier`
 
-Produz classificação estruturada.
+Produces a structured classification.
 
 ### 10.4 `gate`
 
-Avalia requirement e decide passagem.
+Evaluates a requirement and decides pass/fail.
 
 ### 10.5 `fork` / `join`
 
-Controla paralelismo e merge de artifacts.
+Controls parallelism and artifact merging.
 
 ### 10.6 `human_decision`
 
-Pausa até resposta ou policy de timeout.
+Pauses until a response or a timeout policy.
 
 ### 10.7 `subgraph`
 
-Invoca graph parametrizado sem esconder eventos internos.
+Invokes a parameterized graph without hiding internal events.
 
 ### 10.8 `materializer`
 
-Converte claims/evidence em documento ou projection.
+Converts claims/evidence into a document or projection.
 
 ### 10.9 `deploy` / `rollback`
 
-Representa efeito externo com preconditions e compensação.
+Represents an external effect with preconditions and compensation.
 
 ## 11. Edge design
 
 ### 11.1 Data edge
 
-Transfere payload tipado. Evite payload gigante; use artifact refs.
+Transfers a typed payload. Avoid huge payloads; use artifact refs.
 
 ### 11.2 Evidence edge
 
-Declara que output prova requirement de outro nó/gate.
+Declares that an output proves a requirement of another node/gate.
 
 ### 11.3 Control edge
 
-Ordena execução sem payload.
+Orders execution without a payload.
 
 ### 11.4 Conditional edge
 
-Usa expressão limitada. Deve cobrir missing/unknown.
+Uses a limited expression. Must cover missing/unknown.
 
 ### 11.5 Failure edge
 
-Roteia failure category.
+Routes a failure category.
 
 ### 11.6 Compensation edge
 
-Define ação para desfazer efeito externo.
+Defines an action to undo an external effect.
 
 ## 12. Completion contracts
 
-Um contrato de conclusão deve ser verificável.
+A completion contract must be verifiable.
 
 ```yaml
 completion:
@@ -478,10 +478,10 @@ completion:
 
 ## 13. Context design
 
-Graph Engineer deve declarar:
+The Graph Engineer must declare:
 
-- scopes relevantes;
-- types preferidos;
+- relevant scopes;
+- preferred types;
 - temporal window;
 - max tokens;
 - blind exclusions;
@@ -489,28 +489,28 @@ Graph Engineer deve declarar:
 - expansion rules;
 - sensitive data handling.
 
-Não inclua documentos inteiros quando symbols/sections bastam.
+Don't include entire documents when symbols/sections suffice.
 
 ## 14. Memory design
 
-Memória de agente não é cache de chat. Grave apenas observações reutilizáveis com evidência e TTL.
+Agent memory is not a chat cache. Record only reusable observations with evidence and a TTL.
 
-Bom:
+Good:
 
 ```text
-Alterações no PaymentService frequentemente exigem testes de idempotência.
+Changes to PaymentService frequently require idempotency tests.
 Evidence: exec-482, tests/payments/idempotency.spec.ts
 Confidence: 0.87
-Expires: 90 dias
+Expires: 90 days
 ```
 
-Ruim:
+Bad:
 
 ```text
 Eu acho que o backend costuma ser confuso.
 ```
 
-## 15. Security review para extensões
+## 15. Security review for extensions
 
 Checklist:
 
@@ -540,7 +540,7 @@ Trust levels:
 
 ## 16. Conformance suite
 
-Toda extensão deve passar:
+Every extension must pass:
 
 1. schema validation;
 2. manifest lint;
@@ -552,10 +552,10 @@ Toda extensão deve passar:
 8. secret redaction;
 9. sandbox test;
 10. compatibility test;
-11. replay determinism quando aplicável;
+11. replay determinism when applicable;
 12. documentation completeness.
 
-## 17. Performance e custo
+## 17. Performance and cost
 
 Declare:
 
@@ -568,20 +568,20 @@ Declare:
 - concurrency limit;
 - cache behavior.
 
-O harness usa esses dados para decidir composição.
+The harness uses this data to decide composition.
 
-## 18. Versionamento
+## 18. Versioning
 
-- patch: correção sem contrato novo;
-- minor: capability backward-compatible;
-- major: schema/semantics breaking;
-- deprecated components permanecem reproduzíveis;
-- migration guide obrigatório para major;
-- manifest declara compatible framework range.
+- patch: fix without a new contract;
+- minor: backward-compatible capability;
+- major: breaking schema/semantics;
+- deprecated components remain reproducible;
+- migration guide required for major;
+- manifest declares a compatible framework range.
 
-## 19. Publicação
+## 19. Publishing
 
-Um pacote publicável contém:
+A publishable package contains:
 
 ```text
 manifest.yaml
@@ -596,39 +596,39 @@ CHANGELOG.md
 SIGNATURE
 ```
 
-Registry exibe publisher, trust, permissions, supported platforms, versions, vulnerabilities e compatibility.
+The registry displays publisher, trust, permissions, supported platforms, versions, vulnerabilities, and compatibility.
 
 ## 20. Anti-patterns
 
-- mega-agent com todas as tools;
-- workflow de 20 nós para tarefa trivial;
-- reviewer lendo somente resumo do executor;
-- schema `output: string` para tudo;
-- tool com acesso irrestrito ao host;
-- policy implementada no prompt;
-- graph edge sem comportamento para missing output;
-- retry infinito;
-- memory sem expiração;
-- agent template fixando provider;
-- plugin exigindo secrets sem justificativa;
-- docs sem provenance;
-- evaluator que sempre aprova.
+- mega-agent with every tool;
+- 20-node workflow for a trivial task;
+- reviewer reading only the executor's summary;
+- `output: string` schema for everything;
+- tool with unrestricted host access;
+- policy implemented in the prompt;
+- graph edge with no behavior for missing output;
+- infinite retry;
+- memory without expiration;
+- agent template hard-coding a provider;
+- plugin requiring secrets without justification;
+- docs without provenance;
+- evaluator that always approves.
 
-## 21. Checklist de revisão do Graph Engineer
+## 21. Graph Engineer review checklist
 
-Antes de mergear uma extensão:
+Before merging an extension:
 
-- [ ] O problema exige uma capability nova?
-- [ ] O contrato é atômico e reutilizável?
-- [ ] Inputs e outputs são tipados?
-- [ ] Evidência é explícita?
-- [ ] Permissions são mínimas?
-- [ ] Isolation mínimo está correto?
-- [ ] Failure modes são distinguíveis?
-- [ ] Cancellation e timeout existem?
-- [ ] Há testes positivos e negativos?
-- [ ] Há proteção contra secret leakage?
-- [ ] A extensão é substituível?
-- [ ] Sem provider/model hard-coded sem necessidade?
-- [ ] Versionamento e migration estão definidos?
-- [ ] UI consegue explicar o que ela faz?
+- [ ] Does the problem require a new capability?
+- [ ] Is the contract atomic and reusable?
+- [ ] Are inputs and outputs typed?
+- [ ] Is evidence explicit?
+- [ ] Are permissions minimal?
+- [ ] Is the minimum isolation correct?
+- [ ] Are failure modes distinguishable?
+- [ ] Do cancellation and timeout exist?
+- [ ] Are there positive and negative tests?
+- [ ] Is there protection against secret leakage?
+- [ ] Is the extension substitutable?
+- [ ] No provider/model hard-coded without necessity?
+- [ ] Are versioning and migration defined?
+- [ ] Can the UI explain what it does?

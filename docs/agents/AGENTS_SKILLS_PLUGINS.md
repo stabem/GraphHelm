@@ -1,40 +1,40 @@
-# Agentes, skills, tools e plugins
+# Agents, skills, tools and plugins
 
-## 1. Visão
+## 1. Vision
 
-GraphHelm trata agentes como configurações temporárias de trabalho, não como personagens permanentes. O valor está na combinação de objetivo, capability, contexto, permissões, modelo, contrato e evidência. Agentes úteis podem ser persistidos no projeto, mas continuam versionados e auditáveis.
+GraphHelm treats agents as temporary work configurations, not permanent characters. The value lies in the combination of objective, capability, context, permissions, model, contract and evidence. Useful agents can be persisted in the project, but remain versioned and auditable.
 
-## 2. Taxonomia
+## 2. Taxonomy
 
 ### 2.1 Capability
 
-Descrição atômica do que pode ser feito.
+Atomic description of what can be done.
 
 ### 2.2 Tool
 
-Mecanismo executável que oferece uma ou mais capabilities.
+Executable mechanism that offers one or more capabilities.
 
 ### 2.3 Skill
 
-Conhecimento operacional/instrução que orienta como usar capabilities para um objetivo.
+Operational knowledge/instruction that guides how to use capabilities toward an objective.
 
 ### 2.4 Agent Definition
 
-Configuração persistente e reutilizável.
+Persistent, reusable configuration.
 
 ### 2.5 Agent Runtime
 
-Instância efêmera ligada a node, graph version e execution.
+Ephemeral instance bound to node, graph version and execution.
 
 ### 2.6 Agent Experience
 
-Memórias e métricas acumuladas, subordinadas a evidence e TTL.
+Accumulated memories and metrics, subordinate to evidence and TTL.
 
 ### 2.7 Plugin
 
-Pacote instalável que adiciona capability, tool, skill, evaluator, policy, model adapter, retriever, visualizer ou outro extension point.
+Installable package that adds capability, tool, skill, evaluator, policy, model adapter, retriever, visualizer or another extension point.
 
-## 3. Ciclo de vida do agente
+## 3. Agent lifecycle
 
 ```text
 Need identified
@@ -52,7 +52,7 @@ Need identified
 
 ## 4. Project Agent Registry
 
-### 4.1 Escopo
+### 4.1 Scope
 
 - subproject-local;
 - project-shared;
@@ -60,9 +60,9 @@ Need identified
 - imported read-only;
 - community package.
 
-Promoção entre scopes é explícita.
+Promotion between scopes is explicit.
 
-### 4.2 Metadados
+### 4.2 Metadata
 
 - purpose;
 - versions;
@@ -76,11 +76,11 @@ Promoção entre scopes é explícita.
 - performance metrics;
 - status;
 - provenance;
-- publisher/signature para externos.
+- publisher/signature for external ones.
 
 ### 4.3 Matching
 
-O Agent Matcher retorna:
+The Agent Matcher returns:
 
 ```yaml
 agent_match:
@@ -97,38 +97,38 @@ agent_match:
   alternative: synthesize_new
 ```
 
-### 4.4 Não reuso cego
+### 4.4 No blind reuse
 
-Reuso é proibido quando:
+Reuse is prohibited when:
 
-- contract incompatível;
-- permission insuficiente;
-- memory contradita/expirada afeta objetivo;
-- version incompatible;
-- status suspended/deprecated sem explicit pin;
-- project scope não permite;
-- required isolation não suportado.
+- contract is incompatible;
+- permission is insufficient;
+- contradicted/expired memory affects the objective;
+- version is incompatible;
+- status is suspended/deprecated without explicit pin;
+- project scope does not allow it;
+- required isolation is not supported.
 
-## 5. Agentes efêmeros
+## 5. Ephemeral agents
 
-### 5.1 Geração
+### 5.1 Generation
 
-O Agent Synthesizer recebe subtask contract e capability catalog. Ele produz definição completa, não apenas system prompt.
+The Agent Synthesizer receives a subtask contract and capability catalog. It produces a complete definition, not just a system prompt.
 
-### 5.2 Persistência
+### 5.2 Persistence
 
-Por padrão, definição efêmera fica no Execution Manifest. Ela só entra no Project Agent Registry quando:
+By default, an ephemeral definition stays in the Execution Manifest. It only enters the Project Agent Registry when:
 
-- usuário clica `Salvar como agente`;
-- usuário salva o node como template;
-- API explícita promove;
-- import de manifest é confirmado.
+- the user clicks `Save as agent`;
+- the user saves the node as a template;
+- an explicit API promotes it;
+- a manifest import is confirmed.
 
-Dreams pode criar e ativar uma nova versão de agente somente pelo workflow governado de shadow validation e conforme a policy do projeto. Ele nunca transforma automaticamente um overlay ad hoc de nó em definição estável apenas porque a execução teve sucesso.
+Dreams can create and activate a new agent version only through the governed shadow validation workflow and in accordance with the project's policy. It never automatically turns an ad hoc node overlay into a stable definition just because the execution succeeded.
 
-## 6. Overlays de execução
+## 6. Execution overlays
 
-Uma instância pode alterar:
+An instance can change:
 
 - objective;
 - instructions;
@@ -141,11 +141,11 @@ Uma instância pode alterar:
 - isolation;
 - memory writes.
 
-Essas alterações pertencem somente ao node/execution. Ao terminar, não mudam Agent Definition.
+These changes belong only to the node/execution. When it finishes, they do not change the Agent Definition.
 
-## 7. Memória
+## 7. Memory
 
-### 7.1 Tipos
+### 7.1 Types
 
 - `strategy_outcome`;
 - `known_pitfall`;
@@ -163,30 +163,30 @@ Essas alterações pertencem somente ao node/execution. Ao terminar, não mudam 
 - deprecated;
 - expired.
 
-### 7.3 Leitura
+### 7.3 Reading
 
-Agent Experience entra na Context Capsule somente quando:
+Agent Experience enters the Context Capsule only when:
 
-- scope corresponde;
-- não expirou;
-- relevance alta;
-- evidence disponível;
-- não conflita silenciosamente com claim atual;
-- budget permite.
+- scope matches;
+- it has not expired;
+- relevance is high;
+- evidence is available;
+- it does not silently conflict with the current claim;
+- budget allows it.
 
-### 7.4 Escrita
+### 7.4 Writing
 
-Agente propõe memory candidate. Memory Validator e policy decidem persistência.
+The agent proposes a memory candidate. The Memory Validator and policy decide persistence.
 
-## 8. Avaliação de agentes
+## 8. Agent evaluation
 
-Métricas por task class:
+Metrics per task class:
 
 - completion success;
 - evidence completeness;
 - output schema compliance;
 - reviewer findings;
-- regressions posteriores;
+- later regressions;
 - false-positive/negative;
 - token/cost;
 - duration;
@@ -196,37 +196,37 @@ Métricas por task class:
 - usefulness rating;
 - calibration.
 
-Scores devem ser segmentados; média global é enganosa.
+Scores must be segmented; a global average is misleading.
 
-## 9. Status e manutenção
+## 9. Status and maintenance
 
 ### Active
 
-Disponível para matching.
+Available for matching.
 
 ### Suspended
 
-Não selecionado automaticamente; pode ser pinned manualmente.
+Not selected automatically; can be pinned manually.
 
 ### Deprecated
 
-Substituído, mas reproduzível.
+Replaced, but reproducible.
 
 ### Archived
 
-Somente histórico/import.
+History/import only.
 
 ### Quarantined
 
-Suspeita de segurança/integridade.
+Suspected security/integrity issue.
 
-Dreams pode alterar status, criar versões, fundir ou arquivar agentes após shadow validation, policy checks e rollback disponível. Toda mudança permanece versionada e auditável.
+Dreams can change status, create versions, merge or archive agents after shadow validation, policy checks and with rollback available. Every change remains versioned and auditable.
 
 ## 10. Skills
 
-### 10.1 Conteúdo
+### 10.1 Content
 
-Uma skill pode conter:
+A skill can contain:
 
 - purpose;
 - applicability;
@@ -240,17 +240,17 @@ Uma skill pode conter:
 - evaluator recommendations;
 - conformance tests.
 
-### 10.2 Composição
+### 10.2 Composition
 
-O harness pode carregar múltiplas skills. Conflicts são detectados por declared constraints e semantic lint. Uma skill não pode mudar hard policy.
+The harness can load multiple skills. Conflicts are detected via declared constraints and semantic lint. A skill cannot change hard policy.
 
 ### 10.3 Context cost
 
-Skills grandes são segmentadas. O agent recebe apenas sections relevantes, com ref para expandir.
+Large skills are segmented. The agent receives only the relevant sections, with a ref to expand.
 
-### 10.4 Qualidade
+### 10.4 Quality
 
-Skill score usa:
+Skill score uses:
 
 - task success uplift;
 - error reduction;
@@ -282,7 +282,7 @@ Skill score usa:
 
 ### 11.2 Tool Broker
 
-Toda call passa por:
+Every call passes through:
 
 1. schema validation;
 2. identity check;
@@ -295,9 +295,9 @@ Toda call passa por:
 9. artifact persistence;
 10. event emission.
 
-### 11.3 Efeitos
+### 11.3 Effects
 
-Tool declara:
+A tool declares:
 
 - read-only;
 - reversible write;
@@ -307,11 +307,11 @@ Tool declara:
 - secret use;
 - network egress.
 
-Isso influencia gate e isolation.
+This influences gating and isolation.
 
 ## 12. Plugins
 
-### 12.1 Tipos
+### 12.1 Types
 
 - `capability-provider`
 - `tool`
@@ -332,12 +332,12 @@ Isso influencia gate e isolation.
 
 - OCI container;
 - WASI/WASM;
-- local process com broker;
+- local process with broker;
 - remote HTTP/gRPC;
 - MCP server;
 - pure data package.
 
-Plugins não rodam in-process no Runtime core por padrão.
+Plugins do not run in-process in the Runtime core by default.
 
 ### 12.3 Manifest
 
@@ -374,26 +374,26 @@ spec:
     external: false
 ```
 
-### 12.4 Instalação
+### 12.4 Installation
 
-Fluxo:
+Flow:
 
-1. resolver package e signature;
-2. mostrar publisher/trust;
-3. mostrar permission diff;
-4. verificar vulnerability/license;
-5. baixar por hash;
-6. executar conformance sandbox;
-7. habilitar no scope escolhido;
-8. registrar event.
+1. resolve package and signature;
+2. show publisher/trust;
+3. show permission diff;
+4. check vulnerability/license;
+5. download by hash;
+6. run conformance sandbox;
+7. enable in the chosen scope;
+8. record event.
 
-### 12.5 Atualização
+### 12.5 Update
 
-Nunca autoampliar permissions. Se nova versão pede acesso adicional, exige confirmação.
+Never auto-expand permissions. If a new version requests additional access, confirmation is required.
 
 ## 13. Community Registry
 
-O registry pode ser central ou federado, mas instalação não depende de serviço proprietário. Metadata pública:
+The registry can be central or federated, but installation does not depend on a proprietary service. Public metadata:
 
 - package/version/hash;
 - source repository;
@@ -404,27 +404,27 @@ O registry pode ser central ou federado, mas instalação não depende de servi�
 - trust;
 - compatibility;
 - vulnerabilities;
-- download count opcional;
+- optional download count;
 - conformance results;
 - reproducible build status.
 
-Runtime aceita registries customizados e package local.
+Runtime accepts custom registries and local packages.
 
 ## 14. Supply chain
 
-- pin por digest;
+- pin by digest;
 - signatures;
 - SBOM;
 - provenance attestation;
-- reproducible builds desejáveis;
+- reproducible builds desirable;
 - vulnerability scan;
 - dependency policy;
 - quarantine/revoke;
-- no mutable `latest` em execution manifests.
+- no mutable `latest` in execution manifests.
 
 ## 15. Agent-to-agent communication
 
-Agentes não conversam por chat global. Comunicação acontece por:
+Agents do not talk over a global chat. Communication happens via:
 
 - typed artifacts;
 - node outputs;
@@ -433,15 +433,15 @@ Agentes não conversam por chat global. Comunicação acontece por:
 - human decisions;
 - event triggers.
 
-Um coordinator agent pode existir, mas também usa contratos e não recebe authority irrestrita.
+A coordinator agent can exist, but it also uses contracts and does not receive unrestricted authority.
 
-## 16. Delegação
+## 16. Delegation
 
-Agent pode solicitar subtask emitindo Graph Signal `delegation_requested`. Graph Governor decide criar node. Agent não spawna runtime arbitrariamente.
+An agent can request a subtask by emitting the `delegation_requested` Graph Signal. The Graph Governor decides whether to create a node. An agent does not spawn a runtime arbitrarily.
 
-## 17. Identidade de agente
+## 17. Agent identity
 
-Cada Agent Runtime possui:
+Each Agent Runtime has:
 
 - runtime ID;
 - definition/version;
@@ -453,32 +453,32 @@ Cada Agent Runtime possui:
 - context capsule;
 - timestamps.
 
-Tool Broker usa essa identidade para authorization e audit.
+The Tool Broker uses this identity for authorization and audit.
 
-## 18. Segredos
+## 18. Secrets
 
-Agentes recebem secret references, nunca valor no prompt quando avoidable. Tool/model runtime resolve no broker. Qualquer output é scanned/redacted antes de persistir.
+Agents receive secret references, never a value in the prompt when avoidable. The tool/model runtime resolves it in the broker. Any output is scanned/redacted before being persisted.
 
-## 19. Marketplace e comercialização futura
+## 19. Marketplace and future monetization
 
-O ecossistema pode permitir packages gratuitos ou pagos, mas:
+The ecosystem can allow free or paid packages, but:
 
-- formato permanece aberto;
-- side-loading é permitido;
-- runtime não exige marketplace oficial;
-- package pago não pode esconder permissions;
-- license precisa ser declarada;
-- community edition continua capaz de executar extensions compatíveis.
+- the format remains open;
+- side-loading is permitted;
+- the runtime does not require an official marketplace;
+- a paid package cannot hide permissions;
+- a license must be declared;
+- the community edition remains able to run compatible extensions.
 
-## 20. Critérios de aceite
+## 20. Acceptance criteria
 
-- agent definition não é sinônimo de prompt;
-- reuso pesquisa Project Agent Registry antes de síntese;
-- node overlay não muda agent salvo;
-- memory possui evidence/TTL/status;
-- tool calls passam por broker;
-- agent não cria agent runtime diretamente;
-- plugin permissions são visíveis;
-- update com permission expansion pede confirmação;
-- packages são pinned por version/hash;
-- communication usa artifacts, não chat global.
+- agent definition is not synonymous with a prompt;
+- reuse searches the Project Agent Registry before synthesis;
+- node overlay does not change a saved agent;
+- memory has evidence/TTL/status;
+- tool calls pass through the broker;
+- an agent does not create an agent runtime directly;
+- plugin permissions are visible;
+- an update with permission expansion requires confirmation;
+- packages are pinned by version/hash;
+- communication uses artifacts, not global chat.

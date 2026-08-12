@@ -1,10 +1,10 @@
-# Modelo de dados e protocolos
+# Data model and protocols
 
-## 1. Objetivo
+## 1. Purpose
 
-Definir entidades, relações, eventos e contratos públicos do GraphHelm. Os JSON Schemas em `/schemas` são exemplos normativos iniciais; implementações podem usar Protobuf, JSON ou outras codificações desde que preservem semantics e versionamento.
+Define entities, relationships, events, and public contracts of GraphHelm. The JSON Schemas in `/schemas` are initial normative examples; implementations may use Protobuf, JSON, or other encodings as long as they preserve semantics and versioning.
 
-## 2. Entidades principais
+## 2. Main entities
 
 ```mermaid
 erDiagram
@@ -31,9 +31,9 @@ erDiagram
     PROJECT ||--o{ DREAM_CYCLE : runs
 ```
 
-## 3. Identidade e escopo
+## 3. Identity and scope
 
-Todos os recursos possuem:
+All resources have:
 
 ```yaml
 identity:
@@ -48,7 +48,7 @@ identity:
     actor_id: ...
 ```
 
-Escopo explícito:
+Explicit scope:
 
 ```yaml
 scope:
@@ -82,7 +82,7 @@ task_request:
 
 ## 5. Task Profile
 
-Campos mínimos:
+Minimum fields:
 
 ```yaml
 task_profile:
@@ -106,7 +106,7 @@ task_profile:
 
 ## 6. Harness Manifest
 
-Harness Manifest referencia uma Graph Version e todo o setup compilado:
+The Harness Manifest references a Graph Version and the entire compiled setup:
 
 ```yaml
 harness_manifest:
@@ -134,7 +134,7 @@ harness_manifest:
 
 ## 7. Graph Version
 
-Uma versão é imutável:
+A version is immutable:
 
 ```yaml
 graph_version:
@@ -153,13 +153,13 @@ graph_version:
 
 ## 8. Node Definition
 
-Campos principais:
+Main fields:
 
 ```yaml
 node:
   id: security_review
   type: agent
-  name: Revisar segurança
+  name: Review security
   objective: string
   agent_binding: agent_version_or_ephemeral_spec
   model_profile: critical_reasoning
@@ -194,7 +194,7 @@ edge:
   priority: 100
 ```
 
-Expressions devem usar uma linguagem limitada, determinística e sem acesso arbitrário a filesystem/network.
+Expressions must use a limited, deterministic language with no arbitrary access to the filesystem/network.
 
 ## 10. Agent Definition
 
@@ -218,7 +218,7 @@ agent_definition:
 
 ## 11. Capability
 
-Capability é uma habilidade atômica detectável:
+A capability is an atomic, detectable skill:
 
 ```yaml
 capability:
@@ -237,7 +237,7 @@ capability:
 
 ## 12. Skill
 
-Skill é orientação operacional versionada, não autoridade de permissão:
+A skill is versioned operational guidance, not a permission authority:
 
 ```yaml
 skill:
@@ -294,7 +294,7 @@ context_capsule:
   dependency_hash: sha256
 ```
 
-## 15. Claim e Evidence
+## 15. Claim and Evidence
 
 ```yaml
 claim:
@@ -313,7 +313,7 @@ claim:
     supersedes: [claim_ref]
 ```
 
-Evidence pode ser source location, test result, artifact, user decision, external source, log ou observation.
+Evidence can be a source location, test result, artifact, user decision, external source, log, or observation.
 
 ## 16. Memory Record
 
@@ -334,7 +334,7 @@ memory_record:
 
 ## 17. Graph Signal
 
-Agentes e runtime emitem sinais, não mutações:
+Agents and the runtime emit signals, not mutations:
 
 ```yaml
 graph_signal:
@@ -369,7 +369,7 @@ mutation_record:
   actor: actor_ref
 ```
 
-## 19. Policy e Waiver
+## 19. Policy and Waiver
 
 ```yaml
 policy:
@@ -420,7 +420,7 @@ model_route:
 
 ## 21. Artifact
 
-Artifacts são content-addressed:
+Artifacts are content-addressed:
 
 ```yaml
 artifact:
@@ -455,9 +455,9 @@ event:
   sensitivity: internal
 ```
 
-## 23. Taxonomia inicial de eventos
+## 23. Initial event taxonomy
 
-### Intake e harness
+### Intake and harness
 
 - `task.accepted`
 - `task.interpreted`
@@ -469,7 +469,7 @@ event:
 - `graph.linted`
 - `graph.published`
 
-### Execução
+### Execution
 
 - `execution.started`
 - `execution.paused`
@@ -479,7 +479,7 @@ event:
 - `execution.failed`
 - `execution.cancelled`
 
-### Nó
+### Node
 
 - `node.queued`
 - `node.started`
@@ -492,7 +492,7 @@ event:
 - `node.invalidated`
 - `node.waived`
 
-### Grafo
+### Graph
 
 - `graph.draft_created`
 - `graph.draft_analyzed`
@@ -500,7 +500,7 @@ event:
 - `graph.mutation_applied`
 - `graph.version_rolled_back`
 
-### Conhecimento
+### Knowledge
 
 - `claim.created`
 - `claim.validated`
@@ -519,7 +519,7 @@ event:
 - `dream.discarded`
 - `dream.task_generated`
 
-### Segurança
+### Security
 
 - `lease.granted`
 - `lease.denied`
@@ -530,7 +530,7 @@ event:
 
 ## 24. Public API surface
 
-Recursos mínimos:
+Minimum resources:
 
 ```text
 /workspaces
@@ -558,7 +558,7 @@ Recursos mínimos:
 /exports
 ```
 
-Protocol operations críticas:
+Critical protocol operations:
 
 - create execution;
 - stream execution events;
@@ -573,7 +573,7 @@ Protocol operations críticas:
 
 ## 25. Concurrency
 
-Mutations usam optimistic concurrency:
+Mutations use optimistic concurrency:
 
 ```yaml
 mutation_request:
@@ -582,25 +582,25 @@ mutation_request:
   operations: [...]
 ```
 
-Se a versão mudou, resposta inclui current version e semantic diff para rebase.
+If the version has changed, the response includes the current version and a semantic diff for rebasing.
 
-## 26. Versionamento
+## 26. Versioning
 
-- API: SemVer major em path/header ou negotiation;
-- schemas: version field obrigatório;
+- API: SemVer major in path/header or negotiation;
+- schemas: version field required;
 - graph DSL: `apiVersion`;
 - plugins: compatibility ranges;
 - events: type + schema_version;
 - agent/skill: SemVer;
-- graph versions: integer monotônico por execução.
+- graph versions: monotonic integer per execution.
 
-## 27. Redação e classificação
+## 27. Redaction and classification
 
-Dados possuem sensitivity. Serializers aplicam:
+Data has a sensitivity level. Serializers apply:
 
 - secret redaction;
 - PII minimization;
-- path normalization em exports;
+- path normalization in exports;
 - provider payload filtering;
 - user-configurable retention.
 

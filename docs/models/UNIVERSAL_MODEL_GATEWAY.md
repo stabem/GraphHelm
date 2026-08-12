@@ -1,23 +1,23 @@
 # Universal Model Gateway
 
-## 1. Objetivo
+## 1. Objective
 
-Oferecer uma interface comum para modelos e runtimes sem esconder diferenças importantes de capability, autenticação, quota, custo, tool use, contexto e termos do provedor.
+Offer a common interface for models and runtimes without hiding important differences in capability, authentication, quota, cost, tool use, context, and provider terms.
 
-O gateway não transforma uma assinatura de chat em API arbitrária. Ele integra runtimes oficiais que aceitam login da conta do usuário, quando o provedor oferece esse caminho, e integra APIs por BYOK separadamente.
+The gateway does not turn a chat subscription into an arbitrary API. It integrates official runtimes that accept login via the user's account, when the provider offers that path, and integrates BYOK APIs separately.
 
-## 2. Tipos de rota
+## 2. Route types
 
 ### 2.1 Aggregator
 
-Exemplos: OpenRouter e adapters equivalentes.
+Examples: OpenRouter and equivalent adapters.
 
-Características:
+Characteristics:
 
-- uma credencial para múltiplos modelos;
-- billing do agregador;
-- API normalizada;
-- capabilities podem variar do provider nativo.
+- one credential for multiple models;
+- aggregator billing;
+- normalized API;
+- capabilities may vary from the native provider.
 
 ### 2.2 Direct API / BYOK
 
@@ -26,27 +26,27 @@ Características:
 - xAI API;
 - Google/Vertex;
 - Bedrock;
-- outros providers.
+- other providers.
 
-A chave pertence ao usuário e fica no Credential Broker.
+The key belongs to the user and lives in the Credential Broker.
 
 ### 2.3 Native runtime
 
-- Codex CLI/SDK autenticado por fluxo oficial;
-- Claude Code/SDK autenticado por fluxo oficial;
-- outros clientes oficiais futuros.
+- Codex CLI/SDK authenticated via the official flow;
+- Claude Code/SDK authenticated via the official flow;
+- other future official clients.
 
-Native runtime é uma ferramenta agentiva com semantics próprias. Não deve ser reduzido a `chat.completions` quando possui filesystem/tools/session behavior diferentes.
+Native runtime is an agentic tool with its own semantics. It should not be reduced to `chat.completions` when it has different filesystem/tools/session behavior.
 
 ### 2.4 OpenAI-compatible endpoint
 
-vLLM, llama.cpp server, Ollama adapters e outros endpoints locais/privados.
+vLLM, llama.cpp server, Ollama adapters, and other local/private endpoints.
 
 ### 2.5 Local embedded runtime
 
-Modelo executado em GPU/CPU do usuário, com adapter de lifecycle e resource scheduling.
+Model executed on the user's GPU/CPU, with a lifecycle adapter and resource scheduling.
 
-## 3. Arquitetura
+## 3. Architecture
 
 ```mermaid
 flowchart LR
@@ -97,11 +97,11 @@ model_route:
 
 ## 5. Capability discovery
 
-Adapter declara e testa:
+The adapter declares and tests:
 
 - input modalities;
 - output modalities;
-- context window observada/documentada;
+- observed/documented context window;
 - tool calling;
 - native repository actions;
 - structured output support;
@@ -112,66 +112,66 @@ Adapter declara e testa:
 - authentication status;
 - usage reporting;
 - safety restrictions;
-- data residency/retention metadata quando conhecido.
+- data residency/retention metadata when known.
 
-Capabilities são versionadas porque providers mudam.
+Capabilities are versioned because providers change.
 
-## 6. Autenticação
+## 6. Authentication
 
-### 6.1 Princípios
+### 6.1 Principles
 
-- browser abre apenas domínio oficial do provider;
-- plataforma nunca solicita senha do provider;
-- sem scraping de web chat;
-- sem importar cookies;
-- sem token copiado de DevTools;
-- usar CLI/SDK/OAuth/documented flow;
-- credentials ficam na VPS;
-- desktop guarda somente identidade mTLS e metadata de conexão;
-- revogação é suportada.
+- browser opens only the provider's official domain;
+- the platform never asks for the provider's password;
+- no scraping of web chat;
+- no cookie importing;
+- no token copied from DevTools;
+- use CLI/SDK/OAuth/documented flow;
+- credentials stay on the VPS;
+- desktop only holds mTLS identity and connection metadata;
+- revocation is supported.
 
-### 6.2 Fluxo de runtime nativo
+### 6.2 Native runtime flow
 
 ```text
-Usuário clica Conectar
-→ Runtime Broker inicia login oficial
-→ Studio abre URL/device flow do provider
-→ usuário autentica diretamente
-→ runtime oficial persiste credencial no vault/namespace dedicado
-→ broker executa health test
+User clicks Connect
+→ Runtime Broker starts official login
+→ Studio opens the provider's URL/device flow
+→ user authenticates directly
+→ official runtime persists the credential in a dedicated vault/namespace
+→ broker runs health test
 → capability discovery
-→ route fica available
+→ route becomes available
 ```
 
-### 6.3 Separação
+### 6.3 Separation
 
 ```text
 Model Runtime Sandbox
-  - credencial do provider
-  - cliente oficial
-  - sem acesso irrestrito ao projeto
+  - provider credential
+  - official client
+  - no unrestricted access to the project
 
 Tool Broker boundary
 
 Execution Sandbox
-  - projeto/worktree
-  - tools mediadas
-  - sem credencial do provider
+  - project/worktree
+  - mediated tools
+  - no provider credential
 ```
 
-Quando runtime oficial exige acesso ao diretório, ele deve operar em workspace dedicado com secrets namespace isolado e policy de tools/filesystem; nunca montar o diretório de credenciais dentro de código não confiável.
+When an official runtime requires directory access, it must operate in a dedicated workspace with an isolated secrets namespace and a tools/filesystem policy; never mount the credentials directory inside untrusted code.
 
 ## 7. Credential Broker
 
 ### 7.1 Store
 
 - encrypted at rest;
-- master key separada dos dados;
-- unseal pelo owner;
-- integração opcional com Vault/KMS;
-- audit de acesso;
+- master key separate from the data;
+- unseal by the owner;
+- optional integration with Vault/KMS;
+- access audit;
 - rotation/revoke;
-- backup criptografado separado.
+- separate encrypted backup.
 
 ### 7.2 Secret references
 
@@ -188,7 +188,7 @@ secret_ref:
 
 ### 7.3 Lease
 
-Valor é resolvido somente no processo autorizado e pelo menor tempo possível. Não entra em prompt, log ou artifact.
+The value is resolved only within the authorized process and for the shortest possible time. It never enters a prompt, log, or artifact.
 
 ## 8. Model Router
 
@@ -214,20 +214,20 @@ model_requirements:
 
 ### 8.2 Candidate filtering
 
-Excluir rotas:
+Exclude routes that are:
 
-- não autenticadas;
-- capabilities insuficientes;
-- proibidas por policy;
-- quota indisponível;
-- data handling incompatível;
-- provider independence requirement violado;
-- context insuficiente;
-- runtime/platform indisponível.
+- not authenticated;
+- insufficient in capabilities;
+- forbidden by policy;
+- unavailable in quota;
+- incompatible in data handling;
+- in violation of the provider independence requirement;
+- insufficient in context;
+- unavailable in runtime/platform.
 
 ### 8.3 Scoring
 
-Registrar componentes do score sem revelar detalhes internos do provider:
+Record score components without revealing internal provider details:
 
 ```yaml
 routing_decision:
@@ -248,13 +248,13 @@ routing_decision:
   selected: claude_subscription
 ```
 
-### 8.4 Sem regras fixas por marca
+### 8.4 No fixed brand rules
 
-O framework não codifica “Claude revisa” ou “Codex implementa”. Configuração do usuário pode preferir ou proibir rotas, mas o default é capability-based.
+The framework does not hardcode "Claude reviews" or "Codex implements." User configuration may prefer or forbid routes, but the default is capability-based.
 
-## 9. Perfis de trabalho
+## 9. Work profiles
 
-Perfis normativos descrevem necessidade, não provider:
+Normative profiles describe the need, not the provider:
 
 - `fast_classification`
 - `cheap_extraction`
@@ -268,11 +268,11 @@ Perfis normativos descrevem necessidade, não provider:
 - `local_private`
 - `high_reliability_structured_output`
 
-Adapters mapeiam models/runtimes aos perfis com confidence e benchmark local.
+Adapters map models/runtimes to profiles with confidence and local benchmark data.
 
-## 10. Benchmark local
+## 10. Local benchmark
 
-O gateway pode executar evals opt-in no projeto:
+The gateway can run opt-in evals on the project:
 
 - schema compliance;
 - repository task success;
@@ -283,7 +283,7 @@ O gateway pode executar evals opt-in no projeto:
 - token/cost;
 - context sensitivity.
 
-Resultados são locais e alimentam router. Benchmark não deve enviar dados privados a registry externo sem opt-in.
+Results are local and feed the router. Benchmarking must not send private data to an external registry without opt-in.
 
 ## 11. Usage normalization
 
@@ -296,17 +296,17 @@ Resultados são locais e alimentam router. Benchmark não deve enviar dados priv
 - monetary cost;
 - rate limits.
 
-### 11.2 Assinaturas
+### 11.2 Subscriptions
 
-- quota state observada;
-- reset quando exposto;
+- observed quota state;
+- reset when exposed;
 - recent throttles;
-- concurrency observada;
+- observed concurrency;
 - route availability;
 - task interruption;
 - provider banner/status.
 
-Não inventar número de tokens/custo quando runtime não fornece.
+Do not invent token counts/cost when the runtime does not provide them.
 
 ### 11.3 Local
 
@@ -317,68 +317,68 @@ Não inventar número de tokens/custo quando runtime não fornece.
 - queue time;
 - model load time.
 
-## 12. Política de capacidade esgotada
+## 12. Exhausted capacity policy
 
-Decisão normativa: **pausar, sem fallback automático pago**.
+Normative decision: **pause, with no automatic paid fallback**.
 
-Fluxo:
+Flow:
 
-1. adapter detecta limit/throttle/auth failure;
-2. checkpoint do node;
-3. route health atualizada;
-4. nodes dependentes `waiting_for_model_capacity`;
-5. outros nodes independentes podem seguir;
-6. Studio mostra opções;
-7. usuário escolhe wait, retry, reconnect, manual switch ou cancel;
-8. resume do checkpoint.
+1. adapter detects limit/throttle/auth failure;
+2. node checkpoint;
+3. route health updated;
+4. dependent nodes go `waiting_for_model_capacity`;
+5. other independent nodes may continue;
+6. Studio shows options;
+7. user chooses wait, retry, reconnect, manual switch, or cancel;
+8. resume from checkpoint.
 
-Trocar manualmente de rota cria event e pode invalidar cache/model-dependent output conforme policy.
+Manually switching routes creates an event and may invalidate cache/model-dependent output per policy.
 
 ## 13. Session management
 
-Native runtimes podem manter sessão. Manifest registra session reference, não credential. Session resume precisa respeitar Context Capsule atual; histórico nativo não pode introduzir contexto não auditado. Opções:
+Native runtimes can maintain a session. The manifest records a session reference, not a credential. Session resume must respect the current Context Capsule; native history must not introduce unaudited context. Options:
 
-- stateless call preferida;
-- managed session com transcript artifacts redigidos;
-- session reset em reviewer blind;
-- session pin somente dentro da mesma node attempt.
+- stateless call preferred;
+- managed session with redacted transcript artifacts;
+- session reset in reviewer blind;
+- session pin only within the same node attempt.
 
 ## 14. Tool use
 
-Duas estratégias:
+Two strategies:
 
 ### 14.1 Gateway-native tool calls
 
-Model chama Tool Broker por schema.
+Model calls the Tool Broker via schema.
 
 ### 14.2 Runtime-native agent tools
 
-Codex/Claude Code podem possuir tools próprias. Adapter deve:
+Codex/Claude Code may have their own tools. The adapter must:
 
-- mapear permission modes;
-- interceptar/registrar tool operations quando suportado;
-- executar em workspace/sandbox dedicado;
-- proibir acesso a credential store;
-- produzir artifacts/events equivalentes;
-- declarar gaps de observability.
+- map permission modes;
+- intercept/log tool operations when supported;
+- execute in a dedicated workspace/sandbox;
+- forbid access to the credential store;
+- produce equivalent artifacts/events;
+- declare observability gaps.
 
-Se runtime não oferecer controle suficiente para uma tarefa de alto risco, policy pode exigir adapter/API mais controlável ou isolation superior.
+If the runtime does not offer sufficient control for a high-risk task, policy may require a more controllable adapter/API or stronger isolation.
 
 ## 15. Structured outputs
 
-Gateway tenta, em ordem:
+The gateway attempts, in order:
 
 1. provider-native schema;
 2. tool/function output;
-3. constrained decoding quando disponível;
-4. parser + repair attempt limitado;
+3. constrained decoding when available;
+4. parser + limited repair attempt;
 5. fail `malformed_output`.
 
-Repair nunca muda semantics silenciosamente; original e repaired output são preservados.
+Repair never silently changes semantics; the original and repaired output are both preserved.
 
-## 16. Privacy e data policy
+## 16. Privacy and data policy
 
-Cada route declara metadata conhecida:
+Each route declares known metadata:
 
 - consumer/business/API;
 - data training controls;
@@ -388,11 +388,11 @@ Cada route declara metadata conhecida:
 - provider terms reference;
 - last verified date.
 
-Como essas condições mudam, metadata precisa de atualização e warning quando stale. User policy decide routes permitidas por sensitivity.
+As these conditions change, metadata needs updating and a warning when stale. User policy decides which routes are permitted by sensitivity.
 
 ## 17. Errors
 
-Taxonomia:
+Taxonomy:
 
 - auth_required;
 - auth_revoked;
@@ -411,13 +411,13 @@ Taxonomia:
 
 ## 18. Health
 
-Health probes não devem consumir quota excessiva. Use:
+Health probes must not consume excessive quota. Use:
 
 - credential/session metadata;
 - lightweight status;
 - passive errors;
 - periodic minimal probe;
-- provider status adapter opcional.
+- optional provider status adapter.
 
 States:
 
@@ -430,7 +430,7 @@ States:
 
 ## 19. User controls
 
-Por route:
+Per route:
 
 - enabled;
 - allowed scopes;
@@ -444,15 +444,15 @@ Por route:
 - reset/reconnect;
 - delete credential.
 
-## 20. Critérios de aceite
+## 20. Acceptance criteria
 
-- BYOK e assinatura são billing modes distintos;
-- nenhuma senha/cookie web é coletada;
-- credentials não entram em execution sandbox;
-- router registra decisão;
-- provider name não determina função fixa;
-- quota de assinatura pausa sem fallback pago;
-- manual switch funciona;
-- native runtime tools são mediadas/auditadas na medida suportada;
-- stale provider metadata gera warning;
-- local model route é cidadão de primeira classe.
+- BYOK and subscription are distinct billing modes;
+- no web password/cookie is collected;
+- credentials never enter the execution sandbox;
+- the router logs its decision;
+- provider name does not determine a fixed function;
+- subscription quota pauses with no paid fallback;
+- manual switch works;
+- native runtime tools are mediated/audited to the extent supported;
+- stale provider metadata generates a warning;
+- the local model route is a first-class citizen.

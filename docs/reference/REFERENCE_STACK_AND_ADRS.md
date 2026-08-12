@@ -1,213 +1,213 @@
-# Stack de referência e ADRs iniciais
+# Reference stack and initial ADRs
 
 ## 1. Status
 
-A arquitetura normativa é independente de linguagem. Esta seção recomenda uma implementação de referência coerente com segurança, portabilidade, comunidade e extensibilidade. Não há código implementado.
+The normative architecture is language-independent. This section recommends a reference implementation consistent with security, portability, community, and extensibility. No code has been implemented.
 
-## 2. Stack de referência
+## 2. Reference stack
 
 ### Studio
 
 - Tauri 2;
 - React + TypeScript;
-- React Flow ou canvas compatível por adapter;
-- state management event-sourced/cache local;
-- Monaco editor para DSL/schemas;
+- React Flow or a canvas compatible via adapter;
+- event-sourced/local cache state management;
+- Monaco editor for DSL/schemas;
 - Markdown/Mermaid renderers;
-- OS keychain para identidade local.
+- OS keychain for local identity.
 
 ### Runtime core
 
-- Rust para daemon, Graph Engine, Policy Engine, Tool Broker, Credential Broker e sandbox orchestration;
+- Rust for daemon, Graph Engine, Policy Engine, Tool Broker, Credential Broker, and sandbox orchestration;
 - async runtime;
-- gRPC/Connect-compatible API com Protobuf como contrato binário e JSON mapping;
+- gRPC/Connect-compatible API with Protobuf as the binary contract and JSON mapping;
 - WebSocket/SSE-compatible event streaming.
 
 ### SDKs
 
 - TypeScript;
 - Python;
-- CLI multiplataforma;
-- generated clients a partir dos schemas/protocols.
+- cross-platform CLI;
+- generated clients from the schemas/protocols.
 
-### Extensões
+### Extensions
 
-- OCI containers como formato universal;
-- WASI/WASM para componentes leves e mais restritos;
+- OCI containers as universal format;
+- WASI/WASM for lightweight, more restricted components;
 - MCP/HTTP/gRPC adapters;
-- pure-data packages para skills/policies/schemas.
+- pure-data packages for skills/policies/schemas.
 
-### Persistência
+### Persistence
 
 - PostgreSQL + JSONB + full-text + pgvector;
-- artifact store content-addressed em filesystem, com adapter S3-compatible;
-- Git para repositórios e docs;
-- encrypted vault local com adapter para Vault/KMS.
+- content-addressed artifact store on filesystem, with S3-compatible adapter;
+- Git for repositories and docs;
+- local encrypted vault with adapter for Vault/KMS.
 
-### Observabilidade
+### Observability
 
 - OpenTelemetry;
-- logs estruturados;
+- structured logs;
 - Prometheus-compatible metrics;
-- exporters externos opcionais.
+- optional external exporters.
 
-### Isolamento
+### Isolation
 
-- Docker/Podman rootless para Tier 1/2;
+- Docker/Podman rootless for Tier 1/2;
 - seccomp/AppArmor/SELinux;
-- gVisor/Kata/Firecracker adapter para Tier 3;
+- gVisor/Kata/Firecracker adapter for Tier 3;
 - Git worktrees/snapshots;
 - egress proxy.
 
-## 3. ADR-001 — Studio local, Runtime na VPS
+## 3. ADR-001 — Local Studio, Runtime on the VPS
 
 **Status:** accepted.
 
-**Contexto:** usuário quer interface local e execução/dados na própria infraestrutura.
+**Context:** the user wants a local interface with execution/data on their own infrastructure.
 
-**Decisão:** Studio atua como control plane; VPS como execution/data plane.
+**Decision:** Studio acts as the control plane; the VPS as the execution/data plane.
 
-**Consequências positivas:** privacidade, runtime contínuo, recursos maiores, acesso remoto controlado.
+**Positive consequences:** privacy, continuous runtime, greater resources, controlled remote access.
 
-**Consequências negativas:** bootstrap, rede, certificado e diagnóstico são mais complexos.
+**Negative consequences:** bootstrap, networking, certificates, and diagnostics are more complex.
 
-## 4. ADR-002 — SSH apenas para bootstrap/maintenance
-
-**Status:** accepted.
-
-**Decisão:** usar SSH para diagnóstico e instalação. Operação normal ocorre pela Public Runtime API com mTLS.
-
-**Motivo:** não modelar controle em parsing de terminal e permitir SDKs.
-
-## 5. ADR-003 — Graph DSL declarativa e tipada
+## 4. ADR-002 — SSH only for bootstrap/maintenance
 
 **Status:** accepted.
 
-**Decisão:** YAML/JSON representation com schemas e semantics próprias; Graph Version imutável.
+**Decision:** use SSH for diagnostics and installation. Normal operation occurs through the Public Runtime API with mTLS.
 
-**Alternativa rejeitada:** armazenar workflow apenas como código de aplicação ou prompts.
+**Reason:** avoid modeling control in terminal parsing, and enable SDKs.
 
-## 6. ADR-004 — Policy Engine separado de LLM
-
-**Status:** accepted.
-
-**Decisão:** LLM produz sinais/propostas; motor determinístico aplica invariantes.
-
-**Motivo:** segurança e reprodutibilidade.
-
-## 7. ADR-005 — Event Store append-only
+## 5. ADR-003 — Declarative, typed Graph DSL
 
 **Status:** accepted.
 
-**Decisão:** transições e evidências são eventos imutáveis. Projections podem ser reconstruídas.
+**Decision:** YAML/JSON representation with its own schemas and semantics; immutable Graph Version.
 
-**Consequência:** storage/retention precisam de política; auditoria e replay ficam robustos.
+**Rejected alternative:** storing the workflow only as application code or prompts.
 
-## 8. ADR-006 — Knowledge Graph em PostgreSQL inicialmente
+## 6. ADR-004 — Policy Engine separate from the LLM
+
+**Status:** accepted.
+
+**Decision:** the LLM produces signals/proposals; a deterministic engine enforces invariants.
+
+**Reason:** security and reproducibility.
+
+## 7. ADR-005 — Append-only Event Store
+
+**Status:** accepted.
+
+**Decision:** transitions and evidence are immutable events. Projections can be rebuilt.
+
+**Consequence:** storage/retention require a policy; auditing and replay become robust.
+
+## 8. ADR-006 — Knowledge Graph in PostgreSQL initially
 
 **Status:** recommended.
 
-**Decisão:** modelar entities/relations/claims em tabelas/JSONB e adapter interface. Não exigir graph database separado na primeira fatia.
+**Decision:** model entities/relations/claims in tables/JSONB with an adapter interface. Do not require a separate graph database in the first slice.
 
-**Motivo:** menos componentes operacionais, transações e backup simples.
+**Reason:** fewer operational components, simpler transactions and backup.
 
-**Evolução:** adapters para Neo4j/AGE/outros podem existir.
+**Evolution:** adapters for Neo4j/AGE/others may exist.
 
 ## 9. ADR-007 — Content-addressed artifacts
 
 **Status:** accepted.
 
-**Decisão:** artifacts imutáveis por hash, metadata no banco, bytes em filesystem/S3.
+**Decision:** artifacts immutable by hash, metadata in the database, bytes on filesystem/S3.
 
-**Motivo:** dedup, provenance, reproducibility e cache.
+**Reason:** dedup, provenance, reproducibility, and caching.
 
-## 10. ADR-008 — Core em Rust, extensões fora do processo
-
-**Status:** recommended.
-
-**Decisão:** core de confiança em Rust; extensões via container/WASI/process/remote protocols.
-
-**Motivo:** segurança de memória, performance e não carregar plugin arbitrário no processo privilegiado.
-
-## 11. ADR-009 — Protobuf semantics com JSON/YAML views
+## 10. ADR-008 — Core in Rust, extensions out of process
 
 **Status:** recommended.
 
-**Decisão:** protocolos de runtime definidos em Protobuf ou IDL equivalente; Graph DSL/manifests em YAML/JSON com JSON Schema.
+**Decision:** trusted core in Rust; extensions via container/WASI/process/remote protocols.
 
-**Motivo:** streaming, clients gerados e experiência humana.
+**Reason:** memory safety, performance, and not loading arbitrary plugins into the privileged process.
 
-## 12. ADR-010 — Queue inicialmente no PostgreSQL
+## 11. ADR-009 — Protobuf semantics with JSON/YAML views
 
 **Status:** recommended.
 
-**Decisão:** single-node scheduler usa durable jobs/leasing no PostgreSQL. Message bus externo é adapter futuro.
+**Decision:** runtime protocols defined in Protobuf or an equivalent IDL; Graph DSL/manifests in YAML/JSON with JSON Schema.
 
-**Motivo:** reduzir complexidade da V1.
+**Reason:** streaming, generated clients, and human experience.
 
-**Condição de evolução:** multi-node scale, throughput ou isolation demandando NATS/Kafka-like bus.
+## 12. ADR-010 — Queue initially in PostgreSQL
 
-## 13. ADR-011 — Secret broker separado
+**Status:** recommended.
 
-**Status:** accepted.
+**Decision:** the single-node scheduler uses durable jobs/leasing in PostgreSQL. An external message bus is a future adapter.
 
-**Decisão:** secrets criptografados e resolvidos por broker. Nunca Graph DSL/context artifact.
+**Reason:** reduce V1 complexity.
 
-## 14. ADR-012 — Native model runtimes como adapters de primeira classe
+**Evolution condition:** multi-node scale, throughput, or isolation requirements demanding a NATS/Kafka-like bus.
 
-**Status:** accepted.
-
-**Decisão:** Codex/Claude Code não são tratados apenas como APIs de chat. Adapter modela session, tools, permissions e quota.
-
-## 15. ADR-013 — Sem fallback pago automático
+## 13. ADR-011 — Separate secret broker
 
 **Status:** accepted.
 
-**Decisão:** quota de assinatura pausa execution. Manual switch obrigatório para BYOK.
+**Decision:** secrets are encrypted and resolved by a broker. Never in the Graph DSL/context artifact.
 
-## 16. ADR-014 — Graph mutation por Governor
-
-**Status:** accepted.
-
-**Decisão:** agents emitem signals; somente Graph Governor publica mutations.
-
-## 17. ADR-015 — User graph edits transacionais
+## 14. ADR-012 — Native model runtimes as first-class adapters
 
 **Status:** accepted.
 
-**Decisão:** layout visual é local/imediato; topology/config operacional vira Graph Draft atômico.
+**Decision:** Codex/Claude Code are not treated merely as chat APIs. The adapter models session, tools, permissions, and quota.
 
-## 18. ADR-016 — Agent node overlays não promovem definição
-
-**Status:** accepted.
-
-**Decisão:** alterações em runtime valem somente para execution. Reuso exige save explícito.
-
-## 19. ADR-017 — Dreams em shadow workspace
+## 15. ADR-013 — No automatic paid fallback
 
 **Status:** accepted.
 
-**Decisão:** cognitive changes são testadas em snapshot e committed atomicamente. Code changes viram normal task.
+**Decision:** subscription quota pauses execution. Manual switch is required for BYOK.
+
+## 16. ADR-014 — Graph mutation via Governor
+
+**Status:** accepted.
+
+**Decision:** agents emit signals; only the Graph Governor publishes mutations.
+
+## 17. ADR-015 — Transactional user graph edits
+
+**Status:** accepted.
+
+**Decision:** visual layout is local/immediate; operational topology/config becomes an atomic Graph Draft.
+
+## 18. ADR-016 — Agent node overlays do not promote the definition
+
+**Status:** accepted.
+
+**Decision:** runtime changes apply only to the execution. Reuse requires an explicit save.
+
+## 19. ADR-017 — Dreams in a shadow workspace
+
+**Status:** accepted.
+
+**Decision:** cognitive changes are tested in a snapshot and committed atomically. Code changes become a normal task.
 
 ## 20. ADR-018 — AGPLv3 + commercial license
 
 **Status:** accepted subject to legal review.
 
-**Decisão:** dual licensing com non-exclusive CLA.
+**Decision:** dual licensing with a non-exclusive CLA.
 
-## 21. ADR-019 — Single-user first com actor identity
+## 21. ADR-019 — Single-user first with actor identity
 
 **Status:** accepted.
 
-**Decisão:** V1 possui owner local, mas todo event/action inclui actor e authorization model extensível.
+**Decision:** V1 has a local owner, but every event/action includes an actor and an extensible authorization model.
 
 ## 22. ADR-020 — No mandatory central service
 
 **Status:** accepted.
 
-**Decisão:** update registry, extension registry, hosted telemetry e provisioning são opcionais/substituíveis.
+**Decision:** update registry, extension registry, hosted telemetry, and provisioning are optional/replaceable.
 
-## 23. Repositório de referência
+## 23. Reference repository
 
 ```text
 graphhelm/

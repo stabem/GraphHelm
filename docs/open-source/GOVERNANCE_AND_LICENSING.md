@@ -1,141 +1,141 @@
-# Governança open source, licenciamento e contribuições
+# Open source governance, licensing, and contributions
 
-## 1. Objetivo
+## 1. Purpose
 
-Construir GraphHelm como framework aberto, confiável e adotável, preservando ao mesmo tempo a possibilidade de licenciamento comercial alternativo sobre a mesma base de código.
+Build GraphHelm as an open, trustworthy, and adoptable framework, while preserving the possibility of an alternative commercial license over the same codebase.
 
-Este documento é uma estratégia de produto e governança, não aconselhamento jurídico. Os textos finais de licença comercial, ICLA, CCLA, marca e termos precisam de advogado especializado.
+This document is a product and governance strategy, not legal advice. The final texts of the commercial license, ICLA, CCLA, trademark, and terms require a specialized attorney.
 
-## 2. Constituição open source
+## 2. Open source constitution
 
-1. Framework, Runtime e Studio têm código-fonte público.
-2. Nenhuma função essencial depende de cloud do mantenedor.
-3. Tudo que o Studio faz usa API pública.
-4. Self-host completo é suportado.
-5. Telemetria externa é opt-in.
-6. Protocolos e schemas são públicos.
-7. Extensões podem ser instaladas fora de registry oficial.
-8. Exportação não contém lock-in intencional.
-9. Serviços comerciais são conveniência, suporte ou gestão, não desbloqueio do núcleo.
-10. Roadmap, RFCs, ADRs e security policy são públicos.
+1. Framework, Runtime, and Studio have public source code.
+2. No essential function depends on the maintainer's cloud.
+3. Everything the Studio does uses a public API.
+4. Full self-hosting is supported.
+5. External telemetry is opt-in.
+6. Protocols and schemas are public.
+7. Extensions can be installed outside the official registry.
+8. Export contains no intentional lock-in.
+9. Commercial services are convenience, support, or management, not core unlocking.
+10. Roadmap, RFCs, ADRs, and security policy are public.
 
-## 3. Estratégia de licença dupla
+## 3. Dual license strategy
 
-### 3.1 Edição comunitária
+### 3.1 Community edition
 
 **GNU Affero General Public License v3 (AGPLv3).**
 
-Motivação:
+Motivation:
 
-- o produto é naturalmente executado por rede;
-- modificações usadas para oferecer serviço em rede devem disponibilizar source correspondente aos usuários, conforme os termos da licença;
-- protege a reciprocidade do núcleo.
+- the product is naturally run over a network;
+- modifications used to offer a network service must make the corresponding source available to users, per the terms of the license;
+- protects the reciprocity of the core.
 
-### 3.2 Licença comercial
+### 3.2 Commercial license
 
-Contrato alternativo para organizações que desejam incorporar, modificar ou oferecer o software sem as obrigações da AGPLv3.
+Alternative agreement for organizations that want to embed, modify, or offer the software without the obligations of the AGPLv3.
 
-Possíveis ofertas:
+Possible offerings:
 
-- licença comercial self-hosted;
-- suporte e SLA;
-- deployment gerenciado;
-- observabilidade hospedada;
-- colaboração/SSO/compliance gerenciados;
-- marketplace e billing;
-- consultoria e implantação;
-- indemnification contratual;
+- self-hosted commercial license;
+- support and SLA;
+- managed deployment;
+- hosted observability;
+- managed collaboration/SSO/compliance;
+- marketplace and billing;
+- consulting and implementation;
+- contractual indemnification;
 - long-term support.
 
-A licença comercial não deve depender de manter recursos essenciais fora do repositório comunitário.
+The commercial license must not depend on keeping essential features out of the community repository.
 
-### 3.3 Mesma base de código
+### 3.3 Same codebase
 
-Objetivo: evitar “open core” em que o produto real fica fechado. Add-ons de serviço podem existir, mas o framework agentivo integral permanece aberto.
+Goal: avoid an "open core" model in which the real product stays closed. Service add-ons may exist, but the full agentic framework remains open.
 
 ## 4. Contributor License Agreement
 
-### 4.1 Modelo
+### 4.1 Model
 
-CLA não exclusivo:
+Non-exclusive CLA:
 
-- contribuidor mantém copyright;
-- concede direitos amplos, permanentes e irrevogáveis necessários para usar, modificar, distribuir, sublicenciar e relicenciar a contribuição;
-- inclui patent grant relacionado;
-- permite distribuição AGPL e comercial;
-- mantém atribuição/autoria;
-- declara direito de contribuir;
-- separa ICLA e CCLA.
+- contributor retains copyright;
+- grants broad, permanent, and irrevocable rights necessary to use, modify, distribute, sublicense, and relicense the contribution;
+- includes a related patent grant;
+- allows both AGPL and commercial distribution;
+- preserves attribution/authorship;
+- declares the right to contribute;
+- separates ICLA and CCLA.
 
 ### 4.2 ICLA
 
-Para pessoas físicas. Deve cobrir contribuições próprias e declarações sobre empregador quando aplicável.
+For individuals. Must cover the contributor's own contributions and employer declarations when applicable.
 
 ### 4.3 CCLA
 
-Para empresas que possuem contribuições de funcionários. Não substitui automaticamente declaração individual; o fluxo jurídico definitivo decide a combinação.
+For companies covering contributions from their employees. Does not automatically replace an individual declaration; the final legal workflow decides the combination.
 
-### 4.4 UX do CLA
+### 4.4 CLA UX
 
-- texto curto e legível;
-- página pública explicando por que existe;
-- assinatura eletrônica no primeiro PR relevante;
-- status automatizado no CI;
-- privacidade de dados do signatário;
-- processo para correções;
-- versão do CLA registrada.
+- short and readable text;
+- public page explaining why it exists;
+- electronic signature on the first relevant PR;
+- automated status check in CI;
+- signer data privacy;
+- process for corrections;
+- CLA version tracked.
 
-### 4.5 Pequenas contribuições
+### 4.5 Small contributions
 
-A política jurídica deve definir se typo/docs pequenas exigem CLA. Para simplicidade de relicenciamento, a recomendação é exigir CLA para todo PR mergeado, com automação de baixo atrito.
+Legal policy must define whether small typo/docs fixes require a CLA. For relicensing simplicity, the recommendation is to require a CLA for every merged PR, with low-friction automation.
 
-## 5. Copyright e ownership
+## 5. Copyright and ownership
 
-Para dual licensing sustentável, o mantenedor/entidade precisa controlar direitos suficientes sobre todo código distribuído comercialmente. Código sem CLA compatível não entra na base dual-license ou exige consentimento separado.
+For sustainable dual licensing, the maintainer/entity needs to control sufficient rights over all commercially distributed code. Code without a compatible CLA does not enter the dual-license base or requires separate consent.
 
-Third-party code deve ter license compatibility review. Dependências AGPL/GPL podem afetar distribuição comercial e precisam de análise específica.
+Third-party code must undergo license compatibility review. AGPL/GPL dependencies can affect commercial distribution and require specific analysis.
 
-## 6. Marca
+## 6. Trademark
 
-Licença de código não concede automaticamente direito de usar nome/logo como produto oficial. Criar Trademark Policy separada:
+A code license does not automatically grant the right to use the name/logo as the official product. Create a separate Trademark Policy:
 
-- uso nominativo permitido;
-- forks podem dizer “compatível com”;
-- não podem se passar por release oficial;
-- programa de parceiros/certificação opcional;
-- proteção contra malware usando marca.
+- nominative use permitted;
+- forks may say "compatible with";
+- may not pass themselves off as the official release;
+- optional partner/certification program;
+- protection against malware using the trademark.
 
-“GraphHelm” é o nome selecionado para desenvolvimento; o lançamento público depende de busca jurídica, reserva de namespaces e política de marca.
+"GraphHelm" is the name selected for development; public launch depends on legal search, namespace reservation, and trademark policy.
 
-## 7. Estrutura de governança
+## 7. Governance structure
 
-### 7.1 Fase inicial
+### 7.1 Initial phase
 
-- Founder/Maintainer principal;
+- Founder/Lead Maintainer;
 - Core Maintainers;
 - Module Maintainers;
 - Security Team;
 - Release Managers;
 - Community Moderators.
 
-### 7.2 Evolução
+### 7.2 Evolution
 
 - Technical Steering Committee;
 - RFC process;
 - transparent voting/consensus;
 - conflict of interest policy;
 - maintainer succession;
-- independent foundation possível após maturidade.
+- independent foundation possible after maturity.
 
 ## 8. RFC process
 
-Obrigatório para:
+Mandatory for:
 
-- novo protocol/node type;
+- new protocol/node type;
 - breaking schema change;
 - security boundary;
 - license/governance change;
-- public API major change;
+- major public API change;
 - new trust model;
 - critical dependency;
 - hosted service coupling;
@@ -170,9 +170,9 @@ States:
 
 ## 9. ADRs
 
-ADRs registram decisões específicas da implementação de referência. Não substituem RFCs públicas para mudanças de ecossistema.
+ADRs record decisions specific to the reference implementation. They do not replace public RFCs for ecosystem-wide changes.
 
-Formato:
+Format:
 
 - context;
 - decision;
@@ -181,22 +181,22 @@ Formato:
 - status;
 - supersedes.
 
-## 10. Versionamento e releases
+## 10. Versioning and releases
 
-- SemVer para packages e APIs;
-- release train previsível;
+- SemVer for packages and APIs;
+- predictable release train;
 - alpha/beta/RC;
 - signed tags/artifacts;
 - SBOM;
 - provenance attestations;
 - changelog;
 - migration guides;
-- LTS comercial/comunitário conforme capacidade;
+- commercial/community LTS as capacity allows;
 - compatibility matrix.
 
-## 11. Repositório
+## 11. Repository
 
-Estrutura sugerida:
+Suggested structure:
 
 ```text
 /apps/studio
@@ -214,24 +214,24 @@ Estrutura sugerida:
 /examples
 ```
 
-A linguagem concreta pode variar, mas boundaries precisam permanecer.
+The specific language may vary, but the boundaries must remain.
 
 ## 12. Contribution workflow
 
-1. issue/discussion para mudanças grandes;
-2. RFC quando necessário;
+1. issue/discussion for large changes;
+2. RFC when necessary;
 3. fork/branch;
 4. CLA check;
 5. tests/conformance;
 6. security/license scans;
-7. review por code owners;
+7. review by code owners;
 8. public CI;
-9. merge com changelog;
+9. merge with changelog;
 10. release notes.
 
 ## 13. Code review
 
-Exigir:
+Require:
 
 - functional correctness;
 - contracts/schemas;
@@ -243,11 +243,11 @@ Exigir:
 - performance;
 - license provenance.
 
-Mudanças no core security/policy/credential broker requerem reviewer especializado e, idealmente, dois approvals.
+Changes to the core security/policy/credential broker require a specialized reviewer and, ideally, two approvals.
 
 ## 14. Conformance program
 
-Publicar suite para validar:
+Publish a suite to validate:
 
 - Runtime compatibility;
 - Studio/API compatibility;
@@ -258,7 +258,7 @@ Publicar suite para validar:
 - event semantics;
 - export/replay.
 
-Selo “GraphHelm Compatible” depende de trademark policy e testes públicos.
+The "GraphHelm Compatible" seal depends on trademark policy and public tests.
 
 ## 15. Security governance
 
@@ -270,40 +270,40 @@ Selo “GraphHelm Compatible” depende de trademark policy e testes públicos.
 - embargo/coordinated disclosure;
 - security advisories;
 - dependency alerts;
-- incident postmortems redigidos quando seguro;
-- bug bounty futuro.
+- incident postmortems published when safe to do so;
+- future bug bounty.
 
 ## 16. Community norms
 
 - Code of Conduct;
-- technical disagreement by evidence;
+- technical disagreement resolved by evidence;
 - no hidden roadmap promises;
 - transparent moderation;
 - contributor recognition;
 - public meeting notes;
-- avoid maintainer capture by vendor.
+- avoid maintainer capture by a vendor.
 
-## 17. Telemetria e dados comunitários
+## 17. Telemetry and community data
 
 Default:
 
 - local metrics on;
 - external telemetry off.
 
-Opt-in dataset pode coletar somente metadata claramente descrita, com anonymization e delete mechanism. Nunca incluir prompts/code/artifacts sem opt-in específico separado.
+An opt-in dataset may collect only clearly described metadata, with anonymization and a delete mechanism. Never include prompts/code/artifacts without a separate, specific opt-in.
 
 ## 18. Marketplace/registry governance
 
-Registry oficial pode moderar malware, trademark abuse e broken packages. Porém:
+The official registry may moderate malware, trademark abuse, and broken packages. However:
 
-- protocol é aberto;
-- alternate registries são permitidos;
-- local install é permitido;
-- removal/revocation tem reason público quando possível;
-- paid package terms são visíveis;
-- security metadata não pode ser escondida por pagamento.
+- the protocol is open;
+- alternate registries are permitted;
+- local install is permitted;
+- removal/revocation has a public reason when possible;
+- paid package terms are visible;
+- security metadata cannot be hidden behind payment.
 
-## 19. Monetização compatível
+## 19. Compatible monetization
 
 - managed cloud;
 - one-click VPS;
@@ -317,31 +317,31 @@ Registry oficial pode moderar malware, trademark abuse e broken packages. Porém
 - consulting;
 - custom adapters.
 
-A community edition continua plenamente funcional self-hosted.
+The community edition remains fully functional self-hosted.
 
-## 20. Riscos
+## 20. Risks
 
-### CLA reduz contribuições
+### CLA reduces contributions
 
-Mitigação: texto curto, explicação honesta, assinatura simples, governança transparente.
+Mitigation: short text, honest explanation, simple signature, transparent governance.
 
-### AGPL afasta empresas
+### AGPL deters companies
 
-Mitigação: licença comercial clara e avaliação simples.
+Mitigation: clear commercial license and simple evaluation.
 
-### Fork hostil
+### Hostile fork
 
-Mitigação: qualidade, comunidade, marca, release velocity e open governance; não fechamento do core.
+Mitigation: quality, community, brand, release velocity, and open governance; not closing the core.
 
 ### Contributor rights ambiguity
 
-Mitigação: ICLA/CCLA, provenance e license scans.
+Mitigation: ICLA/CCLA, provenance, and license scans.
 
-### Dependência incompatível
+### Incompatible dependency
 
-Mitigação: automated license policy e legal review de critical dependencies.
+Mitigation: automated license policy and legal review of critical dependencies.
 
-## 21. Documentos jurídicos necessários antes do lançamento
+## 21. Legal documents needed before launch
 
 - AGPLv3 LICENSE;
 - commercial license agreement;
@@ -349,15 +349,15 @@ Mitigação: automated license policy e legal review de critical dependencies.
 - CCLA;
 - CLA privacy notice;
 - trademark policy;
-- terms/privacy para serviços opcionais;
-- DPA para hosting empresarial;
-- export controls review, se aplicável;
+- terms/privacy for optional services;
+- DPA for enterprise hosting;
+- export controls review, if applicable;
 - contributor guide;
 - third-party notices.
 
-## 22. Fontes de referência
+## 22. Reference sources
 
-- GNU AGPLv3 e explicação da cláusula de rede: Free Software Foundation.
-- Modelo de ICLA/CCLA e explicação: Apache Software Foundation.
+- GNU AGPLv3 and explanation of the network clause: Free Software Foundation.
+- ICLA/CCLA model and explanation: Apache Software Foundation.
 
-Links e data de verificação estão em `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md`.
+Links and verification date are in `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md`.

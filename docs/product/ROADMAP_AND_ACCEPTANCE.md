@@ -1,30 +1,30 @@
-# Roadmap, critérios de aceite e métricas
+# Roadmap, acceptance criteria and metrics
 
-## 1. Princípio de entrega
+## 1. Delivery principle
 
-A arquitetura é generalista desde o início, mas a implementação futura deve evoluir por fatias verticais comprováveis. O objetivo não é produzir um editor visual sem motor real nem um motor poderoso sem experiência de controle.
+The architecture is general-purpose from the start, but future implementation must evolve through provable vertical slices. The goal is not to produce a visual editor without a real engine, nor a powerful engine without a control experience.
 
-Nenhuma implementação é parte do presente pacote; este documento organiza a sequência futura.
+No implementation is part of the present package; this document organizes the future sequence.
 
-## 2. Fase 0 — especificação
+## 2. Phase 0 — specification
 
-**Resultado:** documentação integral, schemas iniciais, Graph DSL, threat model, decision register e exemplos.
+**Outcome:** full documentation, initial schemas, Graph DSL, threat model, decision register and examples.
 
-Critérios:
+Criteria:
 
-- decisões não se contradizem;
-- todos os módulos têm boundaries;
-- nenhum workflow fixo por domínio é exigido;
-- user override está definido;
-- open-source/licensing strategy documentada;
-- source references verificadas;
-- schemas/examples passam validação básica.
+- decisions do not contradict each other;
+- every module has boundaries;
+- no fixed workflow per domain is required;
+- user override is defined;
+- open-source/licensing strategy documented;
+- source references verified;
+- schemas/examples pass basic validation.
 
-## 3. Fase 1 — vertical slice developer-first
+## 3. Phase 1 — developer-first vertical slice
 
-### 3.1 Objetivo
+### 3.1 Objective
 
-Executar uma mudança de software de ponta a ponta:
+Execute a software change end to end:
 
 ```text
 prompt
@@ -38,15 +38,15 @@ prompt
 → audited result
 ```
 
-### 3.2 Escopo
+### 3.2 Scope
 
-- Studio local;
+- local Studio;
 - SSH/Docker bootstrap;
 - single-node Runtime;
 - Workspace/Project/Subproject;
-- Codex/Claude native adapters quando oficialmente suportados;
+- Codex/Claude native adapters where officially supported;
 - BYOK/OpenRouter adapter;
-- Graph DSL subset completo para core nodes;
+- complete Graph DSL subset for core nodes;
 - Graph Engine;
 - Graph Draft;
 - Autopilot/Supervised/Manual;
@@ -56,45 +56,45 @@ prompt
 - initial Knowledge Graph;
 - Living Docs;
 - Tier 0/1;
-- Tool Broker para repository/shell/tests;
+- Tool Broker for repository/shell/tests;
 - Policy Engine;
 - quality gates;
 - basic Dreams;
 - export/replay;
 - public API/CLI.
 
-### 3.3 Fora da Fase 1
+### 3.3 Out of Phase 1
 
 - multiuser UI;
-- marketplace pago;
+- paid marketplace;
 - multi-node scheduler;
 - Tier 3 production-grade;
-- todos os domínios;
+- all domains;
 - hosted cloud;
 - enterprise SSO;
-- full visual editor de plugins.
+- full visual plugin editor.
 
 ### 3.4 Acceptance scenario
 
-1. usuário instala Runtime em VPS limpa;
-2. conecta Studio;
-3. autentica uma rota de modelo;
-4. importa repositório;
-5. pede uma feature;
-6. sistema gera Graph v1;
-7. execução mapeia, planeja, altera, testa e revisa;
-8. usuário remove review e força deploy em ambiente de teste;
-9. Graph Draft mostra riscos;
-10. user confirma;
-11. waiver é registrado;
-12. execução pausa se rota atingir quota;
-13. user retoma após capacidade;
-14. docs e claims são atualizadas;
-15. export reproduz timeline.
+1. user installs Runtime on a clean VPS;
+2. connects Studio;
+3. authenticates a model route;
+4. imports a repository;
+5. requests a feature;
+6. system generates Graph v1;
+7. execution maps, plans, changes, tests and reviews;
+8. user removes review and forces deploy to a test environment;
+9. Graph Draft shows risks;
+10. user confirms;
+11. waiver is recorded;
+12. execution pauses if a route hits its quota;
+13. user resumes once capacity is available;
+14. docs and claims are updated;
+15. export reproduces the timeline.
 
-## 4. Fase 2 — generalização de capacidades
+## 4. Phase 2 — generalization of capabilities
 
-Adicionar tools/capabilities para:
+Add tools/capabilities for:
 
 - web research;
 - source verification;
@@ -107,13 +107,13 @@ Adicionar tools/capabilities para:
 - operations;
 - external integrations.
 
-Critério: o core não recebe branch de código por domínio; apenas extensões e schemas.
+Criterion: the core does not receive a code branch per domain; only extensions and schemas.
 
-## 5. Fase 3 — ecossistema
+## 5. Phase 3 — ecosystem
 
 - public extension registry;
 - signing/trust;
-- conformance cloud opcional;
+- optional conformance cloud;
 - package discovery;
 - community agents/skills;
 - alternate registries;
@@ -121,7 +121,7 @@ Critério: o core não recebe branch de código por domínio; apenas extensões 
 - Graph Engineer tooling;
 - benchmark packs.
 
-## 6. Fase 4 — colaboração e enterprise
+## 6. Phase 4 — collaboration and enterprise
 
 - multiuser;
 - RBAC;
@@ -136,30 +136,30 @@ Critério: o core não recebe branch de código por domínio; apenas extensões 
 - compliance controls;
 - commercial license operations.
 
-## 7. Fase 5 — distributed agent operating system
+## 7. Phase 5 — distributed agent operating system
 
 - federated runtimes;
 - edge/local GPU scheduling;
 - organization-wide knowledge boundaries;
 - graph exchange/market;
-- hosted control plane opcional;
+- optional hosted control plane;
 - cross-workspace capability brokerage;
 - advanced Dreams experiments;
-- formal verification de policies/graphs onde viável.
+- formal verification of policies/graphs where viable.
 
-## 8. Critérios de aceite globais
+## 8. Global acceptance criteria
 
 ### 8.1 Harness
 
-- task profile estruturado;
-- graph customizado, não template fechado;
+- structured task profile;
+- customized graph, not a closed template;
 - capability snapshot;
-- policies aplicadas deterministically;
-- graph lint e simulation;
+- deterministically applied policies;
+- graph lint and simulation;
 - minimal graph rationale;
-- limits de expansion.
+- expansion limits.
 
-### 8.2 Grafo
+### 8.2 Graph
 
 - node/edge contracts;
 - versioning;
@@ -171,17 +171,17 @@ Critério: o core não recebe branch de código por domínio; apenas extensões 
 - waiver;
 - replay.
 
-### 8.3 Contexto
+### 8.3 Context
 
-- capsule por node;
-- no full history default;
+- capsule per node;
+- no full history by default;
 - provenance;
 - conflicts;
 - expansion request;
 - cache/invalidation;
 - blind review.
 
-### 8.4 Agentes
+### 8.4 Agents
 
 - synthesize/reuse;
 - Project Agent Registry;
@@ -190,17 +190,17 @@ Critério: o core não recebe branch de código por domínio; apenas extensões 
 - performance segmentation;
 - no direct graph spawning.
 
-### 8.5 Modelos
+### 8.5 Models
 
 - multiple route types;
 - official auth only;
-- BYOK separated;
+- BYOK kept separate;
 - credential isolation;
 - capability routing;
 - pause on quota;
-- no paid fallback automatically.
+- no automatic paid fallback.
 
-### 8.6 Segurança
+### 8.6 Security
 
 - Tier 0/1 minimum;
 - no Docker socket;
@@ -219,24 +219,24 @@ Critério: o core não recebe branch de código por domínio; apenas extensões 
 - shadow dream;
 - independent critic;
 - rollback;
-- code finding creates normal task.
+- code finding creates a normal task.
 
 ### 8.8 Open source
 
 - public source;
 - public APIs;
 - self-host;
-- telemetry opt-in;
+- opt-in telemetry;
 - schemas/docs;
 - AGPL/commercial strategy;
 - CLA process;
 - reproducible export.
 
-## 9. Métricas north star
+## 9. North star metrics
 
 ### 9.1 Evidence-backed task success
 
-Percentual de execuções aceitas pelo usuário que satisfazem completion contracts sem regressão conhecida dentro da janela definida.
+Percentage of user-accepted executions that satisfy completion contracts with no known regression within the defined window.
 
 ### 9.2 Context efficiency
 
@@ -244,17 +244,17 @@ Percentual de execuções aceitas pelo usuário que satisfazem completion contra
 1 - tokens_sent_with_compiler / estimated_tokens_full_context
 ```
 
-Não deve ser otimizada isoladamente; acompanhar qualidade.
+Must not be optimized in isolation; track alongside quality.
 
 ### 9.3 Orchestration efficiency
 
-- nodes úteis / total nodes;
-- evidence gain por node;
+- useful nodes / total nodes;
+- evidence gain per node;
 - coordination overhead;
 - mutation count;
 - time on critical path.
 
-## 10. Métricas secundárias
+## 10. Secondary metrics
 
 - time to first useful graph;
 - time to first evidence;
@@ -277,7 +277,7 @@ Não deve ser otimizada isoladamente; acompanhar qualidade.
 
 ### 11.1 Harness benchmark
 
-Conjunto de tasks de diferentes complexidades. Avaliar:
+Set of tasks of varying complexity. Evaluate:
 
 - graph adequacy;
 - required gates;
@@ -323,13 +323,13 @@ Conjunto de tasks de diferentes complexidades. Avaliar:
 - Docker socket access;
 - log leakage.
 
-## 12. Quality bars para releases
+## 12. Quality bars for releases
 
 ### Alpha
 
-- data loss e secret leak blockers;
-- core flow funciona;
-- APIs podem mudar;
+- data loss and secret leak blockers;
+- core flow works;
+- APIs may change;
 - explicit experimental warnings.
 
 ### Beta
@@ -339,67 +339,67 @@ Conjunto de tasks de diferentes complexidades. Avaliar:
 - backup/restore;
 - security review;
 - extension SDK;
-- docs completas.
+- complete docs.
 
 ### 1.0
 
 - stable public API/DSL;
 - self-host upgrade path;
-- threat model validated;
+- validated threat model;
 - reliable replay/export;
 - contributor governance;
 - commercial/legal docs;
 - compatibility tests;
 - supported platforms.
 
-## 13. Riscos de execução do produto
+## 13. Product execution risks
 
-### 13.1 Complexidade sistêmica
+### 13.1 Systemic complexity
 
-Mitigar com boundaries, vertical slice, contract-first e no fixed packs.
+Mitigate with boundaries, vertical slice, contract-first and no fixed packs.
 
-### 13.2 UI sobre motor imaturo
+### 13.2 UI over an immature engine
 
-Mitigar desenvolvendo cada interação contra API real e event stream.
+Mitigate by developing every interaction against the real API and event stream.
 
 ### 13.3 Orchestrator overthinking
 
-Mitigar com minimal graph objective, budgets e deterministic gates.
+Mitigate with a minimal graph objective, budgets and deterministic gates.
 
 ### 13.4 Provider auth changes
 
-Mitigar com adapters, official flows, health metadata, graceful disable e documented verification dates.
+Mitigate with adapters, official flows, health metadata, graceful disable and documented verification dates.
 
-### 13.5 Token savings prejudicam qualidade
+### 13.5 Token savings harming quality
 
-Mitigar com expansion, evidence recall metrics e benchmark.
+Mitigate with expansion, evidence recall metrics and benchmarking.
 
-### 13.6 Dreams corrompe conhecimento
+### 13.6 Dreams corrupting knowledge
 
-Mitigar com shadow, tests, critic, atomic commit e rollback.
+Mitigate with shadow, tests, critic, atomic commit and rollback.
 
-### 13.7 Owner override causa incidente
+### 13.7 Owner override causing an incident
 
-Mitigar com clear impact, waiver, rollback tools e incident correlation, sem retirar soberania.
+Mitigate with clear impact, waiver, rollback tools and incident correlation, without removing sovereignty.
 
 ### 13.8 Open-source contribution friction
 
-Mitigar com CLA simples, governance pública e value claro para contributors.
+Mitigate with a simple CLA, public governance and clear value for contributors.
 
-## 14. Definition of Done da documentação
+## 14. Documentation definition of done
 
-Este pacote é considerado integral quando:
+This package is considered complete when:
 
-- MASTER PRD existe;
-- decision register contém todas as escolhas;
-- telas e comportamentos estão especificados;
-- harness e Graph Engineer docs são profundos;
-- DSL e schemas existem;
-- context/knowledge/Dreams estão definidos;
-- model gateway cobre BYOK/assinatura/local;
-- security e threat model existem;
-- operations/recovery existem;
-- open-source/licensing/governance existem;
-- examples demonstram cenários;
-- referências oficiais e data de verificação existem;
-- arquivos passam validação de links locais, JSON e YAML.
+- MASTER PRD exists;
+- decision register contains all choices;
+- screens and behaviors are specified;
+- harness and Graph Engineer docs are thorough;
+- DSL and schemas exist;
+- context/knowledge/Dreams are defined;
+- model gateway covers BYOK/subscription/local;
+- security and threat model exist;
+- operations/recovery exist;
+- open-source/licensing/governance exist;
+- examples demonstrate scenarios;
+- official references and verification date exist;
+- files pass local link, JSON and YAML validation.

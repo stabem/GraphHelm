@@ -1,142 +1,142 @@
 # MASTER PRD — GraphHelm
 
-**Versão:** 0.1.1
-**Estado:** especificação aprovada para implementação incremental; sem código neste pacote
-**Categoria:** open-source Agentic Operating System
-**Topologia:** Studio local + Runtime na VPS do usuário
+**Version:** 0.1.1
+**State:** specification approved for incremental implementation; no code in this package
+**Category:** open-source Agentic Operating System
+**Topology:** Local Studio + Runtime on the user's VPS
 
 ---
 
-## 1. Resumo executivo
+## 1. Executive summary
 
-GraphHelm é uma plataforma aberta para organizar, executar e auditar trabalho realizado por agentes de inteligência artificial. O usuário envia uma demanda em linguagem natural. Um harness dinâmico interpreta o objetivo, mede risco, complexidade, incerteza e superfície de impacto, descobre as capacidades disponíveis e compila um grafo específico para aquela tarefa.
+GraphHelm is an open platform for organizing, executing, and auditing work performed by artificial intelligence agents. The user submits a request in natural language. A dynamic harness interprets the goal, measures risk, complexity, uncertainty, and impact surface, discovers the available capabilities, and compiles a graph specific to that task.
 
-O grafo pode combinar investigação, planejamento, execução, testes, crítica, revisão de segurança, documentação, deploy, análise de dados, pesquisa, criação de conteúdo, automação e qualquer outra capacidade registrada. Não existem packs rígidos por domínio. O sistema cria o setup adequado lendo o catálogo real de modelos, agentes, skills, ferramentas, políticas, contexto, infraestrutura e orçamento daquele projeto.
+The graph can combine investigation, planning, execution, testing, critique, security review, documentation, deployment, data analysis, research, content creation, automation, and any other registered capability. There are no rigid domain-specific packs. The system builds the appropriate setup by reading the project's real catalog of models, agents, skills, tools, policies, context, infrastructure, and budget.
 
-O Studio local mostra a execução como um diagrama operacional. O usuário observa agentes em tempo real, abre documentos e artefatos vinculados, edita nós e arestas, pausa branches, aprova nós propostos, troca modelos e, quando quiser, força um caminho diferente — inclusive ignorando verificações e indo diretamente ao deploy. O harness explica o impacto, mas não retira a soberania do proprietário.
+The local Studio displays the execution as an operational diagram. The user observes agents in real time, opens linked documents and artifacts, edits nodes and edges, pauses branches, approves proposed nodes, swaps models, and, whenever desired, forces a different path — including skipping checks and going straight to deployment. The harness explains the impact, but does not take sovereignty away from the owner.
 
-Toda execução acontece na VPS do usuário. Código, documentos, eventos, credenciais, índices, memória, artefatos e sandboxes permanecem sob seu controle. O projeto é integralmente open source, com edição comunitária AGPLv3 e licença comercial alternativa sobre a mesma base de código.
-
----
-
-## 2. Problema
-
-Ferramentas agentivas atuais geralmente sofrem com uma ou mais limitações:
-
-- tratam todo pedido com um fluxo fixo ou um único agente generalista;
-- enviam contexto excessivo para todos os agentes, aumentando custo e ruído;
-- não mostram claramente quem está fazendo o quê, com quais permissões e por qual motivo;
-- permitem que o mesmo modelo implemente, critique e aprove seu próprio trabalho;
-- acumulam documentação e memórias contraditórias sem governança;
-- não adaptam isolamento, testes e revisão ao risco descoberto durante a execução;
-- dependem de cloud proprietária, impedindo auditoria e controle de dados;
-- oferecem automação, mas pouco controle para o usuário alterar o workflow em andamento;
-- criam agentes e prompts descartáveis, sem aprender de maneira auditável dentro do projeto;
-- não transformam a execução em conhecimento reutilizável e documentação viva.
-
-GraphHelm resolve isso tratando a orquestração como um problema de compilação, tipagem, políticas, evidência e controle visual.
+All execution happens on the user's VPS. Code, documents, events, credentials, indexes, memory, artifacts, and sandboxes remain under their control. The project is fully open source, with a community edition under AGPLv3 and an alternative commercial license over the same codebase.
 
 ---
 
-## 3. Visão
+## 2. Problem
 
-> Qualquer pessoa deve conseguir transformar um objetivo em uma organização temporária de agentes especializados, executada em sua própria infraestrutura, com contexto mínimo, evidência verificável, controle visual e memória útil.
+Current agentic tools generally suffer from one or more limitations:
 
-O produto pretende se tornar um framework universal para aplicações agentivas, da mesma forma que frameworks web organizaram interfaces, roteamento, estado e componentes. Sua unidade fundamental não é o chat, mas o **grafo de trabalho governado**.
+- they treat every request with a fixed flow or a single generalist agent;
+- they send excessive context to every agent, increasing cost and noise;
+- they don't clearly show who is doing what, with which permissions, and for what reason;
+- they allow the same model to implement, critique, and approve its own work;
+- they accumulate contradictory documentation and memories without governance;
+- they don't adapt isolation, testing, and review to the risk discovered during execution;
+- they depend on proprietary cloud, preventing audit and data control;
+- they offer automation but little control for the user to change the workflow in progress;
+- they create disposable agents and prompts, without learning in an auditable way within the project;
+- they don't turn execution into reusable knowledge and living documentation.
 
----
-
-## 4. Princípios
-
-### 4.1 Harness dinâmico
-
-O workflow é sintetizado para a demanda atual. O sistema não seleciona um template fechado; ele compõe capacidades atômicas.
-
-### 4.2 Menor grafo suficiente
-
-Mais agentes não significam mais qualidade. O Graph Architect deve gerar o menor grafo capaz de produzir evidência suficiente de conclusão.
-
-### 4.3 Qualidade comprovada
-
-Sucesso exige evidências: testes, fontes, diffs, métricas, contratos preenchidos ou critérios explícitos. “O agente acredita que terminou” não é evidência.
-
-### 4.4 Independência crítica
-
-Quando a criticidade exigir, o revisor deve ser independente do executor em modelo, contexto subjetivo, instruções ou combinação desses fatores.
-
-### 4.5 Contexto de baixo consumo
-
-Agentes recebem cápsulas específicas para seu objetivo, não o histórico integral do chat ou do projeto.
-
-### 4.6 Soberania humana
-
-O harness governa o padrão. O proprietário pode interromper, editar, substituir, pular ou forçar o fluxo. O sistema registra e explica o risco, sem iniciar substitutos silenciosamente.
-
-### 4.7 Segurança por capacidade
-
-Permissão é concedida por capacidade, escopo e tempo. Um agente não herda o acesso de outro.
-
-### 4.8 Verdade com proveniência
-
-Toda claim importante aponta para eventos, arquivos, testes, fontes ou decisões. Conflitos são representados, não escondidos.
-
-### 4.9 Open source real
-
-Framework, Runtime, Studio, protocolos e extensões essenciais são públicos. Não existe backend proprietário obrigatório.
-
-### 4.10 Reprodutibilidade
-
-Grafos, contratos, versões, políticas, agentes, contexto e artefatos podem ser exportados sem credenciais e reexecutados com rotas equivalentes.
+GraphHelm solves this by treating orchestration as a problem of compilation, typing, policies, evidence, and visual control.
 
 ---
 
-## 5. Usuários
+## 3. Vision
 
-### 5.1 Proprietário individual
+> Anyone should be able to turn a goal into a temporary organization of specialized agents, executed on their own infrastructure, with minimal context, verifiable evidence, visual control, and useful memory.
 
-Desenvolvedor, fundador, pesquisador, analista, criador ou operador que quer uma equipe de agentes em sua própria VPS.
+The product aims to become a universal framework for agentic applications, in the same way web frameworks organized interfaces, routing, state, and components. Its fundamental unit is not the chat, but the **governed work graph**.
+
+---
+
+## 4. Principles
+
+### 4.1 Dynamic harness
+
+The workflow is synthesized for the current request. The system does not select a closed template; it composes atomic capabilities.
+
+### 4.2 Smallest sufficient graph
+
+More agents does not mean more quality. The Graph Architect must generate the smallest graph capable of producing sufficient evidence of completion.
+
+### 4.3 Proven quality
+
+Success requires evidence: tests, sources, diffs, metrics, filled-in contracts, or explicit criteria. "The agent believes it's done" is not evidence.
+
+### 4.4 Critical independence
+
+When criticality demands it, the reviewer must be independent from the executor in model, subjective context, instructions, or a combination of these factors.
+
+### 4.5 Low-consumption context
+
+Agents receive capsules specific to their objective, not the full chat or project history.
+
+### 4.6 Human sovereignty
+
+The harness governs the default. The owner can interrupt, edit, replace, skip, or force the flow. The system records and explains the risk, without silently starting substitutes.
+
+### 4.7 Security by capability
+
+Permission is granted by capability, scope, and time. An agent does not inherit another's access.
+
+### 4.8 Truth with provenance
+
+Every important claim points to events, files, tests, sources, or decisions. Conflicts are represented, not hidden.
+
+### 4.9 Real open source
+
+Framework, Runtime, Studio, protocols, and essential extensions are public. There is no mandatory proprietary backend.
+
+### 4.10 Reproducibility
+
+Graphs, contracts, versions, policies, agents, context, and artifacts can be exported without credentials and re-executed with equivalent routes.
+
+---
+
+## 5. Users
+
+### 5.1 Individual owner
+
+Developer, founder, researcher, analyst, creator, or operator who wants a team of agents on their own VPS.
 
 ### 5.2 Graph Engineer
 
-Pessoa que registra capacidades, define contratos, cria skills, policies, evaluators, adapters e componentes visuais para o ecossistema.
+Person who registers capabilities, defines contracts, and creates skills, policies, evaluators, adapters, and visual components for the ecosystem.
 
-### 5.3 Maintainer de projeto open source
+### 5.3 Open source project maintainer
 
-Usa a plataforma para triagem, implementação, testes, revisão, segurança, documentação e release.
+Uses the platform for triage, implementation, testing, review, security, documentation, and release.
 
-### 5.4 Equipe futura
+### 5.4 Future team
 
-Owner, Admin, Operator, Developer, Reviewer, Viewer, Billing, Service Account e funções customizadas. A V1 é single-user, mas o modelo de identidade nasce preparado.
+Owner, Admin, Operator, Developer, Reviewer, Viewer, Billing, Service Account, and custom roles. V1 is single-user, but the identity model is born prepared for this.
 
 ---
 
 ## 6. Jobs to be done
 
-- “Quando eu descrevo um objetivo, quero que o sistema monte o processo certo sem eu configurar dez agentes manualmente.”
-- “Quando uma tarefa ficar mais arriscada do que parecia, quero que o grafo se adapte e proponha novas verificações.”
-- “Quando eu discordar do workflow, quero editar o diagrama e continuar do meu jeito.”
-- “Quando um agente precisar de contexto, quero que ele receba apenas o necessário.”
-- “Quando o trabalho terminar, quero saber o que foi feito, por quem, com qual modelo, quanto custou e quais evidências sustentam o resultado.”
-- “Quando ninguém estiver usando o projeto, quero que o sistema organize memória e documentação sem reescrever a história.”
-- “Quando uma assinatura de modelo atingir o limite, quero que a execução espere, sem começar a gastar minha API automaticamente.”
-- “Quando um agente criado para meu projeto se provar útil, quero que ele fique disponível para futuras tarefas.”
+- "When I describe a goal, I want the system to assemble the right process without me having to manually configure ten agents."
+- "When a task turns out riskier than it looked, I want the graph to adapt and propose new checks."
+- "When I disagree with the workflow, I want to edit the diagram and continue my way."
+- "When an agent needs context, I want it to receive only what's necessary."
+- "When the work is done, I want to know what was done, by whom, with which model, how much it cost, and what evidence supports the result."
+- "When no one is using the project, I want the system to organize memory and documentation without rewriting history."
+- "When a model subscription hits its limit, I want execution to wait, without automatically starting to spend my API budget."
+- "When an agent created for my project proves useful, I want it to stay available for future tasks."
 
 ---
 
-## 7. Escopo funcional integral
+## 7. Full functional scope
 
 ### 7.1 Framework
 
-- Universal Intake e Command Router;
+- Universal Intake and Command Router;
 - Task Profiler;
 - Capability Registry;
-- Agent Synthesizer e Agent Matcher;
+- Agent Synthesizer and Agent Matcher;
 - Harness Compiler;
 - Graph Architect;
-- Graph DSL tipada;
-- Graph Linter e Graph Simulator;
+- Typed Graph DSL;
+- Graph Linter and Graph Simulator;
 - Graph Engine;
-- Graph Governor e mutações versionadas;
+- Graph Governor and versioned mutations;
 - Policy Engine;
 - Quality/Evaluation Engine;
 - Context Compiler;
@@ -148,50 +148,50 @@ Owner, Admin, Operator, Developer, Reviewer, Viewer, Billing, Service Account e 
 - Tool Broker;
 - Sandbox/Isolation Orchestrator;
 - Project Agent Registry;
-- Skill e Plugin Runtime;
-- observabilidade e replay.
+- Skill and Plugin Runtime;
+- observability and replay.
 
-### 7.2 Runtime na VPS
+### 7.2 Runtime on the VPS
 
-- instalação e atualização por SSH + Docker;
-- daemon de execução;
+- installation and update via SSH + Docker;
+- execution daemon;
 - worker manager;
-- containers, worktrees e sandboxes;
+- containers, worktrees, and sandboxes;
 - credential broker;
-- scheduler e cron de Dreams;
-- stores de eventos, artefatos e índices;
-- APIs públicas;
-- streaming de eventos ao Studio;
-- checkpoints, pause, resume, cancel e rollback;
-- health checks e autodiagnóstico.
+- Dreams scheduler and cron;
+- event, artifact, and index stores;
+- public APIs;
+- event streaming to the Studio;
+- checkpoints, pause, resume, cancel, and rollback;
+- health checks and self-diagnosis.
 
-### 7.3 Studio local
+### 7.3 Local Studio
 
-- onboarding e conexão com VPS;
-- gerenciamento de workspace/projeto/subprojeto;
-- chat contextual;
-- canvas de grafo operacional;
-- editor integral de nós e arestas;
-- painel de agentes em execução;
-- explorador de arquivos e artefatos;
-- documentação viva;
+- onboarding and VPS connection;
+- workspace/project/subproject management;
+- contextual chat;
+- operational graph canvas;
+- full node and edge editor;
+- running agents panel;
+- file and artifact explorer;
+- living documentation;
 - Knowledge Graph explorer;
 - Project Agent Registry;
 - capability/skill/plugin registry;
 - model connections;
-- policies e segurança;
+- policies and security;
 - Dreams Center;
-- event log, custos e métricas;
-- exportação/reprodução.
+- event log, costs, and metrics;
+- export/reproduction.
 
 ---
 
-## 8. Topologia
+## 8. Topology
 
 ```mermaid
 flowchart LR
-    U[Usuário] --> S[Studio local]
-    S <-->|mTLS / SSH bootstrap / API pública| R[Runtime na VPS]
+    U[User] --> S[Local Studio]
+    S <-->|mTLS / SSH bootstrap / public API| R[Runtime on the VPS]
     R --> G[Graph Engine]
     R --> C[Context + Knowledge]
     R --> E[Event & Artifact Store]
@@ -200,20 +200,20 @@ flowchart LR
     G --> M[Universal Model Gateway]
     M --> OAI[Codex / OpenAI]
     M --> ANT[Claude Code / Anthropic]
-    M --> OR[OpenRouter e APIs BYOK]
-    M --> LOC[Modelos locais]
+    M --> OR[OpenRouter and BYOK APIs]
+    M --> LOC[Local models]
     X --> W[Worktrees / Containers / MicroVMs]
 ```
 
-O Studio é control plane. A VPS é execution plane e data plane. Nenhum código-fonte precisa passar por infraestrutura do mantenedor do projeto.
+The Studio is the control plane. The VPS is the execution plane and data plane. No source code needs to pass through the project maintainer's infrastructure.
 
 ---
 
-## 9. Fluxo principal
+## 9. Main flow
 
 ```mermaid
 flowchart TD
-    A[Prompt ou comando] --> B[Command Router]
+    A[Prompt or command] --> B[Command Router]
     B --> C[Task Profiler]
     C --> D[Capability Discovery]
     D --> E[Agent Matching / Synthesis]
@@ -221,43 +221,43 @@ flowchart TD
     F --> G[Graph Architect]
     G --> H[Policy Enforcement]
     H --> I[Graph Lint + Simulation]
-    I --> J[Publicar Graph v1]
-    J --> K[Executar nós]
-    K --> L[Monitorar sinais]
-    L --> M{Mudança necessária?}
-    M -->|não| N[Quality Gates]
-    M -->|sim| O[Graph Governor]
+    I --> J[Publish Graph v1]
+    J --> K[Execute nodes]
+    K --> L[Monitor signals]
+    L --> M{Change needed?}
+    M -->|no| N[Quality Gates]
+    M -->|yes| O[Graph Governor]
     O --> P[Graph vN+1]
     P --> K
-    N --> Q[Atualizar conhecimento e docs]
-    Q --> R[Entrega auditável]
+    N --> Q[Update knowledge and docs]
+    Q --> R[Auditable delivery]
 ```
 
-### 9.1 Classificação contínua
+### 9.1 Continuous classification
 
-A classificação inicial nunca é definitiva. O runtime, agentes, testes e ferramentas podem emitir sinais. O Graph Governor reavalia risco, profundidade, isolamento, contexto e gates.
+The initial classification is never final. The runtime, agents, tests, and tools can emit signals. The Graph Governor reassesses risk, depth, isolation, context, and gates.
 
-### 9.2 Expansões propostas
+### 9.2 Proposed expansions
 
-Em Autopilot, expansões normais podem ser aplicadas automaticamente conforme política. Quando o usuário intervier ou estiver em Supervised/Manual, novos agentes aparecem como ghost nodes. Eles não começam, não recebem contexto e não consomem tokens até aprovação.
+In Autopilot, normal expansions can be applied automatically according to policy. When the user intervenes or is in Supervised/Manual mode, new agents appear as ghost nodes. They do not start, do not receive context, and do not consume tokens until approved.
 
-### 9.3 Limites
+### 9.3 Limits
 
-A execução para quando:
+Execution stops when:
 
-- conclui os critérios;
-- usuário pausa ou cancela;
-- modelo fica sem capacidade e não há troca manual;
-- limite de mutações, retries, custo ou tempo é atingido;
-- existe conflito não resolvido;
-- falta uma decisão genuinamente não inferível;
-- ocorre impossibilidade técnica.
+- it meets the criteria;
+- the user pauses or cancels;
+- a model runs out of capacity and there is no manual switch;
+- the mutation, retry, cost, or time limit is reached;
+- there is an unresolved conflict;
+- a genuinely non-inferable decision is missing;
+- a technical impossibility occurs.
 
 ---
 
-## 10. Harness dinâmico
+## 10. Dynamic harness
 
-O harness é um programa compilado para a execução. Ele contém:
+The harness is a program compiled for the execution. It contains:
 
 ```yaml
 harness_manifest:
@@ -274,59 +274,59 @@ harness_manifest:
   completion_contract: ...
 ```
 
-### 10.1 Entradas
+### 10.1 Inputs
 
-- objetivo e critérios do usuário;
-- estado do projeto;
-- contexto canônico;
-- catálogo de capacidades;
-- agentes persistentes;
-- skills e tools;
-- modelos e capacidade disponível;
-- políticas;
-- infraestrutura;
-- orçamento, urgência e preferências.
+- user's goal and criteria;
+- project state;
+- canonical context;
+- capability catalog;
+- persistent agents;
+- skills and tools;
+- models and available capacity;
+- policies;
+- infrastructure;
+- budget, urgency, and preferences.
 
-### 10.2 Saídas
+### 10.2 Outputs
 
-- grafo tipado;
-- funções e contratos de cada nó;
-- seleção de agentes e modelos;
-- cápsulas de contexto;
-- permissões e isolation tiers;
-- gates e evidências necessárias;
-- plano de retries e compensação;
-- estimativa de custo/tempo;
-- regras de mutação.
+- typed graph;
+- functions and contracts for each node;
+- agent and model selection;
+- context capsules;
+- permissions and isolation tiers;
+- gates and required evidence;
+- retry and compensation plan;
+- cost/time estimate;
+- mutation rules.
 
-### 10.3 O que é fixo
+### 10.3 What is fixed
 
-- tipos e contratos;
-- políticas rígidas;
-- capabilities registradas;
-- permissões disponíveis;
-- schemas de eventos;
-- regras de lint;
-- invariantes de segurança.
+- types and contracts;
+- rigid policies;
+- registered capabilities;
+- available permissions;
+- event schemas;
+- lint rules;
+- security invariants.
 
-### 10.4 O que é dinâmico
+### 10.4 What is dynamic
 
-- número e papel dos agentes;
-- topologia;
-- paralelismo;
-- modelos;
-- contexto;
-- testes;
-- revisões;
+- number and role of agents;
+- topology;
+- parallelism;
+- models;
+- context;
+- tests;
+- reviews;
 - retries;
-- documentação a atualizar;
-- isolamento acima do mínimo.
+- documentation to update;
+- isolation above the minimum.
 
 ---
 
-## 11. Grafo operacional
+## 11. Operational graph
 
-### 11.1 Tipos de nós
+### 11.1 Node types
 
 - `agent`
 - `tool`
@@ -345,208 +345,208 @@ harness_manifest:
 - `rollback`
 - `artifact_transform`
 
-### 11.2 Tipos de aresta
+### 11.2 Edge types
 
-- controle;
-- dados;
-- evidência;
-- condicional;
-- evento;
-- falha;
-- compensação;
-- aprovação humana.
+- control;
+- data;
+- evidence;
+- conditional;
+- event;
+- failure;
+- compensation;
+- human approval.
 
-### 11.3 Estados
+### 11.3 States
 
 `draft`, `linting`, `ready`, `queued`, `running`, `waiting_input`, `waiting_capacity`, `paused`, `blocked`, `succeeded`, `failed`, `waived`, `skipped`, `cancelled`, `invalidated`.
 
-### 11.4 Edição transacional
+### 11.4 Transactional editing
 
-Mudanças visuais são imediatas. Mudanças operacionais criam `Graph Draft`. O Studio mostra nós/arestas adicionados, removidos, outputs invalidados, gates ignorados e branches pausadas. Após confirmação, o runtime cria nova versão atômica.
+Visual changes are immediate. Operational changes create a `Graph Draft`. The Studio shows added and removed nodes/edges, invalidated outputs, skipped gates, and paused branches. After confirmation, the runtime creates a new atomic version.
 
-### 11.5 Soberania
+### 11.5 Sovereignty
 
-O usuário pode conectar implementação diretamente ao deploy. O sistema deve:
+The user can connect implementation directly to deployment. The system must:
 
-1. mostrar gates ignorados;
-2. mostrar obrigações não atendidas;
-3. registrar waiver;
-4. permitir manter pausado;
-5. executar se tecnicamente possível.
+1. show skipped gates;
+2. show unmet obligations;
+3. record a waiver;
+4. allow staying paused;
+5. execute if technically possible.
 
 ---
 
-## 12. Agentes
+## 12. Agents
 
-### 12.1 Definição, runtime e experiência
+### 12.1 Definition, runtime, and experience
 
-- **Agent Definition:** configuração persistente e versionada.
-- **Agent Runtime:** instância temporária dentro de um nó.
-- **Agent Experience:** memórias resumidas, avaliações e histórico.
+- **Agent Definition:** persistent, versioned configuration.
+- **Agent Runtime:** temporary instance within a node.
+- **Agent Experience:** summarized memories, evaluations, and history.
 
-### 12.2 Síntese
+### 12.2 Synthesis
 
-O sistema pode inventar o agente necessário, mas precisa declarar:
+The system can invent the necessary agent, but must declare:
 
-- objetivo;
+- objective;
 - capabilities;
-- ferramentas permitidas;
-- ações proibidas;
+- allowed tools;
+- forbidden actions;
 - input/output schemas;
-- perfil de modelo;
-- orçamento de contexto;
-- critérios de conclusão;
-- evidências obrigatórias;
-- isolation tier mínimo.
+- model profile;
+- context budget;
+- completion criteria;
+- required evidence;
+- minimum isolation tier.
 
-### 12.3 Reuso
+### 12.3 Reuse
 
-O Agent Matcher pesquisa o Project Agent Registry. Pode reutilizar, parametrizar, versionar, derivar ou criar novo agente. O histórico de desempenho nunca substitui a verificação da compatibilidade atual.
+The Agent Matcher searches the Project Agent Registry. It can reuse, parameterize, version, derive, or create a new agent. Performance history never replaces verification of current compatibility.
 
-### 12.4 Memória
+### 12.4 Memory
 
-Memórias possuem origem, evidência, confiança, validade, expiração e status: `candidate`, `validated`, `deprecated`, `contradicted`, `expired`.
+Memories have origin, evidence, confidence, validity, expiration, and status: `candidate`, `validated`, `deprecated`, `contradicted`, `expired`.
 
 ---
 
-## 13. Contexto e conhecimento
+## 13. Context and knowledge
 
 ### 13.1 Context Capsule
 
-Cada nó recebe:
+Each node receives:
 
 1. Project Kernel;
 2. Task Capsule;
 3. Node Capsule;
 4. Evidence Bundle;
 5. Dependency Outputs;
-6. Agent Experience válida.
+6. valid Agent Experience.
 
-O agente pode pedir expansão justificando informação faltante e impacto esperado.
+The agent can request expansion by justifying missing information and the expected impact.
 
-### 13.2 Três camadas de verdade
+### 13.2 Three layers of truth
 
-1. **Evidence/Event Store:** eventos e evidências imutáveis.
-2. **Project Knowledge Graph:** entidades, claims, relações, conflitos e temporalidade.
-3. **Living Documentation:** PRDs, arquitetura, guias e runbooks legíveis.
+1. **Evidence/Event Store:** immutable events and evidence.
+2. **Project Knowledge Graph:** entities, claims, relations, conflicts, and temporality.
+3. **Living Documentation:** PRDs, architecture, guides, and runbooks in readable form.
 
-### 13.3 Regras
+### 13.3 Rules
 
-- documentos não apagam eventos;
-- claims novas podem confirmar, contradizer ou substituir;
-- resumos carregam proveniência;
-- conflitos permanecem visíveis;
-- mudanças invalidam somente fragmentos dependentes;
-- revisor não recebe automaticamente a opinião interna do executor.
+- documents do not erase events;
+- new claims can confirm, contradict, or replace;
+- summaries carry provenance;
+- conflicts remain visible;
+- changes invalidate only dependent fragments;
+- the reviewer does not automatically receive the executor's internal opinion.
 
 ---
 
 ## 14. Dreams Engine
 
-O Dreams Engine roda quando o projeto está ocioso ou por agendamento. Ele pode:
+The Dreams Engine runs when the project is idle or on a schedule. It can:
 
-- consolidar documentos;
-- reclassificar claims;
-- marcar contradições;
-- expirar memórias;
-- deduplicar agentes;
-- sugerir versões melhores de skills;
-- otimizar índices e recuperação;
-- avaliar padrões de harness;
-- gerar tarefas fundamentadas.
+- consolidate documents;
+- reclassify claims;
+- flag contradictions;
+- expire memories;
+- deduplicate agents;
+- suggest better versions of skills;
+- optimize indexes and retrieval;
+- evaluate harness patterns;
+- generate well-founded tasks.
 
-Toda mudança cognitiva ocorre em Shadow Workspace:
+Every cognitive change happens in a Shadow Workspace:
 
 `Dream Planner → Impact Classifier → Evidence Validator → Policy Engine → Shadow Change → Tests → Independent Critic → Atomic Commit/Discard`.
 
-Ele não altera código diretamente. Para bugs, dívida técnica ou oportunidades, cria uma tarefa normal `dream_generated`, reclassificada do zero pelo harness.
+It does not change code directly. For bugs, technical debt, or opportunities, it creates a normal `dream_generated` task, reclassified from scratch by the harness.
 
 ---
 
 ## 15. Universal Model Gateway
 
-### 15.1 Rotas
+### 15.1 Routes
 
-- agregadores, como OpenRouter;
-- APIs diretas BYOK;
-- runtimes nativos autenticados oficialmente;
-- endpoints OpenAI-compatible;
-- modelos locais;
+- aggregators, such as OpenRouter;
+- direct BYOK APIs;
+- officially authenticated native runtimes;
+- OpenAI-compatible endpoints;
+- local models;
 - cloud enterprise adapters.
 
-### 15.2 Seleção
+### 15.2 Selection
 
-O roteador pontua adequação, qualidade histórica, contexto, ferramentas, latência, custo, quota, privacidade, independência e disponibilidade. Não existe regra fixa “modelo X sempre planeja”.
+The router scores fit, historical quality, context, tools, latency, cost, quota, privacy, independence, and availability. There is no fixed rule like "model X always plans."
 
-### 15.3 Assinaturas
+### 15.3 Subscriptions
 
-Runtimes de assinatura devem usar fluxo oficial do provedor. Não é permitido scraping de chat web, importação de cookie ou captura de senha. Credenciais ficam no broker da VPS, fora do sandbox de código.
+Subscription runtimes must use the provider's official flow. Web chat scraping, cookie import, or password capture are not permitted for unofficial automation. Credentials stay in the VPS broker, outside the code sandbox.
 
-### 15.4 Capacidade esgotada
+### 15.4 Exhausted capacity
 
-Quando uma assinatura atinge limite:
+When a subscription hits its limit:
 
 - checkpoint;
-- estado `waiting_for_model_capacity`;
-- nenhuma troca para BYOK automática;
-- usuário escolhe esperar, reconectar, trocar rota ou cancelar;
-- nós independentes podem terminar;
-- retomada preserva outputs válidos.
+- `waiting_for_model_capacity` state;
+- no automatic switch to BYOK;
+- the user chooses to wait, reconnect, switch route, or cancel;
+- independent nodes can finish;
+- resumption preserves valid outputs.
 
 ---
 
-## 16. Segurança e isolamento
+## 16. Security and isolation
 
 ### 16.1 Tiers
 
-- **Tier 0:** leitura, planejamento, pesquisa e crítica sem escrita/shell destrutivo.
-- **Tier 1:** worktree/snapshot + container efêmero.
-- **Tier 2:** containers segmentados por agente/grupo, rede e filesystem próprios.
-- **Tier 3:** microVM ou sandbox reforçada para código desconhecido ou alto risco.
+- **Tier 0:** reading, planning, research, and critique without destructive write/shell access.
+- **Tier 1:** worktree/snapshot + ephemeral container.
+- **Tier 2:** containers segmented by agent/group, with their own network and filesystem.
+- **Tier 3:** microVM or hardened sandbox for unknown or high-risk code.
 
-O tier pode subir, nunca descer abaixo do mínimo da policy.
+The tier can rise, never fall below the policy's minimum.
 
 ### 16.2 Capability leases
 
-Cada acesso define capacidade, escopo, duração, origem e revogação. Segredos são injetados apenas no broker ou processo autorizado.
+Each access defines capability, scope, duration, origin, and revocation. Secrets are injected only into the broker or an authorized process.
 
-### 16.3 Ameaças prioritárias
+### 16.3 Priority threats
 
-- prompt injection em repositórios e fontes;
-- exfiltração de credenciais;
-- dependências maliciosas;
-- escalada via Docker socket;
-- bypass de policy;
+- prompt injection in repositories and sources;
+- credential exfiltration;
+- malicious dependencies;
+- escalation via the Docker socket;
+- policy bypass;
 - context poisoning;
-- memória obsoleta tratada como verdade;
-- agente aprovando próprio resultado;
-- expansão infinita de grafo;
-- logs contendo segredos;
-- plugin com permissões excessivas.
+- outdated memory treated as truth;
+- an agent approving its own result;
+- infinite graph expansion;
+- logs containing secrets;
+- a plugin with excessive permissions.
 
 ---
 
 ## 17. Studio
 
-Layout principal inspirado no conceito fornecido:
+Main layout inspired by the concept provided:
 
 ```text
 ┌─────────────┬────────────────────────────────────┬──────────────┬──────────────┐
-│ Projetos    │ Canvas do grafo                    │ Agentes      │ Docs/Files   │
-│ e escopos   │                                    │ em execução  │ Artefatos    │
-│             │                                    │              │ Imagens      │
+│ Projects    │ Graph canvas                        │ Running      │ Docs/Files   │
+│ and scopes  │                                    │ agents       │ Artifacts    │
+│             │                                    │              │ Images       │
 │             ├────────────────────────────────────┤              │              │
-│             │ Chat contextual + comandos         │              │              │
+│             │ Contextual chat + commands         │              │              │
 └─────────────┴────────────────────────────────────┴──────────────┴──────────────┘
 ```
 
-Painéis são redimensionáveis e recolhíveis. O grafo é o centro operacional, não uma decoração.
+Panels are resizable and collapsible. The graph is the operational center, not a decoration.
 
-Telas obrigatórias:
+Required screens:
 
 - onboarding;
-- conexão de VPS;
-- conexão de modelos;
+- VPS connection;
+- model connection;
 - workspace home;
 - project studio;
 - node inspector;
@@ -564,150 +564,150 @@ Telas obrigatórias:
 
 ## 18. Command Router
 
-Cada mensagem é classificada por intenção, alvo e confiança:
+Each message is classified by intent, target, and confidence:
 
-- consulta sem mutação;
-- instrução para nó;
-- mutação de grafo;
-- nova execução;
-- decisão humana;
-- atualização documental;
-- conversa sem efeito operacional.
+- query without mutation;
+- instruction for a node;
+- graph mutation;
+- new execution;
+- human decision;
+- documentation update;
+- conversation with no operational effect.
 
-Direcionamento explícito:
+Explicit targeting:
 
-`@projeto`, `@execução`, `@graph`, `@nó`, `@agente`, `@documento`, `@harness`.
+`@project`, `@execution`, `@graph`, `@node`, `@agent`, `@document`, `@harness`.
 
-Mutações viram Graph Draft. Ambiguidades mostram interpretações. Instruções simples para nó selecionado podem ser aplicadas sem alterar topologia.
+Mutations become a Graph Draft. Ambiguities show interpretations. Simple instructions for a selected node can be applied without changing the topology.
 
 ---
 
-## 19. Hierarquia
+## 19. Hierarchy
 
 ```text
 Workspace
-├── políticas e conexões compartilhadas
-├── Projeto
+├── shared policies and connections
+├── Project
 │   ├── Knowledge Graph
-│   ├── documentação
-│   ├── agentes
-│   ├── execuções
-│   ├── repositórios/fontes
-│   └── Subprojeto
-└── Projeto
+│   ├── documentation
+│   ├── agents
+│   ├── executions
+│   ├── repositories/sources
+│   └── Subproject
+└── Project
 ```
 
-Herança é seletiva, com visibilidade e proveniência explícitas. Conteúdo de irmãos não entra automaticamente no contexto.
+Inheritance is selective, with explicit visibility and provenance. Sibling content does not automatically enter context.
 
 ---
 
-## 20. Open source e governança
+## 20. Open source and governance
 
-### 20.1 Garantias
+### 20.1 Guarantees
 
-- clone e self-host completos;
-- API pública para tudo que o Studio faz;
-- CLI e SDKs públicos;
-- telemetria externa opt-in;
-- schemas e protocolos versionados;
-- plugins inspecionáveis;
-- exportação sem vendor lock-in.
+- full clone and self-host;
+- public API for everything the Studio does;
+- public CLI and SDKs;
+- opt-in external telemetry;
+- versioned schemas and protocols;
+- inspectable plugins;
+- export with no vendor lock-in.
 
-### 20.2 Licença
+### 20.2 License
 
-- edição comunitária: AGPLv3;
-- licença comercial: contrato alternativo;
-- mesma base de código;
-- ICLA/CCLA não exclusivos;
-- textos jurídicos validados antes do lançamento.
+- community edition: AGPLv3;
+- commercial license: alternative contract;
+- same codebase;
+- non-exclusive ICLA/CCLA;
+- legal texts validated before launch.
 
-### 20.3 Processo
+### 20.3 Process
 
-- RFCs públicas;
+- public RFCs;
 - ADRs;
 - SemVer;
-- changelog de contratos;
+- contract changelog;
 - conformance suite;
 - security policy;
-- roadmap aberto;
-- benchmark reproduzível.
+- open roadmap;
+- reproducible benchmark.
 
 ---
 
-## 21. Requisitos não funcionais
+## 21. Non-functional requirements
 
-- self-host sem serviço central obrigatório;
-- eventos idempotentes e ordenáveis por execução;
-- resume sem repetir nó concluído válido;
-- segredos ausentes de logs e exports;
-- cada output com provenance;
-- graph versions imutáveis;
-- APIs compatíveis com automação externa;
-- 1.000 nós renderizados com interação fluida no Studio de referência;
-- status de execução propagado ao Studio em até 500 ms na rede local saudável;
-- falha do Studio não encerra runtime;
-- falha do runtime preserva checkpoint durável;
-- plugins não confiáveis isolados;
-- import/export com manifest versionado;
-- acessibilidade de teclado e leitores de tela.
-
----
-
-## 22. Métricas de produto
-
-- taxa de tarefas concluídas com evidência suficiente;
-- tempo até primeiro grafo útil;
-- redução de tokens contra baseline de contexto integral;
-- precisão de recuperação de contexto;
-- taxa de gates que encontram problemas reais;
-- taxa de falsos positivos de revisores;
-- frequência de overrides manuais;
-- retrabalho após conclusão;
-- custo por resultado aceito;
-- tempo de recuperação após pausa/falha;
-- reutilização de agentes e skills;
-- contradições resolvidas pelo Dreams sem regressão;
-- sucesso de reprodução de execution manifests.
+- self-host with no mandatory central service;
+- idempotent events, orderable per execution;
+- resume without repeating a validly completed node;
+- secrets absent from logs and exports;
+- every output with provenance;
+- immutable graph versions;
+- APIs compatible with external automation;
+- 1,000 nodes rendered with smooth interaction in the reference Studio;
+- execution status propagated to the Studio within 500 ms on a healthy local network;
+- Studio failure does not stop the runtime;
+- runtime failure preserves a durable checkpoint;
+- untrusted plugins isolated;
+- import/export with a versioned manifest;
+- keyboard and screen reader accessibility.
 
 ---
 
-## 23. Não objetivos
+## 22. Product metrics
 
-- prometer correção absoluta;
-- usar contas de chat por automação não oficial;
-- esconder decisões de roteamento;
-- executar tudo no mesmo container;
-- manter memória infinita por agente;
-- obrigar marketplace ou cloud central;
-- impedir o proprietário de aceitar risco consciente;
-- substituir revisão jurídica, médica ou financeira profissional;
-- definir workflows fechados como fonte da inteligência do produto.
-
----
-
-## 24. Primeira fatia vertical recomendada
-
-Embora a documentação cubra o produto integral, a primeira entrega futura deverá provar a arquitetura de ponta a ponta em engenharia de software:
-
-`prompt → harness → grafo visual → agentes → código → testes/crítica → docs → entrega auditável`.
-
-Inclui Studio, VPS, Model Gateway, Graph Engine, Context Compiler, Event Store, Agent Registry, Tier 0/1, docs vivas, Dreams básico e APIs públicas. Os mesmos contratos precisam suportar os domínios futuros sem refatoração conceitual.
+- rate of tasks completed with sufficient evidence;
+- time to first useful graph;
+- token reduction versus full-context baseline;
+- context retrieval accuracy;
+- rate of gates that catch real problems;
+- reviewer false positive rate;
+- frequency of manual overrides;
+- rework after completion;
+- cost per accepted result;
+- recovery time after pause/failure;
+- agent and skill reuse;
+- contradictions resolved by Dreams without regression;
+- success rate of execution manifest reproduction.
 
 ---
 
-## 25. Critério de visão cumprida
+## 23. Non-goals
 
-A visão é cumprida quando um usuário consegue:
+- promising absolute correctness;
+- using chat accounts for unofficial automation;
+- hiding routing decisions;
+- running everything in the same container;
+- keeping infinite memory per agent;
+- requiring a marketplace or central cloud;
+- preventing the owner from consciously accepting risk;
+- replacing professional legal, medical, or financial review;
+- defining closed workflows as the source of the product's intelligence.
 
-1. instalar o Runtime na própria VPS;
-2. conectar modelos por BYOK, assinatura oficial ou local;
-3. abrir um projeto multimodal;
-4. escrever uma demanda aberta;
-5. ver um grafo customizado ser compilado;
-6. entender cada agente, modelo, contexto, permissão e gate;
-7. editar o workflow em execução;
-8. pausar e continuar sem perder trabalho;
-9. receber resultado sustentado por evidências;
-10. ver documentação e conhecimento atualizados;
-11. permitir que Dreams mantenha o projeto durante ociosidade;
-12. exportar e reproduzir a execução sem depender do mantenedor.
+---
+
+## 24. Recommended first vertical slice
+
+Although the documentation covers the full product, the first future delivery should prove the architecture end-to-end in software engineering:
+
+`prompt → harness → visual graph → agents → code → tests/critique → docs → auditable delivery`.
+
+It includes Studio, VPS, Model Gateway, Graph Engine, Context Compiler, Event Store, Agent Registry, Tier 0/1, living docs, basic Dreams, and public APIs. The same contracts must support future domains without conceptual refactoring.
+
+---
+
+## 25. Vision-fulfilled criterion
+
+The vision is fulfilled when a user is able to:
+
+1. install the Runtime on their own VPS;
+2. connect models via BYOK, official subscription, or local;
+3. open a multimodal project;
+4. write an open-ended request;
+5. see a customized graph get compiled;
+6. understand each agent, model, context, permission, and gate;
+7. edit the workflow while it's running;
+8. pause and resume without losing work;
+9. receive a result backed by evidence;
+10. see documentation and knowledge updated;
+11. let Dreams maintain the project during idle time;
+12. export and reproduce the execution without depending on the maintainer.

@@ -1,46 +1,46 @@
-# GraphHelm — decisão de nome
+# GraphHelm — naming decision
 
 ## Status
 
-**Nome de produto selecionado para desenvolvimento:** `GraphHelm`.
+**Product name selected for development:** `GraphHelm`.
 
-Esta decisão define o nome de trabalho do framework, do Runtime e do Studio. Ela não substitui pesquisa jurídica de marca, aquisição de domínios ou reserva de namespaces em registries antes do lançamento público.
+This decision sets the working name for the framework, the Runtime, and the Studio. It does not replace trademark legal research, domain acquisition, or namespace reservation on registries before public launch.
 
-## Por que GraphHelm
+## Why GraphHelm
 
-- **Graph** representa a abstração central do produto: cada demanda é compilada em um grafo executável, adaptativo, versionado e editável.
-- **Helm** representa direção e soberania: o harness governa a execução por padrão, enquanto o usuário permanece no comando e pode alterar o fluxo.
-- O nome funciona para software, pesquisa, automação, documentos, operações e outros domínios; não limita o sistema a agentes de programação.
-- É curto, pronunciável, técnico e adequado a um framework open source global.
+- **Graph** represents the product's central abstraction: every request is compiled into an executable, adaptive, versioned, and editable graph.
+- **Helm** represents direction and sovereignty: the harness governs execution by default, while the user remains in command and can alter the flow.
+- The name works for software, research, automation, documents, operations, and other domains; it does not limit the system to coding agents.
+- It is short, pronounceable, technical, and suitable for a global open source framework.
 
-## Posicionamento
+## Positioning
 
-**Categoria:** open-source agent operating system and control plane.
+**Category:** open-source agent operating system and control plane.
 
-**Tagline principal:**
+**Main tagline:**
 
 > The open-source control plane for governed AI agents.
 
-**Linha curta de produto:**
+**Short product line:**
 
 > Compose agents. Govern every run.
 
-**Descrição de uma frase:**
+**One-sentence description:**
 
 > GraphHelm dynamically compiles, executes, governs, and visualizes task-specific AI agent graphs on infrastructure controlled by the user.
 
-## Arquitetura da marca
+## Brand architecture
 
-- `GraphHelm Core` — Graph Engine, Harness Compiler, Policy Engine e protocolos.
-- `GraphHelm Runtime` — daemon executado na VPS do usuário.
-- `GraphHelm Studio` — interface local de chat, grafo, execução e documentação.
-- `GraphHelm CLI` — interface automatizável para projetos, grafos e runtime.
-- `GraphHelm SDK` — SDKs TypeScript e Python.
-- `GraphHelm Registry` — catálogo aberto e substituível de extensões, skills, tools e schemas.
+- `GraphHelm Core` — Graph Engine, Harness Compiler, Policy Engine, and protocols.
+- `GraphHelm Runtime` — daemon running on the user's VPS.
+- `GraphHelm Studio` — local interface for chat, graph, execution, and documentation.
+- `GraphHelm CLI` — automatable interface for projects, graphs, and runtime.
+- `GraphHelm SDK` — TypeScript and Python SDKs.
+- `GraphHelm Registry` — open, replaceable catalog of extensions, skills, tools, and schemas.
 
-## Convenções técnicas propostas
+## Proposed technical conventions
 
-Estas convenções somente devem ser publicadas após a reserva dos respectivos namespaces:
+These conventions should only be published after the respective namespaces are reserved:
 
 ```text
 GitHub organization: graphhelm
@@ -52,14 +52,14 @@ Project directory: .graphhelm/
 Primary config: graphhelm.yaml
 ```
 
-Os identificadores wire-format existentes com `p50.dev` permanecem provisoriamente válidos até uma ADR específica aprovar a migração de namespace. A primeira implementação não deve alterar identificadores públicos silenciosamente.
+Existing wire-format identifiers with `p50.dev` remain provisionally valid until a specific ADR approves the namespace migration. The first implementation must not silently change public identifiers.
 
-## Checklist antes do anúncio público
+## Checklist before public announcement
 
-1. pesquisa de marca nas jurisdições relevantes;
-2. reserva do domínio principal e variantes defensivas;
-3. reserva da organização no GitHub;
-4. reserva dos namespaces npm, PyPI e crates.io;
-5. pesquisa de nomes semelhantes em projetos de agentes, grafos, DevTools e Kubernetes;
-6. ADR de migração de `p50.dev` para o namespace definitivo;
-7. atualização atômica de schemas, exemplos, documentação e contratos gerados.
+1. trademark research in relevant jurisdictions;
+2. reservation of the primary domain and defensive variants;
+3. reservation of the GitHub organization;
+4. reservation of npm, PyPI, and crates.io namespaces;
+5. research of similar names in agent, graph, DevTools, and Kubernetes projects;
+6. ADR for migrating from `p50.dev` to the definitive namespace;
+7. atomic update of schemas, examples, documentation, and generated contracts.

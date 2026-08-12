@@ -1,24 +1,24 @@
-# GraphHelm — design aprovado
+# GraphHelm — approved design
 
 ## Status
 
-Design consolidado em 2026-08-08 e aprovado como base normativa para planejamento e implementação incremental. Este repositório ainda não contém implementação.
+Design consolidated on 2026-08-08 and approved as the normative baseline for planning and incremental implementation. This repository does not yet contain any implementation.
 
-## Visão
+## Vision
 
-GraphHelm é um sistema operacional open source para agentes de IA. O Studio roda localmente e controla um Runtime instalado via SSH + Docker na VPS do usuário. Todo pedido passa por classificação, capability discovery, síntese/reuso de agentes, compilação de contexto, arquitetura de grafo, policies, lint e execução.
+GraphHelm is an open-source operating system for AI agents. The Studio runs locally and controls a Runtime installed via SSH + Docker on the user's VPS. Every request goes through classification, capability discovery, agent synthesis/reuse, context compilation, graph architecture, policies, lint, and execution.
 
-O harness é criado por tarefa a partir de capabilities atômicas; não existem packs fixos por domínio. O grafo é adaptativo, versionado e editável. O usuário é soberano e pode pausar, remover gates ou forçar deploy, com impact report e waiver. Agentes propostos após intervenção manual não iniciam sem confirmação.
+The harness is built per task from atomic capabilities; there are no fixed domain packs. The graph is adaptive, versioned, and editable. The user is sovereign and can pause, remove gates, or force deployment, with an impact report and waiver. Agents proposed after manual intervention do not start without confirmation.
 
-O sistema usa Event Store imutável, Project Knowledge Graph e Living Documentation. Context Capsules minimizam tokens. Dreams mantém documentos, claims, memórias, agentes e skills em shadow workspace; achados de código geram tarefas normais.
+The system uses an immutable Event Store, a Project Knowledge Graph, and Living Documentation. Context Capsules minimize tokens. Dreams maintains documents, claims, memories, agents, and skills in a shadow workspace; code findings generate normal tasks.
 
-Modelos entram por Universal Model Gateway: BYOK, APIs, agregadores, runtimes oficiais de assinatura e modelos locais. Limite de assinatura pausa a execução; não há fallback pago automático.
+Models are accessed through the Universal Model Gateway: BYOK, direct APIs, aggregators, official subscription runtimes, and local models. Reaching a subscription limit pauses execution; there is no automatic paid fallback.
 
-O projeto será integralmente open source, AGPLv3 + licença comercial alternativa, com CLA não exclusivo.
+The project will be fully open source, AGPLv3 plus an alternate commercial license, with a non-exclusive CLA.
 
-## Decisões completas
+## Complete decisions
 
-Consultar:
+See:
 
 - `MASTER_PRD.md`
 - `docs/DECISION_REGISTER.md`
@@ -26,8 +26,8 @@ Consultar:
 - `docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md`
 - `docs/graph-engineer/GRAPH_DSL_SPEC.md`
 - `docs/ux/STUDIO_SPEC.md`
-- demais documentos listados em `docs/INDEX.md`.
+- the remaining documents listed in `docs/INDEX.md`.
 
-## Gate de implementação
+## Implementation gate
 
-A implementação só deve começar após revisão explícita desta documentação pelo usuário e criação de um plano separado. Este repositório não contém scaffold, código de produto ou mudanças de infraestrutura.
+Implementation should only start after explicit user review of this documentation and creation of a separate plan. This repository contains no scaffold, product code, or infrastructure changes.

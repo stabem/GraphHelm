@@ -1,312 +1,312 @@
-# Studio — especificação funcional e de interação
+# Studio — functional and interaction specification
 
-## 1. Objetivo
+## 1. Objective
 
-O Studio é o control plane local do GraphHelm. Ele reúne chat, grafo operacional, agentes em execução, documentação, arquivos, artefatos, eventos, políticas e configurações. A interface deve permitir que um usuário não especialista compreenda o workflow, enquanto oferece profundidade suficiente para um Graph Engineer editar contratos e políticas.
+Studio is GraphHelm's local control plane. It brings together chat, the operational graph, running agents, documentation, files, artifacts, events, policies, and settings. The interface must let a non-specialist user understand the workflow, while offering enough depth for a Graph Engineer to edit contracts and policies.
 
-O grafo não é uma animação ilustrativa. Cada nó representa uma unidade real de execução e cada aresta representa dependência, dados, evidência, condição ou controle.
+The graph is not an illustrative animation. Each node represents a real unit of execution, and each edge represents dependency, data, evidence, condition, or control.
 
-## 2. Estrutura principal
+## 2. Main structure
 
-Layout desktop padrão:
+Standard desktop layout:
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│ Top bar: workspace / projeto / modo / execução / conexão / busca / ações      │
+│ Top bar: workspace / project / mode / execution / connection / search / actions │
 ├───────────────┬──────────────────────────────────────┬─────────────┬─────────────┤
-│ Navegação     │ Canvas do grafo                      │ Agentes     │ Docs/Files  │
-│ Workspace     │                                      │ rodando     │ Artefatos   │
-│ Projetos      │                                      │             │ Imagens     │
-│ Execuções     │                                      │             │ Claims      │
+│ Navigation    │ Graph canvas                          │ Agents      │ Docs/Files  │
+│ Workspace     │                                       │ running     │ Artifacts   │
+│ Projects      │                                       │             │ Images      │
+│ Executions    │                                       │             │ Claims      │
 │               ├──────────────────────────────────────┤             │             │
-│               │ Chat e Command Composer              │             │             │
+│               │ Chat and Command Composer             │             │             │
 └───────────────┴──────────────────────────────────────┴─────────────┴─────────────┘
 ```
 
-Todos os painéis são redimensionáveis. O usuário pode recolher navegação, agentes ou docs para ampliar o canvas. O layout é salvo localmente por workspace.
+All panels are resizable. The user can collapse navigation, agents, or docs to expand the canvas. The layout is saved locally per workspace.
 
 
-## 2.1 Referências conceituais fornecidas
+## 2.1 Conceptual references provided
 
-- [Esboço original do Studio](../assets/original-studio-sketch.png): projetos à esquerda, grafo central, chat inferior, agentes e arquivos/documentos à direita.
-- [Referência de diagrama](../assets/graph-diagram-reference.png): nós com identidade e propriedades, arestas nomeadas e relações legíveis.
+- [Original Studio sketch](../assets/original-studio-sketch.png): projects on the left, central graph, chat at the bottom, agents and files/documents on the right.
+- [Diagram reference](../assets/graph-diagram-reference.png): nodes with identity and properties, named edges, and readable relationships.
 
-As referências orientam a organização funcional. O design visual final deve ser refinado, acessível e responsivo, sem copiar limitações do desenho manual.
+The references guide the functional organization. The final visual design must be refined, accessible, and responsive, without copying the limitations of the hand-drawn sketch.
 
-### 2.2 Larguras recomendadas
+### 2.2 Recommended widths
 
-- navegação esquerda: 240–320 px;
-- painel de agentes: 260–360 px;
-- painel docs/files: 320–480 px;
-- chat inferior: 120–360 px de altura;
-- canvas ocupa todo o restante.
+- left navigation: 240–320 px;
+- agents panel: 260–360 px;
+- docs/files panel: 320–480 px;
+- bottom chat: 120–360 px in height;
+- canvas occupies all remaining space.
 
-Esses valores são defaults, não restrições fixas.
+These values are defaults, not fixed constraints.
 
 ## 3. Top bar
 
-Componentes:
+Components:
 
-- seletor de Workspace;
-- breadcrumb `Projeto / Subprojeto`;
-- seletor de execução ativa;
-- indicador do modo: Autopilot, Supervised, Manual Graph;
-- indicador de conexão com Runtime;
-- status global: running, paused, waiting capacity, blocked, completed;
-- custo/capacidade resumida;
-- busca global;
-- botão `Novo trabalho`;
-- botão `Graph Draft` quando existir rascunho;
-- menu de exportar, replay e settings.
+- Workspace selector;
+- `Project / Subproject` breadcrumb;
+- active execution selector;
+- mode indicator: Autopilot, Supervised, Manual Graph;
+- Runtime connection indicator;
+- global status: running, paused, waiting capacity, blocked, completed;
+- summarized cost/capacity;
+- global search;
+- `New work` button;
+- `Graph Draft` button when a draft exists;
+- export, replay, and settings menu.
 
-### 3.1 Comportamento offline
+### 3.1 Offline behavior
 
-Se o Studio perder conexão:
+If Studio loses connection:
 
-- mostra banner persistente;
-- mantém leitura do último snapshot local;
-- bloqueia mutações que exigem confirmação do Runtime;
-- permite escrever drafts locais de comando;
-- reconecta automaticamente;
-- após reconectar, compara versões antes de aplicar qualquer draft.
+- it shows a persistent banner;
+- it keeps reading the last local snapshot;
+- it blocks mutations that require Runtime confirmation;
+- it allows writing local command drafts;
+- it reconnects automatically;
+- after reconnecting, it compares versions before applying any draft.
 
-## 4. Navegação lateral
+## 4. Side navigation
 
-Seções:
+Sections:
 
 1. **Workspaces**
-2. **Projetos**
-3. **Subprojetos**
-4. **Execuções**
-5. **Agentes**
-6. **Skills e capabilities**
-7. **Documentação**
+2. **Projects**
+3. **Subprojects**
+4. **Executions**
+5. **Agents**
+6. **Skills and capabilities**
+7. **Documentation**
 8. **Dreams**
-9. **Modelos**
-10. **Policies e segurança**
-11. **Eventos e métricas**
-12. **Configurações**
+9. **Models**
+10. **Policies and security**
+11. **Events and metrics**
+12. **Settings**
 
-Cada projeto mostra badges de execuções ativas, blockers, docs desatualizados, dreams pendentes e conexão.
+Each project shows badges for active executions, blockers, stale docs, pending dreams, and connection status.
 
-## 5. Canvas do grafo
+## 5. Graph canvas
 
-### 5.1 Anatomia de um nó
+### 5.1 Anatomy of a node
 
 ```text
 ┌─────────────────────────────────────┐
-│ ícone  Nome do nó              status│
-│ Agente • Modelo • isolation tier    │
+│ icon  Node name                status│
+│ Agent • Model • isolation tier      │
 ├─────────────────────────────────────┤
-│ objetivo resumido                   │
-│ progresso / etapa / última ação     │
+│ summarized objective                │
+│ progress / step / last action       │
 ├─────────────────────────────────────┤
-│ contexto 12k | 3 tools | 04:21      │
-│ evidência 4/6 | retries 0/2         │
+│ context 12k | 3 tools | 04:21       │
+│ evidence 4/6 | retries 0/2          │
 └─────────────────────────────────────┘
 ```
 
-Elementos opcionais:
+Optional elements:
 
-- badge `GATE`;
-- badge `MANUAL OVERRIDE`;
-- badge `DREAM GENERATED`;
-- badge `PROPOSED` para ghost node;
-- indicador de output novo;
-- indicador de contexto expandido;
-- lock quando nó já está materializado e válido;
-- warning de output invalidado.
+- `GATE` badge;
+- `MANUAL OVERRIDE` badge;
+- `DREAM GENERATED` badge;
+- `PROPOSED` badge for ghost node;
+- new output indicator;
+- expanded context indicator;
+- lock when the node is already materialized and valid;
+- invalidated output warning.
 
-### 5.2 Estados visuais
+### 5.2 Visual states
 
-- draft: borda tracejada neutra;
-- ghost/proposed: 50% de opacidade, tracejado;
-- queued: indicador discreto;
-- running: pulso ou progresso reduzido, respeitando reduced motion;
-- waiting input: ícone humano;
-- waiting capacity: ícone de relógio/quota;
-- paused: ícone pause;
-- blocked: warning com causa;
-- succeeded: check;
-- failed: erro;
-- waived: check com ressalva;
-- skipped: transparência;
-- invalidated: hatch/risco e badge.
+- draft: neutral dashed border;
+- ghost/proposed: 50% opacity, dashed;
+- queued: subtle indicator;
+- running: pulse or reduced progress indicator, respecting reduced motion;
+- waiting input: human icon;
+- waiting capacity: clock/quota icon;
+- paused: pause icon;
+- blocked: warning with cause;
+- succeeded: check mark;
+- failed: error;
+- waived: check mark with caveat;
+- skipped: transparency;
+- invalidated: hatching/strikethrough and badge.
 
-Cor nunca é o único meio de indicar estado.
+Color is never the only means of indicating state.
 
-### 5.3 Arestas
+### 5.3 Edges
 
-Cada aresta pode exibir:
+Each edge can display:
 
-- label de contrato;
-- condição;
-- tipo: data, control, evidence, event, failure, compensation;
-- estado do payload;
-- contagem de artefatos;
-- incompatibilidade de schema;
-- breakpoint manual.
+- contract label;
+- condition;
+- type: data, control, evidence, event, failure, compensation;
+- payload state;
+- artifact count;
+- schema mismatch;
+- manual breakpoint.
 
-Ao passar o mouse, mostra origem, destino, condição, payload e última travessia.
+On hover, it shows origin, destination, condition, payload, and last traversal.
 
-### 5.4 Organização
+### 5.4 Organization
 
-- auto-layout hierárquico, radial, swimlane ou livre;
-- grupos colapsáveis por branch, fase, domínio ou subgraph;
+- hierarchical, radial, swimlane, or free-form auto-layout;
+- collapsible groups by branch, phase, domain, or subgraph;
 - minimap;
-- zoom semântico: em zoom baixo, mostrar apenas nomes e status;
-- pin de nós importantes;
-- filtros por status, agente, modelo, custo, risco, origem e tag;
-- comparação lado a lado de Graph Versions.
+- semantic zoom: at low zoom, show only names and status;
+- pinning of important nodes;
+- filters by status, agent, model, cost, risk, origin, and tag;
+- side-by-side comparison of Graph Versions.
 
-### 5.5 Interações
+### 5.5 Interactions
 
-- clique seleciona nó;
-- duplo clique abre inspector completo;
-- arrastar altera somente posição visual;
-- arrastar porta cria aresta no Graph Draft;
-- Delete cria remoção no Graph Draft;
-- Shift+clique seleciona subgrafo;
-- botão direito abre ações;
-- Space+drag move canvas;
-- Ctrl/Cmd+K abre command palette;
-- Ctrl/Cmd+Enter envia chat;
-- Ctrl/Cmd+Shift+Enter envia como nova execução.
+- click selects a node;
+- double click opens the full inspector;
+- dragging changes only the visual position;
+- dragging a port creates an edge in the Graph Draft;
+- Delete creates a removal in the Graph Draft;
+- Shift+click selects a subgraph;
+- right click opens actions;
+- Space+drag moves the canvas;
+- Ctrl/Cmd+K opens the command palette;
+- Ctrl/Cmd+Enter sends the chat message;
+- Ctrl/Cmd+Shift+Enter sends it as a new execution.
 
-## 6. Chat e Command Composer
+## 6. Chat and Command Composer
 
-### 6.1 Componentes
+### 6.1 Components
 
-- campo multiline;
-- selector de alvo atual;
-- chips de contexto anexado;
-- anexos;
-- modo `perguntar`, `instruir`, `nova execução` opcional;
-- estimativa de efeito operacional;
-- botão enviar;
-- histórico resumido.
+- multiline field;
+- current target selector;
+- attached context chips;
+- attachments;
+- optional `ask`, `instruct`, `new execution` modes;
+- estimate of operational effect;
+- send button;
+- summarized history.
 
-O usuário não é obrigado a selecionar intenção manualmente. O Command Router classifica.
+The user is not required to manually select an intent. The Command Router classifies it.
 
-### 6.2 Resultado da classificação
+### 6.2 Classification result
 
-Após mensagem operacional, mostrar uma faixa:
+After an operational message, show a strip:
 
 ```text
-Interpretado como: mutação do grafo atual
-Alvo: exec-482
-Confiança: alta
-Ação proposta: remover Integration Tests e conectar Implementation → Deploy
-[Revisar draft] [Corrigir interpretação] [Cancelar]
+Interpreted as: mutation of the current graph
+Target: exec-482
+Confidence: high
+Proposed action: remove Integration Tests and connect Implementation → Deploy
+[Review draft] [Correct interpretation] [Cancel]
 ```
 
-Mensagens consultivas recebem resposta sem mutação.
+Advisory messages receive a response without mutation.
 
-### 6.3 Menções
+### 6.3 Mentions
 
-Autocomplete para:
+Autocomplete for:
 
-- `@projeto`
-- `@execução`
+- `@project`
+- `@execution`
 - `@graph`
-- `@nó`
-- `@agente`
-- `@documento`
-- `@arquivo`
+- `@node`
+- `@agent`
+- `@document`
+- `@file`
 - `@harness`
 
-### 6.4 Perguntas do sistema
+### 6.4 System questions
 
-Perguntas genuinamente necessárias entram como `human_decision` no grafo e aparecem no chat. O usuário pode responder ali ou no inspector do nó.
+Genuinely necessary questions enter the graph as `human_decision` and appear in the chat. The user can respond there or in the node inspector.
 
-## 7. Painel de agentes em execução
+## 7. Running agents panel
 
-Lista compacta por status:
+Compact list by status:
 
-- nome e função;
-- nó atual;
-- modelo/rota;
-- duração;
-- capacidade/quota;
-- tokens quando disponíveis;
-- tool em uso;
-- isolamento;
-- último evento;
-- botão pause/stop/open.
+- name and role;
+- current node;
+- model/route;
+- duration;
+- capacity/quota;
+- tokens when available;
+- tool in use;
+- isolation;
+- last event;
+- pause/stop/open button.
 
-Ações:
+Actions:
 
-- abrir agente;
-- pausar após chamada atual;
-- parar imediatamente;
-- trocar modelo para próxima tentativa;
-- visualizar contexto;
-- visualizar tools;
-- silenciar notificações;
-- salvar definição após execução, por ação explícita.
+- open agent;
+- pause after the current call;
+- stop immediately;
+- switch model for the next attempt;
+- view context;
+- view tools;
+- mute notifications;
+- save definition after execution, via explicit action.
 
-Desativar um agente pausa a branch no checkpoint seguro. Substitutos aparecem como propostas, nunca iniciam automaticamente após intervenção manual.
+Disabling an agent pauses the branch at the next safe checkpoint. Replacements appear as proposals and never start automatically after manual intervention.
 
-## 8. Painel Docs, Files e Artifacts
+## 8. Docs, Files, and Artifacts panel
 
-Abas:
+Tabs:
 
-1. **Docs** — living documentation, status de atualização, claims relacionadas.
-2. **Files** — repositórios, diretórios, arquivos anexados e remotos.
-3. **Artifacts** — patches, relatórios, imagens, datasets, builds, exports.
-4. **Evidence** — testes, fontes, logs, snapshots, diff.
-5. **Claims** — afirmações e relações do Knowledge Graph.
-6. **Pictures** — preview visual de imagens e screenshots.
+1. **Docs** — living documentation, freshness status, related claims.
+2. **Files** — repositories, directories, attached and remote files.
+3. **Artifacts** — patches, reports, images, datasets, builds, exports.
+4. **Evidence** — tests, sources, logs, snapshots, diffs.
+5. **Claims** — Knowledge Graph statements and relations.
+6. **Pictures** — visual preview of images and screenshots.
 
-Cada item mostra:
+Each item shows:
 
-- origem;
-- versão;
-- quem produziu;
-- nós consumidores;
-- validade;
+- origin;
+- version;
+- who produced it;
+- consuming nodes;
+- validity;
 - hash;
-- classificação de sensibilidade;
-- ações: abrir, fixar no contexto, comparar, exportar, marcar obsoleto.
+- sensitivity classification;
+- actions: open, pin to context, compare, export, mark obsolete.
 
 ## 9. Node Inspector
 
-O inspector pode abrir como drawer ou tela cheia.
+The inspector can open as a drawer or full screen.
 
-### 9.1 Aba Overview
+### 9.1 Overview tab
 
-- nome, tipo, status;
-- objetivo;
-- justificativa para existir no grafo;
-- origem: harness, user, dream, mutation;
-- dependências e dependentes;
-- progresso;
-- blocker atual.
+- name, type, status;
+- objective;
+- rationale for existing in the graph;
+- origin: harness, user, dream, mutation;
+- dependencies and dependents;
+- progress;
+- current blocker.
 
-### 9.2 Aba Agent
+### 9.2 Agent tab
 
-- definição usada;
-- versão;
+- definition used;
+- version;
 - prompt/instructions;
 - capabilities;
 - prohibited actions;
 - memory policy;
-- histórico do agente no projeto;
-- botão `Salvar como novo agente`.
+- agent history in the project;
+- `Save as new agent` button.
 
-Alterações são overlays exclusivos daquela execução.
+Changes are overlays exclusive to that execution.
 
-### 9.3 Aba Model
+### 9.3 Model tab
 
-- rota atual;
-- candidatos e scores;
-- disponibilidade;
-- quota/custo;
-- independência do executor;
-- parâmetros suportados;
-- ação de trocar manualmente.
+- current route;
+- candidates and scores;
+- availability;
+- quota/cost;
+- executor independence;
+- supported parameters;
+- manual switch action.
 
-### 9.4 Aba Context
+### 9.4 Context tab
 
 - token budget;
 - Project Kernel;
@@ -315,175 +315,175 @@ Alterações são overlays exclusivos daquela execução.
 - Evidence Bundle;
 - Dependency Outputs;
 - Agent Experience;
-- itens excluídos;
-- pedidos de expansão;
-- botão adicionar/remover item.
+- excluded items;
+- expansion requests;
+- add/remove item button.
 
-### 9.5 Aba Skills e Tools
+### 9.5 Skills and Tools tab
 
-- skills carregadas;
-- tools e permissions;
+- loaded skills;
+- tools and permissions;
 - capability leases;
-- chamadas realizadas;
-- rede e filesystem permitidos;
-- botão para editar.
+- calls made;
+- allowed network and filesystem access;
+- edit button.
 
-### 9.6 Aba Contracts
+### 9.6 Contracts tab
 
 - input schema;
 - output schema;
 - completion contract;
 - evidence requirements;
-- validação ao vivo;
-- payload de exemplo.
+- live validation;
+- example payload.
 
-### 9.7 Aba Runtime
+### 9.7 Runtime tab
 
 - isolation tier;
 - container/worktree/microVM;
-- recursos;
+- resources;
 - timeout;
 - retries;
 - checkpoint;
-- logs redigidos;
+- redacted logs;
 - cleanup/quarantine.
 
-### 9.8 Aba Events
+### 9.8 Events tab
 
-Timeline filtrada do nó, incluindo chamadas, outputs, sinais, errors, retries, mutations e waivers.
+Filtered timeline for the node, including calls, outputs, signals, errors, retries, mutations, and waivers.
 
 ## 10. Graph Draft Review
 
-Ao editar operacionalmente, abrir painel com:
+When editing operationally, open a panel with:
 
-- versão base;
-- diff visual;
-- lista de nós adicionados/removidos;
-- arestas alteradas;
-- branches a pausar;
-- outputs invalidados;
-- gates ignorados;
-- obrigações não satisfeitas;
-- custo/tempo estimado;
-- incompatibilidades técnicas;
-- warnings não bloqueantes.
+- base version;
+- visual diff;
+- list of added/removed nodes;
+- changed edges;
+- branches to pause;
+- invalidated outputs;
+- ignored gates;
+- unmet obligations;
+- estimated cost/time;
+- technical incompatibilities;
+- non-blocking warnings.
 
-Ações:
+Actions:
 
-- aplicar;
-- salvar rascunho;
-- descartar;
-- pedir ao harness para reparar;
-- editar novamente;
-- aplicar somente seleção.
+- apply;
+- save draft;
+- discard;
+- ask the harness to repair;
+- edit again;
+- apply selection only.
 
-Aplicação é atômica. Se o Runtime mudou de versão desde a criação do draft, o Studio exige rebase visual.
+Application is atomic. If the Runtime has changed version since the draft was created, Studio requires a visual rebase.
 
 ## 11. Ghost node review
 
-Ghost node mostra:
+The ghost node shows:
 
-- função proposta;
-- motivo;
-- evidência que disparou;
-- modelo sugerido;
-- custo/tempo;
-- permissões;
-- gates atendidos;
-- dependências.
+- proposed function;
+- reason;
+- evidence that triggered it;
+- suggested model;
+- cost/time;
+- permissions;
+- gates satisfied;
+- dependencies.
 
-Ações:
+Actions:
 
-- aprovar;
-- editar e aprovar;
-- substituir por agente salvo;
-- rejeitar;
-- deixar para depois;
-- salvar sem executar;
-- marcar obrigação como waived.
+- approve;
+- edit and approve;
+- replace with a saved agent;
+- reject;
+- leave for later;
+- save without executing;
+- mark obligation as waived.
 
 ## 12. Workspace Home
 
 Widgets:
 
-- projetos recentes;
-- execuções ativas;
+- recent projects;
+- active executions;
 - blockers;
-- uso de modelos;
-- capacidade de assinaturas;
-- dreams recentes;
-- documentos desatualizados;
-- agents de melhor/pior desempenho;
-- riscos de segurança;
+- model usage;
+- subscription capacity;
+- recent dreams;
+- stale documents;
+- best/worst performing agents;
+- security risks;
 - runtime health.
 
-Nenhum widget depende de telemetria externa.
+No widget depends on external telemetry.
 
 ## 13. Onboarding
 
-Passos:
+Steps:
 
-1. escolher idioma e nome local;
-2. criar ou importar workspace;
-3. conectar VPS via SSH;
-4. revisar plano de instalação;
-5. instalar Runtime;
-6. criar cofre;
-7. conectar pelo menos uma rota de modelo;
-8. criar/importar projeto;
-9. escolher repositório, arquivos ou fontes;
-10. executar diagnóstico;
-11. abrir primeiro prompt.
+1. choose language and local name;
+2. create or import a workspace;
+3. connect to a VPS via SSH;
+4. review installation plan;
+5. install Runtime;
+6. create vault;
+7. connect at least one model route;
+8. create/import project;
+9. choose repository, files, or sources;
+10. run diagnostics;
+11. open first prompt.
 
-Cada etapa pode ser retomada. O usuário pode usar modelo local sem conta externa.
+Each step can be resumed. The user can use a local model without an external account.
 
 ## 14. Model Connections
 
-Cards por rota:
+Cards per route:
 
 - provider;
 - transport;
 - auth type;
-- perfil conectado;
+- connected profile;
 - status;
 - capabilities;
-- quota observada;
-- últimos throttles;
+- observed quota;
+- recent throttles;
 - privacy note;
-- testar, reconectar, remover.
+- test, reconnect, remove.
 
-Conexões de assinatura usam login oficial. BYOK mostra escopo e custo configurado. Secrets nunca são exibidos após armazenamento.
+Subscription connections use official login. BYOK shows configured scope and cost. Secrets are never displayed after being stored.
 
 ## 15. Agent Registry
 
-Lista com:
+List with:
 
-- nome;
-- propósito;
-- versão ativa;
+- name;
+- purpose;
+- active version;
 - status;
 - executions;
 - success rate;
 - false-positive rate;
-- custo/duração;
-- última validação;
-- memories ativas;
-- tags e scope.
+- cost/duration;
+- last validation;
+- active memories;
+- tags and scope.
 
-Detalhe:
+Detail:
 
-- definição;
-- versões;
-- performance por cenário;
-- experiências;
-- relações com skills;
-- graphs em que apareceu;
+- definition;
+- versions;
+- performance by scenario;
+- experiences;
+- relationships with skills;
+- graphs it has appeared in;
 - merge/derive/archive;
-- botão testar em sandbox.
+- test-in-sandbox button.
 
-## 16. Skills e Capabilities
+## 16. Skills and Capabilities
 
-Browser com filtros por tipo, permission, runtime, publisher, trust level e compatibility. A instalação mostra manifest e permissões.
+Browser with filters by type, permission, runtime, publisher, trust level, and compatibility. Installation shows the manifest and permissions.
 
 Views:
 
@@ -494,44 +494,44 @@ Views:
 - quarantined;
 - updates.
 
-## 17. Docs e Knowledge
+## 17. Docs and Knowledge
 
 ### 17.1 Documentation Browser
 
-- árvore de docs;
+- docs tree;
 - status: current, stale, conflicted, generated, manually edited;
-- preview Markdown/diagram;
-- claims e evidence sidecar;
-- diff entre versões;
+- Markdown/diagram preview;
+- claims and evidence sidecar;
+- diff between versions;
 - freshness score;
-- pin como canônico.
+- pin as canonical.
 
 ### 17.2 Knowledge Graph Explorer
 
-Visualização por entidades e relações, com filtros por confidence, status, temporalidade, project scope e provenance.
+Visualization by entities and relations, with filters by confidence, status, temporality, project scope, and provenance.
 
-O grafo de conhecimento é separado do grafo de execução, embora possam se referenciar.
+The knowledge graph is separate from the execution graph, although they can reference each other.
 
 ## 18. Dreams Center
 
-Mostra:
+Shows:
 
-- próximo trigger;
+- next trigger;
 - budget;
 - idle policy;
-- ciclos recentes;
-- mudanças propostas/aplicadas;
+- recent cycles;
+- proposed/applied changes;
 - shadow tests;
 - critic result;
 - rollback;
-- tarefas `dream_generated`;
-- economias estimadas de contexto.
+- `dream_generated` tasks;
+- estimated context savings.
 
-O usuário pode iniciar um dream manualmente, pausar o scheduler ou limitar categorias.
+The user can start a dream manually, pause the scheduler, or limit categories.
 
-## 19. Policies e Segurança
+## 19. Policies and Security
 
-Seções:
+Sections:
 
 - global policies;
 - project policies;
@@ -545,33 +545,33 @@ Seções:
 - plugin permissions;
 - audit retention.
 
-A interface diferencia:
+The interface distinguishes between:
 
-- impossibilidade técnica;
-- policy rígida definida pelo owner;
-- recomendação do sistema;
-- gate dispensado.
+- technical impossibility;
+- hard policy defined by the owner;
+- system recommendation;
+- dispensed gate.
 
-## 20. Events, Metrics e Replay
+## 20. Events, Metrics, and Replay
 
 ### 20.1 Timeline
 
-Filtros por execução, graph version, node, agent, model, tool, severity, actor e event type.
+Filters by execution, graph version, node, agent, model, tool, severity, actor, and event type.
 
 ### 20.2 Replay
 
 - play/pause;
-- velocidade;
+- speed;
 - scrubber;
 - graph version switch;
-- abertura do payload em cada evento;
-- comparação de estado antes/depois;
-- esconder conteúdo sensível.
+- opening the payload of each event;
+- before/after state comparison;
+- hide sensitive content.
 
-### 20.3 Métricas
+### 20.3 Metrics
 
-- duração;
-- tokens/custo;
+- duration;
+- tokens/cost;
 - quota;
 - context saved;
 - retries;
@@ -581,63 +581,63 @@ Filtros por execução, graph version, node, agent, model, tool, severity, actor
 - agent performance;
 - evidence coverage.
 
-## 21. Fluxos críticos
+## 21. Critical flows
 
-### 21.1 Prompt novo
+### 21.1 New prompt
 
-1. Usuário envia.
-2. Studio mostra classificação em progresso.
-3. Graph draft inicial aparece.
-4. Em Autopilot, lint aprovado publica e executa.
-5. Em Supervised/Manual, aguarda confirmação conforme política.
-6. Agentes aparecem no painel.
-7. Outputs surgem em docs/artifacts.
+1. User sends a message.
+2. Studio shows classification in progress.
+3. An initial graph draft appears.
+4. In Autopilot, an approved lint publishes and executes it.
+5. In Supervised/Manual, it waits for confirmation according to policy.
+6. Agents appear in the panel.
+7. Outputs appear in docs/artifacts.
 
-### 21.2 Pular testes e ir para deploy
+### 21.2 Skip tests and go to deploy
 
-1. Usuário arrasta aresta `Implementation → Deploy` ou escreve comando.
-2. Draft mostra testes/review removidos.
-3. Studio lista riscos e obrigações.
-4. Usuário aplica.
-5. Runtime cria waiver e Graph Version nova.
-6. Branch segue sem recolocar nós.
+1. User drags the `Implementation → Deploy` edge or writes a command.
+2. The draft shows tests/review removed.
+3. Studio lists risks and obligations.
+4. User applies.
+5. Runtime creates a waiver and a new Graph Version.
+6. The branch proceeds without re-adding nodes.
 
-### 21.3 Limite de assinatura
+### 21.3 Subscription limit
 
-1. Nó recebe resposta de quota.
+1. Node receives a quota response.
 2. Checkpoint.
-3. Status `waiting capacity`.
-4. Studio mostra rota e opções.
-5. Usuário espera ou escolhe outra rota.
-6. Retomada preserva outputs.
+3. `waiting capacity` status.
+4. Studio shows the route and options.
+5. User waits or chooses another route.
+6. Resumption preserves outputs.
 
-### 21.4 Desativar agente
+### 21.4 Disable agent
 
-1. Usuário clica stop/disable.
-2. Nó para no checkpoint escolhido.
-3. Harness calcula cobertura perdida.
-4. Alternativas aparecem como ghost nodes.
-5. Nada inicia sem confirmação.
+1. User clicks stop/disable.
+2. Node stops at the chosen checkpoint.
+3. Harness calculates lost coverage.
+4. Alternatives appear as ghost nodes.
+5. Nothing starts without confirmation.
 
-## 22. Acessibilidade
+## 22. Accessibility
 
-- todos os nós acessíveis por lista alternativa;
-- navegação por teclado entre nós e arestas;
-- labels textuais de status;
-- modo alto contraste;
+- all nodes accessible via an alternative list;
+- keyboard navigation between nodes and edges;
+- textual status labels;
+- high-contrast mode;
 - reduced motion;
-- descrição linear exportável do grafo;
-- atalhos configuráveis;
-- foco preservado após updates em tempo real.
+- exportable linear description of the graph;
+- configurable shortcuts;
+- focus preserved after real-time updates.
 
-## 23. Critérios de aceite do Studio
+## 23. Studio acceptance criteria
 
-- usuário consegue operar sem abrir terminal após bootstrap;
-- qualquer ação operacional deixa trilha auditável;
-- graph draft nunca aplica sem confirmação quando iniciado por ação manual;
-- ghost node não consome recursos antes da aprovação;
-- closing/reopening Studio preserva layout e reconecta execução;
-- cada nó permite abrir contexto, agente, modelo, tools, contracts e events;
-- usuário consegue chegar de implementação a deploy por override explícito;
-- canvas e lista alternativa representam o mesmo estado;
-- nenhuma credencial aparece em UI, log ou export.
+- the user can operate without opening a terminal after bootstrap;
+- any operational action leaves an auditable trail;
+- a graph draft never applies without confirmation when initiated by a manual action;
+- a ghost node consumes no resources before approval;
+- closing/reopening Studio preserves layout and reconnects the execution;
+- each node allows opening context, agent, model, tools, contracts, and events;
+- the user can go from implementation to deploy via explicit override;
+- the canvas and the alternative list represent the same state;
+- no credential appears in the UI, logs, or exports.

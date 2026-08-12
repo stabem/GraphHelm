@@ -1,34 +1,34 @@
-# Observabilidade, operações e recuperação
+# Observability, operations, and recovery
 
-## 1. Objetivo
+## 1. Objective
 
-Dar ao usuário visibilidade completa sobre o comportamento do sistema e permitir pause, resume, replay, diagnóstico e recuperação sem repetir trabalho válido ou ocultar falhas.
+Give the user complete visibility into system behavior and enable pause, resume, replay, diagnosis, and recovery without repeating valid work or hiding failures.
 
-## 2. Pilares de observabilidade
+## 2. Observability pillars
 
 ### 2.1 Events
 
-Fonte operacional append-only. Toda transição relevante gera evento tipado.
+Append-only operational source. Every relevant transition generates a typed event.
 
 ### 2.2 Metrics
 
-Séries e agregações locais de desempenho, custo, qualidade, capacidade e segurança.
+Local series and aggregations of performance, cost, quality, capacity, and security.
 
 ### 2.3 Logs
 
-Logs estruturados para diagnóstico, redigidos por sensitivity.
+Structured logs for diagnosis, redacted by sensitivity.
 
 ### 2.4 Traces
 
-Trace de ponta a ponta: prompt → harness → graph → nodes → model/tool → artifacts → docs.
+End-to-end trace: prompt → harness → graph → nodes → model/tool → artifacts → docs.
 
 ### 2.5 Artifacts
 
-Outputs persistentes que permitem inspeção e reprodução.
+Persistent outputs that allow inspection and reproduction.
 
-## 3. Correlação
+## 3. Correlation
 
-IDs obrigatórios:
+Required IDs:
 
 - workspace_id;
 - project_id;
@@ -42,7 +42,7 @@ IDs obrigatórios:
 - trace_id;
 - artifact_id.
 
-## 4. Métricas do harness
+## 4. Harness metrics
 
 - time_to_profile;
 - time_to_first_graph;
@@ -57,7 +57,7 @@ IDs obrigatórios:
 - capability gaps;
 - agent reuse rate.
 
-## 5. Métricas de execução
+## 5. Execution metrics
 
 - queue time;
 - runtime duration;
@@ -72,12 +72,12 @@ IDs obrigatórios:
 - sandbox cold start;
 - artifact throughput.
 
-## 6. Métricas de modelos
+## 6. Model metrics
 
 - route availability;
 - latency;
-- input/output tokens quando disponíveis;
-- monetary cost quando disponível;
+- input/output tokens when available;
+- monetary cost when available;
 - subscription throttles;
 - waiting capacity time;
 - schema compliance;
@@ -86,7 +86,7 @@ IDs obrigatórios:
 - model switch count;
 - quality by task class.
 
-## 7. Métricas de contexto
+## 7. Context metrics
 
 - tokens allocated/consumed;
 - retrieval count;
@@ -99,7 +99,7 @@ IDs obrigatórios:
 - tokens saved vs full-context baseline;
 - contradiction count presented.
 
-## 8. Métricas de qualidade
+## 8. Quality metrics
 
 - gate pass/fail;
 - finding severity;
@@ -112,7 +112,7 @@ IDs obrigatórios:
 - manual override rate;
 - completed_with_waivers rate.
 
-## 9. Métricas de Dreams
+## 9. Dreams metrics
 
 - cycles;
 - duration;
@@ -126,24 +126,24 @@ IDs obrigatórios:
 - context savings;
 - generated task precision.
 
-## 10. SLOs iniciais
+## 10. Initial SLOs
 
-SLOs de referência, a serem calibrados por hardware/provider:
+Reference SLOs, to be calibrated per hardware/provider:
 
-- Runtime API local/VPN availability: 99,5% mensal;
-- event propagation ao Studio: p95 < 500 ms em rede saudável;
-- graph state write: p95 < 250 ms, excluindo model/tool;
+- Runtime API local/VPN availability: 99.5% monthly;
+- event propagation to Studio: p95 < 500 ms on a healthy network;
+- graph state write: p95 < 250 ms, excluding model/tool;
 - durable checkpoint metadata: p95 < 2 s;
-- resume de node checkpointável: sucesso > 99%;
-- no secret in persisted logs: 100% esperado, tratado como incidente;
+- resume of a checkpointable node: success > 99%;
+- no secret in persisted logs: 100% expected, treated as an incident;
 - graph mutation atomicity: 100%;
 - event idempotency under retry: 100%;
-- Studio canvas interaction: 60 fps alvo com 1.000 nós em máquina de referência;
-- Runtime recovery after reboot: < 2 min para reconstruir scheduler, sem contar container/model cold start.
+- Studio canvas interaction: 60 fps target with 1,000 nodes on reference hardware;
+- Runtime recovery after reboot: < 2 min to rebuild the scheduler, not counting container/model cold start.
 
 ## 11. Checkpoints
 
-### 11.1 Tipos
+### 11.1 Types
 
 - node pre-call;
 - model turn;
@@ -154,7 +154,7 @@ SLOs de referência, a serem calibrados por hardware/provider:
 - external effect receipt;
 - human decision.
 
-### 11.2 Conteúdo
+### 11.2 Content
 
 - graph version;
 - node state;
@@ -168,46 +168,46 @@ SLOs de referência, a serem calibrados por hardware/provider:
 - pending timers;
 - compensation state.
 
-Secrets não entram no checkpoint; apenas references.
+Secrets do not enter the checkpoint; only references.
 
 ### 11.3 Resume
 
-Antes de retomar:
+Before resuming:
 
-- validar graph version;
-- validar dependencies;
-- validar source snapshot;
-- renovar leases;
-- revalidar route health;
-- reabrir/recriar sandbox;
-- invalidar session não segura;
-- emitir event.
+- validate graph version;
+- validate dependencies;
+- validate source snapshot;
+- renew leases;
+- revalidate route health;
+- reopen/recreate sandbox;
+- invalidate unsafe session;
+- emit event.
 
 ## 12. Pause semantics
 
 ### Graceful pause
 
-Aguarda call atual terminar, persiste output e para próximo step.
+Waits for the current call to finish, persists output, and stops before the next step.
 
 ### Immediate stop
 
-Cancela model/tool, mata process/sandbox se necessário e retorna ao último checkpoint seguro.
+Cancels model/tool, kills the process/sandbox if necessary, and returns to the last safe checkpoint.
 
 ### Branch pause
 
-Pausa somente descendants afetados. Branches independentes continuam.
+Pauses only affected descendants. Independent branches continue.
 
 ### Global pause
 
-Impede novos nodes; running nodes obedecem chosen policy.
+Prevents new nodes; running nodes obey the chosen policy.
 
 ## 13. Cancel semantics
 
-Cancel não apaga histórico. Efeitos externos já realizados exigem compensation. Status final registra partial effects.
+Cancel does not erase history. External effects already performed require compensation. The final status records partial effects.
 
 ## 14. Retry
 
-Categorias:
+Categories:
 
 - transient provider;
 - rate limit;
@@ -218,21 +218,21 @@ Categorias:
 - policy denied;
 - invalid input.
 
-Somente categorias configuradas retry. Quota esgotada de assinatura entra em wait, não retry agressivo.
+Only configured categories retry. Exhausted subscription quota enters wait, not aggressive retry.
 
 ## 15. No-progress detection
 
-Detectar:
+Detect:
 
-- outputs semanticamente idênticos;
-- retries sem mudança de contexto/strategy;
-- remediation loop recorrente;
-- graph mutation alternando estados;
+- semantically identical outputs;
+- retries with no change in context/strategy;
+- recurring remediation loop;
+- graph mutation alternating states;
 - agent delegation chain;
 - repeated tool failure;
-- budget consumption sem evidence gain.
+- budget consumption without evidence gain.
 
-Ações:
+Actions:
 
 - stop branch;
 - change strategy;
@@ -261,72 +261,72 @@ Ações:
 - internal_bug;
 - cancelled.
 
-Cada failure inclui retriable, severity, evidence e recommended actions.
+Each failure includes retriable, severity, evidence, and recommended actions.
 
 ## 17. Recovery scenarios
 
-### 17.1 Studio fecha
+### 17.1 Studio closes
 
-Sem efeito no Runtime. Ao reabrir, Studio busca snapshot e stream desde último sequence.
+No effect on the Runtime. On reopening, Studio fetches the snapshot and streams from the last sequence.
 
-### 17.2 Runtime reinicia
+### 17.2 Runtime restarts
 
-- lock de recovery;
-- carregar nonterminal executions;
-- verificar leases expiradas;
-- marcar running nodes como recovering;
-- reconciliar sandboxes;
-- retomar ou rollback ao checkpoint;
-- emitir recovery report.
+- recovery lock;
+- load nonterminal executions;
+- check expired leases;
+- mark running nodes as recovering;
+- reconcile sandboxes;
+- resume or roll back to the checkpoint;
+- emit recovery report.
 
-### 17.3 Worker morre
+### 17.3 Worker dies
 
-Lease de worker expira. Scheduler reatribui attempt conforme idempotência e effect state.
+Worker lease expires. The scheduler reassigns the attempt according to idempotency and effect state.
 
-### 17.4 Banco indisponível
+### 17.4 Database unavailable
 
-Parar novas mutations/side effects; nodes podem terminar call atual, mas não confirmar sucesso sem durable event. Buffer local limitado não substitui persistência para efeitos críticos.
+Stop new mutations/side effects; nodes may finish the current call, but cannot confirm success without a durable event. Limited local buffering does not substitute for persistence for critical effects.
 
-### 17.5 Artifact store indisponível
+### 17.5 Artifact store unavailable
 
-Node não conclui output grande até persistência. Pequenos payloads podem ficar pending dentro de limite seguro.
+The node does not complete a large output until persistence occurs. Small payloads may remain pending within a safe limit.
 
 ### 17.6 Model quota
 
-`waiting_for_model_capacity`; sem fallback automático.
+`waiting_for_model_capacity`; no automatic fallback.
 
-### 17.7 Sandbox cleanup falha
+### 17.7 Sandbox cleanup fails
 
-Quarantine; não reuse; alert; cleanup job privilegiado separado.
+Quarantine; no reuse; alert; separate privileged cleanup job.
 
 ### 17.8 Graph draft stale
 
-Studio recebe diff, rebase e precisa reconfirmar changes operacionais.
+Studio receives the diff, rebases, and needs to reconfirm operational changes.
 
 ## 18. Replay
 
-Replay reconstrói:
+Replay reconstructs:
 
-- Graph Version ao longo do tempo;
+- Graph Version over time;
 - node states;
-- model/tool calls metadata;
+- model/tool call metadata;
 - artifacts;
 - user interventions;
 - waivers;
 - knowledge/doc updates.
 
-Modos:
+Modes:
 
 - visual timeline;
 - deterministic simulation;
-- re-execution with same refs;
+- re-execution with the same refs;
 - re-execution with substituted models;
 - branch-only replay;
 - failure reproduction.
 
-Re-execution cria nova execution e não altera original.
+Re-execution creates a new execution and does not alter the original.
 
-## 19. Export e backup
+## 19. Export and backup
 
 ### 19.1 Export
 
@@ -352,11 +352,11 @@ Re-execution cria nova execution e não altera original.
 
 ### 19.3 Disaster recovery
 
-Runbook define RPO/RTO conforme deployment. Single-node default: daily full + frequent incremental events/artifacts. Produção empresarial pode usar streaming replicas/object versioning.
+The runbook defines RPO/RTO according to deployment. Single-node default: daily full backup plus frequent incremental events/artifacts. Enterprise production may use streaming replicas/object versioning.
 
 ## 20. Retention
 
-Configurable por data class:
+Configurable by data class:
 
 - raw prompts;
 - model outputs;
@@ -369,9 +369,9 @@ Configurable por data class:
 - claims;
 - secrets access audit.
 
-Event Store “imutável” significa não reescrever dentro do período de retenção. Expiração legal/owner pode criar tombstone/cryptographic erasure conforme design de compliance, preservando metadata mínima e audit do deletion.
+Event Store "immutable" means not rewriting within the retention period. Legal/owner expiration may create a tombstone/cryptographic erasure per compliance design, preserving minimal metadata and a deletion audit.
 
-## 21. Alertas
+## 21. Alerts
 
 - runtime offline;
 - auth required;
@@ -387,7 +387,7 @@ Event Store “imutável” significa não reescrever dentro do período de rete
 - plugin vulnerability;
 - backup failed.
 
-Canais são plugins; local notifications default.
+Channels are plugins; local notifications by default.
 
 ## 22. Health dashboard
 
@@ -406,9 +406,9 @@ Canais são plugins; local notifications default.
 
 ## 23. OpenTelemetry
 
-Reference implementation usa OpenTelemetry semantics e export local. External collector é opcional. Sensitive attributes são filtered antes do exporter.
+The reference implementation uses OpenTelemetry semantics and local export. An external collector is optional. Sensitive attributes are filtered before the exporter.
 
-## 24. Runbooks obrigatórios
+## 24. Mandatory runbooks
 
 - install failure;
 - update rollback;
@@ -424,15 +424,15 @@ Reference implementation usa OpenTelemetry semantics e export local. External co
 - Dreams rollback;
 - project export/import.
 
-## 25. Critérios de aceite
+## 25. Acceptance criteria
 
-- restart não perde completed outputs;
-- duplicate event não duplica efeito;
-- pause branch preserva outras branches;
-- immediate stop retorna a checkpoint conhecido;
-- replay mostra Graph Versions corretas;
-- quota wait não gasta BYOK;
-- secret não aparece em logs/export;
-- quarantine impede reuse;
-- backup/restore é testável;
-- metrics são locais por padrão.
+- restart does not lose completed outputs;
+- duplicate event does not duplicate the effect;
+- branch pause preserves other branches;
+- immediate stop returns to a known checkpoint;
+- replay shows correct Graph Versions;
+- quota wait does not consume BYOK;
+- secret does not appear in logs/export;
+- quarantine prevents reuse;
+- backup/restore is testable;
+- metrics are local by default.

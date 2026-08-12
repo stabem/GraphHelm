@@ -1,33 +1,33 @@
-# Harness dinâmico — especificação completa
+# Dynamic harness — complete specification
 
-## 1. Definição
+## 1. Definition
 
-O harness é o sistema que transforma uma intenção aberta em uma organização executável de agentes, ferramentas, modelos, contexto, políticas, sandboxes e gates. Ele não é um prompt mestre e não é uma sequência fixa. É um compilador adaptativo com componentes probabilísticos e verificadores determinísticos.
+The harness is the system that transforms an open intent into an executable organization of agents, tools, models, context, policies, sandboxes and gates. It is not a master prompt and it is not a fixed sequence. It is an adaptive compiler with probabilistic components and deterministic verifiers.
 
-A saída do harness é um **Harness Manifest** associado a uma **Graph Version**. Durante a execução, descobertas produzem sinais; o Graph Governor pode recompilar partes do harness e publicar novas versões do grafo.
+The harness output is a **Harness Manifest** associated with a **Graph Version**. During execution, findings produce signals; the Graph Governor can recompile parts of the harness and publish new graph versions.
 
-## 2. Objetivos
+## 2. Objectives
 
-1. selecionar o menor conjunto de capacidades capaz de cumprir o objetivo;
-2. adaptar profundidade, crítica, teste e segurança ao risco real;
-3. limitar tokens, custo, latência e expansão sem sacrificar evidência essencial;
-4. evitar que agentes concedam a si mesmos permissões ou dispensem gates;
-5. reduzir viés de confirmação;
-6. tornar toda decisão relevante explicável e auditável;
-7. permitir controle manual sem destruir consistência técnica;
-8. continuar aprendendo no escopo do projeto sem criar memória opaca.
+1. select the smallest set of capabilities able to fulfill the objective;
+2. adapt depth, critique, testing and security to the actual risk;
+3. limit tokens, cost, latency and expansion without sacrificing essential evidence;
+4. prevent agents from granting themselves permissions or waiving gates;
+5. reduce confirmation bias;
+6. make every relevant decision explainable and auditable;
+7. allow manual control without breaking technical consistency;
+8. keep learning within the project scope without creating opaque memory.
 
-## 3. Não objetivos
+## 3. Non-objectives
 
-- produzir o mesmo grafo para toda instalação;
-- mapear domínio para um pack estático;
-- usar um LLM como única camada de segurança;
-- exigir aprovação humana em toda fase;
-- impedir override consciente do owner;
-- preservar etapas que deixaram de contribuir;
-- maximizar número de agentes.
+- producing the same graph for every installation;
+- mapping a domain to a static pack;
+- using an LLM as the sole security layer;
+- requiring human approval at every phase;
+- preventing a conscious override by the owner;
+- preserving steps that no longer contribute;
+- maximizing the number of agents.
 
-## 4. Pipeline de compilação
+## 4. Compilation pipeline
 
 ```mermaid
 flowchart TD
@@ -47,15 +47,15 @@ flowchart TD
     N --> O[Harness Manifest + Graph v1]
 ```
 
-Os componentes podem trabalhar em paralelo quando seus inputs permitirem, mas o resultado final passa por policy e lint determinísticos.
+Components can work in parallel when their inputs allow it, but the final result always passes through deterministic policy and lint checks.
 
-## 5. Universal Intake e resolução de alvo
+## 5. Universal Intake and target resolution
 
-O intake converte texto, anexos, seleção de UI e origem em `Task Request`.
+Intake converts text, attachments, UI selection and origin into a `Task Request`.
 
-### 5.1 Resolução de intenção
+### 5.1 Intent resolution
 
-Categorias mínimas:
+Minimum categories:
 
 - `new_execution`
 - `continue_execution`
@@ -66,19 +66,19 @@ Categorias mínimas:
 - `query_only`
 - `conversation_only`
 
-### 5.2 Ambiguidade
+### 5.2 Ambiguity
 
-Quando duas interpretações operacionais são plausíveis e alteram estado de forma diferente, o sistema apresenta opções. Uma resposta informativa pode ser dada sem aguardar, mas nenhuma mutação ambígua é aplicada.
+When two operational interpretations are plausible and would alter state differently, the system presents options. An informative response can be given without waiting, but no ambiguous mutation is applied.
 
 ### 5.3 Scope resolution
 
-O intake determina Workspace, Projeto, Subprojeto, execução e nó. Menções explícitas têm precedência. Seleção ativa no canvas é evidência contextual, não comando irreversível.
+Intake determines Workspace, Project, Subproject, execution and node. Explicit mentions take precedence. Active selection on the canvas is contextual evidence, not an irreversible command.
 
 ## 6. Task Profiler
 
-### 6.1 Saída
+### 6.1 Output
 
-O Task Profiler produz um vetor de sinais, não uma label única.
+The Task Profiler produces a vector of signals, not a single label.
 
 ```yaml
 task_profile:
@@ -102,34 +102,34 @@ task_profile:
     deploy_requested: true
 ```
 
-### 6.2 Fontes de classificação
+### 6.2 Classification sources
 
-- pedido do usuário;
-- seleção do projeto;
-- arquivos e símbolos referenciados;
-- histórico recente;
-- claims canônicas;
-- repositório e dependências;
-- produção/configuração;
-- tools necessárias;
-- modelo de ameaça;
-- heurísticas determinísticas;
-- classificador de modelo barato;
-- verificador mais forte em casos ambíguos.
+- user request;
+- project selection;
+- referenced files and symbols;
+- recent history;
+- canonical claims;
+- repository and dependencies;
+- production/configuration;
+- required tools;
+- threat model;
+- deterministic heuristics;
+- cheap model classifier;
+- stronger verifier for ambiguous cases.
 
-### 6.3 Redundância
+### 6.3 Redundancy
 
-Sinais de alto impacto devem ser confirmados por mais de uma fonte quando possível. Exemplo: `touches_authentication` pode vir de linguagem do usuário, path analysis e dependency graph.
+High-impact signals must be confirmed by more than one source when possible. Example: `touches_authentication` can come from user language, path analysis and the dependency graph.
 
-### 6.4 Reclassificação contínua
+### 6.4 Continuous reclassification
 
-O perfil é versionado. Descobertas posteriores podem elevar ou reduzir escopo, mas policies garantem que uma redução não ignore evidência contraditória.
+The profile is versioned. Later findings can raise or lower scope, but policies ensure that a reduction never ignores contradictory evidence.
 
 ## 7. Capability Discovery
 
-### 7.1 Catálogo atômico
+### 7.1 Atomic catalog
 
-O catálogo contém capabilities, não workflows. Exemplos:
+The catalog contains capabilities, not workflows. Examples:
 
 - repository_search;
 - dependency_trace;
@@ -150,7 +150,7 @@ O catálogo contém capabilities, não workflows. Exemplos:
 
 ### 7.2 Query
 
-Discovery considera:
+Discovery considers:
 
 - input/output compatibility;
 - objective similarity;
@@ -166,21 +166,21 @@ Discovery considera:
 
 ### 7.3 Capability gap
 
-Se uma capability necessária não existe, o harness pode:
+If a required capability does not exist, the harness can:
 
-1. compor capabilities menores;
-2. sintetizar um agente usando tools existentes;
-3. propor instalação de extensão;
-4. pedir decisão humana;
-5. declarar impossibilidade técnica.
+1. compose smaller capabilities;
+2. synthesize an agent using existing tools;
+3. propose installing an extension;
+4. request a human decision;
+5. declare technical impossibility.
 
-Ele não inventa uma tool inexistente como se estivesse disponível.
+It never invents a nonexistent tool as if it were available.
 
-## 8. Agent Matcher e Agent Synthesizer
+## 8. Agent Matcher and Agent Synthesizer
 
 ### 8.1 Agent Match Score
 
-Pontuação conceitual:
+Conceptual scoring:
 
 ```text
 match = objective_fit
@@ -195,21 +195,21 @@ match = objective_fit
       − correlated_failure_risk
 ```
 
-Nenhum valor histórico sozinho autoriza reuso. Um agente excelente em um cenário pode ser inadequado em outro.
+No single historical value authorizes reuse on its own. An agent that excels in one scenario may be unsuitable in another.
 
-### 8.2 Reuso
+### 8.2 Reuse
 
-O matcher pode:
+The matcher can:
 
-- reutilizar sem alteração;
-- parametrizar a instância;
-- usar definição com overlay temporário;
-- derivar nova definição, se o usuário salvar depois;
-- criar agente efêmero.
+- reuse without changes;
+- parameterize the instance;
+- use the definition with a temporary overlay;
+- derive a new definition, if the user saves it afterward;
+- create an ephemeral agent.
 
-### 8.3 Síntese
+### 8.3 Synthesis
 
-Agente efêmero precisa declarar:
+An ephemeral agent must declare:
 
 ```yaml
 agent_spec:
@@ -227,17 +227,17 @@ agent_spec:
   memory_write_policy: ...
 ```
 
-O linter rejeita agente sem contratos, permissions ou condição de término.
+The linter rejects an agent without contracts, permissions or a termination condition.
 
 ## 9. Context Strategy Planner
 
-Planeja que conhecimento será necessário em cada fase, sem materializar todos os tokens antecipadamente.
+Plans what knowledge will be needed at each phase, without materializing all tokens up front.
 
-### 9.1 Princípio
+### 9.1 Principle
 
-O planner cria referências e retrieval recipes. O Context Compiler materializa a cápsula no momento do nó, usando o snapshot correto.
+The planner creates references and retrieval recipes. The Context Compiler materializes the capsule at node time, using the correct snapshot.
 
-### 9.2 Estratégias
+### 9.2 Strategies
 
 - exact file/symbol retrieval;
 - semantic retrieval;
@@ -252,20 +252,20 @@ O planner cria referências e retrieval recipes. O Context Compiler materializa 
 
 ### 9.3 Budgets
 
-Cada nó recebe:
+Each node receives:
 
-- budget inicial;
-- máximo expansível;
-- prioridade dos itens;
-- compressão permitida;
-- conteúdo proibido;
-- condition para expansão.
+- initial budget;
+- expandable maximum;
+- item priority;
+- allowed compression;
+- prohibited content;
+- expansion condition.
 
 ## 10. Model Candidate Planner
 
-### 10.1 Perfis de modelo
+### 10.1 Model profiles
 
-Em vez de nomes fixos, o harness declara necessidades:
+Instead of fixed names, the harness declares needs:
 
 - `fast_classification`
 - `structured_extraction`
@@ -277,7 +277,7 @@ Em vez de nomes fixos, o harness declara necessidades:
 - `low_cost_synthesis`
 - `local_private`
 
-### 10.2 Score de rota
+### 10.2 Route score
 
 ```text
 route_score = capability_fit
@@ -293,29 +293,29 @@ route_score = capability_fit
             − correlated_error_risk
 ```
 
-### 10.3 Diversidade
+### 10.3 Diversity
 
-Quando policy exige revisão independente, o planner favorece:
+When policy requires independent review, the planner favors:
 
-- provider diferente;
-- família de modelo diferente;
-- prompt/papel diferente;
+- a different provider;
+- a different model family;
+- a different prompt/role;
 - blind context;
-- ferramentas de verificação distintas.
+- distinct verification tools.
 
-### 10.4 Capacidade de assinatura
+### 10.4 Subscription capacity
 
-A capacidade pode ser desconhecida. O planner usa sinais observados, mas nunca presume ilimitado. Limite atingido pausa a rota; BYOK não é acionado automaticamente.
+Capacity may be unknown. The planner uses observed signals, but never assumes it is unlimited. A reached limit pauses the route; BYOK is not triggered automatically.
 
 ## 11. Graph Architect
 
-### 11.1 Responsabilidade
+### 11.1 Responsibility
 
-Propõe topologia, paralelismo, agentes, gates, joins, retries e critérios. Não concede secrets, não remove policies e não executa.
+Proposes topology, parallelism, agents, gates, joins, retries and criteria. It does not grant secrets, does not remove policies and does not execute anything.
 
-### 11.2 Heurística do menor grafo
+### 11.2 Smallest-graph heuristic
 
-Para cada nó candidato, estimar:
+For each candidate node, estimate:
 
 ```text
 expected_value = risk_reduction
@@ -328,11 +328,11 @@ expected_value = risk_reduction
                − context_duplication
 ```
 
-Nós com baixo valor esperado são removidos ou fundidos, salvo requirement de policy.
+Nodes with low expected value are removed or merged, unless a policy requirement dictates otherwise.
 
-### 11.3 Padrões permitidos, não packs
+### 11.3 Allowed patterns, not packs
 
-O Architect pode usar padrões abstratos:
+The Architect can use abstract patterns:
 
 - inspect → act → verify;
 - independent parallel investigations;
@@ -342,31 +342,31 @@ O Architect pode usar padrões abstratos:
 - research → source verification → synthesis;
 - generate variants → evaluate → select.
 
-Esses padrões são primitives de raciocínio, não workflows fixos por domínio.
+These patterns are reasoning primitives, not fixed domain-specific workflows.
 
 ### 11.4 Decomposition
 
-Um node deve ter objetivo claro, input finito, output tipado e conclusão verificável. Se a subtarefa exige contextos ou permissões incompatíveis, dividir.
+A node must have a clear objective, finite input, typed output and a verifiable conclusion. If the subtask requires incompatible contexts or permissions, split it.
 
-### 11.5 Paralelismo
+### 11.5 Parallelism
 
-Paralelizar quando:
+Parallelize when:
 
-- branches são independentes;
-- outputs podem ser unidos por contrato;
-- diversidade melhora confiança;
-- recursos permitem;
-- risco de estado concorrente é controlado.
+- branches are independent;
+- outputs can be joined by contract;
+- diversity improves confidence;
+- resources allow it;
+- concurrent-state risk is controlled.
 
-Evitar paralelismo quando aumenta duplicação, conflito de write ou quota pressure.
+Avoid parallelism when it increases duplication, write conflicts or quota pressure.
 
 ## 12. Policy Engine
 
-### 12.1 Característica
+### 12.1 Characteristics
 
-Determinístico, versionado e separado do LLM. Pode consumir sinais probabilísticos, mas aplica regras explícitas.
+Deterministic, versioned and separate from the LLM. It can consume probabilistic signals, but applies explicit rules.
 
-### 12.2 Tipos de policy
+### 12.2 Policy types
 
 - security;
 - quality;
@@ -381,7 +381,7 @@ Determinístico, versionado e separado do LLM. Pode consumir sinais probabilíst
 - documentation;
 - user interaction.
 
-### 12.3 Exemplo
+### 12.3 Example
 
 ```yaml
 policy:
@@ -406,38 +406,38 @@ policy:
 
 ### 12.4 Hard constraints
 
-Hard constraints são impossibilidades ou políticas definidas como não dispensáveis pelo owner. Exemplo: secret nunca pode ser serializado em export. O modelo não pode mudar hard constraint.
+Hard constraints are impossibilities or policies defined as non-waivable by the owner. Example: a secret can never be serialized into an export. The model cannot change a hard constraint.
 
 ### 12.5 Waiver
 
-Waiver registra obrigação não atendida; não altera o resultado do evaluator. Uma execução pode estar `completed_with_waivers`.
+A waiver records an obligation that was not met; it does not change the evaluator's result. An execution can be `completed_with_waivers`.
 
 ## 13. Isolation Planner
 
-Determina tier, network, filesystem, secret scope, resource limit e cleanup.
+Determines tier, network, filesystem, secret scope, resource limits and cleanup.
 
-### 13.1 Sinais de elevação
+### 13.1 Elevation signals
 
-- código não confiável;
-- pacote novo/desconhecido;
-- shell destrutivo;
-- acesso a secrets;
-- parsing de arquivo malicioso;
-- browser com downloads;
-- execução de binário;
-- acesso de produção;
-- análise ofensiva;
-- plugin não verificado.
+- untrusted code;
+- new/unknown package;
+- destructive shell;
+- secret access;
+- parsing of a malicious file;
+- browser with downloads;
+- binary execution;
+- production access;
+- offensive analysis;
+- unverified plugin.
 
-### 13.2 Elevação dinâmica
+### 13.2 Dynamic elevation
 
-O runtime intercepta ação incompatível, emite Graph Signal, checkpointa e reexecuta em sandbox nova. Estado mutável do tier menor não é promovido cegamente.
+The runtime intercepts an incompatible action, emits a Graph Signal, checkpoints and re-executes in a new sandbox. Mutable state from the smaller tier is never blindly promoted.
 
 ## 14. Budget Optimizer
 
 ### 14.1 Budgets
 
-- tokens por nó;
+- tokens per node;
 - output tokens;
 - API cost;
 - subscription concurrency;
@@ -449,55 +449,55 @@ O runtime intercepta ação incompatível, emite Graph Signal, checkpointa e ree
 - CPU/memory/storage;
 - network egress.
 
-### 14.2 Estratégias de economia
+### 14.2 Savings strategies
 
-- classificador barato com escalation;
-- cache de Context Capsules;
-- reuse de extraction artifacts;
+- cheap classifier with escalation;
+- Context Capsule caching;
+- reuse of extraction artifacts;
 - delta context;
-- output estruturado;
+- structured output;
 - tool result summarization;
-- batch de retrieval;
+- retrieval batching;
 - early stopping;
 - branch cancellation;
-- deterministic checks antes de LLM reviewer;
-- reuse de agent definitions, não necessariamente de respostas;
-- model routing por marginal quality.
+- deterministic checks before an LLM reviewer;
+- reuse of agent definitions, not necessarily of responses;
+- model routing by marginal quality.
 
-### 14.3 Nunca economizar removendo evidência obrigatória
+### 14.3 Never save by removing required evidence
 
-Optimizer pode trocar método equivalente, mas policy requirement permanece.
+The optimizer can swap for an equivalent method, but the policy requirement remains.
 
 ## 15. Graph Linter
 
-Checks mínimos:
+Minimum checks:
 
-- IDs únicos;
-- schemas resolvíveis;
+- unique IDs;
+- resolvable schemas;
 - edge compatibility;
-- nodes alcançáveis;
+- reachable nodes;
 - entry/terminal nodes;
-- condições válidas;
-- ausência de ciclo não controlado;
-- retries finitos;
+- valid conditions;
+- absence of an uncontrolled cycle;
+- finite retries;
 - timeout;
-- permission satisfiable;
-- isolation satisfiable;
-- model route available;
-- context budget válido;
-- required policies cobertas;
-- completion contract possível;
+- satisfiable permissions;
+- satisfiable isolation;
+- available model route;
+- valid context budget;
+- required policies covered;
+- possible completion contract;
 - no secret path exposure;
-- no direct graph mutation by agent;
-- compensation para ação destrutiva quando exigido;
-- user decision node para ambiguidade inevitável.
+- no direct graph mutation by an agent;
+- compensation for destructive action when required;
+- user decision node for unavoidable ambiguity.
 
 ## 16. Graph Simulator
 
-Simula:
+Simulates:
 
-- transições;
-- branches condicionais;
+- transitions;
+- conditional branches;
 - failures;
 - retries;
 - capacity wait;
@@ -508,30 +508,30 @@ Simula:
 - deadlock;
 - cost upper bound.
 
-Não chama modelos ou tools externas. Usa fixtures de output schema.
+It does not call models or external tools. It uses output schema fixtures.
 
 ## 17. Harness Manifest
 
-O manifest deve ser suficiente para explicar e reproduzir o setup:
+The manifest must be sufficient to explain and reproduce the setup:
 
-- snapshot de capabilities;
-- agentes e versões;
-- model candidates e selected route;
+- capability snapshot;
+- agents and versions;
+- model candidates and the selected route;
 - graph;
 - context plan;
 - policies;
 - isolation;
 - budgets;
 - evidence requirements;
-- rationale resumido;
+- summarized rationale;
 - compiler/linter versions;
 - hashes.
 
-## 18. Execução e feedback
+## 18. Execution and feedback
 
 ### 18.1 Node runtime envelope
 
-Antes do agente iniciar, o runtime monta:
+Before the agent starts, the runtime assembles:
 
 - instructions;
 - Context Capsule;
@@ -542,9 +542,9 @@ Antes do agente iniciar, o runtime monta:
 - budget;
 - cancellation token.
 
-### 18.2 Saída
+### 18.2 Output
 
-Agente entrega:
+The agent delivers:
 
 - structured output;
 - artifacts;
@@ -554,13 +554,13 @@ Agente entrega:
 - graph signals;
 - memory candidates.
 
-### 18.3 Sem chain-of-thought como contrato
+### 18.3 No chain-of-thought as a contract
 
-O sistema registra justificativas resumidas e evidências, não exige exposição de raciocínio privado. Auditoria deve depender de inputs, outputs, ferramentas e decisões estruturadas.
+The system records summarized rationale and evidence; it does not require exposing private reasoning. Auditing must rely on inputs, outputs, tools and structured decisions.
 
 ## 19. Graph Signals
 
-Taxonomia inicial:
+Initial taxonomy:
 
 - unexpected_dependency;
 - unexpected_security_boundary;
@@ -583,7 +583,7 @@ Taxonomia inicial:
 
 ## 20. Graph Governor
 
-### 20.1 Processo
+### 20.1 Process
 
 ```text
 signal → normalize → validate evidence → reprofile → propose mutation
@@ -596,7 +596,7 @@ signal → normalize → validate evidence → reprofile → propose mutation
 - replace/split/merge node;
 - add parallel branch;
 - cancel branch;
-- change model for unstarted node;
+- change model for an unstarted node;
 - elevate isolation;
 - expand context;
 - add gate;
@@ -605,7 +605,7 @@ signal → normalize → validate evidence → reprofile → propose mutation
 - redirect failure;
 - invalidate outputs.
 
-### 20.3 Controle de explosão
+### 20.3 Explosion control
 
 - max nodes;
 - max mutations;
@@ -617,7 +617,7 @@ signal → normalize → validate evidence → reprofile → propose mutation
 - branch budget;
 - human escalation when nonconvergent.
 
-## 21. Gates de qualidade
+## 21. Quality gates
 
 ### 21.1 Gate contract
 
@@ -635,7 +635,7 @@ gate:
   override: owner_allowed
 ```
 
-### 21.2 Famílias
+### 21.2 Families
 
 - unit/integration/e2e tests;
 - static analysis;
@@ -651,49 +651,49 @@ gate:
 - documentation freshness;
 - rollback validation.
 
-### 21.3 Gate adaptativo
+### 21.3 Adaptive gate
 
-Método pode mudar, requirement não. Exemplo: security review pode ser coberta por scanner + reviewer ou por dois reviewers especializados, conforme contexto.
+The method can change, the requirement cannot. Example: security review can be covered by a scanner + reviewer or by two specialized reviewers, depending on context.
 
-## 22. Redução de viés de confirmação
+## 22. Reducing confirmation bias
 
-### 22.1 Regras
+### 22.1 Rules
 
-- executor não emite aprovação final da própria mudança;
-- reviewer recebe evidence e diff, não elogio/conclusão do executor;
-- critic pode operar em blind mode;
-- divergências são estruturadas;
-- reviewer precisa citar location/evidence;
-- aprovação vazia sem inspeção falha completion contract;
-- diversidade de modelo é preferida quando marginalmente útil;
-- deterministic tests precedem opinião quando possível;
-- prompt do reviewer inclui busca ativa por falsificação;
-- final verifier testa claims críticas, não só lê relatórios.
+- the executor never issues final approval of its own change;
+- the reviewer receives evidence and diff, not the executor's praise/conclusion;
+- the critic can operate in blind mode;
+- disagreements are structured;
+- the reviewer must cite location/evidence;
+- an empty approval without inspection fails the completion contract;
+- model diversity is preferred when marginally useful;
+- deterministic tests precede opinion when possible;
+- the reviewer's prompt includes actively searching for falsification;
+- the final verifier tests critical claims, not just reads reports.
 
 ### 22.2 Disagreement Resolver
 
-Quando reviewers divergem:
+When reviewers disagree:
 
-1. extrair claims de conflito;
-2. pedir evidência específica;
-3. executar teste discriminante;
-4. usar terceiro árbitro somente se necessário;
-5. preservar divergência se não resolvida;
-6. marcar conclusão com incerteza.
+1. extract the conflicting claims;
+2. request specific evidence;
+3. run a discriminating test;
+4. use a third arbiter only if necessary;
+5. preserve the disagreement if unresolved;
+6. mark the conclusion with uncertainty.
 
 ## 23. Completion Engine
 
-Execução conclui quando:
+Execution concludes when:
 
-- terminal nodes concluíram ou foram waived/skipped validamente;
-- completion contract global está satisfeito ou explicitamente waived;
-- artifacts obrigatórios existem;
-- evidence coverage atinge requirement;
-- não há branch required ativa;
-- Graph Version corrente é estável;
-- documentação/knowledge update possui estado permitido pela policy.
+- terminal nodes have completed or were validly waived/skipped;
+- the global completion contract is satisfied or explicitly waived;
+- required artifacts exist;
+- evidence coverage meets the requirement;
+- there is no active required branch;
+- the current Graph Version is stable;
+- documentation/knowledge update has a state allowed by policy.
 
-Resultado:
+Result:
 
 - `completed`
 - `completed_with_recommendations`
@@ -705,38 +705,38 @@ Resultado:
 - `failed`
 - `cancelled`
 
-## 24. Controle manual
+## 24. Manual control
 
-### 24.1 Desativar nó
+### 24.1 Disable node
 
 - checkpoint;
 - dependency impact;
 - branch pause;
-- alternativas como ghost nodes;
-- nenhuma alternativa inicia automaticamente;
-- owner escolhe substituir, waiver, manter pausado ou cancelar.
+- alternatives as ghost nodes;
+- no alternative starts automatically;
+- owner chooses to replace, waive, keep paused or cancel.
 
-### 24.2 Editar nó
+### 24.2 Edit node
 
-Cria overlay temporário. Se input/output mudar, edges são relintadas. Definição salva não muda.
+Creates a temporary overlay. If input/output changes, edges are relinted. The saved definition does not change.
 
-### 24.3 Pular para deploy
+### 24.3 Skip to deploy
 
-Graph Draft registra removed nodes, new edge, unsatisfied obligations e risks. Após confirmação, policy waiver e Graph Version são publicados.
+The Graph Draft records removed nodes, the new edge, unmet obligations and risks. After confirmation, the policy waiver and Graph Version are published.
 
-### 24.4 Rollback de graph
+### 24.4 Graph rollback
 
-Rollback restaura topologia, não necessariamente efeitos externos. Para efeitos, compensation nodes precisam existir.
+Rollback restores topology, not necessarily external effects. For effects, compensation nodes must exist.
 
-## 25. Exemplos de harness
+## 25. Harness examples
 
-### 25.1 Alteração leve
+### 25.1 Light change
 
 ```text
 Context Retriever → Patch Executor → Targeted Test → Diff Verifier
 ```
 
-### 25.2 Mudança profunda
+### 25.2 Deep change
 
 ```text
 Repository Mapper
@@ -751,7 +751,7 @@ Repository Mapper
   → Documentation Materializer
 ```
 
-### 25.3 Demanda multidomínio
+### 25.3 Multi-domain demand
 
 ```text
 Market Research ─┐
@@ -760,11 +760,11 @@ Technical Audit ─┘                         ↓
                                       Brand Review → Publish
 ```
 
-Esses exemplos não são packs; o compiler cria algo semelhante apenas quando sinais e capabilities justificarem.
+These examples are not packs; the compiler creates something similar only when signals and capabilities justify it.
 
-## 26. Avaliação do próprio harness
+## 26. Evaluating the harness itself
 
-Métricas:
+Metrics:
 
 - task success;
 - evidence coverage;
@@ -780,19 +780,19 @@ Métricas:
 - user graph edits;
 - post-completion regressions.
 
-O Dreams Engine usa essas métricas para sugerir melhorias, nunca para enfraquecer hard policies.
+The Dreams Engine uses these metrics to suggest improvements, never to weaken hard policies.
 
 ## 27. Conformance requirements
 
-Uma implementação compatível deve:
+A compliant implementation must:
 
-- produzir manifest versionado;
-- separar proposer de policy enforcement;
-- impedir agent direct mutation;
-- suportar structured graph signals;
-- suportar context capsules;
-- suportar user override e waiver;
-- preservar event history;
-- limitar graph expansion;
-- expor decisões pelo public API;
-- permitir substituir adapters.
+- produce a versioned manifest;
+- separate the proposer from policy enforcement;
+- prevent direct agent mutation;
+- support structured graph signals;
+- support context capsules;
+- support user override and waiver;
+- preserve event history;
+- limit graph expansion;
+- expose decisions through the public API;
+- allow adapters to be replaced.

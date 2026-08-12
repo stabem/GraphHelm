@@ -1,17 +1,17 @@
-# GraphHelm — documentação integral do produto
+# GraphHelm — full product documentation
 
-> **Nome do produto:** GraphHelm
-> **Codinome original:** Programação 5.0
-> **Categoria:** sistema operacional open source para agentes de IA
-> **Estado deste repositório:** especificação integral, Foundation Graph Kernel implementado e protocolos `1.0.0` publicados
-> **Versão da especificação:** 0.1.1
-> **Data-base:** 2026-08-08
+> **Product name:** GraphHelm
+> **Original codename:** Programação 5.0
+> **Category:** open source operating system for AI agents
+> **State of this repository:** full specification, Foundation Graph Kernel implemented, and `1.0.0` protocols published
+> **Specification version:** 0.1.1
+> **Baseline date:** 2026-08-08
 
-GraphHelm é uma plataforma local-first em que o usuário controla, por uma interface visual, uma infraestrutura agentiva executada em sua própria VPS. Cada pedido é classificado, decomposto e convertido em um grafo de execução específico para o cenário. O sistema seleciona ou cria agentes, modelos, ferramentas, contexto, isolamento, testes e revisões sem depender de workflows fixos por domínio.
+GraphHelm is a local-first platform in which the user controls, through a visual interface, an agentic infrastructure running on their own VPS. Each request is classified, decomposed, and converted into an execution graph specific to the scenario. The system selects or creates agents, models, tools, context, isolation, tests, and reviews without relying on fixed domain-specific workflows.
 
 ## Foundation Graph Kernel
 
-O primeiro milestone executável está em Rust 1.97.1. Ele oferece validação YAML/JSON offline, hash semântico, versões imutáveis, lint e policy determinísticos, drafts transacionais, waivers, simulação sem efeitos, Event Store append-only, replay e CLI JSON.
+The first executable milestone is written in Rust 1.97.1. It provides offline YAML/JSON validation, semantic hashing, immutable versions, deterministic lint and policy, transactional drafts, waivers, side-effect-free simulation, an append-only Event Store, replay, and a JSON CLI.
 
 ```bash
 cargo run --locked -p graphhelm-cli -- graph validate examples/graphs/software-feature.yaml
@@ -19,11 +19,11 @@ cargo run --locked -p graphhelm-cli -- graph lint examples/graphs/software-featu
 cargo run --locked -p graphhelm-cli -- graph hash examples/graphs/software-feature.yaml
 ```
 
-Consulte [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-graph-kernel.md) para contratos, comandos, códigos de saída, segurança e evidências de aceite.
+See [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-graph-kernel.md) for contracts, commands, exit codes, security, and acceptance evidence.
 
-## Protocolos e evolução de schemas
+## Protocols and schema evolution
 
-Os nove JSON Schemas têm catálogo verificável, hashes canônicos, snapshot imutável `1.0.0`, análise conservadora de compatibilidade, regras SemVer exatas, migrações declarativas e limitadas, fixtures públicas de conformidade e CLI JSON. A release inicial não publica nenhuma migração de dados; os identificadores provisórios `p50.dev` foram preservados.
+The nine JSON Schemas have a verifiable catalog, canonical hashes, an immutable `1.0.0` snapshot, conservative compatibility analysis, exact SemVer rules, declarative and scoped migrations, public conformance fixtures, and a JSON CLI. The initial release does not publish any data migration; the provisional `p50.dev` identifiers have been preserved.
 
 ```bash
 cargo run --locked -p graphhelm-cli -- schema catalog --catalog schemas/catalog.json
@@ -32,57 +32,57 @@ cargo run --locked -p graphhelm-cli -- schema conformance --catalog schemas/cata
 cargo run --locked -p graphhelm-cli -- schema view --catalog schemas/catalog.json --schema graph
 ```
 
-Consulte [docs/milestones/protocols-and-schema-evolution.md](docs/milestones/protocols-and-schema-evolution.md) para o contrato do catálogo, limites, matriz de compatibilidade, SemVer, migrações, segurança, rollback e evidências de aceite.
+See [docs/milestones/protocols-and-schema-evolution.md](docs/milestones/protocols-and-schema-evolution.md) for the catalog contract, limits, compatibility matrix, SemVer, migrations, security, rollback, and acceptance evidence.
 
-O produto é composto por três superfícies abertas:
+The product is made up of three open surfaces:
 
-1. **Framework** — Graph Engine, Harness Compiler, Context Compiler, Policy Engine, Agent Registry, Model Gateway, Dreams Engine e protocolos.
-2. **Runtime** — daemon instalado na VPS do usuário, responsável por execução, sandboxes, eventos, artefatos, credenciais e jobs.
-3. **Studio** — aplicativo local para chat, grafo, agentes em execução, documentos, arquivos, auditoria e controle soberano do workflow.
+1. **Framework** — Graph Engine, Harness Compiler, Context Compiler, Policy Engine, Agent Registry, Model Gateway, Dreams Engine, and protocols.
+2. **Runtime** — daemon installed on the user's VPS, responsible for execution, sandboxes, events, artifacts, credentials, and jobs.
+3. **Studio** — local application for chat, graph, running agents, documents, files, auditing, and sovereign workflow control.
 
-## Como ler
+## How to read this repository
 
-- [MASTER_PRD.md](MASTER_PRD.md): documento consolidado e normativo.
-- [docs/DECISION_REGISTER.md](docs/DECISION_REGISTER.md): todas as escolhas aprovadas durante a definição.
-- [docs/product/PRODUCT_REQUIREMENTS.md](docs/product/PRODUCT_REQUIREMENTS.md): requisitos funcionais e não funcionais.
-- [docs/ux/STUDIO_SPEC.md](docs/ux/STUDIO_SPEC.md): telas, componentes, estados e interações.
-- [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md): arquitetura de alto nível e topologia.
-- [docs/harness/HARNESS_SPEC.md](docs/harness/HARNESS_SPEC.md): especificação completa do harness dinâmico.
-- [docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md](docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md): guia para construir capacidades, agentes, gates e extensões.
-- [docs/graph-engineer/GRAPH_DSL_SPEC.md](docs/graph-engineer/GRAPH_DSL_SPEC.md): DSL tipada de grafos.
-- [docs/context/CONTEXT_KNOWLEDGE_DREAMS.md](docs/context/CONTEXT_KNOWLEDGE_DREAMS.md): contexto de baixo consumo, conhecimento e Dreams Engine.
-- [docs/agents/AGENTS_SKILLS_PLUGINS.md](docs/agents/AGENTS_SKILLS_PLUGINS.md): ciclo de vida de agentes, skills, tools e plugins.
-- [docs/models/UNIVERSAL_MODEL_GATEWAY.md](docs/models/UNIVERSAL_MODEL_GATEWAY.md): BYOK, assinaturas, rotas locais e política de capacidade.
-- [docs/security/SECURITY_ISOLATION_THREAT_MODEL.md](docs/security/SECURITY_ISOLATION_THREAT_MODEL.md): isolamento, secrets e threat model.
-- [docs/architecture/DATA_AND_PROTOCOLS.md](docs/architecture/DATA_AND_PROTOCOLS.md): entidades, eventos, APIs e contratos.
-- [docs/operations/OBSERVABILITY_AND_RECOVERY.md](docs/operations/OBSERVABILITY_AND_RECOVERY.md): métricas, checkpoints, replay e recuperação.
-- [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): AGPLv3, licença comercial, CLA e governança.
-- [docs/product/ROADMAP_AND_ACCEPTANCE.md](docs/product/ROADMAP_AND_ACCEPTANCE.md): fases, critérios de aceite e métricas.
-- [docs/product/NAMING_DECISION.md](docs/product/NAMING_DECISION.md): nome, posicionamento e arquitetura da marca.
-- [CODEX_BOOTSTRAP_PROMPT.md](CODEX_BOOTSTRAP_PROMPT.md): prompt inicial para planejamento e primeira implementação no Codex.
-- [docs/reference/EXAMPLE_EXECUTIONS.md](docs/reference/EXAMPLE_EXECUTIONS.md): exemplos completos de grafos.
-- [docs/reference/REFERENCE_STACK_AND_ADRS.md](docs/reference/REFERENCE_STACK_AND_ADRS.md): stack de referência e decisões arquiteturais.
-- [docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md](docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md): fontes oficiais verificadas.
-- [schemas/](schemas/): contratos JSON Schema.
-- [examples/](examples/): grafos e manifests de exemplo.
+- [MASTER_PRD.md](MASTER_PRD.md): consolidated, normative document.
+- [docs/DECISION_REGISTER.md](docs/DECISION_REGISTER.md): all choices approved during the definition phase.
+- [docs/product/PRODUCT_REQUIREMENTS.md](docs/product/PRODUCT_REQUIREMENTS.md): functional and non-functional requirements.
+- [docs/ux/STUDIO_SPEC.md](docs/ux/STUDIO_SPEC.md): screens, components, states, and interactions.
+- [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md): high-level architecture and topology.
+- [docs/harness/HARNESS_SPEC.md](docs/harness/HARNESS_SPEC.md): full specification of the dynamic harness.
+- [docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md](docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md): guide for building capabilities, agents, gates, and extensions.
+- [docs/graph-engineer/GRAPH_DSL_SPEC.md](docs/graph-engineer/GRAPH_DSL_SPEC.md): typed graph DSL.
+- [docs/context/CONTEXT_KNOWLEDGE_DREAMS.md](docs/context/CONTEXT_KNOWLEDGE_DREAMS.md): low-consumption context, knowledge, and the Dreams Engine.
+- [docs/agents/AGENTS_SKILLS_PLUGINS.md](docs/agents/AGENTS_SKILLS_PLUGINS.md): lifecycle of agents, skills, tools, and plugins.
+- [docs/models/UNIVERSAL_MODEL_GATEWAY.md](docs/models/UNIVERSAL_MODEL_GATEWAY.md): BYOK, subscriptions, local routes, and capability policy.
+- [docs/security/SECURITY_ISOLATION_THREAT_MODEL.md](docs/security/SECURITY_ISOLATION_THREAT_MODEL.md): isolation, secrets, and threat model.
+- [docs/architecture/DATA_AND_PROTOCOLS.md](docs/architecture/DATA_AND_PROTOCOLS.md): entities, events, APIs, and contracts.
+- [docs/operations/OBSERVABILITY_AND_RECOVERY.md](docs/operations/OBSERVABILITY_AND_RECOVERY.md): metrics, checkpoints, replay, and recovery.
+- [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): AGPLv3, commercial license, CLA, and governance.
+- [docs/product/ROADMAP_AND_ACCEPTANCE.md](docs/product/ROADMAP_AND_ACCEPTANCE.md): phases, acceptance criteria, and metrics.
+- [docs/product/NAMING_DECISION.md](docs/product/NAMING_DECISION.md): name, positioning, and brand architecture.
+- [CODEX_BOOTSTRAP_PROMPT.md](CODEX_BOOTSTRAP_PROMPT.md): initial prompt for planning and first implementation in Codex.
+- [docs/reference/EXAMPLE_EXECUTIONS.md](docs/reference/EXAMPLE_EXECUTIONS.md): complete graph examples.
+- [docs/reference/REFERENCE_STACK_AND_ADRS.md](docs/reference/REFERENCE_STACK_AND_ADRS.md): reference stack and architectural decisions.
+- [docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md](docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md): verified official sources.
+- [schemas/](schemas/): JSON Schema contracts.
+- [examples/](examples/): example graphs and manifests.
 
-## Princípios constitucionais
+## Constitutional principles
 
-1. **Nenhuma função essencial depende de servidor proprietário.**
-2. **O harness propõe e governa; o usuário continua soberano.**
-3. **Cada tarefa recebe um grafo específico, não um pack fixo.**
-4. **Toda afirmação importante precisa de proveniência e evidência.**
-5. **Agentes compartilham artefatos e contexto compilado, não chats inteiros.**
-6. **Qualidade é comprovada por gates e evidências, não por autoconfiança do executor.**
-7. **Permissões, contexto e segredos seguem o mínimo privilégio.**
-8. **Toda mutação operacional do grafo é versionada, transacional e reversível.**
-9. **O sistema deve buscar o menor grafo capaz de produzir evidência suficiente.**
-10. **O núcleo e os protocolos são públicos, documentados e substituíveis.**
+1. **No essential function depends on a proprietary server.**
+2. **The harness proposes and governs; the user remains sovereign.**
+3. **Each task receives a graph specific to it, not a fixed pack.**
+4. **Every important claim requires provenance and evidence.**
+5. **Agents share artifacts and compiled context, not entire chats.**
+6. **Quality is proven by gates and evidence, not by the executor's self-confidence.**
+7. **Permissions, context, and secrets follow the principle of least privilege.**
+8. **Every operational mutation of the graph is versioned, transactional, and reversible.**
+9. **The system must seek the smallest graph capable of producing sufficient evidence.**
+10. **The core and the protocols are public, documented, and replaceable.**
 
-## Escopo deste pacote
+## Scope of this package
 
-Este repositório descreve o produto inteiro, incluindo a visão generalista. A primeira fatia recomendada continua sendo developer-first, mas a arquitetura não depende do domínio de programação. Pesquisa, produto, marketing, dados, documentos, design, automação, operações e outros trabalhos usam o mesmo catálogo de capacidades atômicas e o mesmo compilador de grafos.
+This repository describes the entire product, including the generalist vision. The recommended first slice remains developer-first, but the architecture does not depend on the programming domain. Research, product, marketing, data, documents, design, automation, operations, and other work all use the same catalog of atomic capabilities and the same graph compiler.
 
-## Status jurídico
+## Legal status
 
-A estratégia proposta é AGPLv3 para a edição comunitária, licença comercial alternativa sobre a mesma base de código e CLA não exclusivo para contribuições. Os textos definitivos de licença comercial, ICLA e CCLA devem ser redigidos e validados por assessoria jurídica antes de publicação.
+The proposed strategy is AGPLv3 for the community edition, an alternative commercial license over the same codebase, and a non-exclusive CLA for contributions. The final texts of the commercial license, ICLA, and CCLA must be drafted and validated by legal counsel before publication.

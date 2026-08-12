@@ -1,266 +1,266 @@
-# Requisitos de produto
+# Product Requirements
 
-## 1. Escopo normativo
+## 1. Normative scope
 
-Este documento transforma a visão do MASTER PRD em requisitos verificáveis. Os identificadores devem ser preservados em issues, testes de aceite e RFCs.
+This document translates the vision of the MASTER PRD into verifiable requirements. Identifiers must be preserved in issues, acceptance tests, and RFCs.
 
-## 2. Requisitos funcionais
+## 2. Functional requirements
 
-### FR-001 — Instalação self-hosted
+### FR-001 — Self-hosted installation
 
-O usuário deve conseguir instalar o Runtime em uma VPS Linux existente por SSH e Docker, sem criar conta em serviço central.
+The user must be able to install the Runtime on an existing Linux VPS via SSH and Docker, without creating an account on a central service.
 
-**Aceite:** o bootstrap valida arquitetura, disco, memória, Docker/Podman, portas, Git e persistência; mostra plano antes de alterar a VPS; permite atualizar e desinstalar.
+**Acceptance:** the bootstrap validates architecture, disk, memory, Docker/Podman, ports, Git, and persistence; shows a plan before altering the VPS; allows updating and uninstalling.
 
-### FR-002 — Studio local
+### FR-002 — Local Studio
 
-O Studio deve operar como control plane local, reconectando-se ao Runtime sem interromper execuções.
+The Studio must operate as a local control plane, reconnecting to the Runtime without interrupting executions.
 
-### FR-003 — Hierarquia de contexto
+### FR-003 — Context hierarchy
 
-Deve existir Workspace, Projeto e Subprojeto, com herança seletiva para políticas, agentes, skills, documentos, fontes e credenciais.
+There must be Workspace, Project, and Subproject, with selective inheritance for policies, agents, skills, documents, sources, and credentials.
 
-### FR-004 — Intake universal
+### FR-004 — Universal intake
 
-O usuário deve poder enviar linguagem natural, arquivos, imagens, links permitidos, seleção de nós e referências a documentos.
+The user must be able to submit natural language, files, images, allowed links, node selections, and document references.
 
 ### FR-005 — Command Router
 
-Cada mensagem deve produzir `intent`, `target`, `confidence`, `operational_effect` e `interpretation`. Mutações do grafo criam draft, não alteração silenciosa.
+Each message must produce `intent`, `target`, `confidence`, `operational_effect`, and `interpretation`. Graph mutations create a draft, not a silent change.
 
 ### FR-006 — Task Profile
 
-O sistema deve classificar, no mínimo:
+The system must classify, at minimum:
 
-- domínio provável e multidomínio;
-- complexidade;
-- profundidade;
-- superfície afetada;
-- risco de regressão;
-- risco de segurança;
-- reversibilidade;
-- incerteza;
-- necessidade de pesquisa;
-- sensibilidade de dados;
-- custo e duração estimados;
-- necessidade de decisão humana;
-- isolation tier mínimo.
+- probable domain and multi-domain;
+- complexity;
+- depth;
+- affected surface;
+- regression risk;
+- security risk;
+- reversibility;
+- uncertainty;
+- research need;
+- data sensitivity;
+- estimated cost and duration;
+- need for human decision;
+- minimum isolation tier.
 
-### FR-007 — Catálogo de capacidades
+### FR-007 — Capability catalog
 
-Capabilities devem ser pesquisáveis por objetivo, input/output, permissões, custo, histórico, runtime, isolamento e compatibilidade.
+Capabilities must be searchable by objective, input/output, permissions, cost, history, runtime, isolation, and compatibility.
 
-### FR-008 — Harness por tarefa
+### FR-008 — Per-task harness
 
-Cada execução deve possuir um Harness Manifest imutável por versão. Não deve existir dependência obrigatória de packs fixos por domínio.
+Each execution must have an immutable, versioned Harness Manifest. There must be no mandatory dependency on fixed packs per domain.
 
-### FR-009 — Graph DSL tipada
+### FR-009 — Typed Graph DSL
 
-Nós e arestas devem declarar contratos. O linter deve bloquear incompatibilidades técnicas antes da execução.
+Nodes and edges must declare contracts. The linter must block technical incompatibilities before execution.
 
-### FR-010 — Agentes sintetizados
+### FR-010 — Synthesized agents
 
-O sistema deve criar agentes específicos quando nenhum agente salvo atender. Toda definição precisa de objetivo, capabilities, permissions, schemas, evidence requirements e completion criteria.
+The system must create specific agents when no saved agent satisfies the need. Every definition requires an objective, capabilities, permissions, schemas, evidence requirements, and completion criteria.
 
 ### FR-011 — Project Agent Registry
 
-Agentes devem poder ser salvos, versionados, avaliados, derivados, suspensos, arquivados e reutilizados no escopo do projeto.
+Agents must be savable, versionable, evaluable, derivable, suspendable, archivable, and reusable within the project scope.
 
-### FR-012 — Alterações temporárias de nó
+### FR-012 — Temporary node changes
 
-Editar uma instância de agente no grafo não altera a definição persistente. Salvar/promover exige comando explícito.
+Editing an agent instance on the graph does not alter the persistent definition. Saving/promoting requires an explicit command.
 
 ### FR-013 — Universal Model Gateway
 
-Deve suportar agregadores, BYOK, APIs diretas, runtimes nativos oficiais e modelos locais por adapters substituíveis.
+Must support aggregators, BYOK, direct APIs, official native runtimes, and local models through replaceable adapters.
 
-### FR-014 — Pausa por limite de assinatura
+### FR-014 — Pause on subscription limit
 
-Quando uma rota de assinatura atingir limite ou perder sessão, os nós dependentes entram em `waiting_for_model_capacity`; não deve existir fallback pago automático.
+When a subscription route reaches its limit or loses session, dependent nodes enter `waiting_for_model_capacity`; there must be no automatic paid fallback.
 
 ### FR-015 — Context Capsules
 
-Cada nó recebe uma cápsula versionada, com itens incluídos, excluídos, provenance, token budget e política de expansão.
+Each node receives a versioned capsule, with included items, excluded items, provenance, token budget, and expansion policy.
 
-### FR-016 — Solicitação de expansão
+### FR-016 — Expansion request
 
-O agente deve poder pedir mais contexto declarando motivo, informação faltante e impacto esperado. O Context Compiler aceita, reduz ou rejeita.
+The agent must be able to request more context by declaring the reason, the missing information, and the expected impact. The Context Compiler accepts, reduces, or rejects it.
 
 ### FR-017 — Event Store
 
-Prompts, decisões, eventos, diffs, testes, modelos, custos, artefatos, waivers e mutações devem ser registrados de forma append-only.
+Prompts, decisions, events, diffs, tests, models, costs, artifacts, waivers, and mutations must be recorded in an append-only manner.
 
 ### FR-018 — Knowledge Graph
 
-Claims devem possuir status, confiança, validade temporal, provenance e relações `supports`, `contradicts`, `supersedes`, `derived_from` e `applies_to`.
+Claims must have status, confidence, temporal validity, provenance, and relations `supports`, `contradicts`, `supersedes`, `derived_from`, and `applies_to`.
 
 ### FR-019 — Living Documentation
 
-Documentos legíveis devem ser versionados e vinculados a claims/evidências. Atualizações precisam produzir diff e justificativa.
+Readable documents must be versioned and linked to claims/evidence. Updates must produce a diff and justification.
 
 ### FR-020 — Graph Engine
 
-O motor deve executar DAGs e grafos governados com forks, joins, condições, retries, timeouts, compensações, checkpoints e human decisions.
+The engine must execute DAGs and governed graphs with forks, joins, conditions, retries, timeouts, compensations, checkpoints, and human decisions.
 
 ### FR-021 — Graph Governor
 
-Agentes não podem alterar a topologia diretamente. Devem emitir `graph_signal`. O Governor publica nova versão após policy, dependency, cost e lint checks.
+Agents cannot alter the topology directly. They must emit a `graph_signal`. The Governor publishes a new version after policy, dependency, cost, and lint checks.
 
 ### FR-022 — Ghost nodes
 
-Quando a política de interação exigir aprovação, uma expansão aparece como proposta visual sem runtime, contexto ou consumo de modelo.
+When the interaction policy requires approval, an expansion appears as a visual proposal without runtime, context, or model consumption.
 
-### FR-023 — Modos de operação
+### FR-023 — Operating modes
 
-Deve haver Autopilot, Supervised e Manual Graph, alternáveis durante a execução.
+There must be Autopilot, Supervised, and Manual Graph modes, switchable during execution.
 
-### FR-024 — Controle soberano
+### FR-024 — Sovereign control
 
-O proprietário pode pausar, cancelar, remover nó, trocar modelo, editar aresta, pular gate e ir direto para deploy quando tecnicamente executável.
+The owner can pause, cancel, remove a node, change model, edit an edge, skip a gate, and go straight to deploy when technically feasible.
 
 ### FR-025 — Waiver
 
-Pular obrigação cria waiver com ator, escopo, riscos, versão do grafo e duração. O sistema não deve recolocar automaticamente o gate ignorado.
+Skipping an obligation creates a waiver with actor, scope, risks, graph version, and duration. The system must not automatically reinstate the ignored gate.
 
-### FR-026 — Substituição confirmada
+### FR-026 — Confirmed replacement
 
-Após o usuário desativar um agente, qualquer substituto proposto permanece parado até confirmação explícita.
+After the user deactivates an agent, any proposed replacement remains stopped until explicit confirmation.
 
-### FR-027 — Graph Draft transacional
+### FR-027 — Transactional Graph Draft
 
-Alterações operacionais devem ser agrupadas, analisadas e aplicadas atomicamente. Somente branches afetadas são pausadas/invalidadas.
+Operational changes must be grouped, analyzed, and applied atomically. Only affected branches are paused/invalidated.
 
-### FR-028 — Editor integral de nó
+### FR-028 — Full node editor
 
-O usuário pode editar objetivo, instruções, agente, modelo, skills, tools, contexto, schemas, completion criteria, isolamento, recursos, retries, gates, memory policy e edge conditions.
+The user can edit objective, instructions, agent, model, skills, tools, context, schemas, completion criteria, isolation, resources, retries, gates, memory policy, and edge conditions.
 
-### FR-029 — Isolamento adaptativo
+### FR-029 — Adaptive isolation
 
-Cada nó recebe tier, filesystem, network, secret scope e resource limits. O runtime pode elevar o tier conforme sinais.
+Each node receives a tier, filesystem, network, secret scope, and resource limits. The runtime can elevate the tier based on signals.
 
 ### FR-030 — Capability leases
 
-Acesso a tool, rede, filesystem, segredo ou produção deve ter lease escopada, revogável e registrada.
+Access to a tool, network, filesystem, secret, or production must have a scoped, revocable, and recorded lease.
 
 ### FR-031 — Tool Broker
 
-Agentes devem acessar o ambiente por tools mediadas e tipadas. Código não confiável não recebe credenciais de modelos.
+Agents must access the environment through mediated, typed tools. Untrusted code does not receive model credentials.
 
-### FR-032 — Gates de qualidade
+### FR-032 — Quality gates
 
-O sistema deve suportar testes determinísticos, avaliação por modelo, review independente, segurança, performance, consistência, documentação, fonte e critérios customizados.
+The system must support deterministic tests, model-based evaluation, independent review, security, performance, consistency, documentation, source, and custom criteria.
 
-### FR-033 — Evidência de conclusão
+### FR-033 — Completion evidence
 
-Cada nó e execução deve declarar o que prova conclusão. Saída sem evidência pode ser marcada como parcial, não como plenamente validada.
+Each node and execution must declare what proves completion. Output without evidence may be marked as partial, not as fully validated.
 
-### FR-034 — Controle de viés
+### FR-034 — Bias control
 
-O harness deve poder impor reviewer independente, blind review, provider diversity, prompt diversity e disagreement resolution.
+The harness must be able to enforce independent reviewer, blind review, provider diversity, prompt diversity, and disagreement resolution.
 
 ### FR-035 — Dreams Engine
 
-Deve operar em Shadow Workspace, validar mudanças, receber crítica independente e realizar commit atômico ou descarte.
+Must operate in a Shadow Workspace, validate changes, receive independent critique, and perform an atomic commit or discard.
 
-### FR-036 — Dreams sem alteração direta de código
+### FR-036 — Dreams without direct code changes
 
-Achados que exigem código devem virar tarefas normais com origem `dream_generated`.
+Findings that require code must become normal tasks with origin `dream_generated`.
 
-### FR-037 — Documentação e agente em paralelo
+### FR-037 — Parallel documentation and agent
 
-O grafo pode atualizar claims, índices e documentação enquanto outra branch executa, desde que dependências e snapshots evitem ler estado inconsistente.
+The graph can update claims, indexes, and documentation while another branch executes, as long as dependencies and snapshots avoid reading inconsistent state.
 
-### FR-038 — Painel de agentes
+### FR-038 — Agent panel
 
-O Studio deve mostrar status, função, modelo, nó, tokens/capacidade, duração, ferramentas, contexto e último evento de cada agente.
+The Studio must show status, role, model, node, tokens/capacity, duration, tools, context, and the last event for each agent.
 
-### FR-039 — Painel de docs e arquivos
+### FR-039 — Docs and files panel
 
-Documentos, arquivos, imagens, artefatos, diffs, testes e fontes devem ser vinculados ao projeto e aos nós que os produziram ou consumiram.
+Documents, files, images, artifacts, diffs, tests, and sources must be linked to the project and to the nodes that produced or consumed them.
 
-### FR-040 — Auditoria e replay
+### FR-040 — Audit and replay
 
-O usuário deve poder reproduzir a timeline, comparar Graph Versions, abrir inputs/outputs e exportar Execution Manifest sem secrets.
+The user must be able to replay the timeline, compare Graph Versions, open inputs/outputs, and export the Execution Manifest without secrets.
 
-### FR-041 — APIs públicas
+### FR-041 — Public APIs
 
-Tudo que o Studio faz deve estar disponível por API e, quando aplicável, CLI e SDK.
+Everything the Studio does must be available via API and, when applicable, CLI and SDK.
 
-### FR-042 — Extensões
+### FR-042 — Extensions
 
-Plugins devem declarar type, capabilities, contracts, permissions, isolation minimum, platforms e version compatibility.
+Plugins must declare type, capabilities, contracts, permissions, minimum isolation, platforms, and version compatibility.
 
-### FR-043 — Observabilidade local
+### FR-043 — Local observability
 
-Tokens, quotas, custos, latência, failures, graph mutations, context usage e quality scores devem ficar disponíveis localmente.
+Tokens, quotas, costs, latency, failures, graph mutations, context usage, and quality scores must be available locally.
 
-### FR-044 — Colaboração futura
+### FR-044 — Future collaboration
 
-Mesmo em single-user, toda ação deve possuir `actor`. O modelo de autorização deve aceitar user, service account e agent identity.
+Even in single-user mode, every action must have an `actor`. The authorization model must accept user, service account, and agent identity.
 
-### FR-045 — Exportação
+### FR-045 — Export
 
-Projeto, agentes, skills, grafos, policies e execution manifests devem poder ser exportados. Secrets nunca entram por padrão.
+Project, agents, skills, graphs, policies, and execution manifests must be exportable. Secrets never go in by default.
 
-## 3. Requisitos não funcionais
+## 3. Non-functional requirements
 
-### NFR-001 — Privacidade
+### NFR-001 — Privacy
 
-Nenhum dado é enviado ao mantenedor por padrão. Telemetria externa é opt-in, documentada e desligável.
+No data is sent to the maintainer by default. External telemetry is opt-in, documented, and can be disabled.
 
-### NFR-002 — Segurança de secrets
+### NFR-002 — Secret security
 
-Nenhum secret em logs, artifacts, context capsules, prompts exportados ou crash dumps. O scanner de segredo deve rodar em saídas persistentes.
+No secret in logs, artifacts, context capsules, exported prompts, or crash dumps. The secret scanner must run on persistent outputs.
 
-### NFR-003 — Resiliência
+### NFR-003 — Resilience
 
-O Runtime sobrevive ao fechamento do Studio. Reboot da VPS recupera execuções de checkpoints duráveis.
+The Runtime survives the Studio closing. A VPS reboot recovers executions from durable checkpoints.
 
-### NFR-004 — Idempotência
+### NFR-004 — Idempotency
 
-Comandos de mutação, eventos e retries devem possuir IDs idempotentes.
+Mutation commands, events, and retries must have idempotent IDs.
 
-### NFR-005 — Compatibilidade
+### NFR-005 — Compatibility
 
-Schemas e APIs seguem SemVer. Breaking changes exigem migração e changelog.
+Schemas and APIs follow SemVer. Breaking changes require migration and a changelog.
 
-### NFR-006 — Desempenho do Studio
+### NFR-006 — Studio performance
 
-Canvas deve manter interação fluida com 1.000 nós e virtualizar detalhes. Atualização de estado deve ser incremental.
+The canvas must maintain fluid interaction with 1,000 nodes and virtualize details. State updates must be incremental.
 
-### NFR-007 — Eficiência de contexto
+### NFR-007 — Context efficiency
 
-Context Compiler deve medir precisão, recall, redundância e tokens evitados por cápsula.
+The Context Compiler must measure precision, recall, redundancy, and tokens saved per capsule.
 
-### NFR-008 — Expansão limitada
+### NFR-008 — Bounded expansion
 
-Toda execução possui limites de nós, profundidade, mutations, retries, custo e wall-clock; loops sem progresso são detectados.
+Every execution has limits on nodes, depth, mutations, retries, cost, and wall-clock time; loops without progress are detected.
 
-### NFR-009 — Auditabilidade
+### NFR-009 — Auditability
 
-Toda decisão de modelo relevante deve registrar candidatos, score, restrições e rota escolhida, respeitando confidencialidade do provedor.
+Every relevant model decision must record candidates, score, constraints, and the chosen route, while respecting provider confidentiality.
 
-### NFR-010 — Acessibilidade
+### NFR-010 — Accessibility
 
-Navegação por teclado, foco visível, contraste, labels, text alternatives e modo de movimento reduzido.
+Keyboard navigation, visible focus, contrast, labels, text alternatives, and reduced-motion mode.
 
-### NFR-011 — Portabilidade
+### NFR-011 — Portability
 
-Runtime de referência suporta Linux x86_64 e arm64. Studio suporta Windows, macOS e Linux.
+The reference Runtime supports Linux x86_64 and arm64. The Studio supports Windows, macOS, and Linux.
 
-### NFR-012 — Substituibilidade
+### NFR-012 — Replaceability
 
-Stores, model adapters, sandbox adapters, evaluators e retrievers devem possuir interfaces públicas.
+Stores, model adapters, sandbox adapters, evaluators, and retrievers must have public interfaces.
 
-## 4. Regras de negócio
+## 4. Business rules
 
-- Um gate pode ser `required`, `recommended` ou `optional`.
-- `required` pode ser dispensável por owner, salvo impossibilidade técnica ou policy rígida configurada pelo próprio owner.
-- Waiver não converte evidência inexistente em evidência satisfeita.
-- Um nó `succeeded` pode ser invalidado por mutação posterior se seu input semântico mudou.
-- Uma memória expirada não entra automaticamente em Context Capsule.
-- Um agente suspenso não é selecionado pelo matcher, mas continua reproduzível por versão.
-- Graph Governor preserva outputs concluídos apenas quando dependency hash permanece válido.
-- Model route de assinatura não pode gastar API BYOK sem escolha manual.
-- Dreams nunca apaga Event Store nem amplia suas próprias permissões.
-- Um plugin não recebe network ou secrets sem manifestação explícita e policy compatível.
+- A gate can be `required`, `recommended`, or `optional`.
+- `required` can be waivable by the owner, except in cases of technical impossibility or a strict policy configured by the owner themselves.
+- A waiver does not convert nonexistent evidence into satisfied evidence.
+- A `succeeded` node can be invalidated by a later mutation if its semantic input changed.
+- An expired memory does not automatically enter a Context Capsule.
+- A suspended agent is not selected by the matcher, but remains reproducible by version.
+- The Graph Governor preserves completed outputs only while the dependency hash remains valid.
+- A subscription model route cannot spend BYOK API without manual selection.
+- Dreams never erases the Event Store nor expands its own permissions.
+- A plugin does not receive network or secrets without explicit declaration and compatible policy.

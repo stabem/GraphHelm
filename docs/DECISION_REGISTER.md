@@ -1,51 +1,51 @@
-# Registro de decisões aprovadas
+# Approved decision register
 
-Este documento consolida as decisões de produto já tomadas. Elas são normativas para a versão 0.1 da especificação.
+This document consolidates the product decisions already made. They are normative for version 0.1 of the specification.
 
-| ID | Tema | Decisão |
+| ID | Theme | Decision |
 |---|---|---|
-| D-001 | Topologia | Studio local como control plane; runtime e dados na VPS do usuário. |
-| D-002 | Conexão da VPS | VPS existente conectada via SSH; instalação e atualização por Docker. |
-| D-003 | Autonomia | Autonomia total governada pelo harness; sem aprovação obrigatória entre fases. |
-| D-004 | Abrangência | Sistema operacional generalista de agentes, não apenas ferramenta de programação. |
-| D-005 | Harness | Harness sintetizado por tarefa a partir de capacidades atômicas; nenhum pack fixo por domínio. |
-| D-006 | Regras obrigatórias | Policy Engine determinístico impõe invariantes e gates conforme sinais de risco. |
-| D-007 | Agentes | Agentes efêmeros são sintetizados com contratos e capacidades registradas. |
-| D-008 | Persistência de agentes | Agentes úteis ficam salvos no Project Agent Registry e podem ser reutilizados. |
-| D-009 | Memória de agente | Memória limitada, auditável, com evidência, confiança, validade e expiração. |
-| D-010 | Verdade do projeto | Três camadas: Evidence/Event Store, Project Knowledge Graph e Living Documentation. |
-| D-011 | Dreams Engine | Autonomia total governada sobre conhecimento, documentos, agentes, skills e índices. |
-| D-012 | Dreams e código | Dreams não altera código diretamente; cria tarefa normal fundamentada para o Graph Engine. |
-| D-013 | Isolamento | Isolamento adaptativo Tier 0–3, elevado conforme riscos descobertos. |
-| D-014 | Modelos | Universal Model Gateway com BYOK, APIs diretas, agregadores, runtimes nativos e modelos locais. |
-| D-015 | Assinaturas | Conexão oficial com conta ChatGPT/Codex e Claude/Claude Code quando suportada pelo provedor. |
-| D-016 | Fallback de assinatura | Ao atingir limite de assinatura, pausar; não gastar BYOK/OpenRouter automaticamente. |
-| D-017 | Contexto | Context Compiler em camadas com cápsulas específicas por nó e expansão justificada. |
-| D-018 | Grafo em execução | Grafo adaptativo, versionado e alterado somente pelo Graph Governor. |
-| D-019 | Soberania | Usuário pode pausar, remover gates, pular fases e conectar diretamente ao deploy. |
-| D-020 | Substituição de agente | Agente substituto nunca inicia automaticamente após intervenção manual; exige confirmação. |
-| D-021 | Ghost nodes | Expansões propostas aparecem como nós transparentes sem consumir tokens antes da aprovação. |
-| D-022 | Modos | Autopilot, Supervised e Manual Graph, alternáveis durante a execução. |
-| D-023 | Editor de nó | Editor integral: objetivo, prompt, modelo, contexto, skills, ferramentas, contratos, gates e retries. |
-| D-024 | Edição de agente salvo | Alterações em nó valem só para a execução atual; promoção exige ação explícita. |
-| D-025 | Edição em execução | Alterações visuais imediatas; alterações operacionais entram em Graph Draft transacional. |
-| D-026 | Chat | Command Router contextual; mutações operacionais viram drafts para confirmação. |
-| D-027 | Hierarquia | Workspace → Projeto → Subprojeto, com herança seletiva de contexto e políticas. |
-| D-028 | Colaboração | Single-user first, mas identidade, autorização e auditoria prontas para equipes. |
-| D-029 | Open source | Framework, Runtime e Studio integralmente open source; nenhuma função essencial fechada. |
-| D-030 | Licenciamento | Dual license: AGPLv3 comunitária e licença comercial alternativa. |
-| D-031 | Contribuições | CLA não exclusivo, com ICLA e CCLA, permitindo relicenciamento comercial. |
-| D-032 | Primeira fatia | Fatia vertical developer-first completa, sem limitar a arquitetura generalista. |
-| D-033 | Estado atual | Produzir documentação integral antes de qualquer implementação. |
-| D-034 | Nome | GraphHelm é o nome de produto selecionado para desenvolvimento, sujeito a clearance jurídico e reserva de namespaces antes do lançamento público. |
+| D-001 | Topology | Local Studio as control plane; runtime and data on the user's VPS. |
+| D-002 | VPS connection | Existing VPS connected via SSH; installation and updates via Docker. |
+| D-003 | Autonomy | Full autonomy governed by the harness; no mandatory approval between phases. |
+| D-004 | Scope | Generalist agent operating system, not just a coding tool. |
+| D-005 | Harness | Harness synthesized per task from atomic capabilities; no fixed pack per domain. |
+| D-006 | Mandatory rules | Deterministic Policy Engine enforces invariants and gates according to risk signals. |
+| D-007 | Agents | Ephemeral agents are synthesized with contracts and registered capabilities. |
+| D-008 | Agent persistence | Useful agents are saved to the Project Agent Registry and can be reused. |
+| D-009 | Agent memory | Limited, auditable memory, with evidence, confidence, validity, and expiration. |
+| D-010 | Project truth | Three layers: Evidence/Event Store, Project Knowledge Graph, and Living Documentation. |
+| D-011 | Dreams Engine | Full autonomy governed over knowledge, documents, agents, skills, and indexes. |
+| D-012 | Dreams and code | Dreams does not alter code directly; it creates a normal, substantiated task for the Graph Engine. |
+| D-013 | Isolation | Adaptive Tier 0–3 isolation, elevated as risks are discovered. |
+| D-014 | Models | Universal Model Gateway with BYOK, direct APIs, aggregators, native runtimes, and local models. |
+| D-015 | Subscriptions | Official connection with ChatGPT/Codex and Claude/Claude Code accounts when supported by the provider. |
+| D-016 | Subscription fallback | On reaching a subscription limit, pause; do not spend BYOK/OpenRouter automatically. |
+| D-017 | Context | Layered Context Compiler with node-specific capsules and justified expansion. |
+| D-018 | Graph at runtime | Adaptive, versioned graph, changed only by the Graph Governor. |
+| D-019 | Sovereignty | The user can pause, remove gates, skip phases, and connect directly to deploy. |
+| D-020 | Agent replacement | A replacement agent never starts automatically after manual intervention; it requires confirmation. |
+| D-021 | Ghost nodes | Proposed expansions appear as transparent nodes that consume no tokens before approval. |
+| D-022 | Modes | Autopilot, Supervised, and Manual Graph, switchable during execution. |
+| D-023 | Node editor | Full editor: objective, prompt, model, context, skills, tools, contracts, gates, and retries. |
+| D-024 | Editing a saved agent | Changes to a node apply only to the current execution; promotion requires an explicit action. |
+| D-025 | Editing at runtime | Visual changes are immediate; operational changes go through a transactional Graph Draft. |
+| D-026 | Chat | Contextual Command Router; operational mutations become drafts for confirmation. |
+| D-027 | Hierarchy | Workspace → Project → Subproject, with selective inheritance of context and policies. |
+| D-028 | Collaboration | Single-user first, but identity, authorization, and auditing ready for teams. |
+| D-029 | Open source | Framework, Runtime, and Studio fully open source; no essential function closed. |
+| D-030 | Licensing | Dual license: community AGPLv3 and an alternate commercial license. |
+| D-031 | Contributions | Non-exclusive CLA, with ICLA and CCLA, allowing commercial relicensing. |
+| D-032 | First slice | Complete developer-first vertical slice, without limiting the generalist architecture. |
+| D-033 | Current state | Produce complete documentation before any implementation. |
+| D-034 | Name | GraphHelm is the product name selected for development, subject to legal clearance and namespace reservation before public launch. |
 
-## Consequências obrigatórias
+## Mandatory consequences
 
-- Nenhum componente pode presumir um workflow estático chamado “software pack”, “marketing pack” ou equivalente.
-- Um agente nunca recebe, por padrão, todo o histórico do projeto.
-- Um executor não pode aprovar sozinho seu próprio resultado quando houver obrigação de revisão independente.
-- O usuário proprietário pode substituir ou ignorar gates, mas o sistema registra riscos, waivers e resultados posteriores.
-- Credenciais de modelos não podem ficar acessíveis no mesmo sandbox que executa código não confiável.
-- O desktop oficial não pode usar endpoints privados indisponíveis a clientes externos.
-- Toda ação do Studio deve ser possível via API/CLI pública do Runtime.
-- O Event Store não pode ser reescrito pelo Dreams Engine.
+- No component may assume a fixed workflow called "software pack", "marketing pack", or equivalent.
+- An agent never receives the project's entire history by default.
+- An executor cannot approve its own result alone when independent review is required.
+- The owning user can override or bypass gates, but the system records risks, waivers, and downstream results.
+- Model credentials must not be accessible in the same sandbox that runs untrusted code.
+- The official desktop app cannot use private endpoints unavailable to external clients.
+- Every Studio action must be possible via the Runtime's public API/CLI.
+- The Event Store cannot be rewritten by the Dreams Engine.

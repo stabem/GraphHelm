@@ -1,81 +1,83 @@
-# Glossário
+# Glossary
 
-**Agent Definition** — configuração persistente e versionada de um agente.
+**Agent Definition** — persistent, versioned configuration of an agent.
 
-**Agent Experience** — memórias auditáveis e métricas de desempenho ligadas a um agente.
+**Agent Experience** — auditable memories and performance metrics linked to an agent.
 
-**Agent Runtime** — instância efêmera de uma Agent Definition ou agente sintetizado dentro de um node.
+**Agent Runtime** — ephemeral instance of an Agent Definition or agent synthesized within a node.
 
-**Artifact** — resultado persistente e content-addressed, como patch, relatório, imagem ou build.
+**Artifact** — persistent, content-addressed output, such as a patch, report, image, or build.
 
-**Autopilot** — modo em que o harness executa e adapta o grafo autonomamente conforme policies.
+**Autopilot** — mode in which the harness executes and adapts the graph autonomously according to policies.
 
-**Capability** — unidade atômica que descreve algo que o sistema consegue fazer.
+**Capability** — atomic unit describing something the system can do.
 
-**Capability Lease** — autorização temporária, escopada e revogável para usar uma capability.
+**Capability Lease** — temporary, scoped, and revocable authorization to use a capability.
 
-**Completion Contract** — condições e evidências necessárias para considerar node ou execution concluído.
+**Completion Contract** — conditions and evidence required to consider a node or execution complete.
 
-**Context Capsule** — pacote mínimo, versionado e específico de contexto entregue a um node.
+**Context Capsule** — minimal, versioned, context-specific package delivered to a node.
 
-**Context Compiler** — componente que recupera, filtra, comprime e compila Context Capsules.
+**Context Compiler** — component that retrieves, filters, compresses, and compiles Context Capsules.
 
-**Dreams Engine** — manutenção cognitiva assíncrona de documentos, claims, memórias, agentes, skills e índices.
+**Dreams Engine** — asynchronous cognitive maintenance of documents, claims, memories, agents, skills, and indexes.
 
-**Evidence** — prova referenciável que sustenta uma claim ou completion requirement.
+**Evidence** — referenceable proof that supports a claim or completion requirement.
 
-**Event Store** — registro append-only de eventos e evidências operacionais.
+**Event Store** — append-only log of events and operational evidence.
 
-**Execution** — instância de trabalho iniciada por usuário, evento, schedule ou Dreams.
+**Execution** — instance of work initiated by a user, event, schedule, or Dreams.
 
-**Ghost Node** — node proposto visualmente, mas ainda não aprovado ou executado.
+**Ghost Node** — node proposed visually, but not yet approved or executed.
 
-**Graph Architect** — componente que propõe topologia e composição do grafo.
+**Graph Architect** — component that proposes the graph's topology and composition.
 
-**Graph Draft** — conjunto transacional de alterações operacionais ainda não aplicado.
+**Graph Draft** — transactional set of operational changes not yet applied.
 
-**Graph Engineer** — pessoa que cria capabilities, tools, skills, policies, evaluators, adapters e contratos.
+**Graph Engineer** — person who creates capabilities, tools, skills, policies, evaluators, adapters, and contracts.
 
-**Graph Governor** — componente autorizado a transformar signals em Graph Versions novas.
+**Graph Governor** — component authorized to transform signals into new Graph Versions.
 
-**Graph Signal** — descoberta estruturada emitida por agent, tool, test, runtime, user ou Dreams.
+**Graph Signal** — structured finding emitted by an agent, tool, test, runtime, user, or Dreams.
 
-**Graph Version** — snapshot imutável e executável da topologia e configuração do grafo.
+**Graph Version** — immutable, executable snapshot of the graph's topology and configuration.
 
-**Harness** — setup compilado para uma tarefa, incluindo grafo, agentes, modelos, contexto, policies, budgets e isolamento.
+**Harness** — compiled setup for a task, including graph, agents, models, context, policies, budgets, and isolation.
 
-**Hard Constraint** — regra técnica ou policy explicitamente não dispensável.
+**Hard Constraint** — technical or policy rule that is explicitly non-waivable.
 
-**Knowledge Graph** — representação de entidades, claims, relações, temporalidade e provenance do projeto.
+**Knowledge Graph** — representation of the project's entities, claims, relations, temporality, and provenance.
 
-**Living Documentation** — documentos humanos versionados e materializados a partir de claims/evidence.
+**Living Documentation** — human-readable documents, versioned and materialized from claims/evidence.
 
-**Manual Graph** — modo em que o usuário monta e altera o workflow; harness atua como linter e assistente.
+**Manual Graph** — mode in which the user builds and modifies the workflow; the harness acts as a linter and assistant.
 
-**Model Route** — conexão utilizável para um modelo ou runtime, com provider, auth, capabilities e capacity state.
+**Model Route** — usable connection to a model or runtime, with provider, auth, capabilities, and capacity state.
 
-**Node** — unidade de execução com objetivo, contrato, permissions e lifecycle.
+**Node** — unit of execution with a goal, contract, permissions, and lifecycle.
 
-**Overlay** — alteração temporária aplicada a uma instância de node sem mudar definição persistente.
+**Overlay** — temporary change applied to a node instance without altering its persistent definition.
 
-**Policy Engine** — motor determinístico que aplica regras e invariantes.
+**Policy Engine** — deterministic engine that enforces rules and invariants.
 
-**Project Agent Registry** — catálogo de agentes persistentes no escopo do projeto.
+**Project Agent Registry** — catalog of persistent agents within a project's scope.
 
-**Provenance** — origem e cadeia de derivação de uma informação, artifact ou decisão.
+**Provenance** — origin and derivation chain of a piece of information, artifact, or decision.
 
-**Runtime** — daemon e serviços executados na VPS do usuário.
+**Runtime** — daemon and services running on the user's VPS.
 
-**Shadow Workspace** — snapshot isolado usado para testar mudanças do Dreams antes de commit.
+**Shadow Workspace** — isolated snapshot used to test Dreams changes before commit.
 
-**Skill** — orientação operacional versionada para aplicar capabilities.
+**Skill** — versioned operational guidance for applying capabilities.
 
-**Studio** — aplicativo local que funciona como control plane e editor visual.
+**Studio** — local application that serves as the control plane and visual editor.
 
-**Supervised** — modo em que expansões relevantes aguardam confirmação.
+**Supervised** — mode in which relevant expansions await confirmation.
 
-**Tool** — mecanismo executável que oferece capabilities.
+**Tool** — executable mechanism that provides capabilities.
 
-**Tool Broker** — mediador de chamadas de tools, permissions, secrets e sandboxes.
+**Tool Broker** — mediator of tool calls, permissions, secrets, and sandboxes.
 
-**Waiver** — registro explícito de obrigação não atendida por decisão do usuário autorizado.
+**Waiver** — explicit record of an unmet obligation, by decision of an authorized user.
+</content>
+</invoke>

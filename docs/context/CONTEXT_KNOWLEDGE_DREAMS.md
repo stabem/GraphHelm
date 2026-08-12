@@ -1,10 +1,10 @@
-# Context Compiler, conhecimento e Dreams Engine
+# Context Compiler, Knowledge, and Dreams Engine
 
-## 1. Objetivo
+## 1. Objective
 
-Esta camada evita que cada agente receba o projeto inteiro, transforma execução em conhecimento rastreável e mantém documentação/memória úteis ao longo do tempo. Ela é a base do “context low”: o sistema compartilha o mínimo suficiente, preservando referências recuperáveis e provenance.
+This layer prevents every agent from receiving the entire project, turns execution into traceable knowledge, and keeps documentation/memory useful over time. It is the foundation of "context low": the system shares just enough, while preserving recoverable references and provenance.
 
-## 2. Arquitetura de verdade em três camadas
+## 2. Three-layer architecture of truth
 
 ```mermaid
 flowchart BT
@@ -19,65 +19,65 @@ flowchart BT
 
 ### 2.1 Evidence/Event Store
 
-Contém fatos brutos e imutáveis:
+Contains raw, immutable facts:
 
-- prompts e decisões;
+- prompts and decisions;
 - Graph Versions;
 - node inputs/outputs;
 - tool calls;
 - source snapshots;
 - diffs;
-- testes;
-- logs redigidos;
+- tests;
+- redacted logs;
 - external sources;
 - model route decisions;
-- policies e waivers;
+- policies and waivers;
 - artifacts;
 - dream reports.
 
-Correções são novos eventos, nunca edição retroativa.
+Corrections are new events, never retroactive edits.
 
 ### 2.2 Project Knowledge Graph
 
-Representa entidades e claims:
+Represents entities and claims:
 
-- requisitos;
-- decisões;
-- componentes;
-- pessoas/atores;
+- requirements;
+- decisions;
+- components;
+- people/actors;
 - APIs;
-- riscos;
-- hipóteses;
-- fontes;
-- agentes;
+- risks;
+- hypotheses;
+- sources;
+- agents;
 - skills;
-- documentos;
-- execuções;
-- incidentes;
-- relações temporais.
+- documents;
+- executions;
+- incidents;
+- temporal relations.
 
 ### 2.3 Living Documentation
 
-Materializações humanas:
+Human materializations:
 
 - PRD;
-- arquitetura;
+- architecture;
 - ADRs;
 - runbooks;
-- guias;
-- glossários;
+- guides;
+- glossaries;
 - research reports;
 - decision logs;
 - changelogs;
 - task summaries.
 
-Documento é uma view versionada do conhecimento, não a única verdade.
+A document is a versioned view of knowledge, not the sole truth.
 
 ## 3. Context Compiler
 
-### 3.1 Entrada
+### 3.1 Input
 
-- objetivo do nó;
+- node objective;
 - input schema;
 - completion/evidence contract;
 - project/subproject scope;
@@ -89,11 +89,11 @@ Documento é uma view versionada do conhecimento, não a única verdade.
 - blind review restrictions;
 - data sensitivity.
 
-### 3.2 Saída
+### 3.2 Output
 
-`Context Capsule` imutável por versão, com:
+An immutable, versioned `Context Capsule`, with:
 
-- conteúdo materializado;
+- materialized content;
 - artifact/context refs;
 - summaries;
 - provenance;
@@ -103,34 +103,34 @@ Documento é uma view versionada do conhecimento, não a única verdade.
 - dependency hash;
 - expansion policy.
 
-## 4. Camadas da cápsula
+## 4. Capsule layers
 
 ### 4.1 Project Kernel
 
-Contexto pequeno e estável:
+Small, stable context:
 
-- identidade do projeto;
-- visão;
-- restrições permanentes;
-- convenções;
-- políticas relevantes;
-- glossário essencial.
+- project identity;
+- vision;
+- permanent constraints;
+- conventions;
+- relevant policies;
+- essential glossary.
 
-Deve ser curto, versionado e diferente por scope.
+Must be short, versioned, and different per scope.
 
 ### 4.2 Task Capsule
 
-- pedido atual;
-- critérios de sucesso;
-- decisões do usuário;
-- limites;
+- current request;
+- success criteria;
+- user decisions;
+- boundaries;
 - current execution state;
 - definition of done.
 
 ### 4.3 Node Capsule
 
-- subtarefa;
-- papel do agente;
+- subtask;
+- agent role;
 - input/output contracts;
 - tools;
 - permissions;
@@ -140,7 +140,7 @@ Deve ser curto, versionado e diferente por scope.
 
 ### 4.4 Evidence Bundle
 
-Somente evidências úteis:
+Only useful evidence:
 
 - source locations;
 - file sections;
@@ -152,13 +152,13 @@ Somente evidências úteis:
 
 ### 4.5 Dependency Outputs
 
-Outputs tipados de predecessors. Não incluir chats internos ou raciocínio privado.
+Typed outputs from predecessors. Internal chats or private reasoning are not included.
 
 ### 4.6 Agent Experience
 
-Memórias válidas, diretamente relacionadas, com confidence e TTL.
+Valid memories, directly related, with confidence and TTL.
 
-## 5. Pipeline de compilação de contexto
+## 5. Context compilation pipeline
 
 ```text
 Objective analysis
@@ -176,7 +176,7 @@ Objective analysis
 
 ## 6. Retrieval
 
-### 6.1 Tipos
+### 6.1 Types
 
 - exact ID/ref;
 - keyword/full-text;
@@ -192,7 +192,7 @@ Objective analysis
 
 ### 6.2 Ranking
 
-Score conceitual:
+Conceptual score:
 
 ```text
 relevance
@@ -207,16 +207,16 @@ relevance
 − contamination_risk
 ```
 
-### 6.3 Contradições
+### 6.3 Contradictions
 
-Quando item relevante contradiz outro, ambos entram com status e provenance. O compiler não faz merge silencioso.
+When a relevant item contradicts another, both enter with status and provenance. The compiler does not silently merge them.
 
-## 7. Representação eficiente
+## 7. Efficient representation
 
-O compiler escolhe:
+The compiler chooses:
 
-- conteúdo integral curto;
-- excerpt com line/symbol refs;
+- short full content;
+- excerpt with line/symbol refs;
 - structural summary;
 - hierarchical summary;
 - table/JSON;
@@ -225,17 +225,17 @@ O compiler escolhe:
 - artifact pointer;
 - lazy retrieval handle.
 
-Arquivos grandes nunca entram integralmente por padrão.
+Large files never enter in full by default.
 
 ## 8. Context budget
 
-### 8.1 Alocação
+### 8.1 Allocation
 
-Budget é dividido por prioridade:
+Budget is divided by priority:
 
-1. contrato e instruções;
+1. contract and instructions;
 2. user criteria;
-3. evidence indispensável;
+3. indispensable evidence;
 4. dependency outputs;
 5. project conventions;
 6. memories;
@@ -246,23 +246,23 @@ Budget é dividido por prioridade:
 ```yaml
 context_request:
   node_id: security_review
-  missing_information: fluxo de recuperação de senha
-  reason: pode compartilhar o mesmo token de sessão
+  missing_information: password recovery flow
+  reason: may share the same session token
   expected_decision_impact: high
   requested_scope:
     - src/auth/recovery/**
     - related_adrs
 ```
 
-O compiler avalia scope, budget, sensitivity e relevance. A resposta pode ser full, partial ou denied com reason.
+The compiler evaluates scope, budget, sensitivity, and relevance. The response can be full, partial, or denied with a reason.
 
 ### 8.3 Delta context
 
-Retries recebem somente mudanças desde a cápsula anterior, mais referências estáveis. Isso reduz tokens e inconsistência.
+Retries receive only the changes since the previous capsule, plus stable references. This reduces tokens and inconsistency.
 
-## 9. Caching e invalidação
+## 9. Caching and invalidation
 
-Cache key inclui:
+Cache key includes:
 
 - objective signature;
 - scope;
@@ -273,26 +273,26 @@ Cache key inclui:
 - budget;
 - blind exclusions.
 
-Mudança invalida apenas fragmentos dependentes. Um novo arquivo de marketing não invalida cápsula de backend sem relação.
+A change invalidates only dependent fragments. A new marketing file does not invalidate an unrelated backend capsule.
 
 ## 10. Reviewer isolation
 
-Para reduzir viés:
+To reduce bias:
 
-- reviewer não recebe “executor says success” por padrão;
-- recebe diff, source, tests e acceptance criteria;
-- subjective summaries ficam excluídos em blind mode;
-- execution identity pode ser escondida;
-- reviewer output exige evidence refs;
-- final verifier pode receber findings sem recommendation do reviewer para testar independentemente.
+- the reviewer does not receive "executor says success" by default;
+- it receives diff, source, tests, and acceptance criteria;
+- subjective summaries are excluded in blind mode;
+- execution identity can be hidden;
+- reviewer output requires evidence refs;
+- the final verifier can receive findings without the reviewer's recommendation, to test independently.
 
 ## 11. Knowledge Graph
 
-### 11.1 Entidades
+### 11.1 Entities
 
 - `Project`, `Subproject`, `Repository`, `Component`, `Service`, `Requirement`, `Decision`, `Risk`, `Claim`, `Evidence`, `Document`, `Execution`, `Agent`, `Skill`, `Tool`, `ModelRoute`, `Artifact`, `Incident`, `Environment`.
 
-### 11.2 Relações
+### 11.2 Relations
 
 - `contains`
 - `depends_on`
@@ -320,15 +320,15 @@ candidate → contradicted
 validated → contradicted (new evidence)
 ```
 
-Validation pode exigir deterministic evidence, user decision, multiple sources ou evaluator, conforme claim type.
+Validation may require deterministic evidence, a user decision, multiple sources, or an evaluator, depending on claim type.
 
-### 11.4 Temporalidade
+### 11.4 Temporality
 
-Claims possuem `valid_from` e `valid_until`. Uma arquitetura antiga pode permanecer historicamente correta sem contaminar contexto atual.
+Claims have `valid_from` and `valid_until`. An old architecture can remain historically correct without contaminating the current context.
 
 ### 11.5 Confidence
 
-Confidence representa força da claim, não certeza metafísica. Ela deve ser recalculável a partir de evidence, source authority, recency e contradiction.
+Confidence represents the strength of the claim, not metaphysical certainty. It must be recomputable from evidence, source authority, recency, and contradiction.
 
 ## 12. Living Documentation
 
@@ -348,20 +348,20 @@ document:
   last_validated_at: ...
 ```
 
-### 12.2 Ownership de seção
+### 12.2 Section ownership
 
-Um documento pode misturar:
+A document can mix:
 
-- seção humana protegida;
-- seção gerada;
-- seção collaborative;
-- embed de artifact.
+- protected human section;
+- generated section;
+- collaborative section;
+- artifact embed.
 
-Dreams não sobrescreve seção humana protegida; cria proposta ou conflict note.
+Dreams does not overwrite a protected human section; it creates a proposal or conflict note.
 
 ### 12.3 Freshness
 
-Freshness score considera:
+Freshness score considers:
 
 - source changes;
 - superseded claims;
@@ -370,61 +370,61 @@ Freshness score considera:
 - unresolved conflicts;
 - last validation.
 
-### 12.4 Atualização em paralelo
+### 12.4 Parallel updates
 
-A branch documental usa snapshot/claim watermark. Se código/decisões mudarem antes do commit, materializer faz rebase ou marca stale; não publica documento inconsistente.
+The documentation branch uses a snapshot/claim watermark. If code/decisions change before the commit, the materializer rebases or marks it stale; it does not publish an inconsistent document.
 
 ## 13. Agent memory
 
-### 13.1 O que pode ser lembrado
+### 13.1 What can be remembered
 
-- estratégia que funcionou;
-- erro recorrente;
-- padrão local estável;
-- avaliação recebida;
-- referência para documento canônico;
-- limitação da própria definição.
+- a strategy that worked;
+- a recurring error;
+- a stable local pattern;
+- feedback received;
+- a reference to a canonical document;
+- a limitation of the agent's own definition.
 
-### 13.2 O que não deve ser lembrado
+### 13.2 What must not be remembered
 
-- chat integral;
-- secret;
-- conjectura sem label;
-- cópia de documentação;
-- opinião sobre usuário;
-- output temporário sem valor futuro;
-- informação fora do scope.
+- full chat;
+- secrets;
+- unlabeled conjecture;
+- copy of documentation;
+- opinion about the user;
+- temporary output with no future value;
+- information outside the scope.
 
 ### 13.3 Memory validator
 
-Antes de promover candidate:
+Before promoting a candidate:
 
-- evidence existe;
-- não contradiz claim canônica sem marcação;
-- scope está correto;
-- TTL adequado;
-- texto não contém secret/PII proibida;
-- reuse value esperado é positivo.
+- evidence exists;
+- it does not contradict a canonical claim without marking it;
+- scope is correct;
+- TTL is adequate;
+- text contains no prohibited secret/PII;
+- expected reuse value is positive.
 
 ## 14. Dreams Engine
 
 ### 14.1 Trigger
 
-- projeto ocioso por período configurado;
+- project idle for a configured period;
 - cron;
 - manual;
-- após número de execuções;
-- após incidente;
-- quando stale/conflict threshold excede;
-- quando index fragmentation excede.
+- after a number of executions;
+- after an incident;
+- when the stale/conflict threshold is exceeded;
+- when index fragmentation is exceeded.
 
 ### 14.2 Idle safety
 
-Projeto é “ocioso” quando não há write-critical section ativa. Dreams pode analisar durante execuções, mas commits cognitivos aguardam safe point ou usam versioned merge.
+A project is "idle" when there is no active write-critical section. Dreams can analyze during executions, but cognitive commits wait for a safe point or use versioned merge.
 
 ### 14.3 Dream Planner
 
-Analisa:
+Analyzes:
 
 - documents;
 - claims;
@@ -438,9 +438,9 @@ Analisa:
 - duplicated artifacts;
 - stale indexes.
 
-Gera hypotheses com expected benefit, risk e evidence.
+Generates hypotheses with expected benefit, risk, and evidence.
 
-### 14.4 Categorias de dream
+### 14.4 Dream categories
 
 - documentation consolidation;
 - claim reconciliation;
@@ -456,10 +456,10 @@ Gera hypotheses com expected benefit, risk e evidence.
 
 ### 14.5 Shadow Workspace
 
-Toda mudança mutável acontece em snapshot separado:
+Every mutable change happens in a separate snapshot:
 
-1. clone de metadata/docs/config relevantes;
-2. aplicar change set;
+1. clone of relevant metadata/docs/config;
+2. apply change set;
 3. schema validation;
 4. knowledge consistency checks;
 5. retrieval benchmark;
@@ -467,38 +467,38 @@ Toda mudança mutável acontece em snapshot separado:
 7. agent/skill conformance;
 8. independent critic;
 9. compare metrics;
-10. atomic commit ou discard.
+10. atomic commit or discard.
 
-### 14.6 Proibições
+### 14.6 Prohibitions
 
-Dreams não pode:
+Dreams cannot:
 
-- apagar/rewrite Event Store;
-- remover provenance;
-- ocultar failures;
-- promover hipótese sem evidence;
-- ampliar própria permission;
-- reduzir hard policy;
-- acessar produção sem task normal;
-- alterar código diretamente;
-- iniciar gasto BYOK fora de budget/policy;
-- instalar plugin sem processo normal.
+- delete/rewrite the Event Store;
+- remove provenance;
+- hide failures;
+- promote a hypothesis without evidence;
+- expand its own permission;
+- reduce a hard policy;
+- access production outside a normal task;
+- alter code directly;
+- initiate BYOK spend outside budget/policy;
+- install a plugin outside the normal process.
 
-### 14.7 Achados de código
+### 14.7 Code findings
 
 ```yaml
 dream_finding:
   category: probable_bug
-  description: possível race condition em webhook
+  description: possible race condition in webhook
   confidence: 0.81
   evidence: [...]
   suggested_outcome:
-    - confirmar ou refutar
-    - corrigir se reproduzível
-    - adicionar teste
+    - confirm or refute
+    - fix if reproducible
+    - add test
 ```
 
-O finding vira `Task Request` normal. Task Profiler pode rejeitar/refutar a hipótese.
+The finding becomes a normal `Task Request`. The Task Profiler can reject/refute the hypothesis.
 
 ### 14.8 Dream Report
 
@@ -524,32 +524,32 @@ dream_report:
     context_reduction_percent: 18
 ```
 
-## 15. Dreams e agent consolidation
+## 15. Dreams and agent consolidation
 
-Dois agentes podem ser candidatos a merge quando:
+Two agents can be merge candidates when:
 
-- objective overlap alto;
-- capabilities semelhantes;
-- contracts compatíveis;
-- performance complementar;
-- nenhuma policy exige separação.
+- objective overlap is high;
+- capabilities are similar;
+- contracts are compatible;
+- performance is complementary;
+- no policy requires separation.
 
-Merge cria nova versão; agentes originais permanecem reproduzíveis/arquivados. Nunca apagar histórico.
+A merge creates a new version; the original agents remain reproducible/archived. History is never deleted.
 
-## 16. Dreams e skill optimization
+## 16. Dreams and skill optimization
 
-Mudanças possíveis:
+Possible changes:
 
-- melhorar instrução;
-- adicionar negative case;
-- ajustar completion contract;
-- corrigir schema;
-- adicionar evaluator;
-- reduzir contexto redundante.
+- improve instruction;
+- add negative case;
+- adjust completion contract;
+- fix schema;
+- add evaluator;
+- reduce redundant context.
 
-Toda mudança passa por conformance tests. Dreams não promove mudança silenciosa em skill global de terceiros; cria fork/project override ou proposal conforme ownership.
+Every change goes through conformance tests. Dreams does not silently promote a change to a third party's global skill; it creates a fork/project override or a proposal, depending on ownership.
 
-## 17. Métricas
+## 17. Metrics
 
 ### Context
 
@@ -581,15 +581,15 @@ Toda mudança passa por conformance tests. Dreams não promove mudança silencio
 - rollback frequency;
 - time to consistency.
 
-## 18. Critérios de aceite
+## 18. Acceptance criteria
 
-- nenhum agente recebe full history por default;
-- toda Context Capsule tem provenance e exclusions;
-- expansion request é auditável;
-- conflict relevante aparece explicitamente;
-- Event Store permanece imutável;
-- document diff aponta claims/evidence;
-- memory sem TTL/evidence não é validada;
-- Dreams opera em shadow e possui rollback;
-- finding de código vira task normal;
-- revisor blind não recebe subjective executor summary.
+- no agent receives full history by default;
+- every Context Capsule has provenance and exclusions;
+- an expansion request is auditable;
+- relevant conflict appears explicitly;
+- the Event Store remains immutable;
+- document diff points to claims/evidence;
+- memory without TTL/evidence is not validated;
+- Dreams operates in shadow and has rollback;
+- a code finding becomes a normal task;
+- a blind reviewer does not receive a subjective executor summary.

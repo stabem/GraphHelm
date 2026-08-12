@@ -1,86 +1,86 @@
-# Referências oficiais verificadas
+# Verified Official References
 
-**Data da verificação:** 2026-08-08
+**Verification date:** 2026-08-08
 
-As integrações de providers e a estratégia jurídica são áreas sujeitas a mudanças. Revalidar os documentos oficiais antes de implementação, release ou comunicação comercial.
+Provider integrations and legal strategy are areas subject to change. Revalidate official documents before implementation, release, or commercial communication.
 
 ## OpenAI / Codex
 
-### Uso com conta ChatGPT
+### Use with a ChatGPT account
 
-A documentação oficial informa que o Codex pode ser acessado por clientes como Codex CLI e que o login pode ser feito com a conta ChatGPT; limites variam por plano.
+The official documentation states that Codex can be accessed through clients such as Codex CLI and that login can be done with a ChatGPT account; limits vary by plan.
 
-- OpenAI Help Center — “Using Codex with your ChatGPT plan”  
+- OpenAI Help Center — "Using Codex with your ChatGPT plan"  
   https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan
 
 ### Codex CLI login
 
-A documentação oficial descreve o fluxo `codex --login` / Sign in with ChatGPT e armazenamento local de credenciais do cliente.
+The official documentation describes the `codex --login` flow / Sign in with ChatGPT and local storage of client credentials.
 
-- OpenAI Help Center — “Codex CLI and Sign in with ChatGPT”  
+- OpenAI Help Center — "Codex CLI and Sign in with ChatGPT"  
   https://help.openai.com/en/articles/11381614-api-codex-cli-and-sign-in-with-chatgpt
 
-### Consequência para o projeto
+### Implication for the project
 
-- integrar somente cliente/SDK/fluxo oficialmente suportado;
-- não automatizar chat web;
-- não importar cookies;
-- tratar limites e termos como metadata atualizável;
-- separar uso de assinatura de API BYOK.
+- integrate only officially supported client/SDK/flow;
+- do not automate the web chat;
+- do not import cookies;
+- treat limits and terms as updatable metadata;
+- separate subscription usage from BYOK API usage.
 
 ## Anthropic / Claude Code
 
-### Pro e Max
+### Pro and Max
 
-A documentação oficial informa que Claude Code pode ser autenticado com conta Claude associada aos planos Pro ou Max, enquanto uso de API Console é separado.
+The official documentation states that Claude Code can be authenticated with a Claude account associated with the Pro or Max plans, while API Console usage is separate.
 
-- Anthropic Help Center — “Use Claude Code with your Pro or Max plan”  
+- Anthropic Help Center — "Use Claude Code with your Pro or Max plan"  
   https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan
 
-- Anthropic Docs — “Set up Claude Code”  
+- Anthropic Docs — "Set up Claude Code"  
   https://docs.anthropic.com/en/docs/claude-code/getting-started
 
-### Consequência para o projeto
+### Implication for the project
 
-- usar login oficial do Claude Code;
-- manter adapter específico para native runtime;
-- não representar assinatura Pro/Max como API key genérica;
-- tratar quotas como capacidade observada;
-- separar credentials do execution sandbox.
+- use Claude Code's official login;
+- maintain a specific adapter for the native runtime;
+- do not represent a Pro/Max subscription as a generic API key;
+- treat quotas as observed capacity;
+- separate credentials from the execution sandbox.
 
 ## OpenRouter
 
-A documentação oficial descreve API keys Bearer para endpoints principais e compatibilidade com formatos de API OpenAI em endpoints relevantes.
+The official documentation describes Bearer API keys for the main endpoints and compatibility with OpenAI API formats on relevant endpoints.
 
 - OpenRouter Developer Documentation — FAQ/authentication  
   https://openrouter.ai/docs/faq
 
-### Consequência para o projeto
+### Implication for the project
 
-- OpenRouter é route do tipo aggregator/BYOK;
-- billing e rate limits pertencem ao adapter;
-- capabilities de cada model precisam ser descobertas/registradas;
-- não usar cookie web para API.
+- OpenRouter is an aggregator/BYOK-type route;
+- billing and rate limits belong to the adapter;
+- each model's capabilities need to be discovered/registered;
+- do not use web cookies for the API.
 
 ## GNU AGPLv3
 
-A Free Software Foundation publica o texto oficial da GNU Affero General Public License v3 e explica o requisito adicional relacionado a versões modificadas usadas por usuários através de rede.
+The Free Software Foundation publishes the official text of the GNU Affero General Public License v3 and explains the additional requirement related to modified versions used by users over a network.
 
-- Texto da licença  
+- License text  
   https://www.gnu.org/licenses/agpl-3.0.html.en
 
-- Explicação “Why the GNU Affero GPL”  
+- "Why the GNU Affero GPL" explanation  
   https://www.gnu.org/licenses/why-affero-gpl.en.html
 
-### Consequência para o projeto
+### Implication for the project
 
-- incluir texto integral correto da licença;
-- implementar mecanismo adequado de oferta do source quando aplicável;
-- validar interação entre AGPL, dependencies e licença comercial com advogado.
+- include the correct, full license text;
+- implement an adequate mechanism for offering the source when applicable;
+- validate the interaction between AGPL, dependencies, and the commercial license with a lawyer.
 
 ## Contributor License Agreements
 
-A Apache Software Foundation documenta ICLA e CCLA como acordos em que contribuidores preservam direitos sobre contribuições e concedem direitos para a fundação distribuir e desenvolver o trabalho.
+The Apache Software Foundation documents the ICLA and CCLA as agreements under which contributors retain rights over their contributions and grant the foundation rights to distribute and develop the work.
 
 - ASF Contributor Agreements  
   https://www.apache.org/licenses/contributor-agreements.html
@@ -88,13 +88,13 @@ A Apache Software Foundation documenta ICLA e CCLA como acordos em que contribui
 - ASF CLA FAQ  
   https://www.apache.org/licenses/cla-faq.html
 
-### Consequência para o projeto
+### Implication for the project
 
-- usar esses materiais apenas como referência de estrutura;
-- redigir ICLA/CCLA próprios adequados ao dual licensing;
-- validar patent grant, relicensing e privacidade;
-- não copiar/adaptar sem revisão jurídica.
+- use these materials only as a structural reference;
+- draft our own ICLA/CCLA appropriate to the dual licensing model;
+- validate patent grant, relicensing, and privacy;
+- do not copy/adapt without legal review.
 
-## Nota jurídica
+## Legal note
 
-Esta especificação não afirma que qualquer texto de CLA ou licença comercial já esteja pronto. A decisão de produto é usar AGPLv3 + licença comercial alternativa + CLA não exclusivo. A execução jurídica depende de documentos próprios revisados por profissional qualificado.
+This specification does not claim that any CLA text or commercial license is already finalized. The product decision is to use AGPLv3 + an alternative commercial license + a non-exclusive CLA. Legal execution depends on our own documents, reviewed by a qualified professional.

@@ -1,12 +1,12 @@
-# Graph DSL — especificação v1
+# Graph DSL — specification v1
 
-## 1. Objetivo
+## 1. Purpose
 
-A Graph DSL descreve grafos executáveis de maneira tipada, versionada e independente da implementação do Studio. Ela é usada pelo Harness Compiler, Graph Engineer, CLI, SDKs, exports e conformance tests.
+The Graph DSL describes executable graphs in a typed, versioned, and implementation-independent manner. It is used by the Harness Compiler, Graph Engineer, CLI, SDKs, exports, and conformance tests.
 
-A DSL não inclui credenciais, chain-of-thought ou payloads grandes. Esses itens são referenciados por IDs seguros.
+The DSL does not include credentials, chain-of-thought, or large payloads. These items are referenced by secure IDs.
 
-## 2. Documento base
+## 2. Base document
 
 ```yaml
 apiVersion: p50.dev/graph/v1
@@ -32,16 +32,16 @@ spec:
 
 ## 3. Metadata
 
-Obrigatório:
+Required:
 
-- `id` único;
+- unique `id`;
 - `executionId`;
-- `version` monotônica;
+- monotonic `version`;
 - `name`;
-- `createdAt` na representação persistida;
-- `createdBy` na representação persistida.
+- `createdAt` in the persisted representation;
+- `createdBy` in the persisted representation.
 
-Opcional:
+Optional:
 
 - labels;
 - annotations;
@@ -49,18 +49,18 @@ Opcional:
 - mutationId;
 - description.
 
-Annotations não alteram semantics. Labels podem ser usadas por policies apenas quando schema permitir.
+Annotations do not alter semantics. Labels may be used by policies only when the schema allows it.
 
 ## 4. Node map
 
-Nós são um map por ID para diff estável.
+Nodes are a map keyed by ID for stable diffing.
 
 ```yaml
 nodes:
   security_review:
     type: agent
-    name: Revisar segurança
-    objective: Identificar vulnerabilidades introduzidas na autenticação.
+    name: Review security
+    objective: Identify vulnerabilities introduced in authentication.
     optionality: required
     agent:
       ref: project/security-reviewer@3
@@ -141,7 +141,7 @@ implementation:
     routePolicy: dynamic
 ```
 
-`agent.ref` e `agent.ephemeral` são mutuamente exclusivos.
+`agent.ref` and `agent.ephemeral` are mutually exclusive.
 
 ## 7. Tool node
 
@@ -157,7 +157,7 @@ run_tests:
     schema: schema://TestReport@1
 ```
 
-Tool node não chama LLM por padrão.
+A tool node does not call an LLM by default.
 
 ## 8. Classifier node
 
@@ -192,7 +192,7 @@ security_gate:
     resultLabel: completed_with_security_waiver
 ```
 
-## 10. Fork e join
+## 10. Fork and join
 
 ```yaml
 parallel_review:
@@ -246,7 +246,7 @@ security_subgraph:
       - security_report
 ```
 
-Subgraph não esconde eventos; UI pode colapsar visualmente.
+A subgraph does not hide events; the UI may collapse it visually.
 
 ## 13. Materializer
 
@@ -260,7 +260,7 @@ update_docs:
     schema: schema://DocumentationUpdateBundle@1
 ```
 
-## 14. Deploy e rollback
+## 14. Deploy and rollback
 
 ```yaml
 deploy:
@@ -307,30 +307,30 @@ edges:
 
 ## 16. Expression language
 
-A expression language é pura, limitada e determinística.
+The expression language is pure, restricted, and deterministic.
 
-Permitido:
+Allowed:
 
-- comparação;
+- comparison;
 - boolean;
 - null/missing check;
-- acesso a output tipado;
-- funções agregadas seguras;
-- regex limitada;
+- access to typed output;
+- safe aggregate functions;
+- restricted regex;
 - numeric/string operations;
-- time relative a event metadata.
+- time relative to event metadata.
 
-Proibido:
+Prohibited:
 
 - shell;
 - network;
 - filesystem;
 - eval;
 - dynamic imports;
-- acesso a secrets;
-- loops não limitados.
+- access to secrets;
+- unbounded loops.
 
-Exemplos:
+Examples:
 
 ```text
 nodes.tests.output.failed == 0
@@ -340,7 +340,7 @@ exists(artifacts["rollback-plan"])
 
 ## 17. Bindings
 
-Bindings referenciam:
+Bindings reference:
 
 - node outputs;
 - artifacts;
@@ -348,9 +348,9 @@ Bindings referenciam:
 - claims;
 - user decisions;
 - project settings;
-- environment references sem secret value.
+- environment references without secret values.
 
-Payloads grandes usam artifact refs.
+Large payloads use artifact refs.
 
 ## 18. Context policy
 
@@ -381,9 +381,9 @@ context:
     requiresReason: true
 ```
 
-## 19. Permissions e leases
+## 19. Permissions and leases
 
-DSL pede capabilities; Runtime concede leases.
+The DSL requests capabilities; the Runtime grants leases.
 
 ```yaml
 permissions:
@@ -400,7 +400,7 @@ permissions:
     duration: call
 ```
 
-Não é permitido secret inline.
+Inline secrets are not allowed.
 
 ## 20. Isolation
 
@@ -439,7 +439,7 @@ retry:
     - recompile_context
 ```
 
-Retries contam `maxAttempts`; graph loops de remediation são diferentes e também limitados.
+Retries count toward `maxAttempts`; graph remediation loops are different and are also limited.
 
 ## 22. Completion
 
@@ -469,7 +469,7 @@ budgets:
   maxContextTokensPerNode: 64000
 ```
 
-Assinatura pode não expor custo; limite financeiro aplica somente a rotas pagas. Capacity controls ainda aplicam.
+The signature may not expose cost; the financial limit applies only to paid routes. Capacity controls still apply.
 
 ## 24. Policies
 
@@ -483,7 +483,7 @@ policies:
       reason: user_request_scope
 ```
 
-Inline constraints podem restringir, não ampliar permissões acima do owner policy.
+Inline constraints can restrict, but not expand, permissions beyond the owner policy.
 
 ## 25. Graph completion
 
@@ -502,7 +502,7 @@ completion:
 
 ## 26. Mutation operations
 
-Graph Draft usa operações:
+Graph Draft uses operations:
 
 ```yaml
 operations:
@@ -518,7 +518,7 @@ operations:
     value: {...}
 ```
 
-Além de JSON Patch básico, operações semânticas podem incluir:
+Beyond basic JSON Patch, semantic operations may include:
 
 - `splitNode`
 - `mergeNodes`
@@ -542,11 +542,11 @@ manualOverride:
   scope: execution
 ```
 
-Override fica no mutation record, não altera policy global.
+The override stays in the mutation record and does not alter global policy.
 
 ## 28. Ghost nodes
 
-Ghost node é Graph Draft metadata, não node ativo:
+A ghost node is Graph Draft metadata, not an active node:
 
 ```yaml
 proposal:
@@ -569,44 +569,44 @@ ui:
   accent: semantic/security
 ```
 
-UI hints não afetam execução e podem ser alterados sem Graph Version operacional.
+UI hints do not affect execution and can be changed without an operational Graph Version.
 
 ## 30. Lint rules
 
-Erros:
+Errors:
 
-- schema incompatível;
-- node sem terminal path;
-- cycle sem limit;
+- incompatible schema;
+- node without a terminal path;
+- cycle without a limit;
 - missing edge behavior;
-- permission impossível;
+- impossible permission;
 - unknown capability;
 - hard policy violation;
-- secret inline;
-- deploy sem target;
-- compensation required e ausente;
-- output binding inexistente.
+- inline secret;
+- deploy without a target;
+- required compensation missing;
+- nonexistent output binding.
 
 Warnings:
 
-- reviewer correlacionado;
-- contexto excessivo;
-- nó redundante;
-- cost alto;
-- output string não estruturado;
-- optional node em critical path;
-- timeout ausente quando default usado.
+- correlated reviewer;
+- excessive context;
+- redundant node;
+- high cost;
+- unstructured string output;
+- optional node on the critical path;
+- missing timeout when a default is used.
 
-## 31. Canonicalization e hashing
+## 31. Canonicalization and hashing
 
-Antes de hash:
+Before hashing:
 
-- ordenar maps por key;
-- normalizar whitespace;
-- remover UI-only fields;
-- resolver refs para version IDs;
-- preservar semantic expressions;
-- incluir policy hashes e schema versions.
+- sort maps by key;
+- normalize whitespace;
+- remove UI-only fields;
+- resolve refs to version IDs;
+- preserve semantic expressions;
+- include policy hashes and schema versions.
 
 ## 32. Imports
 
@@ -620,18 +620,18 @@ imports:
     - package://community/deploy-subgraph@1.0.0
 ```
 
-Imports são pinned por versão e hash no Harness Manifest.
+Imports are pinned by version and hash in the Harness Manifest.
 
-## 33. Compatibilidade
+## 33. Compatibility
 
-Implementação compatível com v1 deve:
+A v1-compatible implementation must:
 
-- rejeitar unknown required fields;
-- preservar unknown annotations;
-- suportar todos os common node states;
-- expor graph versioning;
-- validar expressions;
-- não executar ghost nodes;
-- não armazenar secrets inline;
-- registrar waivers;
-- emitir events normativos.
+- reject unknown required fields;
+- preserve unknown annotations;
+- support all common node states;
+- expose graph versioning;
+- validate expressions;
+- not execute ghost nodes;
+- not store secrets inline;
+- record waivers;
+- emit normative events.

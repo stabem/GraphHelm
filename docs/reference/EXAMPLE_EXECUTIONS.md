@@ -1,14 +1,14 @@
-# Exemplos de execuções
+# Example Executions
 
-Os exemplos mostram como o mesmo núcleo compõe grafos diferentes. Não são packs fixos nem templates obrigatórios.
+These examples show how the same core composes different graphs. They are not fixed packs or mandatory templates.
 
-## 1. Correção pequena de UI
+## 1. Small UI fix
 
-### Pedido
+### Request
 
-> Corrija o espaçamento do botão de salvar na tela de usuários.
+> Fix the spacing of the save button on the users screen.
 
-### Perfil
+### Profile
 
 ```yaml
 complexity: low
@@ -18,7 +18,7 @@ regression_risk: 0.20
 reversibility: high
 ```
 
-### Grafo
+### Graph
 
 ```mermaid
 flowchart LR
@@ -28,17 +28,17 @@ flowchart LR
     V --> D[Task summary]
 ```
 
-### Razão
+### Rationale
 
-Não criar architect, security reviewer ou full test suite. Diff verifier confirma que apenas scope esperado mudou.
+Do not create an architect, security reviewer, or full test suite. The diff verifier confirms that only the expected scope changed.
 
-## 2. Alteração em autenticação
+## 2. Authentication change
 
-### Pedido
+### Request
 
-> Adicione login por link mágico e faça deploy.
+> Add magic link login and deploy.
 
-### Perfil inicial
+### Initial profile
 
 ```yaml
 complexity: high
@@ -48,7 +48,7 @@ regression_risk: 0.79
 production_impact: direct
 ```
 
-### Grafo inicial
+### Initial graph
 
 ```mermaid
 flowchart TD
@@ -81,24 +81,24 @@ flowchart TD
 
 ### User override
 
-O usuário remove `SR`, `G` e `RB`, conectando `IT → DEP`.
+The user removes `SR`, `G`, and `RB`, connecting `IT → DEP`.
 
-O Graph Draft mostra:
+The Graph Draft shows:
 
-- 3 nodes removidos;
+- 3 nodes removed;
 - 3 obligations unsatisfied;
 - risk: auth vulnerability, rollback unvalidated;
 - result label: `deployed_without_full_validation`.
 
-Após confirmar, nenhum substitute reviewer inicia. Waiver é registrado e deploy segue.
+After confirming, no substitute reviewer starts. A waiver is recorded and the deploy proceeds.
 
-## 3. Descoberta inesperada durante tarefa simples
+## 3. Unexpected discovery during a simple task
 
-### Pedido
+### Request
 
-> Renomeie o campo `username` para `handle`.
+> Rename the `username` field to `handle`.
 
-### Grafo inicial
+### Initial graph
 
 ```text
 Impact Scan → Patch → Targeted Tests → Docs
@@ -106,7 +106,7 @@ Impact Scan → Patch → Targeted Tests → Docs
 
 ### Signal
 
-Impact Scan encontra que o campo é chave externa e parte da API pública.
+Impact Scan finds that the field is a foreign key and part of the public API.
 
 ```yaml
 graph_signal:
@@ -135,15 +135,15 @@ flowchart TD
     V --> DOC[Docs]
 ```
 
-Completed output do Impact Scan é preservado. Patch antigo é invalidado.
+Completed output from Impact Scan is preserved. The old patch is invalidated.
 
-## 4. Pesquisa e criação de landing page
+## 4. Research and landing page creation
 
-### Pedido
+### Request
 
-> Pesquise concorrentes, defina a proposta de valor, escreva a landing e publique.
+> Research competitors, define the value proposition, write the landing page, and publish it.
 
-### Grafo possível
+### Possible graph
 
 ```mermaid
 flowchart TD
@@ -163,15 +163,15 @@ flowchart TD
     PUB --> DOC[Research + decision docs]
 ```
 
-Capabilities vêm de research, browser, product, copy, frontend, deploy e docs. Não existe “marketing pack”.
+Capabilities come from research, browser, product, copy, frontend, deploy, and docs. There is no "marketing pack".
 
-## 5. Análise de dados
+## 5. Data analysis
 
-### Pedido
+### Request
 
-> Analise os cancelamentos dos últimos seis meses e encontre os principais motivos.
+> Analyze the cancellations from the last six months and find the main reasons.
 
-### Grafo
+### Graph
 
 ```mermaid
 flowchart TD
@@ -186,15 +186,15 @@ flowchart TD
     CR --> REP[Report materializer]
 ```
 
-Policies podem impedir envio de row-level PII a external model. Context usa aggregate artifacts.
+Policies may prevent sending row-level PII to an external model. Context uses aggregate artifacts.
 
-## 6. Documento contratual interno
+## 6. Internal contractual document
 
-### Pedido
+### Request
 
-> Compare estas duas versões do contrato e destaque riscos comerciais.
+> Compare these two versions of the contract and highlight commercial risks.
 
-### Grafo
+### Graph
 
 ```text
 Document parser
@@ -205,11 +205,11 @@ Document parser
 → Evidence-linked report
 ```
 
-O sistema deve marcar que não substitui aconselhamento jurídico e manter cada finding ligado às cláusulas.
+The system must flag that it does not replace legal advice and keep every finding linked to the clauses.
 
-## 7. Limite de assinatura
+## 7. Subscription limit
 
-Durante `Backend implementation`, Codex subscription atinge limite.
+During `Backend implementation`, the Codex subscription hits its limit.
 
 State:
 
@@ -225,29 +225,29 @@ execution:
     workspace: true
 ```
 
-Frontend branch em Claude pode terminar se independente. O usuário escolhe esperar. Nenhuma chave OpenRouter é usada.
+The frontend branch on Claude can finish if independent. The user chooses to wait. No OpenRouter key is used.
 
-## 8. Desativar agente
+## 8. Deactivate agent
 
-Usuário para `Performance Reviewer`.
+The user stops `Performance Reviewer`.
 
-Fluxo:
+Flow:
 
 1. checkpoint;
 2. branch pause;
-3. harness detecta requirement `performance_evidence_required`;
-4. propõe ghost nodes:
+3. harness detects requirement `performance_evidence_required`;
+4. proposes ghost nodes:
    - deterministic benchmark;
    - alternative reviewer;
    - waive requirement;
-5. usuário escolhe “manter pausado”;
-6. nada inicia;
-7. horas depois, usuário aprova deterministic benchmark;
-8. Graph vN+1 é publicado.
+5. user chooses "keep paused";
+6. nothing starts;
+7. hours later, the user approves the deterministic benchmark;
+8. Graph vN+1 is published.
 
-## 9. Dreams encontra documentação obsoleta
+## 9. Dreams finds outdated documentation
 
-Dream cycle encontra doc dizendo que autenticação usa session cookie, mas source/ADR atual mostram JWT.
+The dream cycle finds a doc saying authentication uses a session cookie, but the current source/ADR shows JWT.
 
 Shadow actions:
 
@@ -259,11 +259,11 @@ Shadow actions:
 - independent critic;
 - atomic commit.
 
-Event Store permanece intacto. Doc antigo fica no history.
+The Event Store remains intact. The old doc stays in history.
 
-## 10. Dreams encontra possível bug
+## 10. Dreams finds a possible bug
 
-Dreams observa três failures semelhantes em webhook. Cria task:
+Dreams observes three similar failures in a webhook. It creates a task:
 
 ```yaml
 origin: dream
@@ -281,11 +281,11 @@ suggested_outcome:
   - add_regression_test
 ```
 
-Task Profiler pode concluir que não é bug. Dreams não altera código.
+The Task Profiler may conclude it is not a bug. Dreams does not modify code.
 
-## 11. Revisor cego
+## 11. Blind reviewer
 
-Executor implementa cache. Reviewer recebe:
+The executor implements a cache. The reviewer receives:
 
 - acceptance criteria;
 - diff;
@@ -293,38 +293,38 @@ Executor implementa cache. Reviewer recebe:
 - tests;
 - architecture constraints.
 
-Não recebe:
+It does not receive:
 
-- “implementation completed successfully”;
+- "implementation completed successfully";
 - executor confidence;
 - executor subjective rationale;
 - praise from earlier nodes.
 
-Reviewer encontra stale cache path com source location. Remediation branch é adicionada.
+The reviewer finds a stale cache path with its source location. A remediation branch is added.
 
 ## 12. Multi-project isolation
 
-Workspace contém Tramitei e RadarMargem. Subproject `Tramitei/backend` recebe:
+The workspace contains Tramitei and RadarMargem. The `Tramitei/backend` subproject receives:
 
 - Tramitei vision;
 - backend architecture;
 - global security policy;
 - shared coding conventions.
 
-Não recebe:
+It does not receive:
 
 - RadarMargem code;
 - Tramitei marketing campaign;
 - unrelated credentials;
-- memories de sibling agent.
+- memories from a sibling agent.
 
-Cross-project retrieval test deve retornar zero itens não autorizados.
+The cross-project retrieval test must return zero unauthorized items.
 
-## 13. Plugin não confiável
+## 13. Untrusted plugin
 
-Usuário instala browser plugin community. Manifest pede network e filesystem optional. Conformance detecta tentativa de acessar `/home/runtime/.config`.
+The user installs a community browser plugin. The manifest requests optional network and filesystem access. Conformance detects an attempt to access `/home/runtime/.config`.
 
-Resultado:
+Result:
 
 - call denied;
 - plugin quarantined;
@@ -333,18 +333,18 @@ Resultado:
 - user notified;
 - graph branch blocked or substitute proposed.
 
-## 14. Grafo manual
+## 14. Manual graph
 
-Em Manual Graph, usuário cria:
+In Manual Graph, the user creates:
 
 ```text
 Research Agent → Writer → Publish
 ```
 
-Harness atua como linter:
+The harness acts as a linter:
 
-- Writer output schema incompatível com Publish input;
-- falta source verification;
-- Publish target não configurado.
+- Writer output schema incompatible with Publish input;
+- missing source verification;
+- Publish target not configured.
 
-O sistema sugere corrections. Usuário pode waive source verification, mas não publicar sem target/configuração técnica.
+The system suggests corrections. The user can waive source verification, but cannot publish without a configured target/technical setup.

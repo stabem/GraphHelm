@@ -1,32 +1,32 @@
-# Segurança, isolamento e threat model
+# Security, isolation and threat model
 
-## 1. Objetivo
+## 1. Objective
 
-GraphHelm executa modelos, tools, plugins e código potencialmente não confiável na infraestrutura do usuário. O modelo de segurança assume que prompts, repositórios, dependências, fontes externas e extensões podem ser maliciosos ou induzir comportamentos perigosos.
+GraphHelm runs models, tools, plugins and potentially untrusted code on the user's infrastructure. The security model assumes that prompts, repositories, dependencies, external sources and extensions can be malicious or induce dangerous behavior.
 
-A segurança não depende de “o agente obedecer”. Ela depende de capability leases, policy enforcement, sandboxes, secret separation, typed tools, audit e limites.
+Security does not depend on "the agent obeying". It depends on capability leases, policy enforcement, sandboxes, secret separation, typed tools, audit and limits.
 
-## 2. Ativos protegidos
+## 2. Protected assets
 
-- credenciais de modelos e APIs;
-- chaves SSH e identidade do Runtime;
-- código e documentos do projeto;
-- dados pessoais/confidenciais;
-- ambientes de produção;
-- infraestrutura da VPS;
-- Event Store e audit trail;
-- integridade do Knowledge Graph;
-- policies e hard constraints;
-- artifacts e backups;
-- identidade do usuário;
-- supply chain de plugins;
-- quotas e orçamento.
+- model and API credentials;
+- SSH keys and Runtime identity;
+- project code and documents;
+- personal/confidential data;
+- production environments;
+- VPS infrastructure;
+- Event Store and audit trail;
+- Knowledge Graph integrity;
+- policies and hard constraints;
+- artifacts and backups;
+- user identity;
+- plugin supply chain;
+- quotas and budget.
 
 ## 3. Trust boundaries
 
 ```mermaid
 flowchart LR
-    U[Usuário/Studio] -->|mTLS| API[Runtime API]
+    U[User/Studio] -->|mTLS| API[Runtime API]
     API --> CORE[Trusted Core]
     CORE --> CB[Credential Broker]
     CORE --> TB[Tool Broker]
@@ -50,24 +50,24 @@ Boundaries:
 8. Dreams ↔ canonical knowledge;
 9. user override ↔ policy obligations.
 
-## 4. Adversários e falhas
+## 4. Adversaries and failure modes
 
-- código malicioso no repositório;
-- prompt injection em README, issue, web page ou document;
-- dependency/package comprometido;
-- plugin malicioso;
-- provider/model comprometido ou alucinado;
-- agente tentando ampliar permissions;
-- usuário enganado por UI;
-- atacante com acesso parcial à VPS;
-- secret em log/output;
+- malicious code in the repository;
+- prompt injection via README, issue, web page or document;
+- compromised dependency/package;
+- malicious plugin;
+- compromised or hallucinating provider/model;
+- agent attempting to expand permissions;
+- user deceived by UI;
+- attacker with partial VPS access;
+- secret in log/output;
 - cross-project data leak;
 - compromised update channel;
 - malicious artifact;
-- insider futuro em ambiente multiuser;
-- stale knowledge levando a ação perigosa.
+- future insider in a multiuser environment;
+- stale knowledge leading to dangerous action.
 
-## 5. Princípios
+## 5. Principles
 
 1. deny by default;
 2. least privilege;
@@ -86,7 +86,7 @@ Boundaries:
 
 ### Tier 0 — Cognitive
 
-Uso:
+Usage:
 
 - planning;
 - classification;
@@ -94,7 +94,7 @@ Uso:
 - critique;
 - read-only inspection.
 
-Controles:
+Controls:
 
 - no shell write;
 - no project write;
@@ -105,14 +105,14 @@ Controles:
 
 ### Tier 1 — Execution Workspace
 
-Uso:
+Usage:
 
 - common code/document edits;
 - tests;
 - builds;
 - local transformations.
 
-Controles:
+Controls:
 
 - Git worktree or snapshot;
 - ephemeral container;
@@ -126,7 +126,7 @@ Controles:
 
 ### Tier 2 — Segmented Execution
 
-Uso:
+Usage:
 
 - different agents with conflicting trust;
 - secret-mediated operations;
@@ -135,7 +135,7 @@ Uso:
 - sensitive data;
 - package installation.
 
-Controles:
+Controls:
 
 - separate containers per agent/group;
 - separate filesystem namespace;
@@ -148,7 +148,7 @@ Controles:
 
 ### Tier 3 — Hardened Sandbox
 
-Uso:
+Usage:
 
 - unknown code/binary;
 - malware analysis;
@@ -157,7 +157,7 @@ Uso:
 - dependencies with elevated risk;
 - arbitrary untrusted execution.
 
-Controles:
+Controls:
 
 - microVM, Kata, gVisor or equivalent;
 - kernel boundary stronger than container;
@@ -498,18 +498,18 @@ Owner may waive tests/review, but deploy adapter still requires target, auth and
 
 ## 26. Security disclosure
 
-Repository deve possuir `SECURITY.md` com private reporting channel, supported versions, response targets e coordinated disclosure. Vulnerabilities involving provider auth must also follow provider reporting rules.
+The repository must have a `SECURITY.md` with a private reporting channel, supported versions, response targets and coordinated disclosure. Vulnerabilities involving provider auth must also follow provider reporting rules.
 
-## 27. Critérios de aceite
+## 27. Acceptance criteria
 
-- code sandbox não vê model credentials;
-- Docker socket nunca montado em untrusted container;
-- paths e symlinks são canonicalized;
-- network deny funciona;
-- secret scanner cobre logs/artifacts/exports;
-- graph agent não altera policy;
-- Dreams não amplia permission;
-- cross-project retrieval tests passam;
-- owner override registra waiver;
-- Tier elevation cria ambiente limpo;
-- plugin permission expansion exige confirmação.
+- code sandbox does not see model credentials;
+- Docker socket never mounted in untrusted container;
+- paths and symlinks are canonicalized;
+- network deny works;
+- secret scanner covers logs/artifacts/exports;
+- graph agent does not alter policy;
+- Dreams does not expand permission;
+- cross-project retrieval tests pass;
+- owner override records waiver;
+- Tier elevation creates a clean environment;
+- plugin permission expansion requires confirmation.

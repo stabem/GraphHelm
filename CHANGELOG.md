@@ -21,5 +21,3 @@
 - Observability, checkpoints, replay, and recovery.
 - AGPLv3 governance + commercial license + CLA.
 - Graph and manifest examples.
-</content>
-</invoke>

@@ -15,6 +15,10 @@ The approved documentation baseline is commit `72c376499e4fc92f7a1097432c703d73c
 
 Do not silently resolve a contradiction between higher-precedence sources. Record it in an ADR or RFC with evidence, affected contracts, alternatives, and a recommendation. The product design is already approved; do not restart product brainstorming for implementation work.
 
+## Documentation language
+
+All documentation in this repository — every file under `docs/`, `README.md`, `MASTER_PRD.md`, `CHANGELOG.md`, `DOCUMENTATION_MANIFEST.md`, ADRs, RFCs, decision register entries, and any new document — must be written in English. Do not add or merge Portuguese (or any other non-English) prose. This applies to new documents and to edits of existing ones.
+
 ## Constitutional architecture invariants
 
 - Synthesize task-specific harnesses from atomic capabilities. Never add fixed domain packs or hard-coded category workflows.

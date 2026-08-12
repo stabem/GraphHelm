@@ -79,5 +79,3 @@
 **Tool Broker** — mediator of tool calls, permissions, secrets, and sandboxes.
 
 **Waiver** — explicit record of an unmet obligation, by decision of an authorized user.
-</content>
-</invoke>

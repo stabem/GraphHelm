@@ -64,38 +64,69 @@ authentication; Studio; multi-node scheduling; Knowledge Graph and Dreams.
 Node work is performed by an injected `NodeExecutor` trait whose only milestone-04 implementation is
 effect-free and fixture-driven. Milestone 05 supplies the real one.
 
-## 5. Decisions that must be accepted before any task starts
+## 5. Decisions, resolved
 
-Milestone 03 required an accepted ADR before implementation and that gate held; the same applies. Each
-of these is a genuine tension in the existing documentation, not a detail.
+Milestone 03 required an accepted ADR before implementation and that gate held. These eight are now
+resolved. Most are answered by artifacts already checked in; where a genuine choice existed, the
+rationale and the rejected alternative are recorded.
 
-1. **Mutation identity during execution.** D-018 says the graph is versioned and only the Governor
-   changes it. Does every accepted in-flight mutation publish a new `GraphVersion`, or does an
-   execution carry a version plus an ordered mutation log? Publishing per mutation is simpler to
-   reason about and reuses the M03 publication path; it also multiplies versions and Evidence during
-   an adaptive run.
-2. **Ghost node representation.** D-021 requires proposed expansions to be visible while consuming no
-   tokens. Are ghosts part of the persisted graph in a `proposed` state, or execution-local until
-   approved? Persisting them makes them replayable and visible after a restart; it also puts
-   unapproved content into the authoritative graph.
-3. **Node state vocabulary.** `graphhelm-simulation` already has states and
-   `ROADMAP_AND_ACCEPTANCE.md` §8.2 names more (pause/resume, ghost, bypassed, waived). One closed
-   enum must serve both, or simulation and execution diverge permanently.
-4. **Signal authority.** §19 says agents emit typed signals and §20 says only the Governor mutates.
-   Signals must therefore be proposals with no direct effect. The exact closed signal grammar, and
-   what happens to an unrecognized signal, must be fixed - fail closed is the milestone-03 precedent.
-5. **Mode semantics on an in-flight execution.** D-022 allows switching Autopilot/Supervised/Manual
-   during execution. What happens to a mutation already accepted under Autopilot when the owner
-   switches to Manual mid-run must be defined, not discovered.
-6. **Where execution state lives.** The M03 event store is the durable source of truth and
-   projections are disposable. Execution state must be a projection rebuildable from events, or the
-   append-only guarantee is broken by a mutable execution table.
-7. **No-progress detection thresholds.** `OBSERVABILITY_AND_RECOVERY.md` §15 lists seven detectable
-   conditions but no bounds. Deterministic, replay-stable thresholds are required; anything
-   wall-clock dependent breaks replay.
-8. **Owner override during execution.** D-019 permits removing gates mid-run. The waiver must bind
-   the exact graph version, node, and obligation, reusing the M03 waiver contract rather than adding
-   a second one.
+**5.1 Mutation identity during execution - a version per accepted mutation.**
+D-018 requires the running graph to be versioned and Governor-only. An accepted mutation therefore
+publishes a successor `GraphVersion` through the existing M03 publication path, which already
+guarantees immutability, lineage, canonical hashing and Evidence externalization. A parallel
+"version plus mutation log" model would need a second lineage contract and a second replay rule for
+no benefit. The cost is version growth on an adaptive run, bounded by 5.7's proposal limit: an
+execution accepts at most `MAX_ACCEPTED_MUTATIONS` (64) mutations, after which it blocks for owner
+decision rather than continuing to mutate.
+
+**5.2 Ghost nodes are persisted in a proposed state.**
+D-021 requires a proposal to be visible while consuming no tokens. Execution-local ghosts vanish on
+restart and cannot be replayed, which contradicts the durability this milestone exists to prove. A
+ghost is therefore a node in state `Ghost`, present in the persisted graph, and the scheduler never
+places a `Ghost` node in the ready set. "Consumes no tokens" is enforced structurally by the
+scheduler, not by convention.
+
+**5.3 One node state vocabulary - reuse `NodeState`, add `Ghost`.**
+`graphhelm_protocols::NodeState` already carries the fifteen variants that reconcile the simulation
+and roadmap vocabularies, including `Paused`, `Blocked`, `Waived`, `Skipped`, `Cancelled` and
+`Invalidated`. Only `Ghost` is missing, required by 5.2. Adding one variant to the existing enum is
+correct; a second execution-only enum would guarantee permanent divergence, which is the failure
+this decision exists to prevent. `SimulationStatus` is likewise reused as the aggregate.
+
+**5.4 Signals are proposals; the typed subset is closed and unknown types fail closed.**
+`schemas/graph-signal.schema.json` is normative and already closes `source.type`. Its `type` field is
+an open string for forward compatibility, so per `AGENTS.md` this milestone models the stable typed
+subset and preserves schema-permitted unknown fields. A signal never mutates anything: intake
+validates and records it, and only the Governor may turn one into a draft. An unrecognized signal
+type is recorded and ignored for mutation purposes rather than rejected, because the emitting agent
+is not authoritative and dropping the record would lose evidence - but it can never produce a
+mutation, which is the fail-closed property that matters.
+
+**5.5 Mode switching binds at acceptance, not at proposal.**
+D-022 allows switching Autopilot, Supervised and Manual mid-execution. A mutation is evaluated
+against the mode in force at the instant the Governor accepts it. A proposal made under Autopilot but
+not yet accepted when the owner switches to Manual requires explicit approval; a mutation already
+accepted and published is not retroactively unwound, because published versions are immutable. This
+is the only reading consistent with both D-018 and D-025.
+
+**5.6 Execution state is a disposable projection.**
+The M03 store is append-only and projections are disposable and rebuildable. Execution state is
+therefore a projection over execution events with a watermark, exactly like the projection
+generations M03 already ships. No mutable execution table exists. This is what makes 04b possible and
+keeps replay authoritative.
+
+**5.7 No-progress thresholds are counters, never clocks.**
+`OBSERVABILITY_AND_RECOVERY.md` §15 lists seven conditions without bounds. Every threshold in this
+milestone is a count of events or attempts, never a wall-clock duration, because replay must
+reproduce the identical decision. Fixed bounds: `MAX_NODE_ATTEMPTS` 8, `MAX_IDENTICAL_OUTCOMES` 3,
+`MAX_ACCEPTED_MUTATIONS` 64, `MAX_READY_SET` 1024, `MAX_SIGNALS_PER_EXECUTION` 10_000. Exceeding any
+bound blocks the execution for an owner decision; none silently truncates.
+
+**5.8 Owner override reuses the M03 waiver contract.**
+D-019 permits removing gates mid-run. The existing waiver already binds actor, reason, acknowledged
+risks and graph version, and M03 proved it end to end. A second execution-only waiver would fork the
+audit trail. An override during execution produces the same waiver bound additionally to the node and
+obligation it clears.
 
 ## 6. Proposed crate boundaries
 

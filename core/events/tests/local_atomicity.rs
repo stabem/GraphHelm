@@ -1,0 +1,1255 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use chrono::{TimeZone, Utc};
+use graphhelm_events::{
+    ArtifactRegistration, LocalEventRepository, LocalFailpoint, PreparedAppend, SealedEvidence,
+    WrappedKey,
+};
+use graphhelm_protocols::{
+    ActorId, ArtifactId, ArtifactLocator, ArtifactReference, Clock, DraftProposed, EventKind,
+    EvidenceId, EvidenceReference, GraphImported, GraphSourceKind, IdGenerator, MediaType,
+    NewEvent, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
+    SemanticVersion, Sensitivity, WireHash, WorkspaceId,
+};
+use sha2::{Digest, Sha256};
+
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 9, 12, 0, 0).unwrap()
+    }
+}
+
+#[derive(Default)]
+struct SequenceIds(AtomicU64);
+
+impl IdGenerator for SequenceIds {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
+fn scope() -> RepositoryScope {
+    RepositoryScope::new(
+        WorkspaceId::parse("workspace-1").unwrap(),
+        ProjectId::parse("project-1").unwrap(),
+        Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+    )
+}
+
+fn event(reference: Option<EvidenceReference>, sensitivity: Sensitivity) -> NewEvent {
+    NewEvent::new(
+        OpaqueId::parse("request-1").unwrap(),
+        PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-1").unwrap(),
+        ),
+        sensitivity,
+        EventKind::GraphImported(GraphImported {
+            source_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+            source_kind: GraphSourceKind::GraphDocument,
+        }),
+        reference.into_iter().collect(),
+        vec![],
+    )
+}
+
+fn repository(path: &std::path::Path) -> LocalEventRepository {
+    LocalEventRepository::open(path, Arc::new(FixedClock), Arc::new(SequenceIds::default()))
+        .unwrap()
+}
+
+fn prepared(reference: Option<EvidenceReference>, evidence: Vec<SealedEvidence>) -> PreparedAppend {
+    PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![event(reference, Sensitivity::Internal)],
+        evidence,
+        vec![],
+    )
+    .unwrap()
+}
+
+fn artifact(id: &str, digest: char, bytes: u64) -> ArtifactReference {
+    let digest = digest.to_string().repeat(64);
+    ArtifactReference::new(
+        ArtifactId::parse(id).unwrap(),
+        ArtifactLocator::parse(format!("artifact://sha256/{digest}")).unwrap(),
+        RawSha256::parse(digest).unwrap(),
+        MediaType::parse("application/json").unwrap(),
+        bytes,
+        Sensitivity::Internal,
+        SemanticVersion::parse("1.0.0").unwrap(),
+    )
+    .unwrap()
+}
+
+fn artifact_event(key: &str, references: Vec<ArtifactReference>) -> NewEvent {
+    let mut event = event_with_key(key);
+    event.artifact_refs = references;
+    event
+}
+
+#[test]
+fn artifact_registration_is_owned_by_its_exact_producing_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let reference = artifact("artifact-1", 'a', 7);
+    let registration = ArtifactRegistration::new(reference.clone(), "producer-b").unwrap();
+    let request = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![
+            artifact_event("producer-a", vec![reference]),
+            artifact_event("producer-b", vec![]),
+        ],
+        vec![],
+        vec![registration],
+    )
+    .unwrap();
+    assert_eq!(
+        repository.append_atomic(&request).unwrap_err().code(),
+        "GHE004_INVALID_EVENT"
+    );
+
+    let unreferenced = artifact("artifact-2", 'b', 9);
+    let request = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![artifact_event("producer-c", vec![])],
+        vec![],
+        vec![ArtifactRegistration::new(unreferenced, "producer-c").unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        repository.append_atomic(&request).unwrap_err().code(),
+        "GHE004_INVALID_EVENT"
+    );
+}
+
+#[test]
+fn artifact_catalog_rejects_divergent_reregistration_before_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let original = artifact("artifact-1", 'a', 7);
+    repository
+        .append_atomic(
+            &PreparedAppend::new(
+                scope(),
+                OpaqueId::parse("stream-1").unwrap(),
+                1,
+                vec![artifact_event("producer-a", vec![original.clone()])],
+                vec![],
+                vec![ArtifactRegistration::new(original, "producer-a").unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let divergent = artifact("artifact-1", 'b', 8);
+    let request = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        2,
+        vec![artifact_event("producer-b", vec![divergent.clone()])],
+        vec![],
+        vec![ArtifactRegistration::new(divergent, "producer-b").unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        repository.append_atomic(&request).unwrap_err().code(),
+        "GHE004_INVALID_EVENT"
+    );
+    assert_eq!(
+        repository
+            .read_stream(&scope(), "stream-1", 10, None)
+            .unwrap()
+            .events
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn artifact_identity_cannot_be_reused_from_a_different_producer_stream() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let reference = artifact("artifact-stream-bound", 'd', 11);
+    repository
+        .append_atomic(
+            &PreparedAppend::new(
+                scope(),
+                OpaqueId::parse("stream-1").unwrap(),
+                1,
+                vec![artifact_event("producer-a", vec![reference.clone()])],
+                vec![],
+                vec![ArtifactRegistration::new(reference.clone(), "producer-a").unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let cross_stream = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-2").unwrap(),
+        1,
+        vec![artifact_event("producer-a", vec![reference.clone()])],
+        vec![],
+        vec![ArtifactRegistration::new(reference, "producer-a").unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        repository.append_atomic(&cross_stream).unwrap_err().code(),
+        "GHE004_INVALID_EVENT"
+    );
+}
+
+#[test]
+fn thousands_of_tiny_events_use_real_serialized_bytes_not_synthetic_charges() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let events = (0..4_096)
+        .map(|index| event_with_key(&format!("request-{index}")))
+        .collect::<Vec<_>>();
+    let request = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        events,
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(repository.append_atomic(&request).unwrap().len(), 4_096);
+}
+
+#[test]
+fn exact_retry_is_resolved_before_sequence_and_divergent_reuse_fails_closed() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = repository(directory.path());
+    let request = prepared(None, vec![]);
+    let first = repo.append_atomic(&request).unwrap();
+    let retry = repo.append_atomic(&request).unwrap();
+    assert_eq!(retry, first);
+
+    let divergent = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![event(None, Sensitivity::Restricted)],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let error = repo.append_atomic(&divergent).unwrap_err();
+    assert_eq!(error.code(), "GHE003_IDEMPOTENCY_CONFLICT");
+    assert_eq!(
+        repo.read_stream(&scope(), "stream-1", 100, None)
+            .unwrap()
+            .events,
+        first
+    );
+}
+
+#[test]
+fn direct_append_rejects_secret_shaped_persistent_surfaces_without_mutation() {
+    const CANARY: &str = "sk-abcdefghijklmnopqrst";
+    type RequestMutation = (&'static str, Box<dyn Fn() -> PreparedAppend>);
+    let cases: Vec<RequestMutation> = vec![
+        (
+            "scope",
+            Box::new(|| {
+                PreparedAppend::new(
+                    RepositoryScope::new(
+                        WorkspaceId::parse(CANARY).unwrap(),
+                        ProjectId::parse("project-1").unwrap(),
+                        Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+                    ),
+                    OpaqueId::parse("stream-1").unwrap(),
+                    1,
+                    vec![event(None, Sensitivity::Internal)],
+                    vec![],
+                    vec![],
+                )
+                .unwrap()
+            }),
+        ),
+        (
+            "idempotency",
+            Box::new(|| {
+                PreparedAppend::new(
+                    scope(),
+                    OpaqueId::parse("stream-1").unwrap(),
+                    1,
+                    vec![event_with_key(CANARY)],
+                    vec![],
+                    vec![],
+                )
+                .unwrap()
+            }),
+        ),
+        (
+            "actor",
+            Box::new(|| {
+                let mut unsafe_event = event(None, Sensitivity::Internal);
+                unsafe_event.actor = PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse(CANARY).unwrap(),
+                );
+                PreparedAppend::new(
+                    scope(),
+                    OpaqueId::parse("stream-1").unwrap(),
+                    1,
+                    vec![unsafe_event],
+                    vec![],
+                    vec![],
+                )
+                .unwrap()
+            }),
+        ),
+        (
+            "payload",
+            Box::new(|| {
+                let mut unsafe_event = event(None, Sensitivity::Internal);
+                unsafe_event.kind = EventKind::DraftProposed(DraftProposed {
+                    draft_id: OpaqueId::parse(CANARY).unwrap(),
+                    expected_version: 1,
+                    expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                    operation_count: 1,
+                });
+                PreparedAppend::new(
+                    scope(),
+                    OpaqueId::parse("stream-1").unwrap(),
+                    1,
+                    vec![unsafe_event],
+                    vec![],
+                    vec![],
+                )
+                .unwrap()
+            }),
+        ),
+        (
+            "artifact",
+            Box::new(|| {
+                let reference = artifact(CANARY, 'a', 7);
+                PreparedAppend::new(
+                    scope(),
+                    OpaqueId::parse("stream-1").unwrap(),
+                    1,
+                    vec![artifact_event("producer-a", vec![reference.clone()])],
+                    vec![],
+                    vec![ArtifactRegistration::new(reference, "producer-a").unwrap()],
+                )
+                .unwrap()
+            }),
+        ),
+        (
+            "evidence-metadata",
+            Box::new(|| {
+                let valid = sealed_evidence();
+                let wrapped = WrappedKey::new(
+                    CANARY,
+                    valid.wrapped_key().handle(),
+                    valid.wrapped_key().algorithm(),
+                    valid.wrapped_key().nonce().to_vec(),
+                    valid.wrapped_key().ciphertext().to_vec(),
+                    valid.wrapped_key().aad_sha256().clone(),
+                )
+                .unwrap();
+                let unsafe_evidence = SealedEvidence::new(
+                    valid.reference().clone(),
+                    valid.scope().clone(),
+                    valid.media_type().as_str(),
+                    valid.sensitivity(),
+                    valid.retention_class(),
+                    valid.algorithm(),
+                    valid.nonce().to_vec(),
+                    valid.ciphertext().to_vec(),
+                    wrapped,
+                )
+                .unwrap();
+                prepared(
+                    Some(unsafe_evidence.reference().clone()),
+                    vec![unsafe_evidence],
+                )
+            }),
+        ),
+    ];
+
+    for (name, request) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = repository(directory.path());
+        let journal = directory.path().join("journal.jsonl");
+        let before = std::fs::read(&journal).unwrap();
+        let error = repository.append_atomic(&request()).unwrap_err();
+        assert_eq!(error.code(), "GHE009_EXTERNALIZATION_FAILED", "{name}");
+        assert!(!format!("{error:?} {error}").contains(CANARY), "{name}");
+        assert_eq!(std::fs::read(&journal).unwrap(), before, "{name}");
+        assert_eq!(
+            std::fs::read_dir(directory.path().join("blobs"))
+                .unwrap()
+                .count(),
+            0,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn generated_envelope_identity_is_scanned_before_persistence() {
+    struct SecretEventIds;
+    impl IdGenerator for SecretEventIds {
+        fn next_id(&self, prefix: &'static str) -> String {
+            if prefix == "event" {
+                "sk-abcdefghijklmnopqrst".into()
+            } else {
+                format!("{prefix}-safe")
+            }
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let repository = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SecretEventIds),
+    )
+    .unwrap();
+    let error = repository
+        .append_atomic(&prepared(None, vec![]))
+        .unwrap_err();
+    assert_eq!(error.code(), "GHE009_EXTERNALIZATION_FAILED");
+    assert_eq!(
+        std::fs::metadata(directory.path().join("journal.jsonl"))
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn ciphertext_bytes_are_not_scanned_as_plaintext_content() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let sealed = sealed_evidence_with_ciphertext(b"sk-abcdefghijklmnopqrst".to_vec());
+    let reference = sealed.reference().clone();
+    assert_eq!(
+        repository
+            .append_atomic(&prepared(Some(reference), vec![sealed]))
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn identical_idempotency_key_is_independent_across_streams() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = repository(directory.path());
+    repo.append_atomic(&prepared(None, vec![])).unwrap();
+    let other_stream = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-2").unwrap(),
+        1,
+        vec![event(None, Sensitivity::Internal)],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let committed = repo.append_atomic(&other_stream).unwrap();
+    assert_eq!(committed[0].stream_id.as_str(), "stream-2");
+    assert_eq!(committed[0].sequence, 1);
+    let other_scope = RepositoryScope::new(
+        WorkspaceId::parse("workspace-1").unwrap(),
+        ProjectId::parse("project-2").unwrap(),
+        Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+    );
+    let other_scope_request = PreparedAppend::new(
+        other_scope,
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![event(None, Sensitivity::Internal)],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let committed = repo.append_atomic(&other_scope_request).unwrap();
+    assert_eq!(committed[0].sequence, 1);
+}
+
+#[test]
+fn physically_published_orphan_is_not_reported_as_committed_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::BlobPublish,
+    )
+    .unwrap();
+    let sealed = sealed_evidence();
+    let reference = sealed.reference().clone();
+    assert!(
+        repo.append_atomic(&prepared(Some(reference.clone()), vec![sealed]))
+            .is_err()
+    );
+    assert!(
+        !repo
+            .evidence_exists(&scope(), reference.evidence_id())
+            .unwrap()
+    );
+}
+
+#[test]
+fn invalid_prepared_wrapped_key_aad_is_rejected_before_any_durable_write() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = repository(directory.path());
+    let valid = sealed_evidence();
+    let invalid_wrapped = WrappedKey::new(
+        valid.wrapped_key().key_id(),
+        valid.wrapped_key().handle(),
+        valid.wrapped_key().algorithm(),
+        valid.wrapped_key().nonce().to_vec(),
+        valid.wrapped_key().ciphertext().to_vec(),
+        RawSha256::parse("f".repeat(64)).unwrap(),
+    )
+    .unwrap();
+    let invalid = SealedEvidence::new(
+        valid.reference().clone(),
+        valid.scope().clone(),
+        valid.media_type().as_str(),
+        valid.sensitivity(),
+        valid.retention_class(),
+        valid.algorithm(),
+        valid.nonce().to_vec(),
+        valid.ciphertext().to_vec(),
+        invalid_wrapped,
+    )
+    .unwrap();
+    let journal = directory.path().join("journal.jsonl");
+    let before = std::fs::read(&journal).unwrap();
+    assert_eq!(
+        repo.append_atomic(&prepared(Some(invalid.reference().clone()), vec![invalid]))
+            .unwrap_err()
+            .code(),
+        "GHE004_INVALID_EVENT"
+    );
+    assert_eq!(std::fs::read(&journal).unwrap(), before);
+    assert_eq!(
+        std::fs::read_dir(directory.path().join("blobs"))
+            .unwrap()
+            .count(),
+        0
+    );
+    drop(repo);
+    repository(directory.path());
+}
+
+#[test]
+fn near_maximum_stored_evidence_can_be_verified_on_retry_after_blob_publish() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::BlobPublish,
+    )
+    .unwrap();
+    let sealed = sealed_evidence_with_ciphertext_len(16 * 1024 * 1024 + 16);
+    let request = prepared(Some(sealed.reference().clone()), vec![sealed]);
+    assert_eq!(
+        repo.append_atomic(&request).unwrap_err().code(),
+        "GHE008_STORAGE_FAILURE"
+    );
+    assert_eq!(
+        repo.append_atomic(&request).unwrap_err().code(),
+        "GHE008_STORAGE_FAILURE"
+    );
+}
+
+#[test]
+fn every_stored_evidence_field_is_bound_to_the_committed_reference_and_request() {
+    type EvidenceMutation = (&'static str, Box<dyn Fn(&mut serde_json::Value)>);
+    let mutations: Vec<EvidenceMutation> = vec![
+        (
+            "format",
+            Box::new(|v| v["formatVersion"] = serde_json::json!("2.0.0")),
+        ),
+        (
+            "scope",
+            Box::new(|v| v["scope"]["projectId"] = serde_json::json!("project-other")),
+        ),
+        (
+            "evidence-id",
+            Box::new(|v| v["reference"]["evidenceId"] = serde_json::json!("evidence-2")),
+        ),
+        (
+            "content-digest",
+            Box::new(|v| v["reference"]["contentSha256"] = serde_json::json!("e".repeat(64))),
+        ),
+        (
+            "cipher-digest",
+            Box::new(|v| v["reference"]["ciphertextSha256"] = serde_json::json!("e".repeat(64))),
+        ),
+        (
+            "media",
+            Box::new(|v| v["mediaType"] = serde_json::json!("text/plain")),
+        ),
+        (
+            "sensitivity",
+            Box::new(|v| v["sensitivity"] = serde_json::json!("restricted")),
+        ),
+        (
+            "retention",
+            Box::new(|v| v["retentionClass"] = serde_json::json!("legal_hold")),
+        ),
+        (
+            "algorithm",
+            Box::new(|v| v["algorithm"] = serde_json::json!("other")),
+        ),
+        (
+            "nonce",
+            Box::new(|v| v["nonceHex"] = serde_json::json!("04".repeat(24))),
+        ),
+        (
+            "ciphertext",
+            Box::new(|v| v["ciphertextHex"] = serde_json::json!("08".repeat(16))),
+        ),
+        (
+            "wrapped-key-id",
+            Box::new(|v| v["wrappedKey"]["keyId"] = serde_json::json!("key-2")),
+        ),
+        (
+            "wrapped-handle",
+            Box::new(|v| v["wrappedKey"]["handle"] = serde_json::json!("evidence-2")),
+        ),
+        (
+            "wrapped-algorithm",
+            Box::new(|v| v["wrappedKey"]["algorithm"] = serde_json::json!("other")),
+        ),
+        (
+            "wrapped-nonce",
+            Box::new(|v| v["wrappedKey"]["nonceHex"] = serde_json::json!("05".repeat(24))),
+        ),
+        (
+            "wrapped-ciphertext",
+            Box::new(|v| v["wrappedKey"]["ciphertextHex"] = serde_json::json!("06".repeat(48))),
+        ),
+        (
+            "wrapped-aad",
+            Box::new(|v| v["wrappedKey"]["aadSha256"] = serde_json::json!("f".repeat(64))),
+        ),
+    ];
+    for (name, mutate) in mutations {
+        let directory = tempfile::tempdir().unwrap();
+        let repo = repository(directory.path());
+        let sealed = sealed_evidence();
+        let reference = sealed.reference().clone();
+        repo.append_atomic(&prepared(Some(reference), vec![sealed]))
+            .unwrap();
+        drop(repo);
+        let blob = std::fs::read_dir(directory.path().join("blobs"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&blob).unwrap()).unwrap();
+        mutate(&mut value);
+        std::fs::write(&blob, serde_json::to_vec(&value).unwrap()).unwrap();
+        let error = match LocalEventRepository::open(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+        ) {
+            Ok(_) => panic!("tampered evidence field opened: {name}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE", "{name}");
+    }
+}
+
+#[test]
+fn reconciliation_makes_no_deletions_when_a_later_unknown_entry_exists() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::BlobPublish,
+    )
+    .unwrap();
+    let sealed = sealed_evidence();
+    let reference = sealed.reference().clone();
+    assert!(
+        repo.append_atomic(&prepared(Some(reference), vec![sealed]))
+            .is_err()
+    );
+    drop(repo);
+    let orphan = std::fs::read_dir(directory.path().join("blobs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::write(
+        directory.path().join("blobs").join("zz-unknown"),
+        b"unknown",
+    )
+    .unwrap();
+    let error = match LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) {
+        Ok(_) => panic!("repository with unknown entry opened"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert!(orphan.exists(), "orphan was deleted before full validation");
+}
+
+#[test]
+fn noncanonical_orphan_blob_is_preserved_and_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::BlobPublish,
+    )
+    .unwrap();
+    let sealed = sealed_evidence();
+    let reference = sealed.reference().clone();
+    assert!(
+        repo.append_atomic(&prepared(Some(reference), vec![sealed]))
+            .is_err()
+    );
+    drop(repo);
+    let orphan = std::fs::read_dir(directory.path().join("blobs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut bytes = std::fs::read(&orphan).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&orphan, bytes).unwrap();
+
+    let error = match LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) {
+        Ok(_) => panic!("noncanonical orphan repository opened"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert!(orphan.exists(), "noncanonical orphan was deleted");
+}
+
+#[test]
+fn adapter_never_claims_or_deletes_a_prefix_only_temp_name() {
+    let directory = tempfile::tempdir().unwrap();
+    drop(repository(directory.path()));
+    let foreign = directory.path().join(".tmp").join("blob-user-data.tmp");
+    std::fs::write(&foreign, b"foreign").unwrap();
+
+    let error = match LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) {
+        Ok(_) => panic!("prefix-only temp name was claimed"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert_eq!(std::fs::read(&foreign).unwrap(), b"foreign");
+}
+
+#[test]
+fn recognized_empty_partial_initialization_is_completed_idempotently() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    for name in ["blobs", ".tmp", "active"] {
+        std::fs::create_dir(root.join(name)).unwrap();
+    }
+    std::fs::write(root.join("journal.jsonl"), []).unwrap();
+    std::fs::write(root.join("repository.lock"), []).unwrap();
+    drop(repository(&root));
+    assert_eq!(
+        std::fs::read(root.join("format.json")).unwrap(),
+        b"{\"formatVersion\":\"1.0.0\"}\n"
+    );
+    drop(repository(&root));
+}
+
+#[test]
+fn complete_format_never_recreates_a_missing_required_component() {
+    for name in [
+        "blobs",
+        ".tmp",
+        "active",
+        "journal.jsonl",
+        "repository.lock",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(repository(&root));
+        let target = root.join(name);
+        if target.is_dir() {
+            std::fs::remove_dir(&target).unwrap();
+        } else {
+            std::fs::remove_file(&target).unwrap();
+        }
+        let format_before = std::fs::read(root.join("format.json")).unwrap();
+
+        let error = match LocalEventRepository::open(
+            &root,
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+        ) {
+            Ok(_) => panic!("complete repository recreated missing component {name}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE", "{name}");
+        assert!(!target.exists(), "missing component {name} was recreated");
+        assert_eq!(
+            std::fs::read(root.join("format.json")).unwrap(),
+            format_before
+        );
+    }
+}
+
+#[test]
+fn unknown_partial_initialization_is_rejected_without_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("foreign.bin"), b"untouched").unwrap();
+    let before = std::fs::read(root.join("foreign.bin")).unwrap();
+    let error = match LocalEventRepository::open(
+        &root,
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) {
+        Ok(_) => panic!("unknown partial layout opened"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert_eq!(std::fs::read(root.join("foreign.bin")).unwrap(), before);
+    assert!(!root.join("format.json").exists());
+}
+
+#[test]
+fn injected_publication_failures_never_expose_dangling_committed_references() {
+    for failpoint in LocalFailpoint::all() {
+        let directory = tempfile::tempdir().unwrap();
+        let repo = LocalEventRepository::open_with_failpoint(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+            failpoint,
+        )
+        .unwrap();
+        let sealed = sealed_evidence();
+        let reference = sealed.reference().clone();
+        let _ = repo.append_atomic(&prepared(Some(reference), vec![sealed]));
+        drop(repo);
+
+        let reopened = match LocalEventRepository::open(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+        ) {
+            Ok(repository) => repository,
+            Err(error) => {
+                assert_eq!(failpoint, LocalFailpoint::PhysicalBatchAppend);
+                assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE");
+                continue;
+            }
+        };
+        let page = reopened
+            .read_stream(&scope(), "stream-1", 100, None)
+            .unwrap();
+        for envelope in page.events {
+            for reference in envelope.evidence_refs {
+                assert!(
+                    reopened
+                        .evidence_exists(&scope(), reference.evidence_id())
+                        .unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn concurrent_writers_serialize_and_only_one_claims_the_expected_sequence() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = Arc::new(repository(directory.path()));
+    let left = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![event_with_key("request-left")],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let right = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![event_with_key("request-right")],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let left_repository = Arc::clone(&repository);
+    let right_repository = Arc::clone(&repository);
+    let left = std::thread::spawn(move || left_repository.append_atomic(&left));
+    let right = std::thread::spawn(move || right_repository.append_atomic(&right));
+    let outcomes = [left.join().unwrap(), right.join().unwrap()];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .next()
+            .unwrap()
+            .code(),
+        "GHE001_SEQUENCE_CONFLICT"
+    );
+    assert_eq!(
+        repository
+            .read_stream(&scope(), "stream-1", 10, None)
+            .unwrap()
+            .events
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn public_count_page_cursor_and_safe_integer_bounds_fail_before_persistence() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let too_many = (0..10_001)
+        .map(|index| event_with_key(&format!("request-{index}")))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        PreparedAppend::new(
+            scope(),
+            OpaqueId::parse("stream-1").unwrap(),
+            1,
+            too_many,
+            vec![],
+            vec![],
+        )
+        .unwrap_err()
+        .code(),
+        "GHE006_LIMIT_EXCEEDED"
+    );
+    assert_eq!(
+        PreparedAppend::new(
+            scope(),
+            OpaqueId::parse("stream-1").unwrap(),
+            9_007_199_254_740_992,
+            vec![event_with_key("request-limit")],
+            vec![],
+            vec![],
+        )
+        .unwrap_err()
+        .code(),
+        "GHE006_LIMIT_EXCEEDED"
+    );
+    assert_eq!(
+        repository
+            .read_stream(&scope(), "stream-1", 1_001, None)
+            .unwrap_err()
+            .code(),
+        "GHE006_LIMIT_EXCEEDED"
+    );
+    assert_eq!(
+        repository
+            .read_stream(&scope(), "stream-1", 1, Some(&"x".repeat(4_097)))
+            .unwrap_err()
+            .code(),
+        "GHE006_LIMIT_EXCEEDED"
+    );
+    let mut oversized_event = event_with_key("request-oversized-event");
+    oversized_event.evidence_refs = vec![sealed_evidence().reference().clone(); 8_192];
+    let oversized = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        1,
+        vec![oversized_event],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(
+        repository.append_atomic(&oversized).unwrap_err().code(),
+        "GHE006_LIMIT_EXCEEDED"
+    );
+    assert_eq!(
+        std::fs::metadata(directory.path().join("journal.jsonl"))
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn retained_root_and_lock_anchors_reject_path_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    let repository = repository(&root);
+    let displaced = directory.path().join("displaced");
+    if let Err(error) = std::fs::rename(&root, &displaced) {
+        assert!(
+            is_windows_anchor_denial(&error),
+            "unexpected rename failure: {error}"
+        );
+        repository.append_atomic(&prepared(None, vec![])).unwrap();
+        return;
+    }
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("repository.lock"), []).unwrap();
+    let error = repository
+        .append_atomic(&prepared(None, vec![]))
+        .unwrap_err();
+    assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE");
+}
+
+#[test]
+fn retained_lock_anchor_rejects_lock_path_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    let repository = repository(&root);
+    let lock = root.join("repository.lock");
+    let displaced = root.join("displaced.lock");
+    if let Err(error) = std::fs::rename(&lock, &displaced) {
+        assert!(
+            is_windows_anchor_denial(&error),
+            "unexpected rename failure: {error}"
+        );
+        repository.append_atomic(&prepared(None, vec![])).unwrap();
+        return;
+    }
+    std::fs::write(&lock, []).unwrap();
+    let error = repository
+        .append_atomic(&prepared(None, vec![]))
+        .unwrap_err();
+    assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE");
+}
+
+#[test]
+fn retained_component_anchors_reject_directory_and_journal_replacement() {
+    for (name, directory_component) in [
+        ("blobs", true),
+        (".tmp", true),
+        ("active", true),
+        ("journal.jsonl", false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        let repository = repository(&root);
+        let component = root.join(name);
+        let displaced = root.join(format!("displaced-{}", name.replace('.', "dot")));
+        if let Err(error) = std::fs::rename(&component, &displaced) {
+            assert!(is_windows_anchor_denial(&error), "{name}: {error}");
+            repository.append_atomic(&prepared(None, vec![])).unwrap();
+            continue;
+        }
+        if directory_component {
+            std::fs::create_dir(&component).unwrap();
+        } else {
+            std::fs::write(&component, []).unwrap();
+        }
+        let error = repository
+            .append_atomic(&prepared(None, vec![]))
+            .unwrap_err();
+        assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE", "{name}");
+    }
+}
+
+#[test]
+fn repository_components_reject_symlinks_or_reparse_points() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    drop(repository(&root));
+    let original = root.join("blobs");
+    std::fs::remove_dir(&original).unwrap();
+    let outside = directory.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    if let Err(error) = create_directory_link(&outside, &original) {
+        if is_windows_symlink_privilege_error(&error) {
+            return;
+        }
+        panic!("failed to construct component-link attack: {error}");
+    }
+    let error = match LocalEventRepository::open(
+        &root,
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) {
+        Ok(_) => panic!("linked blob directory unexpectedly opened"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+}
+
+#[test]
+fn format_inspection_rejects_a_broken_repository_link() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing");
+    let root = directory.path().join("repository");
+    if let Err(error) = create_directory_link(&missing, &root) {
+        if is_windows_symlink_privilege_error(&error) {
+            return;
+        }
+        panic!("failed to construct root-link attack: {error}");
+    }
+    let error = LocalEventRepository::inspect_format(&root).unwrap_err();
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+}
+
+fn event_with_key(key: &str) -> NewEvent {
+    let mut value = event(None, Sensitivity::Internal);
+    value.idempotency_key = OpaqueId::parse(key).unwrap();
+    value
+}
+
+#[cfg(windows)]
+fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+
+#[cfg(windows)]
+fn is_windows_symlink_privilege_error(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(1314)
+}
+
+#[cfg(windows)]
+fn is_windows_anchor_denial(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(5 | 32))
+}
+
+#[cfg(not(windows))]
+fn is_windows_anchor_denial(_: &std::io::Error) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+fn is_windows_symlink_privilege_error(_: &std::io::Error) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+fn sealed_evidence() -> SealedEvidence {
+    sealed_evidence_with_ciphertext_len(16)
+}
+
+fn sealed_evidence_with_ciphertext_len(ciphertext_len: usize) -> SealedEvidence {
+    sealed_evidence_with_ciphertext(vec![7_u8; ciphertext_len])
+}
+
+fn sealed_evidence_with_ciphertext(ciphertext: Vec<u8>) -> SealedEvidence {
+    fn push(output: &mut Vec<u8>, field: &[u8]) {
+        output.extend_from_slice(&u32::try_from(field.len()).unwrap().to_be_bytes());
+        output.extend_from_slice(field);
+    }
+    let ciphertext_sha256 = RawSha256::parse(hex::encode(Sha256::digest(&ciphertext))).unwrap();
+    let reference = EvidenceReference::new(
+        EvidenceId::parse("evidence-1").unwrap(),
+        RawSha256::parse("c".repeat(64)).unwrap(),
+        ciphertext_sha256,
+    );
+    let mut aad = Vec::new();
+    push(&mut aad, b"graphhelm-evidence-aad-v1");
+    push(&mut aad, b"workspace-1");
+    push(&mut aad, b"project-1");
+    aad.push(1);
+    push(&mut aad, b"execution-1");
+    push(&mut aad, b"evidence-1");
+    push(&mut aad, b"1.0.0");
+    push(&mut aad, b"application/json");
+    push(&mut aad, b"internal");
+    push(&mut aad, b"standard");
+    push(
+        &mut aad,
+        format!("{}", reference.content_sha256()).as_bytes(),
+    );
+    let wrapped = WrappedKey::new(
+        "key-1",
+        "evidence-1",
+        "xchacha20poly1305",
+        vec![1_u8; 24],
+        vec![2_u8; 48],
+        RawSha256::parse(hex::encode(Sha256::digest(&aad))).unwrap(),
+    )
+    .unwrap();
+    SealedEvidence::new(
+        reference,
+        scope(),
+        "application/json",
+        Sensitivity::Internal,
+        "standard",
+        "xchacha20poly1305",
+        vec![3_u8; 24],
+        ciphertext,
+        wrapped,
+    )
+    .unwrap()
+}
+
+/// A batch that fails its own checksum is a corrupt stored line, which is a different failure from
+/// a broken event hash chain and has a different recovery path. Both used to report
+/// `GHE005_INTEGRITY_FAILURE`, leaving an operator unable to tell them apart.
+#[test]
+fn a_batch_failing_its_own_checksum_reports_the_corrupt_batch_code() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    )
+    .unwrap();
+    repository.append_atomic(&prepared(None, vec![])).unwrap();
+    drop(repository);
+
+    let journal = directory.path().join("journal.jsonl");
+    let text = std::fs::read_to_string(&journal).unwrap();
+    let line = text.lines().next_back().unwrap();
+    let mut batch: serde_json::Value = serde_json::from_str(line).unwrap();
+    let checksum = batch["checksum"].as_str().unwrap().to_owned();
+    // Flip one digest character so only the checksum disagrees with the contents it covers.
+    let flipped = if checksum.ends_with('a') {
+        format!("{}b", &checksum[..checksum.len() - 1])
+    } else {
+        format!("{}a", &checksum[..checksum.len() - 1])
+    };
+    batch["checksum"] = serde_json::json!(flipped);
+    let rewritten = text.replace(line, &serde_json::to_string(&batch).unwrap());
+    std::fs::write(&journal, rewritten).unwrap();
+
+    let Err(error) = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) else {
+        panic!("reopening a repository with a corrupt batch checksum must fail");
+    };
+    assert_eq!(error.code(), "GHE002_CORRUPT_BATCH");
+}

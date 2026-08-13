@@ -60,7 +60,21 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy
 ```
 
-Run commands from the repository root. Required pre-commit verification after the workspace exists:
+This project runs **no hosted CI**. `ci/gate.ps1` is the authoritative gate and nothing verifies a
+change unless it is run locally. Treat a red gate exactly as a red pipeline: do not merge. Run it
+from the repository root:
+
+```powershell
+./ci/gate.ps1
+```
+
+It runs rustfmt, Clippy with `-D warnings`, workspace tests, the CLI suites, the schema catalog,
+baseline compatibility and conformance commands, locked metadata, a whitespace check, and the
+ignored PostgreSQL matrix twice - once in the C locale and once under a real collation, because the
+C locale cannot reveal collation-dependent ordering defects. `-SkipPostgres` exists for changes that
+cannot touch persistence; a run using it is not a full gate and must be reported as such.
+
+The individual commands, if you need to run one in isolation:
 
 ```powershell
 cargo +1.97.1 fmt --all -- --check

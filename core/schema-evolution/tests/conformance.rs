@@ -8,6 +8,7 @@ use graphhelm_schema::OfflineSchemaSet;
 use graphhelm_schema_evolution::{
     ConformanceResources, ConformanceSuite, MAX_CONFORMANCE_CASES, run_conformance,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 fn suite(source: Value) -> Result<ConformanceSuite, serde_json::Error> {
@@ -451,7 +452,7 @@ fn on_disk_public_resources(root: &Path) -> BTreeSet<String> {
 
 fn exact_public_fixture_inventory(manifest: &Value, inventory: &BTreeSet<String>) -> bool {
     let declared = declared_public_resources(manifest);
-    declared.len() == 40 && &declared == inventory
+    declared.len() == 52 && &declared == inventory
 }
 
 fn public_suite_and_resources() -> (Value, ConformanceSuite, ConformanceResources) {
@@ -484,13 +485,13 @@ fn public_suite_and_resources() -> (Value, ConformanceSuite, ConformanceResource
 }
 
 #[test]
-fn public_fixture_inventory_is_exact_and_rejects_an_unreferenced_extra() {
+fn checked_in_public_fixture_inventory_is_exact_and_rejects_an_unreferenced_extra() {
     let root = repository_root();
     let manifest: Value =
         serde_json::from_slice(&fs::read(root.join("conformance/manifest.json")).unwrap()).unwrap();
     let inventory = on_disk_public_resources(&root);
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 38);
-    assert_eq!(declared_public_resources(&manifest).len(), 40);
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 50);
+    assert_eq!(declared_public_resources(&manifest).len(), 52);
     assert!(exact_public_fixture_inventory(&manifest, &inventory));
 
     let mut with_extra = inventory;
@@ -507,14 +508,20 @@ fn public_schema_set(suite: &ConformanceSuite) -> PublicValidators {
     let root = repository_root();
     let resources = [
         "agent",
+        "artifact-reference",
         "claim",
         "context-capsule",
         "edge",
+        "event-envelope",
+        "evidence-record",
         "extension",
         "graph",
         "graph-signal",
         "node",
+        "persisted-graph-version",
         "policy-waiver",
+        "repository-scope",
+        "sensitivity",
     ]
     .into_iter()
     .map(|name| {
@@ -548,6 +555,1004 @@ fn public_schema_set(suite: &ConformanceSuite) -> PublicValidators {
     }
 }
 
+fn current_schema_set() -> OfflineSchemaSet {
+    let root = repository_root();
+    let resources = [
+        "agent",
+        "artifact-reference",
+        "claim",
+        "context-capsule",
+        "edge",
+        "event-envelope",
+        "evidence-record",
+        "extension",
+        "graph",
+        "graph-signal",
+        "node",
+        "persisted-graph-version",
+        "policy-waiver",
+        "repository-scope",
+        "sensitivity",
+    ]
+    .into_iter()
+    .map(|name| {
+        let document = serde_json::from_slice(
+            &fs::read(root.join(format!("schemas/{name}.schema.json"))).unwrap(),
+        )
+        .unwrap();
+        (name.to_owned(), document)
+    })
+    .collect();
+    OfflineSchemaSet::compile(resources).unwrap()
+}
+
+fn validate_current_schema(schema: &str, document: &Value) -> Vec<Diagnostic> {
+    current_schema_set().validate(
+        &format!("https://p50.dev/schemas/{schema}.schema.json"),
+        document,
+        "conformance",
+    )
+}
+
+fn raw_digest() -> &'static str {
+    "0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+fn wire_hash() -> &'static str {
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SerdeEventEnvelopeProbe {
+    schema_version: String,
+    event_id: String,
+    scope: Value,
+    stream_id: String,
+    sequence: u64,
+    occurred_at: String,
+    idempotency_key: String,
+    actor: Value,
+    sensitivity: String,
+    kind: SerdeEventKindProbe,
+    evidence_refs: Vec<Value>,
+    artifact_refs: Vec<Value>,
+    previous_hash: String,
+    event_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+enum SerdeEventKindProbe {
+    SimulationStarted(Value),
+}
+
+fn serde_event_envelope_probe() -> SerdeEventEnvelopeProbe {
+    SerdeEventEnvelopeProbe {
+        schema_version: "1.0.0".into(),
+        event_id: "event-test".into(),
+        scope: json!({
+            "workspaceId": "workspace-test",
+            "projectId": "project-test",
+            "executionId": "execution-test"
+        }),
+        stream_id: "stream-test".into(),
+        sequence: 1,
+        occurred_at: "2026-08-09T00:00:00Z".into(),
+        idempotency_key: "idempotency-test".into(),
+        actor: json!({"type": "system", "id": "system-test"}),
+        sensitivity: "internal".into(),
+        kind: SerdeEventKindProbe::SimulationStarted(simulation_started_payload()),
+        evidence_refs: Vec::new(),
+        artifact_refs: Vec::new(),
+        previous_hash: "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3"
+            .into(),
+        event_hash: wire_hash().into(),
+    }
+}
+
+fn event_envelope(kind: &str, data: Value, project_scoped: bool) -> Value {
+    let scope = if project_scoped {
+        json!({"workspaceId": "workspace-test", "projectId": "project-test"})
+    } else {
+        json!({
+            "workspaceId": "workspace-test",
+            "projectId": "project-test",
+            "executionId": "execution-test"
+        })
+    };
+    json!({
+        "schemaVersion": "1.0.0",
+        "eventId": "event-test",
+        "scope": scope,
+        "streamId": "stream-test",
+        "sequence": 1,
+        "occurredAt": "2026-08-09T00:00:00Z",
+        "idempotencyKey": "idempotency-test",
+        "actor": {"type": "system", "id": "system-test"},
+        "sensitivity": "internal",
+        "kind": {"type": kind, "data": data},
+        "evidenceRefs": [],
+        "artifactRefs": [],
+        "previousHash": "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3",
+        "eventHash": wire_hash()
+    })
+}
+
+fn persisted_graph_version() -> Value {
+    json!({
+        "number": 2,
+        "predecessor": {"number": 1, "semanticHash": wire_hash()},
+        "topology": {
+            "apiVersion": "p50.dev/graph/v1",
+            "kind": "ExecutionGraph",
+            "graphId": "graph-test",
+            "executionId": "execution-test",
+            "labels": {"tier": "production"},
+            "entrypoints": ["start"],
+            "nodes": {
+                "start": {
+                    "nodeType": "agent",
+                    "optionality": "required",
+                    "controls": [],
+                    "contentSlotIds": ["slot-objective"]
+                }
+            },
+            "edges": [],
+            "budgets": {
+                "maxNodes": 1,
+                "maxDepth": 1,
+                "maxMutations": 0,
+                "maxRetriesPerNode": 0,
+                "maxWallClockSeconds": 60,
+                "maxApiCostUsd": 1,
+                "maxParallelModelCalls": 1
+            },
+            "policies": [],
+            "completion": {
+                "controlType": "terminal_nodes",
+                "identifiers": {"terminalNode": "start"},
+                "digests": {},
+                "integers": {},
+                "flags": {"allowWaivers": false}
+            }
+        },
+        "topologyHash": wire_hash(),
+        "semanticHash": wire_hash(),
+        "contentSlots": [{
+            "slotId": "slot-objective",
+            "ownerKind": "node",
+            "ownerId": "start",
+            "fieldKind": "objective",
+            "ordinal": 0,
+            "evidenceId": "evidence-objective",
+            "contentSha256": raw_digest(),
+            "sensitivity": "internal",
+            "requiredForExecution": true
+        }],
+        "createdBy": {"type": "owner", "id": "owner-test"},
+        "createdAt": "2026-08-09T00:00:00Z"
+    })
+}
+
+fn safe_diagnostic() -> Value {
+    json!({
+        "code": "GHS002_SCHEMA",
+        "severity": "error",
+        "path": "/spec",
+        "component": "schema",
+        "sourceContentSha256": raw_digest(),
+        "detailEvidenceId": "evidence-diagnostic"
+    })
+}
+
+fn simulation_started_payload() -> Value {
+    json!({
+        "simulationId": "simulation-test",
+        "graphVersion": 2,
+        "graphHash": wire_hash()
+    })
+}
+
+// Prevents persistence timestamps from admitting representations that normalize outside the
+// four-digit wire year or lose fractional precision in the UTC-owned Rust types.
+#[test]
+fn persistence_schemas_share_one_canonical_utc_timestamp_profile() {
+    let policy_waiver = || {
+        json!({
+            "id": "waiver-test",
+            "requirement": "review",
+            "executionId": "execution-test",
+            "graphVersion": 2,
+            "actor": "owner-test",
+            "acknowledgedRisks": ["unreviewed change"],
+            "scope": "execution",
+            "createdAt": "2026-08-09T00:00:00Z",
+            "expiresAt": null
+        })
+    };
+
+    for timestamp in [
+        "0000-01-01T00:00:00Z",
+        "9999-12-31T23:59:59Z",
+        "2026-08-09T01:02:03.1Z",
+        "2026-08-09T01:02:03.123456789Z",
+        "2026-08-09T23:59:60Z",
+        "2026-08-09T23:59:60.123456789Z",
+    ] {
+        let mut event = event_envelope("simulation_started", simulation_started_payload(), false);
+        event["occurredAt"] = json!(timestamp);
+        assert!(validate_current_schema("event-envelope", &event).is_empty());
+
+        let mut evidence = evidence_record(16, "available");
+        evidence["createdAt"] = json!(timestamp);
+        assert!(validate_current_schema("evidence-record", &evidence).is_empty());
+
+        let mut graph = persisted_graph_version();
+        graph["createdAt"] = json!(timestamp);
+        assert!(validate_current_schema("persisted-graph-version", &graph).is_empty());
+
+        let mut waiver = policy_waiver();
+        waiver["createdAt"] = json!(timestamp);
+        assert!(validate_current_schema("policy-waiver", &waiver).is_empty());
+    }
+
+    for timestamp in [
+        "0000-01-01T00:00:00+23:59",
+        "9999-12-31T23:59:59-23:59",
+        "2026-08-09t01:02:03z",
+        "2026-08-09T01:02:03+00:00",
+        "2026-08-09T01:02:03.1234567890Z",
+    ] {
+        let mut event = event_envelope("simulation_started", simulation_started_payload(), false);
+        event["occurredAt"] = json!(timestamp);
+        assert!(!validate_current_schema("event-envelope", &event).is_empty());
+
+        let mut evidence = evidence_record(16, "available");
+        evidence["createdAt"] = json!(timestamp);
+        assert!(!validate_current_schema("evidence-record", &evidence).is_empty());
+
+        let mut graph = persisted_graph_version();
+        graph["createdAt"] = json!(timestamp);
+        assert!(!validate_current_schema("persisted-graph-version", &graph).is_empty());
+
+        let mut waiver = policy_waiver();
+        waiver["createdAt"] = json!(timestamp);
+        assert!(!validate_current_schema("policy-waiver", &waiver).is_empty());
+    }
+}
+
+// Prevents authoring plaintext, filesystem locations, and dynamic prose from crossing the
+// append-only event boundary through any safe-projection container.
+#[test]
+fn event_schema_rejects_authoring_plaintext_and_paths() {
+    let base = event_envelope(
+        "graph_version_published",
+        json!({"version": persisted_graph_version()}),
+        false,
+    );
+    let diagnostics = validate_current_schema("event-envelope", &base);
+    assert!(
+        diagnostics.is_empty(),
+        "safe baseline rejected: {diagnostics:?}"
+    );
+
+    for (pointer, field) in [
+        ("/kind/data/version/topology", "instructions"),
+        ("/kind/data/version/topology/nodes/start", "objective"),
+        ("/kind/data/version/topology/nodes/start", "purpose"),
+        ("/kind/data/version/topology/nodes/start", "output"),
+        ("/kind/data/version/topology/nodes/start", "log"),
+        ("/kind/data/version/topology/nodes/start", "credential"),
+        ("/kind/data/version/topology/nodes/start", "environment"),
+        ("/kind/data/version/topology/nodes/start", "message"),
+        ("/kind/data/version/topology/nodes/start", "sourcePath"),
+    ] {
+        let mut event = base.clone();
+        event
+            .pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(field.into(), json!("secret text"));
+        assert!(
+            !validate_current_schema("event-envelope", &event).is_empty(),
+            "accepted forbidden field {field:?} at {pointer}"
+        );
+    }
+}
+
+// Prevents the schema from flattening a Serde-tagged EventKind out of EventEnvelope.kind.
+#[test]
+fn serde_tagged_event_kind_serializes_validates_and_round_trips_nested() {
+    let event = serde_event_envelope_probe();
+    let document = serde_json::to_value(&event).unwrap();
+
+    assert_eq!(document["kind"]["type"], "simulation_started");
+    assert_eq!(document["kind"]["data"], simulation_started_payload());
+    assert!(document.get("data").is_none());
+    assert!(
+        validate_current_schema("event-envelope", &document).is_empty(),
+        "{:?}",
+        validate_current_schema("event-envelope", &document)
+    );
+    assert_eq!(
+        serde_json::from_value::<SerdeEventEnvelopeProbe>(document).unwrap(),
+        event
+    );
+}
+
+// Prevents adding a legacy/import receipt branch or silently dropping replay-critical fields from
+// any safe event variant.
+#[test]
+fn all_sixteen_event_variants_are_complete_closed_and_replay_safe() {
+    let variants = [
+        (
+            "graph_imported",
+            json!({"sourceSha256": raw_digest(), "sourceKind": "graph_document"}),
+            false,
+        ),
+        (
+            "graph_validation_failed",
+            json!({"diagnostics": [safe_diagnostic()]}),
+            false,
+        ),
+        (
+            "graph_version_published",
+            json!({"version": persisted_graph_version()}),
+            false,
+        ),
+        (
+            "draft_proposed",
+            json!({
+                "draftId": "draft-test",
+                "expectedVersion": 1,
+                "expectedHash": wire_hash(),
+                "operationCount": 1
+            }),
+            false,
+        ),
+        (
+            "draft_rejected",
+            json!({
+                "draftId": "draft-test",
+                "reasonCode": "policy_blocked",
+                "diagnostics": [safe_diagnostic()],
+                "detailEvidenceId": "evidence-rejection"
+            }),
+            false,
+        ),
+        (
+            "draft_applied",
+            json!({"draftId": "draft-test", "graphVersion": 2, "graphHash": wire_hash()}),
+            false,
+        ),
+        (
+            "policy_obligation_evaluated",
+            json!({
+                "draftId": "draft-test",
+                "requirementId": "review",
+                "status": "waived",
+                "evidenceIds": ["evidence-review"],
+                "reasonCode": "owner_override",
+                "overrideable": true
+            }),
+            false,
+        ),
+        (
+            "policy_waiver_created",
+            json!({"waiver": {
+                "id": "waiver-test",
+                "requirement": "review",
+                "executionId": "execution-test",
+                "graphVersion": 2,
+                "actor": "owner-test",
+                "acknowledgedRisks": ["unreviewed change"],
+                "scope": "execution",
+                "createdAt": "2026-08-09T00:00:00Z",
+                "expiresAt": null
+            }}),
+            false,
+        ),
+        ("simulation_started", simulation_started_payload(), false),
+        (
+            "node_state_changed",
+            json!({
+                "simulationId": "simulation-test",
+                "nodeId": "node-test",
+                "previousState": "waiting_capacity",
+                "nextState": "succeeded"
+            }),
+            false,
+        ),
+        (
+            "simulation_completed",
+            json!({"simulationId": "simulation-test", "status": "blocked"}),
+            false,
+        ),
+        (
+            "integrity_checkpoint_created",
+            json!({
+                "streamId": "stream-test",
+                "sequence": 1,
+                "eventHash": wire_hash(),
+                "repositoryFormat": "1.0.0",
+                "authenticationTag": {
+                    "keyId": "integrity-key",
+                    "algorithm": "hmac-sha256",
+                    "tagSha256": raw_digest()
+                }
+            }),
+            true,
+        ),
+        (
+            "evidence_erasure_requested",
+            erasure_requested_payload(),
+            true,
+        ),
+        (
+            "evidence_erasure_completed",
+            erasure_completed_payload(),
+            true,
+        ),
+        (
+            "evidence_ciphertext_deleted",
+            json!({
+                "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
+                "operationId": "erasure-operation-test",
+                "evidenceId": "evidence-test",
+                "ciphertextSha256": raw_digest(),
+                "deletedAt": "2026-08-09T02:00:00Z"
+            }),
+            true,
+        ),
+        (
+            "evidence_legal_hold_changed",
+            json!({
+                "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
+                "holdId": "hold-test",
+                "evidenceId": "evidence-test",
+                "authority": "compliance-test",
+                "reasonCode": "litigation",
+                "state": "placed",
+                "changedAt": "2026-08-09T00:00:00Z"
+            }),
+            true,
+        ),
+    ];
+
+    assert_eq!(variants.len(), 16);
+    for (kind, data, project_scoped) in variants {
+        let event = event_envelope(kind, data, project_scoped);
+        let diagnostics = validate_current_schema("event-envelope", &event);
+        assert!(diagnostics.is_empty(), "{kind}: {diagnostics:?}");
+
+        let mut open = event;
+        open["kind"]["data"]["unregistered"] = json!(true);
+        assert!(
+            !validate_current_schema("event-envelope", &open).is_empty(),
+            "{kind} accepted an unregistered replay field"
+        );
+    }
+}
+
+// Prevents pre-release import formats and ambiguous source categories from re-entering the only
+// writable envelope.
+#[test]
+fn graph_import_accepts_only_document_or_generated_provenance() {
+    for source_kind in ["graph_document", "generated"] {
+        let event = event_envelope(
+            "graph_imported",
+            json!({"sourceSha256": raw_digest(), "sourceKind": source_kind}),
+            false,
+        );
+        assert!(validate_current_schema("event-envelope", &event).is_empty());
+    }
+
+    for source_kind in ["legacy_journal", "remote_url"] {
+        let event = event_envelope(
+            "graph_imported",
+            json!({"sourceSha256": raw_digest(), "sourceKind": source_kind}),
+            false,
+        );
+        assert!(!validate_current_schema("event-envelope", &event).is_empty());
+    }
+    let removed_receipt = event_envelope("legacy_events_imported", json!({}), false);
+    assert!(!validate_current_schema("event-envelope", &removed_receipt).is_empty());
+}
+
+// Prevents a Foundation authoring document, dynamic diagnostic prose, or unsafe map key from
+// masquerading as the bounded persisted projection.
+#[test]
+fn persisted_projection_is_closed_and_uses_only_registered_structural_maps() {
+    let base = persisted_graph_version();
+    assert!(validate_current_schema("persisted-graph-version", &base).is_empty());
+
+    let authoring_graph: Value = serde_json::from_slice(
+        &fs::read(repository_root().join("conformance/schemas/valid/graph.json")).unwrap(),
+    )
+    .unwrap();
+    let raw_event = event_envelope(
+        "graph_version_published",
+        json!({"version": authoring_graph}),
+        false,
+    );
+    assert!(!validate_current_schema("event-envelope", &raw_event).is_empty());
+
+    for pointer in [
+        "/topology/labels",
+        "/topology/completion/identifiers",
+        "/topology/completion/digests",
+        "/topology/completion/integers",
+        "/topology/completion/flags",
+    ] {
+        let mut invalid = base.clone();
+        invalid
+            .pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("systemPrompt".into(), json!("private"));
+        assert!(
+            !validate_current_schema("persisted-graph-version", &invalid).is_empty(),
+            "unsafe key accepted at {pointer}"
+        );
+    }
+
+    for field in ["message", "source", "sourcePath"] {
+        let mut diagnostic = safe_diagnostic();
+        diagnostic[field] = json!("C:/private/graph.yaml");
+        let event = event_envelope(
+            "graph_validation_failed",
+            json!({"diagnostics": [diagnostic]}),
+            false,
+        );
+        assert!(
+            !validate_current_schema("event-envelope", &event).is_empty(),
+            "persisted diagnostic accepted {field}"
+        );
+    }
+}
+
+// Prevents separator insertion and casing changes from disguising content-bearing field families
+// as registered structural map keys.
+#[test]
+fn persisted_projection_rejects_obfuscated_forbidden_map_keys() {
+    let base = persisted_graph_version();
+    for key in [
+        "pro_mpt",
+        "in__struc-tion",
+        "SystemPrompt",
+        "objectiveText",
+        "sourcePath",
+        "description",
+        "displayName",
+        "completionContract",
+        "policyText",
+        "diagnosticDetail",
+        "rawContent",
+        "responseText",
+        "schemaComment",
+        "exampleValue",
+        "graphTitle",
+        "freeFormProse",
+        "humanNote",
+    ] {
+        let mut invalid = base.clone();
+        invalid["topology"]["labels"] = json!({key: "private"});
+        assert!(
+            !validate_current_schema("persisted-graph-version", &invalid).is_empty(),
+            "accepted obfuscated forbidden key {key:?}"
+        );
+    }
+}
+
+// Prevents wire-chain hashes from becoming raw digests and Evidence references from omitting
+// either the plaintext-integrity digest or ciphertext-integrity digest.
+#[test]
+fn event_hashes_and_evidence_references_keep_distinct_digest_contracts() {
+    let mut event = event_envelope("simulation_started", simulation_started_payload(), false);
+    event["evidenceRefs"] = json!([{
+        "evidenceId": "evidence-test",
+        "contentSha256": raw_digest(),
+        "ciphertextSha256": raw_digest()
+    }]);
+    assert!(validate_current_schema("event-envelope", &event).is_empty());
+
+    for pointer in ["previousHash", "eventHash"] {
+        let mut invalid = event.clone();
+        invalid[pointer] = json!(raw_digest());
+        assert!(!validate_current_schema("event-envelope", &invalid).is_empty());
+    }
+    for field in ["contentSha256", "ciphertextSha256"] {
+        let mut invalid = event.clone();
+        invalid["evidenceRefs"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(!validate_current_schema("event-envelope", &invalid).is_empty());
+    }
+}
+
+// Prevents artifacts from naming non-content-addressed locations or zero-length content.
+#[test]
+fn artifact_reference_requires_canonical_locator_and_positive_byte_length() {
+    let canonical_locator = format!("artifact://sha256/{}", raw_digest());
+    let valid = json!({
+        "artifactId": "artifact-test",
+        "locator": canonical_locator,
+        "contentSha256": raw_digest(),
+        "mediaType": "application/json",
+        "byteLength": 1,
+        "sensitivity": "internal",
+        "metadataVersion": "1.0.0"
+    });
+    assert!(validate_current_schema("artifact-reference", &valid).is_empty());
+
+    for invalid_locator in [
+        raw_digest().to_owned(),
+        format!("artifact-test/{}", raw_digest()),
+        format!("artifact://sha256/{}?download=1", raw_digest()),
+        format!("artifact://sha256/{}", "A".repeat(64)),
+    ] {
+        let mut invalid = valid.clone();
+        invalid["locator"] = json!(invalid_locator);
+        assert!(!validate_current_schema("artifact-reference", &invalid).is_empty());
+    }
+
+    let mut empty = valid;
+    empty["byteLength"] = json!(0);
+    assert!(!validate_current_schema("artifact-reference", &empty).is_empty());
+}
+
+fn evidence_record(byte_length: u64, availability: &str) -> Value {
+    json!({
+        "evidenceId": "evidence-test",
+        "scope": {
+            "workspaceId": "workspace-test",
+            "projectId": "project-test",
+            "executionId": "execution-test"
+        },
+        "mediaType": "application/json",
+        "sensitivity": "restricted",
+        "cipherAlgorithm": "xchacha20poly1305",
+        "cipherVersion": 1,
+        "contentSha256": raw_digest(),
+        "ciphertextSha256": raw_digest(),
+        "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "wrappedKey": {
+            "keyId": "key-test",
+            "algorithm": "aes-kw",
+            "wrappedDekSha256": raw_digest()
+        },
+        "byteLength": byte_length,
+        "createdAt": "2026-08-09T00:00:00Z",
+        "retentionClass": "standard",
+        "availability": availability
+    })
+}
+
+// Prevents evidence metadata from exceeding a 16 MiB plaintext plus the fixed 16-byte AEAD tag.
+#[test]
+fn evidence_byte_length_is_bounded_ciphertext_length_including_aead_overhead() {
+    const XCHACHA20_POLY1305_TAG_BYTES: u64 = 16;
+    const MAX_PLAINTEXT_BYTES: u64 = 16 * 1024 * 1024;
+    let maximum = MAX_PLAINTEXT_BYTES + XCHACHA20_POLY1305_TAG_BYTES;
+    assert!(
+        validate_current_schema("evidence-record", &evidence_record(16, "available")).is_empty()
+    );
+    assert!(
+        validate_current_schema("evidence-record", &evidence_record(maximum, "available"))
+            .is_empty()
+    );
+    assert!(
+        !validate_current_schema("evidence-record", &evidence_record(15, "available")).is_empty()
+    );
+    assert!(
+        !validate_current_schema(
+            "evidence-record",
+            &evidence_record(maximum + 1, "available")
+        )
+        .is_empty()
+    );
+}
+
+// Prevents the prepared erasure state from drifting from the normative state-machine wire name.
+#[test]
+fn evidence_availability_uses_erasure_pending_not_erasure_requested() {
+    assert!(
+        validate_current_schema("evidence-record", &evidence_record(16, "erasure_pending"))
+            .is_empty()
+    );
+    assert!(
+        !validate_current_schema("evidence-record", &evidence_record(16, "erasure_requested"))
+            .is_empty()
+    );
+}
+
+// Prevents actor identities from inheriting the shorter opaque-ID bound or accepting unsafe ASCII.
+#[test]
+fn actor_id_has_its_dedicated_safe_ascii_256_byte_bound() {
+    let mut event = event_envelope("simulation_started", simulation_started_payload(), false);
+    event["actor"]["id"] = json!(format!("a{}", "-".repeat(255)));
+    assert!(validate_current_schema("event-envelope", &event).is_empty());
+
+    event["actor"]["id"] = json!(format!("a{}", "-".repeat(256)));
+    assert!(!validate_current_schema("event-envelope", &event).is_empty());
+    event["actor"]["id"] = json!("actor test");
+    assert!(!validate_current_schema("event-envelope", &event).is_empty());
+    event["actor"]["id"] = json!("actor/test");
+    assert!(!validate_current_schema("event-envelope", &event).is_empty());
+}
+
+// Prevents the shared persistence identifier contract from narrowing Task 3's printable-ASCII
+// grammar or accepting whitespace, path separators, colons, controls, non-ASCII, or overlength.
+#[test]
+fn shared_opaque_ids_follow_normative_printable_ascii_128_byte_grammar() {
+    let schemas = [
+        (
+            "repository-scope",
+            json!({"workspaceId": "workspace-test", "projectId": "project-test"}),
+            "/workspaceId",
+        ),
+        (
+            "event-envelope",
+            event_envelope("simulation_started", simulation_started_payload(), false),
+            "/eventId",
+        ),
+        (
+            "evidence-record",
+            evidence_record(16, "available"),
+            "/evidenceId",
+        ),
+        (
+            "artifact-reference",
+            json!({
+                "artifactId": "artifact-test",
+                "locator": format!("artifact://sha256/{}", raw_digest()),
+                "contentSha256": raw_digest(),
+                "mediaType": "application/json",
+                "byteLength": 1,
+                "sensitivity": "internal",
+                "metadataVersion": "1.0.0"
+            }),
+            "/artifactId",
+        ),
+    ];
+
+    let valid_ids = [
+        "id+tag".to_owned(),
+        "user@example.com".to_owned(),
+        "id=1".to_owned(),
+        "a".repeat(128),
+    ];
+    for valid_id in valid_ids {
+        for (schema, base, pointer) in &schemas {
+            let mut document = base.clone();
+            *document.pointer_mut(pointer).unwrap() = json!(&valid_id);
+            assert!(
+                validate_current_schema(schema, &document).is_empty(),
+                "{schema} rejected valid opaque ID {valid_id:?}"
+            );
+        }
+    }
+
+    let invalid_ids = [
+        "".to_owned(),
+        "id test".to_owned(),
+        "id/test".to_owned(),
+        "id\\test".to_owned(),
+        "id:test".to_owned(),
+        "id\u{001f}test".to_owned(),
+        "idé".to_owned(),
+        "a".repeat(129),
+    ];
+    for invalid_id in invalid_ids {
+        for (schema, base, pointer) in &schemas {
+            let mut document = base.clone();
+            *document.pointer_mut(pointer).unwrap() = json!(invalid_id);
+            assert!(
+                !validate_current_schema(schema, &document).is_empty(),
+                "{schema} accepted invalid opaque ID {invalid_id:?}"
+            );
+        }
+    }
+}
+
+// Prevents an erasure receipt from naming only a version that is ambiguous across policies.
+#[test]
+fn erasure_requested_requires_a_bounded_retention_policy_identity() {
+    let valid = event_envelope(
+        "evidence_erasure_requested",
+        erasure_requested_payload(),
+        true,
+    );
+    assert!(validate_current_schema("event-envelope", &valid).is_empty());
+
+    let mut missing = valid.clone();
+    missing["kind"]["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("retentionPolicyId");
+    assert!(!validate_current_schema("event-envelope", &missing).is_empty());
+    let mut oversized = valid;
+    oversized["kind"]["data"]["retentionPolicyId"] = json!(format!("p{}", "x".repeat(128)));
+    assert!(!validate_current_schema("event-envelope", &oversized).is_empty());
+}
+
+fn erasure_requested_payload() -> Value {
+    json!({
+        "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
+        "operationId": "erasure-operation-test",
+        "evidenceId": "evidence-test",
+        "keyHandleId": "key-handle-test",
+        "retentionPolicyId": "retention-standard",
+        "retentionPolicyVersion": "1.0.0",
+        "authority": "compliance-test",
+        "reasonCode": "retention_expired",
+        "priorState": "available",
+        "state": "erasure_pending",
+        "requestedAt": "2026-08-09T00:00:00Z"
+    })
+}
+
+fn erasure_completed_payload() -> Value {
+    json!({
+        "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
+        "operationId": "erasure-operation-test",
+        "evidenceId": "evidence-test",
+        "keyHandleId": "key-handle-test",
+        "retentionPolicyId": "retention-standard",
+        "retentionPolicyVersion": "1.0.0",
+        "authority": "compliance-test",
+        "reasonCode": "retention_expired",
+        "ciphertextSha256": raw_digest(),
+        "providerReceiptId": "provider-receipt-test",
+        "providerEpoch": 1,
+        "priorState": "erasure_pending",
+        "state": "erased",
+        "requestedAt": "2026-08-09T00:00:00Z",
+        "completedAt": "2026-08-09T01:00:00Z"
+    })
+}
+
+// Prevents prepared/finalized erasure receipts from losing the identifiers and states required
+// to correlate the policy decision, evidence, key revocation, and authenticated provider receipt.
+#[test]
+fn erasure_events_are_audit_complete_closed_and_bounded() {
+    let payloads = [
+        (
+            "evidence_erasure_requested",
+            erasure_requested_payload(),
+            vec![
+                "evidenceScope",
+                "operationId",
+                "evidenceId",
+                "keyHandleId",
+                "retentionPolicyId",
+                "retentionPolicyVersion",
+                "authority",
+                "reasonCode",
+                "priorState",
+                "state",
+                "requestedAt",
+            ],
+        ),
+        (
+            "evidence_erasure_completed",
+            erasure_completed_payload(),
+            vec![
+                "evidenceScope",
+                "operationId",
+                "evidenceId",
+                "keyHandleId",
+                "retentionPolicyId",
+                "retentionPolicyVersion",
+                "authority",
+                "reasonCode",
+                "ciphertextSha256",
+                "providerReceiptId",
+                "providerEpoch",
+                "priorState",
+                "state",
+                "requestedAt",
+                "completedAt",
+            ],
+        ),
+    ];
+
+    for (kind, payload, required) in payloads {
+        let valid = event_envelope(kind, payload.clone(), true);
+        let diagnostics = validate_current_schema("event-envelope", &valid);
+        assert!(diagnostics.is_empty(), "{kind}: {diagnostics:?}");
+
+        for field in required {
+            let mut missing = payload.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                !validate_current_schema("event-envelope", &event_envelope(kind, missing, true))
+                    .is_empty(),
+                "{kind} accepted missing {field}"
+            );
+        }
+
+        let mut open = payload;
+        open["details"] = json!("free-form payload");
+        assert!(
+            !validate_current_schema("event-envelope", &event_envelope(kind, open, true))
+                .is_empty(),
+            "{kind} accepted an extra field"
+        );
+    }
+
+    let mut oversized_operation = erasure_requested_payload();
+    oversized_operation["operationId"] = json!("o".repeat(129));
+    assert!(
+        !validate_current_schema(
+            "event-envelope",
+            &event_envelope("evidence_erasure_requested", oversized_operation, true)
+        )
+        .is_empty()
+    );
+
+    let mut zero_epoch = erasure_completed_payload();
+    zero_epoch["providerEpoch"] = json!(0);
+    assert!(
+        !validate_current_schema(
+            "event-envelope",
+            &event_envelope("evidence_erasure_completed", zero_epoch, true)
+        )
+        .is_empty()
+    );
+}
+
+// Prevents the event schema from duplicating and drifting away from the higher-precedence public
+// PolicyWaiver contract, including Serde's representation of an absent optional reason.
+#[test]
+fn embedded_policy_waiver_matches_the_normative_schema_exactly() {
+    let root = repository_root();
+    let official_valid: Value = serde_json::from_slice(
+        &fs::read(root.join("conformance/schemas/valid/policy-waiver.json")).unwrap(),
+    )
+    .unwrap();
+    let official_invalid: Value = serde_json::from_slice(
+        &fs::read(root.join("conformance/schemas/invalid/policy-waiver.json")).unwrap(),
+    )
+    .unwrap();
+
+    let mut with_reason = official_valid.clone();
+    with_reason["reason"] = json!("owner accepted the recorded risk");
+    let mut null_reason = official_valid.clone();
+    null_reason["reason"] = Value::Null;
+    let mut empty_risks = official_valid.clone();
+    empty_risks["acknowledgedRisks"] = json!([]);
+    let mut invalid_created_at = official_valid.clone();
+    invalid_created_at["createdAt"] = json!("not-a-date");
+    let mut string_expiry = official_valid.clone();
+    string_expiry["expiresAt"] = json!("future-policy-window");
+    let mut unknown_field = official_valid.clone();
+    unknown_field["details"] = json!("not part of the public waiver contract");
+
+    for (case, waiver) in [
+        ("official valid with omitted reason", official_valid),
+        ("official invalid graph version", official_invalid),
+        ("present string reason", with_reason),
+        ("null reason", null_reason),
+        ("empty risks", empty_risks),
+        ("invalid createdAt", invalid_created_at),
+        ("string expiresAt", string_expiry),
+        ("unknown field", unknown_field),
+    ] {
+        let normative_accepts = validate_current_schema("policy-waiver", &waiver).is_empty();
+        let event = event_envelope("policy_waiver_created", json!({"waiver": waiver}), false);
+        assert_eq!(
+            validate_current_schema("event-envelope", &event).is_empty(),
+            normative_accepts,
+            "full event diverged for {case}"
+        );
+    }
+}
+
 fn public_validation(
     validators: &PublicValidators,
     validation_target: &str,
@@ -576,9 +1581,9 @@ fn public_validation(
 
 // Prevents fixture-map insertion order, clocks, paths, or payloads from changing public evidence.
 #[test]
-fn public_manifest_is_complete_and_reports_are_byte_deterministic() {
+fn checked_in_public_manifest_is_complete_and_reports_are_byte_deterministic() {
     let (_, suite, resources) = public_suite_and_resources();
-    assert_eq!(suite.cases.len(), 38);
+    assert_eq!(suite.cases.len(), 50);
     let schema_set = public_schema_set(&suite);
     let validate =
         |schema: &str, document: &Value| public_validation(&schema_set, schema, document);
@@ -597,7 +1602,7 @@ fn public_manifest_is_complete_and_reports_are_byte_deterministic() {
     reordered_suite.cases.reverse();
     let reordered = run_conformance(&reordered_suite, &resources, validate);
     assert!(forward.ok, "{:?} {:?}", forward.diagnostics, forward.cases);
-    assert_eq!((forward.total, forward.passed, forward.failed), (38, 38, 0));
+    assert_eq!((forward.total, forward.passed, forward.failed), (50, 50, 0));
     assert_eq!(
         serde_json::to_vec(&forward).unwrap(),
         serde_json::to_vec(&backward).unwrap()
@@ -628,7 +1633,7 @@ fn public_fixture_gate_enforces_every_current_schema_constraint() {
         public_validation(&schema_set, schema, document)
     });
     assert!(!report.ok);
-    assert_eq!((report.passed, report.failed), (37, 1));
+    assert_eq!((report.passed, report.failed), (49, 1));
     let failed = report.cases.iter().find(|case| !case.passed).unwrap();
     assert_eq!(failed.id, "schema.agent.valid.minimum");
     assert!(
@@ -650,7 +1655,7 @@ fn wrong_expected_code_fails_only_its_sorted_case() {
         public_validation(&schema_set, schema, document)
     });
     assert!(!report.ok);
-    assert_eq!((report.total, report.passed, report.failed), (38, 37, 1));
+    assert_eq!((report.total, report.passed, report.failed), (50, 49, 1));
     assert!(!report.cases[0].passed);
     assert!(report.cases.iter().skip(1).all(|case| case.passed));
     assert_eq!(report.diagnostics.len(), 1);

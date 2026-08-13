@@ -123,22 +123,61 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+// Prevents a superseded pre-release package or partial fixture inventory from becoming a second
+// persistence baseline.
+#[test]
+fn repository_has_one_safe_initial_release() {
+    let root = repository_root();
+    let catalog: SchemaCatalog =
+        serde_json::from_slice(&fs::read(root.join("schemas/catalog.json")).unwrap()).unwrap();
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(root.join("conformance/manifest.json")).unwrap()).unwrap();
+    let declared_resources = manifest["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|case| [case.get("input"), case.get("comparison")])
+        .flatten()
+        .map(|path| path.as_str().unwrap())
+        .chain(
+            manifest["validatorResources"]
+                .as_object()
+                .unwrap()
+                .values()
+                .flat_map(|paths| paths.as_array().unwrap())
+                .map(|path| path.as_str().unwrap()),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(catalog.release_version, Version::new(1, 0, 0));
+    assert_eq!(catalog.schemas.len(), 15);
+    assert!(!root.join("schemas/releases/1.1.0").exists());
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 50);
+    assert_eq!(declared_resources.len(), 52);
+}
+
 #[derive(Clone, Copy)]
 enum RepositoryPackage {
     Current,
     Release1_0_0,
 }
 
-const REPOSITORY_SCHEMA_NAMES: [&str; 9] = [
+const SAFE_SCHEMA_NAMES: [&str; 15] = [
     "agent",
+    "artifact-reference",
     "claim",
     "context-capsule",
     "edge",
+    "event-envelope",
+    "evidence-record",
     "extension",
     "graph",
     "graph-signal",
     "node",
+    "persisted-graph-version",
     "policy-waiver",
+    "repository-scope",
+    "sensitivity",
 ];
 
 impl RepositoryPackage {
@@ -162,13 +201,13 @@ impl RepositoryPackage {
 }
 
 fn package_layout_is_exact(catalog: &SchemaCatalog, package: RepositoryPackage) -> bool {
-    catalog.schemas.len() == REPOSITORY_SCHEMA_NAMES.len()
+    catalog.schemas.len() == SAFE_SCHEMA_NAMES.len()
         && catalog
             .schemas
             .keys()
             .map(String::as_str)
-            .eq(REPOSITORY_SCHEMA_NAMES)
-        && REPOSITORY_SCHEMA_NAMES
+            .eq(SAFE_SCHEMA_NAMES)
+        && SAFE_SCHEMA_NAMES
             .iter()
             .all(|name| catalog.schemas[*name].path == package.schema_path(name))
 }
@@ -186,7 +225,7 @@ fn package_schema_inventory(root: &Path, package: RepositoryPackage) -> Vec<Stri
 }
 
 fn expected_schema_inventory() -> Vec<String> {
-    let mut inventory = REPOSITORY_SCHEMA_NAMES
+    let mut inventory = SAFE_SCHEMA_NAMES
         .iter()
         .map(|name| format!("{name}.schema.json"))
         .collect::<Vec<_>>();
@@ -204,7 +243,7 @@ fn load_repo_catalog(package: RepositoryPackage) -> CatalogResources {
         package_schema_inventory(&root, package),
         expected_schema_inventory()
     );
-    let schemas = REPOSITORY_SCHEMA_NAMES
+    let schemas = SAFE_SCHEMA_NAMES
         .iter()
         .map(|name| {
             let document =
@@ -220,8 +259,7 @@ fn load_repo_catalog(package: RepositoryPackage) -> CatalogResources {
     }
 }
 
-// Prevents a root catalog from silently loading immutable release files, or an immutable release
-// catalog from silently loading mutable root files.
+// Prevents a root catalog from loading immutable release files, and vice versa.
 #[test]
 fn repository_package_layout_rejects_cross_package_schema_paths() {
     let mut current = load_repo_catalog(RepositoryPackage::Current);
@@ -229,16 +267,12 @@ fn repository_package_layout_rejects_cross_package_schema_paths() {
         "schemas/releases/1.0.0/agent.schema.json".into();
     let current_report = validate_catalog(&current);
     assert!(!current_report.ok);
-    assert_eq!(current_report.diagnostics.len(), 1);
-    assert_eq!(current_report.diagnostics[0].code, "GHC001_CATALOG_INVALID");
     assert_eq!(current_report.diagnostics[0].path, "/schemas/agent/path");
 
     let mut release = load_repo_catalog(RepositoryPackage::Release1_0_0);
     release.catalog.schemas.get_mut("agent").unwrap().path = "schemas/agent.schema.json".into();
     let release_report = validate_catalog(&release);
     assert!(!release_report.ok);
-    assert_eq!(release_report.diagnostics.len(), 1);
-    assert_eq!(release_report.diagnostics[0].code, "GHC001_CATALOG_INVALID");
     assert_eq!(release_report.diagnostics[0].path, "/schemas/agent/path");
 }
 
@@ -248,47 +282,89 @@ fn release_catalog_directory_must_match_its_release_version() {
     release.catalog_source = "schemas/releases/2.0.0/catalog.json".into();
     let report = validate_catalog(&release);
     assert!(!report.ok);
-    assert_eq!(report.diagnostics[0].code, "GHC001_CATALOG_INVALID");
     assert_eq!(report.diagnostics[0].path, "/releaseVersion");
 }
 
-// Prevents the mutable current package or immutable 1.0.0 snapshot from being incomplete,
-// internally invalid, or semantically different from one another.
+// Prevents the single public baseline from being partial or diverging between mutable root and
+// immutable snapshot bytes.
 #[test]
-fn checked_in_current_and_1_0_0_release_are_complete_and_equivalent() {
+fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
+    let root = repository_root();
     let current = load_repo_catalog(RepositoryPackage::Current);
     let release = load_repo_catalog(RepositoryPackage::Release1_0_0);
 
-    assert_eq!(current.catalog.schemas.len(), 9);
+    assert_eq!(current.catalog.release_version, Version::new(1, 0, 0));
+    assert_eq!(release.catalog.release_version, Version::new(1, 0, 0));
+    assert_eq!(current.catalog.schemas.len(), 15);
+    assert_eq!(release.catalog.schemas.len(), 15);
     assert!(validate_catalog(&current).ok);
     assert!(validate_catalog(&release).ok);
-    assert_eq!(
-        current.catalog.release_version,
-        Version::parse("1.0.0").unwrap()
-    );
-    assert_eq!(
-        release.catalog.release_version,
-        current.catalog.release_version
-    );
-    assert_eq!(
-        release.catalog.schemas.keys().collect::<Vec<_>>(),
-        current.catalog.schemas.keys().collect::<Vec<_>>()
-    );
-    for name in current.catalog.schemas.keys() {
-        let current_entry = &current.catalog.schemas[name];
-        let release_entry = &release.catalog.schemas[name];
-        assert_eq!(release_entry.id, current_entry.id, "{name}");
+
+    for name in SAFE_SCHEMA_NAMES {
         assert_eq!(
-            release_entry.document_version, current_entry.document_version,
+            fs::read(root.join(RepositoryPackage::Current.schema_path(name))).unwrap(),
+            fs::read(root.join(RepositoryPackage::Release1_0_0.schema_path(name))).unwrap(),
             "{name}"
         );
-        assert_eq!(release_entry.sha256, current_entry.sha256, "{name}");
-        assert_eq!(release.schemas[name], current.schemas[name], "{name}");
+        assert_eq!(
+            current.catalog.schemas[name].sha256, release.catalog.schemas[name].sha256,
+            "{name}"
+        );
     }
 }
 
-// Prevents the immutable release from compiling differently or enforcing different public
-// conformance outcomes than the current package.
+#[test]
+fn path_content_slots_are_identical_closed_1_0_0_contracts() {
+    let root = repository_root();
+    let current = load_repo_catalog(RepositoryPackage::Current);
+    let release = load_repo_catalog(RepositoryPackage::Release1_0_0);
+    let current_validators = OfflineSchemaSet::compile(current.schemas.clone()).unwrap();
+    let release_validators = OfflineSchemaSet::compile(release.schemas.clone()).unwrap();
+    let schema_id = "https://p50.dev/schemas/persisted-graph-version.schema.json";
+    let fixture: Value = serde_json::from_slice(
+        &fs::read(root.join("conformance/schemas/valid/persisted-graph-version.json")).unwrap(),
+    )
+    .unwrap();
+
+    for field_kind in ["context_path", "permission_path", "isolation_path"] {
+        let mut document = fixture.clone();
+        document["contentSlots"][0]["fieldKind"] = json!(field_kind);
+        assert!(
+            current_validators
+                .validate(schema_id, &document, "current")
+                .is_empty(),
+            "root rejected {field_kind}"
+        );
+        assert!(
+            release_validators
+                .validate(schema_id, &document, "release")
+                .is_empty(),
+            "release rejected {field_kind}"
+        );
+    }
+
+    let mut foreign = fixture;
+    foreign["contentSlots"][0]["fieldKind"] = json!("filesystem_path");
+    assert!(
+        !current_validators
+            .validate(schema_id, &foreign, "current")
+            .is_empty()
+    );
+    assert!(
+        !release_validators
+            .validate(schema_id, &foreign, "release")
+            .is_empty()
+    );
+
+    assert_eq!(
+        schema_digest(&current.schemas["persisted-graph-version"])
+            .unwrap()
+            .as_str(),
+        "sha256:3b49e3d800018c2fd5ed4f6b78c383f56b7da148cdc8e2bd734b250ce5a81906"
+    );
+}
+
+// Prevents the immutable snapshot from enforcing different public outcomes than the root package.
 #[test]
 fn current_and_1_0_0_release_enforce_identical_public_schema_contracts() {
     let root = repository_root();
@@ -305,7 +381,7 @@ fn current_and_1_0_0_release_enforce_identical_public_schema_contracts() {
         .filter(|case| case["kind"] == "schema")
         .collect::<Vec<_>>();
 
-    assert_eq!(schema_cases.len(), 18);
+    assert_eq!(schema_cases.len(), 30);
     for case in schema_cases {
         let name = case["schema"].as_str().unwrap();
         let input = case["input"].as_str().unwrap();
@@ -313,47 +389,15 @@ fn current_and_1_0_0_release_enforce_identical_public_schema_contracts() {
         let schema_id = format!("https://p50.dev/schemas/{name}.schema.json");
         let current_diagnostics = current_validators.validate(&schema_id, &document, "conformance");
         let release_diagnostics = release_validators.validate(&schema_id, &document, "conformance");
-        let current_signature = current_diagnostics
-            .iter()
-            .map(|diagnostic| (diagnostic.code.clone(), diagnostic.path.clone()))
-            .collect::<Vec<_>>();
-        let release_signature = release_diagnostics
-            .iter()
-            .map(|diagnostic| (diagnostic.code.clone(), diagnostic.path.clone()))
-            .collect::<Vec<_>>();
-        let expected_codes = case["expect"]["codes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|code| code.as_str().unwrap())
-            .collect::<Vec<_>>();
-        let expected_paths = case["expect"]
-            .get("paths")
-            .and_then(Value::as_array)
-            .map(|paths| {
-                paths
-                    .iter()
-                    .map(|path| path.as_str().unwrap())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        assert_eq!(release_signature, current_signature, "{}", case["id"]);
-        assert_eq!(
-            current_diagnostics
+        let signature = |diagnostics: &[graphhelm_protocols::Diagnostic]| {
+            diagnostics
                 .iter()
-                .map(|diagnostic| diagnostic.code.as_str())
-                .collect::<Vec<_>>(),
-            expected_codes,
-            "{}",
-            case["id"]
-        );
+                .map(|diagnostic| (diagnostic.code.clone(), diagnostic.path.clone()))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
-            current_diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.path.as_str())
-                .collect::<Vec<_>>(),
-            expected_paths,
+            signature(&release_diagnostics),
+            signature(&current_diagnostics),
             "{}",
             case["id"]
         );

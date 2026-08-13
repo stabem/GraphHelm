@@ -1,7 +1,8 @@
 use chrono::{TimeZone, Utc};
 use graphhelm_protocols::{
-    Actor, ActorType, DraftOperation, EventKind, ExecutionGraph, GraphDraft, ManualOverride,
-    NodeState, PolicyWaiver, SemanticHash, SimulationStatus, WaiverScope,
+    Actor, ActorType, DraftOperation, DraftRejected, EventKind, ExecutionGraph, GraphDraft,
+    GraphImported, GraphSourceKind, ManualOverride, NodeState, OpaqueId, PolicyWaiver, RawSha256,
+    SafeCode, SemanticHash, SimulationStarted, SimulationStatus, WaiverScope, WireHash,
 };
 
 #[test]
@@ -78,6 +79,10 @@ fn draft_override_and_waiver_use_stable_camel_case_fields() {
     assert_eq!(waiver_value["executionId"], "exec-1");
     assert_eq!(waiver_value["graphVersion"], 14);
     assert_eq!(waiver_value["acknowledgedRisks"][0], "unreviewed change");
+    assert_eq!(
+        serde_json::from_value::<PolicyWaiver>(waiver_value).unwrap(),
+        waiver
+    );
 }
 
 #[test]
@@ -120,12 +125,30 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
     }
 
     let kinds = [
-        (EventKind::graph_imported("source.yaml"), "graph_imported"),
         (
-            EventKind::draft_rejected("draft-1", "blocked"),
+            EventKind::GraphImported(GraphImported {
+                source_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+                source_kind: GraphSourceKind::GraphDocument,
+            }),
+            "graph_imported",
+        ),
+        (
+            EventKind::DraftRejected(DraftRejected {
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+                reason_code: SafeCode::parse("blocked").unwrap(),
+                diagnostics: vec![],
+                detail_evidence_id: None,
+            }),
             "draft_rejected",
         ),
-        (EventKind::simulation_started(), "simulation_started"),
+        (
+            EventKind::SimulationStarted(SimulationStarted {
+                simulation_id: OpaqueId::parse("simulation-1").unwrap(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+            }),
+            "simulation_started",
+        ),
     ];
     for (kind, expected) in kinds {
         assert_eq!(serde_json::to_value(kind).unwrap()["type"], expected);

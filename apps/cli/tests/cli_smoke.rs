@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use graphhelm_protocols::{
-    Actor, ActorType, DraftOperation, GraphDraft, ManualOverride, NodeType, WaiverScope,
-};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -200,118 +197,139 @@ fn simulate_then_fresh_process_replay_reconstructs_terminal_state() {
     );
     let projection = json(&replayed.stdout);
     assert_eq!(projection["data"]["simulationStatus"], "completed");
-    assert_eq!(
-        projection["data"]["currentGraph"]["graph"]["metadata"]["version"],
-        1
-    );
+    assert!(projection["data"]["currentGraph"].is_null());
 }
 
 #[test]
-fn draft_apply_emits_waiver_and_impossible_deploy_exits_three() {
+fn replay_requires_explicit_scope_and_stream_when_repository_has_multiple_streams() {
     let directory = tempfile::tempdir().unwrap();
-    let mut graph =
-        graphhelm_schema::load_graph(&root().join("examples/graphs/software-feature.yaml"))
-            .unwrap()
-            .graph;
-    graph.spec.nodes.get_mut("review").unwrap().node_type = NodeType::Gate;
-    let base_path = directory.path().join("base.json");
-    std::fs::write(&base_path, serde_json::to_vec_pretty(&graph).unwrap()).unwrap();
-    let review_edges: Vec<_> = graph
-        .spec
-        .edges
-        .iter()
-        .filter(|edge| edge.from == "review" || edge.to == "review")
-        .map(|edge| DraftOperation::RemoveEdge {
-            id: edge.id.clone(),
-        })
-        .collect();
-    let mut operations = review_edges;
-    operations.push(DraftOperation::RemoveNode {
-        id: "review".into(),
-    });
-    let waiver_draft = GraphDraft {
-        id: "draft-waiver".into(),
-        expected_version: graph.metadata.version,
-        expected_hash: graphhelm_graph::semantic_hash(&graph).unwrap(),
-        operations,
-        manual_override: Some(ManualOverride {
-            actor: Actor::new(ActorType::Owner, "owner-local"),
-            reason: "accepted review bypass".into(),
-            waived_requirements: vec!["review".into()],
-            acknowledged_risks: vec!["unreviewed change".into()],
-            scope: WaiverScope::Execution,
-        }),
-    };
-    let waiver_path = directory.path().join("waiver.json");
-    std::fs::write(
-        &waiver_path,
-        serde_json::to_vec_pretty(&waiver_draft).unwrap(),
-    )
-    .unwrap();
-    let waiver_events = directory.path().join("waiver-events.jsonl");
-    let output = command()
+    let repository = directory.path().join("repository-v1");
+    for graph in ["software-feature.yaml", "research-to-publish.yaml"] {
+        let output = command()
+            .args([
+                "graph",
+                "simulate",
+                root().join("examples/graphs").join(graph).to_str().unwrap(),
+                "--events",
+                repository.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{graph}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    let ambiguous = command()
+        .args(["graph", "replay", "--events", repository.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(ambiguous.status.code(), Some(3));
+    assert_eq!(
+        json(&ambiguous.stdout)["diagnostics"][0]["code"],
+        "GHE010_STREAM_SELECTION_REQUIRED"
+    );
+
+    let selected = command()
         .args([
             "graph",
-            "draft",
-            "apply",
-            base_path.to_str().unwrap(),
-            waiver_path.to_str().unwrap(),
-            "--actor",
-            "owner-local",
+            "replay",
             "--events",
-            waiver_events.to_str().unwrap(),
+            repository.to_str().unwrap(),
+            "--workspace",
+            "workspace-local",
+            "--project",
+            "project-local",
+            "--execution",
+            "exec_feature",
+            "--stream",
+            "exec_feature",
         ])
         .output()
         .unwrap();
     assert!(
-        output.status.success(),
+        selected.status.success(),
         "{}",
-        String::from_utf8_lossy(&output.stdout)
+        String::from_utf8_lossy(&selected.stdout)
     );
-    assert_eq!(
-        json(&output.stdout)["data"]["waivers"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    assert_eq!(json(&selected.stdout)["data"]["streamId"], "exec_feature");
+}
 
-    let impossible = GraphDraft {
-        id: "draft-impossible".into(),
-        expected_version: graph.metadata.version,
-        expected_hash: graphhelm_graph::semantic_hash(&graph).unwrap(),
-        operations: vec![DraftOperation::PatchNode {
-            id: "implement".into(),
-            patch: serde_json::json!({"type": "deploy", "targetRef": null}),
-        }],
-        manual_override: Some(ManualOverride {
-            actor: Actor::new(ActorType::Owner, "owner-local"),
-            reason: "emergency".into(),
-            waived_requirements: vec!["deploy_target".into()],
-            acknowledged_risks: vec!["unknown destination".into()],
-            scope: WaiverScope::Execution,
-        }),
+#[test]
+fn draft_apply_fails_closed_without_external_key_provider_and_does_not_mutate() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = root().join("examples/graphs/software-feature.yaml");
+    let loaded = graphhelm_schema::load_graph(&base).unwrap();
+    let draft = graphhelm_protocols::GraphDraft {
+        id: "draft-1".into(),
+        expected_version: loaded.graph.metadata.version,
+        expected_hash: graphhelm_graph::semantic_hash(&loaded.graph).unwrap(),
+        operations: vec![graphhelm_protocols::DraftOperation::RemoveNode { id: "docs".into() }],
+        manual_override: None,
     };
-    let impossible_path = directory.path().join("impossible.json");
-    std::fs::write(&impossible_path, serde_json::to_vec(&impossible).unwrap()).unwrap();
-    let impossible_events = directory.path().join("impossible-events.jsonl");
+    let draft_path = directory.path().join("draft.json");
+    std::fs::write(&draft_path, serde_json::to_vec(&draft).unwrap()).unwrap();
+    let repository = directory.path().join("repository-v1");
+
     let output = command()
         .args([
             "graph",
             "draft",
             "apply",
-            base_path.to_str().unwrap(),
-            impossible_path.to_str().unwrap(),
+            base.to_str().unwrap(),
+            draft_path.to_str().unwrap(),
             "--actor",
             "owner-local",
             "--events",
-            impossible_events.to_str().unwrap(),
+            repository.to_str().unwrap(),
         ])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(3));
     assert_eq!(
         json(&output.stdout)["diagnostics"][0]["code"],
-        "GHP001_STRUCTURAL_IMPOSSIBILITY"
+        "GHK001_KEY_UNAVAILABLE"
     );
+    assert!(!repository.exists());
+}
+
+#[test]
+fn draft_apply_rejects_legacy_event_file_before_key_provider_diagnostic() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = root().join("examples/graphs/software-feature.yaml");
+    let loaded = graphhelm_schema::load_graph(&base).unwrap();
+    let draft = graphhelm_protocols::GraphDraft {
+        id: "draft-1".into(),
+        expected_version: loaded.graph.metadata.version,
+        expected_hash: graphhelm_graph::semantic_hash(&loaded.graph).unwrap(),
+        operations: vec![graphhelm_protocols::DraftOperation::RemoveNode { id: "docs".into() }],
+        manual_override: None,
+    };
+    let draft_path = directory.path().join("draft.json");
+    std::fs::write(&draft_path, serde_json::to_vec(&draft).unwrap()).unwrap();
+    let legacy = directory.path().join("events.jsonl");
+    std::fs::write(&legacy, b"{\"legacy\":true}\n").unwrap();
+
+    let output = command()
+        .args([
+            "graph",
+            "draft",
+            "apply",
+            base.to_str().unwrap(),
+            draft_path.to_str().unwrap(),
+            "--actor",
+            "owner-local",
+            "--events",
+            legacy.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        json(&output.stdout)["diagnostics"][0]["code"],
+        "GHE007_UNSUPPORTED_FORMAT"
+    );
+    assert_eq!(std::fs::read(&legacy).unwrap(), b"{\"legacy\":true}\n");
 }

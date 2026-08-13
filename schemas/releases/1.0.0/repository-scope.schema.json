@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/repository-scope.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Repository Scope",
+  "type": "object",
+  "required": ["workspaceId", "projectId"],
+  "properties": {
+    "workspaceId": {"$ref": "#/$defs/opaqueId"},
+    "projectId": {"$ref": "#/$defs/opaqueId"},
+    "executionId": {"$ref": "#/$defs/opaqueId"}
+  },
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    }
+  },
+  "additionalProperties": false
+}

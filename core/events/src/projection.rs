@@ -1,77 +1,787 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    EventEnvelope, EventKind, GraphVersionRecord, NodeState, PolicyWaiver, SimulationStatus,
+    EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionId, NodeState, OpaqueId,
+    PersistedGraphVersion, PolicyWaiver, ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
 
-/// Pure replay result used by CLI and recovery checks.
+use crate::{
+    AsyncEventRepository, EventRepositoryError, ReadStart, ReadStreamRequest, RepositoryFuture,
+    StreamHead,
+    canonical::{event_hash, serialized_len_bounded},
+    limits::{MAX_EVENT_BYTES, MAX_JOURNAL_BYTES, MAX_READ_ALL, MAX_SAFE_INTEGER},
+};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopedEvidenceId {
+    scope: RepositoryScope,
+    evidence_id: EvidenceId,
+}
+
+impl Serialize for ScopedEvidenceId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let fields = [
+            self.scope.workspace_id().as_str(),
+            self.scope.project_id().as_str(),
+            self.scope.execution_id().map_or("", |id| id.as_str()),
+            self.evidence_id.as_str(),
+        ];
+        let mut wire = String::from("v1:");
+        for field in fields {
+            wire.push_str(&field.len().to_string());
+            wire.push(':');
+            wire.push_str(field);
+        }
+        serializer.serialize_str(&wire)
+    }
+}
+
+impl<'de> Deserialize<'de> for ScopedEvidenceId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = String::deserialize(deserializer)?;
+        let Some(mut remainder) = wire.strip_prefix("v1:") else {
+            return Err(D::Error::custom("invalid scoped Evidence key"));
+        };
+        let mut fields = Vec::with_capacity(4);
+        for _ in 0..4 {
+            let separator = remainder
+                .find(':')
+                .ok_or_else(|| D::Error::custom("invalid scoped Evidence key"))?;
+            let length_token = &remainder[..separator];
+            let length = length_token
+                .parse::<usize>()
+                .map_err(|_| D::Error::custom("invalid scoped Evidence key"))?;
+            if length_token != length.to_string() {
+                return Err(D::Error::custom("invalid scoped Evidence key"));
+            }
+            remainder = &remainder[separator + 1..];
+            let field = remainder
+                .get(..length)
+                .ok_or_else(|| D::Error::custom("invalid scoped Evidence key"))?;
+            fields.push(field);
+            remainder = &remainder[length..];
+        }
+        if !remainder.is_empty() {
+            return Err(D::Error::custom("invalid scoped Evidence key"));
+        }
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse(fields[0]).map_err(D::Error::custom)?,
+            ProjectId::parse(fields[1]).map_err(D::Error::custom)?,
+            if fields[2].is_empty() {
+                None
+            } else {
+                Some(ExecutionId::parse(fields[2]).map_err(D::Error::custom)?)
+            },
+        );
+        Ok(Self::new(
+            scope,
+            EvidenceId::parse(fields[3]).map_err(D::Error::custom)?,
+        ))
+    }
+}
+
+impl PartialOrd for ScopedEvidenceId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScopedEvidenceId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (
+            self.scope.workspace_id(),
+            self.scope.project_id(),
+            self.scope.execution_id(),
+            &self.evidence_id,
+        )
+            .cmp(&(
+                other.scope.workspace_id(),
+                other.scope.project_id(),
+                other.scope.execution_id(),
+                &other.evidence_id,
+            ))
+    }
+}
+
+impl ScopedEvidenceId {
+    #[must_use]
+    pub fn new(scope: RepositoryScope, evidence_id: EvidenceId) -> Self {
+        Self { scope, evidence_id }
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> &RepositoryScope {
+        &self.scope
+    }
+
+    #[must_use]
+    pub const fn evidence_id(&self) -> &EvidenceId {
+        &self.evidence_id
+    }
+}
+
+const GENESIS_HASH: &str =
+    "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceAvailability {
+    Available,
+    ErasurePending,
+    Erased,
+    Deleted,
+}
+
+/// Pure replay result rebuilt only from the safe journal projection.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionProjection {
     pub stream_id: Option<String>,
-    pub current_graph: Option<GraphVersionRecord>,
+    pub current_graph: Option<PersistedGraphVersion>,
     pub proposed_drafts: Vec<String>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
     pub waivers: Vec<PolicyWaiver>,
     pub node_states: BTreeMap<String, NodeState>,
     pub simulation_status: Option<SimulationStatus>,
+    pub evidence_availability: BTreeMap<ScopedEvidenceId, EvidenceAvailability>,
+    pub legal_holds: BTreeSet<ScopedEvidenceId>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReplayError {
-    #[error("event stream is corrupt: {0}")]
-    Corrupt(String),
+    #[error("event stream exceeds a deterministic replay limit")]
+    LimitExceeded,
+    #[error("event stream failed integrity verification")]
+    Corrupt,
+}
+
+/// Durable, exact source position for one disposable projection generation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionWatermark {
+    scope: RepositoryScope,
+    stream_id: String,
+    projection_name: String,
+    projection_version: u32,
+    generation: u64,
+    last_sequence: u64,
+    last_event_hash: Option<EventHash>,
+}
+
+impl ProjectionWatermark {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        scope: RepositoryScope,
+        stream_id: String,
+        projection_name: String,
+        projection_version: u32,
+        generation: u64,
+        last_sequence: u64,
+        last_event_hash: Option<EventHash>,
+    ) -> Result<Self, ReplayError> {
+        OpaqueId::parse(&stream_id).map_err(|_| ReplayError::Corrupt)?;
+        OpaqueId::parse(&projection_name).map_err(|_| ReplayError::Corrupt)?;
+        if projection_version > i32::MAX as u32
+            || generation > MAX_SAFE_INTEGER
+            || last_sequence > MAX_SAFE_INTEGER
+        {
+            return Err(ReplayError::LimitExceeded);
+        }
+        if projection_version == 0
+            || generation == 0
+            || (last_sequence == 0) != last_event_hash.is_none()
+        {
+            return Err(ReplayError::Corrupt);
+        }
+        Ok(Self {
+            scope,
+            stream_id,
+            projection_name,
+            projection_version,
+            generation,
+            last_sequence,
+            last_event_hash,
+        })
+    }
+
+    pub const fn scope(&self) -> &RepositoryScope {
+        &self.scope
+    }
+    pub fn stream_id(&self) -> &str {
+        &self.stream_id
+    }
+    pub fn projection_name(&self) -> &str {
+        &self.projection_name
+    }
+    pub const fn projection_version(&self) -> u32 {
+        self.projection_version
+    }
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub const fn last_sequence(&self) -> u64 {
+        self.last_sequence
+    }
+    pub const fn last_event_hash(&self) -> Option<&EventHash> {
+        self.last_event_hash.as_ref()
+    }
+}
+
+/// In-progress or complete disposable projection generation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionGeneration {
+    watermark: ProjectionWatermark,
+    projection: ExecutionProjection,
+    #[serde(default)]
+    seen_idempotency_keys: BTreeSet<String>,
+    #[serde(default)]
+    active_legal_holds: BTreeSet<(ScopedEvidenceId, String)>,
+    #[serde(default)]
+    aggregate_bytes: u64,
+    #[serde(default)]
+    aggregate_references: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectionRebuildRequest {
+    scope: RepositoryScope,
+    stream_id: String,
+    projection_name: String,
+    projection_version: u32,
+    generation: u64,
+    page_size: u32,
+}
+
+/// Durable generation storage. Implementations keep the old active generation until swap succeeds.
+pub trait ProjectionRepository: Send + Sync {
+    fn load_generation<'a>(
+        &'a self,
+        request: &'a ProjectionRebuildRequest,
+    ) -> RepositoryFuture<'a, Result<Option<ProjectionGeneration>, EventRepositoryError>>;
+    fn save_generation<'a>(
+        &'a self,
+        generation: ProjectionGeneration,
+    ) -> RepositoryFuture<'a, Result<(), EventRepositoryError>>;
+    fn load_active<'a>(
+        &'a self,
+        scope: RepositoryScope,
+        stream_id: String,
+        projection_name: String,
+        projection_version: u32,
+    ) -> RepositoryFuture<'a, Result<Option<ProjectionGeneration>, EventRepositoryError>>;
+    fn swap_active<'a>(
+        &'a self,
+        generation: ProjectionGeneration,
+        expected_source_head: Option<StreamHead>,
+    ) -> RepositoryFuture<'a, Result<(), EventRepositoryError>>;
+}
+
+pub struct ProjectionRebuilder {
+    events: std::sync::Arc<dyn AsyncEventRepository>,
+    projections: std::sync::Arc<dyn ProjectionRepository>,
+}
+
+// Persisting every caller-sized read page lets an adversarial page size turn adapters that
+// authenticate a checkpoint's complete prefix into quadratic work. Keep durable progress bounded
+// by a domain-owned interval instead.
+const PROJECTION_CHECKPOINT_INTERVAL: u64 = 10_000;
+
+impl ProjectionRebuilder {
+    #[must_use]
+    pub fn new(
+        events: std::sync::Arc<dyn AsyncEventRepository>,
+        projections: std::sync::Arc<dyn ProjectionRepository>,
+    ) -> Self {
+        Self {
+            events,
+            projections,
+        }
+    }
+
+    pub fn rebuild<'a>(
+        &'a self,
+        request: ProjectionRebuildRequest,
+    ) -> RepositoryFuture<'a, Result<ProjectionGeneration, EventRepositoryError>> {
+        Box::pin(async move {
+            let (mut generation, created) = match self.projections.load_generation(&request).await?
+            {
+                Some(existing)
+                    if existing.watermark().scope() == request.scope()
+                        && existing.watermark().stream_id() == request.stream_id()
+                        && existing.watermark().projection_name() == request.projection_name()
+                        && existing.watermark().projection_version()
+                            == request.projection_version()
+                        && existing.watermark().generation() == request.generation() =>
+                {
+                    (existing, false)
+                }
+                // A stored generation exists but does not describe the requested one. That is a
+                // non-resumable watermark, not a broken hash chain, and an operator needs to be
+                // able to tell those apart.
+                Some(_) => return Err(EventRepositoryError::WatermarkMismatch),
+                None => (
+                    ProjectionGeneration::new(
+                        request.scope().clone(),
+                        request.stream_id().to_owned(),
+                        request.projection_name().to_owned(),
+                        request.projection_version(),
+                        request.generation(),
+                    )
+                    .map_err(map_replay_error)?,
+                    true,
+                ),
+            };
+            if created {
+                self.projections.save_generation(generation.clone()).await?;
+            }
+            let mut last_saved_sequence = generation.watermark().last_sequence();
+            loop {
+                let observed = self
+                    .events
+                    .stream_head(request.scope().clone(), request.stream_id().to_owned())
+                    .await?;
+                let target_sequence = observed
+                    .as_ref()
+                    .map_or(0, |head| head.next_sequence.saturating_sub(1));
+                if generation.watermark().last_sequence() > target_sequence {
+                    return Err(EventRepositoryError::Integrity);
+                }
+                while generation.watermark().last_sequence() < target_sequence {
+                    let start = match generation.watermark().last_event_hash() {
+                        None => ReadStart::Beginning,
+                        Some(hash) => ReadStart::After {
+                            sequence: generation.watermark().last_sequence(),
+                            event_hash: hash.clone(),
+                        },
+                    };
+                    let page = self
+                        .events
+                        .read_stream(ReadStreamRequest::new(
+                            request.scope().clone(),
+                            request.stream_id().to_owned(),
+                            start,
+                            request.page_size(),
+                        )?)
+                        .await?;
+                    if page.events.is_empty() {
+                        return Err(EventRepositoryError::Integrity);
+                    }
+                    generation
+                        .apply_page(&page.events)
+                        .map_err(map_replay_error)?;
+                    if generation
+                        .watermark()
+                        .last_sequence()
+                        .saturating_sub(last_saved_sequence)
+                        >= PROJECTION_CHECKPOINT_INTERVAL
+                    {
+                        self.projections.save_generation(generation.clone()).await?;
+                        last_saved_sequence = generation.watermark().last_sequence();
+                    }
+                }
+                let current = self
+                    .events
+                    .stream_head(request.scope().clone(), request.stream_id().to_owned())
+                    .await?;
+                if current != observed {
+                    continue;
+                }
+                if generation.watermark().last_sequence() != last_saved_sequence {
+                    self.projections.save_generation(generation.clone()).await?;
+                }
+                self.projections
+                    .swap_active(generation.clone(), observed)
+                    .await?;
+                return Ok(generation);
+            }
+        })
+    }
+}
+
+fn map_replay_error(error: ReplayError) -> EventRepositoryError {
+    match error {
+        ReplayError::LimitExceeded => EventRepositoryError::LimitExceeded,
+        ReplayError::Corrupt => EventRepositoryError::Integrity,
+    }
+}
+
+impl ProjectionRebuildRequest {
+    pub fn new(
+        scope: RepositoryScope,
+        stream_id: String,
+        projection_name: String,
+        projection_version: u32,
+        generation: u64,
+        page_size: u32,
+    ) -> Result<Self, ReplayError> {
+        ProjectionWatermark::new(
+            scope.clone(),
+            stream_id.clone(),
+            projection_name.clone(),
+            projection_version,
+            generation,
+            0,
+            None,
+        )?;
+        if page_size == 0
+            || usize::try_from(page_size).map_or(true, |size| size > crate::limits::MAX_READ_PAGE)
+        {
+            return Err(ReplayError::LimitExceeded);
+        }
+        Ok(Self {
+            scope,
+            stream_id,
+            projection_name,
+            projection_version,
+            generation,
+            page_size,
+        })
+    }
+    pub const fn scope(&self) -> &RepositoryScope {
+        &self.scope
+    }
+    pub fn stream_id(&self) -> &str {
+        &self.stream_id
+    }
+    pub fn projection_name(&self) -> &str {
+        &self.projection_name
+    }
+    pub const fn projection_version(&self) -> u32 {
+        self.projection_version
+    }
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub const fn page_size(&self) -> u32 {
+        self.page_size
+    }
+}
+
+impl ProjectionGeneration {
+    pub fn new(
+        scope: RepositoryScope,
+        stream_id: String,
+        projection_name: String,
+        projection_version: u32,
+        generation: u64,
+    ) -> Result<Self, ReplayError> {
+        Ok(Self {
+            watermark: ProjectionWatermark::new(
+                scope,
+                stream_id,
+                projection_name,
+                projection_version,
+                generation,
+                0,
+                None,
+            )?,
+            projection: ExecutionProjection::default(),
+            seen_idempotency_keys: BTreeSet::new(),
+            active_legal_holds: BTreeSet::new(),
+            aggregate_bytes: 0,
+            aggregate_references: 0,
+        })
+    }
+
+    pub const fn watermark(&self) -> &ProjectionWatermark {
+        &self.watermark
+    }
+    pub const fn projection(&self) -> &ExecutionProjection {
+        &self.projection
+    }
+
+    /// Applies one bounded contiguous source page without opening Evidence.
+    pub fn apply_page(&mut self, events: &[EventEnvelope]) -> Result<(), ReplayError> {
+        if events.len() > crate::limits::MAX_READ_PAGE {
+            return Err(ReplayError::LimitExceeded);
+        }
+        let schemas =
+            graphhelm_schema::repository_schema_set().map_err(|_| ReplayError::Corrupt)?;
+        for event in events {
+            let event_bytes = serialized_len_bounded(event, MAX_EVENT_BYTES)
+                .map_err(|_| ReplayError::LimitExceeded)?;
+            self.aggregate_bytes = self
+                .aggregate_bytes
+                .checked_add(u64::try_from(event_bytes).map_err(|_| ReplayError::LimitExceeded)?)
+                .ok_or(ReplayError::LimitExceeded)?;
+            self.aggregate_references = self
+                .aggregate_references
+                .checked_add(event.evidence_refs.len())
+                .and_then(|value| value.checked_add(event.artifact_refs.len()))
+                .ok_or(ReplayError::LimitExceeded)?;
+            if self.aggregate_bytes > MAX_JOURNAL_BYTES || self.aggregate_references > MAX_READ_ALL
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            let value = serde_json::to_value(event).map_err(|_| ReplayError::Corrupt)?;
+            let expected_previous = self
+                .watermark
+                .last_event_hash
+                .as_ref()
+                .map_or(GENESIS_HASH, EventHash::as_str);
+            if !schemas.validate_event(&value).is_empty()
+                || crate::integrity::validate_envelope(event).is_err()
+                || event.scope != self.watermark.scope
+                || event.stream_id.as_str() != self.watermark.stream_id
+                || event.kind.is_project_level() == event.scope.execution_id().is_some()
+                || event.sequence != self.watermark.last_sequence + 1
+                || event.previous_hash.as_str() != expected_previous
+                || event_hash(event, expected_previous).map_err(|_| ReplayError::Corrupt)?
+                    != event.event_hash.as_str()
+                || !self
+                    .seen_idempotency_keys
+                    .insert(event.idempotency_key.to_string())
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            apply_projection_event(&mut self.projection, &mut self.active_legal_holds, event)?;
+            self.watermark.last_sequence = event.sequence;
+            self.watermark.last_event_hash = Some(event.event_hash.clone());
+        }
+        Ok(())
+    }
+}
+
+fn apply_projection_event(
+    projection: &mut ExecutionProjection,
+    active_legal_holds: &mut BTreeSet<(ScopedEvidenceId, String)>,
+    event: &EventEnvelope,
+) -> Result<(), ReplayError> {
+    projection
+        .stream_id
+        .get_or_insert_with(|| event.stream_id.to_string());
+    match &event.kind {
+        EventKind::GraphVersionPublished(payload) => {
+            graphhelm_graph::validate_persisted_projection(&payload.version)
+                .map_err(|_| ReplayError::Corrupt)?;
+            if event.actor != *payload.version.created_by()
+                || event.scope.execution_id() != Some(payload.version.topology().execution_id())
+                || graphhelm_graph::validate_publication_evidence_ids(
+                    &event.scope,
+                    &payload.version,
+                )
+                .is_err()
+                || graphhelm_graph::validate_evidence_bijection(
+                    payload.version.content_slots(),
+                    &event.evidence_refs,
+                )
+                .is_err()
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            match &projection.current_graph {
+                Some(active)
+                    if active.number().checked_add(1) != Some(payload.version.number())
+                        || payload.version.predecessor().is_none_or(|prior| {
+                            prior.number() != active.number()
+                                || prior.semantic_hash() != active.semantic_hash()
+                        }) =>
+                {
+                    return Err(ReplayError::Corrupt);
+                }
+                None if payload.version.number() != 1
+                    || payload.version.predecessor().is_some() =>
+                {
+                    return Err(ReplayError::Corrupt);
+                }
+                _ => {}
+            }
+            projection.current_graph = Some(payload.version.clone());
+            for slot in payload.version.content_slots() {
+                projection
+                    .evidence_availability
+                    .entry(scoped_evidence_key(&event.scope, slot.evidence_id()))
+                    .or_insert(EvidenceAvailability::Available);
+            }
+        }
+        EventKind::DraftProposed(payload) => {
+            projection
+                .proposed_drafts
+                .push(payload.draft_id.to_string());
+        }
+        EventKind::DraftRejected(payload) => {
+            projection
+                .rejected_drafts
+                .push(payload.draft_id.to_string());
+        }
+        EventKind::DraftApplied(payload) => {
+            projection.applied_drafts.push(payload.draft_id.to_string());
+        }
+        EventKind::PolicyWaiverCreated(payload) => projection.waivers.push(payload.waiver.clone()),
+        EventKind::SimulationStarted(_) => {
+            projection.simulation_status = Some(SimulationStatus::Running);
+        }
+        EventKind::NodeStateChanged(payload) => {
+            projection
+                .node_states
+                .insert(payload.node_id.to_string(), payload.next_state.clone());
+        }
+        EventKind::SimulationCompleted(payload) => {
+            projection.simulation_status = Some(payload.status.clone());
+        }
+        EventKind::EvidenceErasureRequested(payload) => {
+            projection.evidence_availability.insert(
+                scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                EvidenceAvailability::ErasurePending,
+            );
+        }
+        EventKind::EvidenceErasureCompleted(payload) => {
+            projection.evidence_availability.insert(
+                scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                EvidenceAvailability::Erased,
+            );
+        }
+        EventKind::EvidenceCiphertextDeleted(payload) => {
+            projection.evidence_availability.insert(
+                scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                EvidenceAvailability::Deleted,
+            );
+        }
+        EventKind::EvidenceLegalHoldChanged(payload) => update_legal_hold_projection(
+            projection,
+            active_legal_holds,
+            scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+            payload.hold_id.as_str(),
+            payload.state,
+        ),
+        EventKind::GraphImported(_)
+        | EventKind::GraphValidationFailed(_)
+        | EventKind::PolicyObligationEvaluated(_)
+        | EventKind::IntegrityCheckpointCreated(_) => {}
+    }
+    Ok(())
 }
 
 impl ReplayError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
-        "GHE002_CORRUPT_BATCH"
+        match self {
+            Self::LimitExceeded => "GHE006_LIMIT_EXCEEDED",
+            Self::Corrupt => "GHE005_INTEGRITY_FAILURE",
+        }
     }
 }
 
-/// Rebuilds current execution state solely from ordered event envelopes.
-pub fn replay(events: &[EventEnvelope]) -> Result<ExecutionProjection, ReplayError> {
+/// Rebuilds current state without decrypting Evidence or interpreting authoring records.
+pub fn replay(
+    expected_scope: &graphhelm_protocols::RepositoryScope,
+    expected_stream_id: &str,
+    events: &[EventEnvelope],
+) -> Result<ExecutionProjection, ReplayError> {
+    graphhelm_protocols::OpaqueId::parse(expected_stream_id).map_err(|_| ReplayError::Corrupt)?;
+    if events.len() > MAX_READ_ALL {
+        return Err(ReplayError::LimitExceeded);
+    }
+    let schemas = graphhelm_schema::repository_schema_set().map_err(|_| ReplayError::Corrupt)?;
     let mut projection = ExecutionProjection::default();
-    let mut seen = BTreeMap::new();
-    let mut applied_keys = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut previous_hash = GENESIS_HASH;
+    let mut scope = None;
+    let mut aggregate_bytes = 0_u64;
+    let mut aggregate_references = 0_usize;
+    let mut active_legal_holds = BTreeSet::new();
     for (index, event) in events.iter().enumerate() {
-        if event.sequence != index as u64 + 1 {
-            return Err(ReplayError::Corrupt("non-contiguous sequence".into()));
+        let event_bytes = serialized_len_bounded(event, MAX_EVENT_BYTES)
+            .map_err(|_| ReplayError::LimitExceeded)?;
+        aggregate_bytes = aggregate_bytes
+            .checked_add(u64::try_from(event_bytes).map_err(|_| ReplayError::LimitExceeded)?)
+            .ok_or(ReplayError::LimitExceeded)?;
+        aggregate_references = aggregate_references
+            .checked_add(event.evidence_refs.len())
+            .and_then(|value| value.checked_add(event.artifact_refs.len()))
+            .ok_or(ReplayError::LimitExceeded)?;
+        if aggregate_bytes > MAX_JOURNAL_BYTES || aggregate_references > MAX_READ_ALL {
+            return Err(ReplayError::LimitExceeded);
         }
+        let value = serde_json::to_value(event).map_err(|_| ReplayError::Corrupt)?;
+        if !schemas.validate_event(&value).is_empty()
+            || crate::integrity::validate_envelope(event).is_err()
+            || &event.scope != expected_scope
+            || event.stream_id.as_str() != expected_stream_id
+            || scope
+                .as_ref()
+                .is_some_and(|expected| expected != &event.scope)
+            || event.kind.is_project_level() == event.scope.execution_id().is_some()
+            || event_hash(event, previous_hash).map_err(|_| ReplayError::Corrupt)?
+                != event.event_hash.as_str()
+        {
+            return Err(ReplayError::Corrupt);
+        }
+        scope.get_or_insert_with(|| event.scope.clone());
+        if event.sequence != index as u64 + 1
+            || event.previous_hash.as_str() != previous_hash
+            || !seen.insert(event.idempotency_key.clone())
+        {
+            return Err(ReplayError::Corrupt);
+        }
+        previous_hash = event.event_hash.as_str();
         if let Some(stream) = &projection.stream_id {
-            if stream != &event.stream_id {
-                return Err(ReplayError::Corrupt("mixed execution streams".into()));
+            if stream != event.stream_id.as_str() {
+                return Err(ReplayError::Corrupt);
             }
         } else {
-            projection.stream_id = Some(event.stream_id.clone());
-        }
-        if let Some(previous) = seen.insert(event.idempotency_key.clone(), &event.kind) {
-            if previous != &event.kind {
-                return Err(ReplayError::Corrupt(
-                    "conflicting duplicate idempotency key".into(),
-                ));
-            }
-            continue;
-        }
-        if !applied_keys.insert(event.idempotency_key.clone()) {
-            continue;
+            projection.stream_id = Some(event.stream_id.to_string());
         }
         match &event.kind {
             EventKind::GraphVersionPublished(payload) => {
+                graphhelm_graph::validate_persisted_projection(&payload.version)
+                    .map_err(|_| ReplayError::Corrupt)?;
+                if event.actor != *payload.version.created_by()
+                    || event.scope.execution_id() != Some(payload.version.topology().execution_id())
+                    || graphhelm_graph::validate_publication_evidence_ids(
+                        &event.scope,
+                        &payload.version,
+                    )
+                    .is_err()
+                    || graphhelm_graph::validate_evidence_bijection(
+                        payload.version.content_slots(),
+                        &event.evidence_refs,
+                    )
+                    .is_err()
+                {
+                    return Err(ReplayError::Corrupt);
+                }
+                match &projection.current_graph {
+                    Some(active)
+                        if active.number().checked_add(1) != Some(payload.version.number())
+                            || payload.version.predecessor().is_none_or(|predecessor| {
+                                predecessor.number() != active.number()
+                                    || predecessor.semantic_hash() != active.semantic_hash()
+                            }) =>
+                    {
+                        return Err(ReplayError::Corrupt);
+                    }
+                    None if payload.version.number() != 1
+                        || payload.version.predecessor().is_some() =>
+                    {
+                        return Err(ReplayError::Corrupt);
+                    }
+                    _ => {}
+                }
                 projection.current_graph = Some(payload.version.clone());
+                for slot in payload.version.content_slots() {
+                    projection
+                        .evidence_availability
+                        .entry(scoped_evidence_key(&event.scope, slot.evidence_id()))
+                        .or_insert(EvidenceAvailability::Available);
+                }
             }
             EventKind::DraftProposed(payload) => {
-                projection.proposed_drafts.push(payload.draft_id.clone());
+                projection
+                    .proposed_drafts
+                    .push(payload.draft_id.to_string());
             }
             EventKind::DraftRejected(payload) => {
-                projection.rejected_drafts.push(payload.draft_id.clone());
+                projection
+                    .rejected_drafts
+                    .push(payload.draft_id.to_string());
             }
             EventKind::DraftApplied(payload) => {
-                projection.applied_drafts.push(payload.draft_id.clone());
+                projection.applied_drafts.push(payload.draft_id.to_string());
             }
             EventKind::PolicyWaiverCreated(payload) => {
                 projection.waivers.push(payload.waiver.clone());
@@ -82,15 +792,510 @@ pub fn replay(events: &[EventEnvelope]) -> Result<ExecutionProjection, ReplayErr
             EventKind::NodeStateChanged(payload) => {
                 projection
                     .node_states
-                    .insert(payload.node_id.clone(), payload.to.clone());
+                    .insert(payload.node_id.to_string(), payload.next_state.clone());
             }
             EventKind::SimulationCompleted(payload) => {
                 projection.simulation_status = Some(payload.status.clone());
             }
+            EventKind::EvidenceErasureRequested(payload) => {
+                projection.evidence_availability.insert(
+                    scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                    EvidenceAvailability::ErasurePending,
+                );
+            }
+            EventKind::EvidenceErasureCompleted(payload) => {
+                projection.evidence_availability.insert(
+                    scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                    EvidenceAvailability::Erased,
+                );
+            }
+            EventKind::EvidenceCiphertextDeleted(payload) => {
+                projection.evidence_availability.insert(
+                    scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                    EvidenceAvailability::Deleted,
+                );
+            }
+            EventKind::EvidenceLegalHoldChanged(payload) => update_legal_hold_projection(
+                &mut projection,
+                &mut active_legal_holds,
+                scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
+                payload.hold_id.as_str(),
+                payload.state,
+            ),
             EventKind::GraphImported(_)
             | EventKind::GraphValidationFailed(_)
-            | EventKind::PolicyObligationEvaluated(_) => {}
+            | EventKind::PolicyObligationEvaluated(_)
+            | EventKind::IntegrityCheckpointCreated(_) => {}
         }
     }
     Ok(projection)
+}
+
+fn update_legal_hold_projection(
+    projection: &mut ExecutionProjection,
+    active: &mut BTreeSet<(ScopedEvidenceId, String)>,
+    evidence: ScopedEvidenceId,
+    hold_id: &str,
+    state: graphhelm_protocols::LegalHoldState,
+) {
+    let hold = (evidence.clone(), hold_id.to_owned());
+    match state {
+        graphhelm_protocols::LegalHoldState::Placed => {
+            active.insert(hold);
+            projection.legal_holds.insert(evidence);
+        }
+        graphhelm_protocols::LegalHoldState::Released => {
+            active.remove(&hold);
+            if !active.iter().any(|(key, _)| key == &evidence) {
+                projection.legal_holds.remove(&evidence);
+            }
+        }
+    }
+}
+
+fn scoped_evidence_key(
+    scope: &graphhelm_protocols::RepositoryScope,
+    evidence_id: &EvidenceId,
+) -> ScopedEvidenceId {
+    ScopedEvidenceId::new(scope.clone(), evidence_id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use chrono::{TimeZone, Utc};
+    use graphhelm_protocols::{
+        ActorId, EventHash, GraphVersionPublished, NodeType, OpaqueId, Optionality, PersistedActor,
+        PersistedActorType, PersistedBudgets, PersistedControl, PersistedGraphVersion,
+        PersistedGraphVersionRef, PersistedNode, PersistedTimestamp, PersistedTopology, SafeValue,
+        WireHash,
+    };
+
+    use super::*;
+
+    #[test]
+    fn scoped_evidence_keys_keep_identical_ids_in_distinct_executions_separate() {
+        let first_scope = RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+        );
+        let second_scope = RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("execution-2").unwrap()),
+        );
+        let evidence_id = EvidenceId::parse("evidence-shared").unwrap();
+        let first = ScopedEvidenceId::new(first_scope.clone(), evidence_id.clone());
+        let second = ScopedEvidenceId::new(second_scope, evidence_id.clone());
+        let values = BTreeMap::from([(first.clone(), "erased"), (second, "available")]);
+
+        assert_eq!(values.len(), 2);
+        assert_eq!(values.get(&first), Some(&"erased"));
+        assert_eq!(first.scope(), &first_scope);
+        assert_eq!(first.evidence_id(), &evidence_id);
+        let json = serde_json::to_string(&values).unwrap();
+        assert_eq!(
+            serde_json::from_str::<BTreeMap<ScopedEvidenceId, &str>>(&json).unwrap(),
+            values
+        );
+        let canonical_key = serde_json::to_string(&first).unwrap();
+        assert!(
+            serde_json::from_str::<ScopedEvidenceId>(&canonical_key.replace("v1:11:", "v1:011:"))
+                .is_err()
+        );
+        let mut trailing = canonical_key.clone();
+        trailing.insert(trailing.len() - 1, 'x');
+        assert!(serde_json::from_str::<ScopedEvidenceId>(&trailing).is_err());
+        let mut truncated = canonical_key;
+        truncated.remove(truncated.len() - 2);
+        assert!(serde_json::from_str::<ScopedEvidenceId>(&truncated).is_err());
+    }
+
+    #[test]
+    fn releasing_one_of_two_holds_keeps_evidence_held() {
+        let scope = RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+        );
+        let evidence = ScopedEvidenceId::new(scope, EvidenceId::parse("evidence-shared").unwrap());
+        let mut projection = ExecutionProjection::default();
+        let mut active = BTreeSet::new();
+        update_legal_hold_projection(
+            &mut projection,
+            &mut active,
+            evidence.clone(),
+            "hold-1",
+            graphhelm_protocols::LegalHoldState::Placed,
+        );
+        update_legal_hold_projection(
+            &mut projection,
+            &mut active,
+            evidence.clone(),
+            "hold-2",
+            graphhelm_protocols::LegalHoldState::Placed,
+        );
+        update_legal_hold_projection(
+            &mut projection,
+            &mut active,
+            evidence.clone(),
+            "hold-1",
+            graphhelm_protocols::LegalHoldState::Released,
+        );
+        assert!(projection.legal_holds.contains(&evidence));
+        update_legal_hold_projection(
+            &mut projection,
+            &mut active,
+            evidence.clone(),
+            "hold-2",
+            graphhelm_protocols::LegalHoldState::Released,
+        );
+        assert!(!projection.legal_holds.contains(&evidence));
+    }
+
+    fn publication_event(
+        version: PersistedGraphVersion,
+        scope_execution: &str,
+        references: Vec<graphhelm_protocols::EvidenceReference>,
+    ) -> EventEnvelope {
+        let actor = version.created_by().clone();
+        let mut event = EventEnvelope::new(
+            OpaqueId::parse("event-publication").unwrap(),
+            graphhelm_protocols::RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+                Some(graphhelm_protocols::ExecutionId::parse(scope_execution).unwrap()),
+            ),
+            OpaqueId::parse("stream-1").unwrap(),
+            1,
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+            graphhelm_protocols::NewEvent::new(
+                OpaqueId::parse("request-publication").unwrap(),
+                actor,
+                graphhelm_protocols::Sensitivity::Internal,
+                EventKind::GraphVersionPublished(Box::new(GraphVersionPublished { version })),
+                references,
+                vec![],
+            ),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+        );
+        event.event_hash = EventHash::parse(event_hash(&event, GENESIS_HASH).unwrap()).unwrap();
+        event
+    }
+
+    fn invalid_projection() -> PersistedGraphVersion {
+        let completion = PersistedControl::new(
+            SafeValue::parse("all_terminal").unwrap(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let node =
+            PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![]).unwrap();
+        let topology = PersistedTopology::new(
+            OpaqueId::parse("graph-1").unwrap(),
+            graphhelm_protocols::ExecutionId::parse("execution-1").unwrap(),
+            BTreeMap::new(),
+            vec![OpaqueId::parse("missing-entrypoint").unwrap()],
+            BTreeMap::from([(OpaqueId::parse("node-1").unwrap(), node)]),
+            vec![],
+            PersistedBudgets::default(),
+            vec![],
+            completion,
+        )
+        .unwrap();
+        PersistedGraphVersion::new(
+            1,
+            None,
+            topology,
+            WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+            vec![],
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-test").unwrap(),
+            ),
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn replay_rejects_semantically_invalid_persisted_graph() {
+        let event = EventEnvelope::new(
+            OpaqueId::parse("event-1").unwrap(),
+            graphhelm_protocols::RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+                Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+            ),
+            OpaqueId::parse("stream-1").unwrap(),
+            1,
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+            graphhelm_protocols::NewEvent::new(
+                OpaqueId::parse("request-1").unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-test").unwrap(),
+                ),
+                graphhelm_protocols::Sensitivity::Internal,
+                EventKind::GraphVersionPublished(Box::new(GraphVersionPublished {
+                    version: invalid_projection(),
+                })),
+                vec![],
+                vec![],
+            ),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+            EventHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
+        );
+
+        let scope = event.scope.clone();
+        assert_eq!(
+            replay(&scope, "stream-1", &[event]),
+            Err(ReplayError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn replay_rejects_a_valid_projection_with_divergent_predecessor_identity() {
+        let active: PersistedGraphVersion = serde_json::from_str(include_str!(
+            "../../../conformance/schemas/valid/persisted-graph-version.json"
+        ))
+        .unwrap();
+        let divergent = PersistedGraphVersion::new(
+            active.number() + 1,
+            Some(
+                PersistedGraphVersionRef::new(
+                    active.number(),
+                    WireHash::parse(format!("sha256:{}", "f".repeat(64))).unwrap(),
+                )
+                .unwrap(),
+            ),
+            active.topology().clone(),
+            active.topology_hash().clone(),
+            active.semantic_hash().clone(),
+            active.content_slots().to_vec(),
+            active.created_by().clone(),
+            active.created_at().clone(),
+        )
+        .unwrap();
+        assert!(graphhelm_graph::validate_persisted_projection(&divergent).is_ok());
+        let make_event = |version, sequence, previous: &str, hash: &str| {
+            EventEnvelope::new(
+                OpaqueId::parse(format!("event-{sequence}")).unwrap(),
+                graphhelm_protocols::RepositoryScope::new(
+                    graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+                    graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+                    Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+                ),
+                OpaqueId::parse("stream-1").unwrap(),
+                sequence,
+                PersistedTimestamp::from_datetime(
+                    Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap(),
+                )
+                .unwrap(),
+                graphhelm_protocols::NewEvent::new(
+                    OpaqueId::parse(format!("request-{sequence}")).unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::System,
+                        ActorId::parse("system-test").unwrap(),
+                    ),
+                    graphhelm_protocols::Sensitivity::Internal,
+                    EventKind::GraphVersionPublished(Box::new(GraphVersionPublished { version })),
+                    vec![],
+                    vec![],
+                ),
+                EventHash::parse(previous).unwrap(),
+                EventHash::parse(hash).unwrap(),
+            )
+        };
+        let first_hash = format!("sha256:{}", "c".repeat(64));
+        let events = vec![
+            make_event(active, 1, GENESIS_HASH, &first_hash),
+            make_event(
+                divergent,
+                2,
+                &first_hash,
+                &format!("sha256:{}", "d".repeat(64)),
+            ),
+        ];
+
+        let scope = events[0].scope.clone();
+        assert_eq!(
+            replay(&scope, "stream-1", &events),
+            Err(ReplayError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn replay_rejects_more_than_the_public_event_bound_before_event_work() {
+        let event = EventEnvelope::new(
+            OpaqueId::parse("event-1").unwrap(),
+            graphhelm_protocols::RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+                Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+            ),
+            OpaqueId::parse("stream-1").unwrap(),
+            1,
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+            graphhelm_protocols::NewEvent::new(
+                OpaqueId::parse("request-1").unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-test").unwrap(),
+                ),
+                graphhelm_protocols::Sensitivity::Internal,
+                EventKind::GraphImported(graphhelm_protocols::GraphImported {
+                    source_sha256: graphhelm_protocols::RawSha256::parse("a".repeat(64)).unwrap(),
+                    source_kind: graphhelm_protocols::GraphSourceKind::GraphDocument,
+                }),
+                vec![],
+                vec![],
+            ),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+            EventHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
+        );
+        let events = vec![event; 100_001];
+
+        let scope = events[0].scope.clone();
+        assert_eq!(
+            replay(&scope, "stream-1", &events),
+            Err(ReplayError::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn replay_binds_publication_execution_and_exact_ordered_evidence_bijection() {
+        let original: PersistedGraphVersion = serde_json::from_str(include_str!(
+            "../../../conformance/schemas/valid/persisted-graph-version.json"
+        ))
+        .unwrap();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("execution-fixture").unwrap()),
+        );
+        let slots = original
+            .content_slots()
+            .iter()
+            .map(|slot| {
+                graphhelm_protocols::ContentSlot::new(
+                    slot.slot_id().clone(),
+                    slot.owner_kind(),
+                    slot.owner_id().clone(),
+                    slot.field_kind(),
+                    slot.ordinal(),
+                    graphhelm_graph::derive_publication_evidence_id(
+                        &scope,
+                        1,
+                        original.semantic_hash(),
+                        slot,
+                    )
+                    .unwrap(),
+                    slot.content_sha256().clone(),
+                    slot.sensitivity(),
+                    slot.required_for_execution(),
+                )
+            })
+            .collect();
+        let version = PersistedGraphVersion::new(
+            1,
+            None,
+            original.topology().clone(),
+            original.topology_hash().clone(),
+            original.semantic_hash().clone(),
+            slots,
+            original.created_by().clone(),
+            original.created_at().clone(),
+        )
+        .unwrap();
+        let references = version
+            .content_slots()
+            .iter()
+            .map(|slot| {
+                graphhelm_protocols::EvidenceReference::new(
+                    slot.evidence_id().clone(),
+                    slot.content_sha256().clone(),
+                    graphhelm_protocols::RawSha256::parse("f".repeat(64)).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let valid = publication_event(version.clone(), "execution-fixture", references.clone());
+        let expected_scope = valid.scope.clone();
+        assert!(replay(&expected_scope, "stream-1", &[valid]).is_ok());
+
+        let arbitrary_slots = version
+            .content_slots()
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                graphhelm_protocols::ContentSlot::new(
+                    slot.slot_id().clone(),
+                    slot.owner_kind(),
+                    slot.owner_id().clone(),
+                    slot.field_kind(),
+                    slot.ordinal(),
+                    graphhelm_protocols::EvidenceId::parse(format!("arbitrary-evidence-{index}"))
+                        .unwrap(),
+                    slot.content_sha256().clone(),
+                    slot.sensitivity(),
+                    slot.required_for_execution(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let arbitrary = PersistedGraphVersion::new(
+            version.number(),
+            version.predecessor().cloned(),
+            version.topology().clone(),
+            version.topology_hash().clone(),
+            version.semantic_hash().clone(),
+            arbitrary_slots,
+            version.created_by().clone(),
+            version.created_at().clone(),
+        )
+        .unwrap();
+        let arbitrary_refs = arbitrary
+            .content_slots()
+            .iter()
+            .map(|slot| {
+                graphhelm_protocols::EvidenceReference::new(
+                    slot.evidence_id().clone(),
+                    slot.content_sha256().clone(),
+                    graphhelm_protocols::RawSha256::parse("f".repeat(64)).unwrap(),
+                )
+            })
+            .collect();
+        let internally_consistent =
+            publication_event(arbitrary, "execution-fixture", arbitrary_refs);
+        assert_eq!(
+            replay(&expected_scope, "stream-1", &[internally_consistent]),
+            Err(ReplayError::Corrupt)
+        );
+
+        let wrong_execution =
+            publication_event(version.clone(), "execution-other", references.clone());
+        let wrong_execution_scope = wrong_execution.scope.clone();
+        assert_eq!(
+            replay(&wrong_execution_scope, "stream-1", &[wrong_execution]),
+            Err(ReplayError::Corrupt)
+        );
+
+        let mut wrong_order = references;
+        wrong_order.swap(0, 1);
+        let wrong_order = publication_event(version, "execution-fixture", wrong_order);
+        assert_eq!(
+            replay(&expected_scope, "stream-1", &[wrong_order]),
+            Err(ReplayError::Corrupt)
+        );
+    }
 }

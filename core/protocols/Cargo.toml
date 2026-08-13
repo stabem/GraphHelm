@@ -12,4 +12,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+jsonschema.workspace = true
 serde_yaml_ng.workspace = true
+static_assertions.workspace = true

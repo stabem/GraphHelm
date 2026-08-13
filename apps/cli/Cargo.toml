@@ -16,14 +16,18 @@ graphhelm-events = { path = "../../core/events" }
 graphhelm-governor = { path = "../../core/governor" }
 graphhelm-graph = { path = "../../core/graph" }
 graphhelm-policy = { path = "../../core/policy" }
+graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store" }
 graphhelm-protocols = { path = "../../core/protocols" }
 graphhelm-schema = { path = "../../core/schema" }
 graphhelm-schema-evolution = { path = "../../core/schema-evolution" }
+graphhelm-sealed-key-provider = { path = "../../adapters/sealed-key-provider" }
 graphhelm-simulation = { path = "../../core/simulation" }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
 uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]

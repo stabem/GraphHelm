@@ -27,11 +27,14 @@ impl GraphVersion {
         if graph.metadata.version == 0 {
             return Err(GraphError::InvalidVersion);
         }
-        if predecessor
-            .as_ref()
-            .is_some_and(|previous| graph.metadata.version != previous.number + 1)
-        {
-            return Err(GraphError::InvalidPredecessor);
+        if let Some(previous) = predecessor.as_ref() {
+            let expected = previous
+                .number
+                .checked_add(1)
+                .ok_or(GraphError::InvalidPredecessor)?;
+            if graph.metadata.version != expected {
+                return Err(GraphError::InvalidPredecessor);
+            }
         }
         let canonical = canonicalize(&graph)?;
         let content_hash = semantic_hash(&graph)?;

@@ -8,6 +8,12 @@
       "path": "schemas/agent.schema.json",
       "sha256": "sha256:1f60a9317e9a912d0783f24d33e7a3ecd039493672957a7ebe84b5cd2d937da5"
     },
+    "artifact-reference": {
+      "id": "https://p50.dev/schemas/artifact-reference.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/artifact-reference.schema.json",
+      "sha256": "sha256:f7a50b0d09dd5d249496ebb2808547dead84dd4cd0b712e610796c0616ba8cc1"
+    },
     "claim": {
       "id": "https://p50.dev/schemas/claim.schema.json",
       "documentVersion": "1.0.0",
@@ -25,6 +31,18 @@
       "documentVersion": "1.0.0",
       "path": "schemas/edge.schema.json",
       "sha256": "sha256:5b6ff343d02b18b054bc00edb9e40b566767f9cc8894b8851b7063e8aab101d1"
+    },
+    "event-envelope": {
+      "id": "https://p50.dev/schemas/event-envelope.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/event-envelope.schema.json",
+      "sha256": "sha256:1461bfabfeacde685f4e64da94f8c10006a749a9c247b652eac043db6992530f"
+    },
+    "evidence-record": {
+      "id": "https://p50.dev/schemas/evidence-record.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/evidence-record.schema.json",
+      "sha256": "sha256:132d8e6311e0088f7f8415e6280b6e0ae490b9f3331f673835676f2e3c4eb2ee"
     },
     "extension": {
       "id": "https://p50.dev/schemas/extension.schema.json",
@@ -50,11 +68,29 @@
       "path": "schemas/node.schema.json",
       "sha256": "sha256:4582d482236a2cf7c89e2370cfaaaff79deac33cc7f156f1f5600f16e1184fe1"
     },
+    "persisted-graph-version": {
+      "id": "https://p50.dev/schemas/persisted-graph-version.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/persisted-graph-version.schema.json",
+      "sha256": "sha256:3b49e3d800018c2fd5ed4f6b78c383f56b7da148cdc8e2bd734b250ce5a81906"
+    },
     "policy-waiver": {
       "id": "https://p50.dev/schemas/policy-waiver.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/policy-waiver.schema.json",
-      "sha256": "sha256:46a485eb13cc8f460d7e51f6fccc26f06c7c4a77425b124172e39ce36fbbade5"
+      "sha256": "sha256:387ce7a8aa1c82be4fa57734ce0311913426b6fda4de3051885d9edd3e95dac2"
+    },
+    "repository-scope": {
+      "id": "https://p50.dev/schemas/repository-scope.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/repository-scope.schema.json",
+      "sha256": "sha256:1ee9f223457782ec6b0e27ff6707d43141589c235c018a9cc5ab715d5a164534"
+    },
+    "sensitivity": {
+      "id": "https://p50.dev/schemas/sensitivity.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/sensitivity.schema.json",
+      "sha256": "sha256:e8a8871b45a15a47c81227551a0904f807b87ea5d7159086c512e9840469ddfd"
     }
   }
 }

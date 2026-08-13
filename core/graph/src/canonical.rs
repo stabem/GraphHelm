@@ -16,6 +16,8 @@ pub enum GraphError {
     SemanticMismatch,
     #[error("persisted semantic hash does not match the graph")]
     HashMismatch,
+    #[error("safe persistence projection is invalid")]
+    InvalidProjection,
     #[error("graph cannot be represented as canonical JSON: {0}")]
     Serialization(String),
 }
@@ -86,7 +88,7 @@ pub fn semantic_hash(graph: &ExecutionGraph) -> Result<SemanticHash, GraphError>
     Ok(SemanticHash::new(format!("sha256:{}", hex::encode(digest))))
 }
 
-fn sort_value(value: Value) -> Value {
+pub(crate) fn sort_value(value: Value) -> Value {
     match value {
         Value::Object(object) => {
             let sorted: BTreeMap<_, _> = object

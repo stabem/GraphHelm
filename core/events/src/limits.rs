@@ -1,0 +1,11 @@
+pub const MAX_EVENT_BYTES: usize = 1024 * 1024;
+pub const MAX_BATCH_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_JOURNAL_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_BATCH_EVENTS: usize = 10_000;
+pub const MAX_EVIDENCE_ITEMS: usize = 10_000;
+pub const MAX_EVIDENCE_BATCH_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_ARTIFACTS: usize = 64;
+pub const MAX_READ_PAGE: usize = 1_000;
+pub const MAX_READ_ALL: usize = 100_000;
+pub const MAX_CURSOR_BYTES: usize = 4 * 1024;
+pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;

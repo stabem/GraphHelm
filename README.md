@@ -3,7 +3,7 @@
 > **Product name:** GraphHelm
 > **Original codename:** Programação 5.0
 > **Category:** open source operating system for AI agents
-> **State of this repository:** full specification, Foundation Graph Kernel implemented, and `1.0.0` protocols published
+> **State of this repository:** full specification, Foundation Graph Kernel implemented, `1.0.0` protocol baseline, and the production Event/Evidence Store implemented
 > **Specification version:** 0.1.1
 > **Baseline date:** 2026-08-08
 
@@ -33,6 +33,19 @@ cargo run --locked -p graphhelm-cli -- schema view --catalog schemas/catalog.jso
 ```
 
 See [docs/milestones/protocols-and-schema-evolution.md](docs/milestones/protocols-and-schema-evolution.md) for the catalog contract, limits, compatibility matrix, SemVer, migrations, security, rollback, and acceptance evidence.
+
+## Production Event and Evidence Store
+
+The Governor externalizes every free-form authoring value into encrypted Evidence and publishes a `PersistedGraphVersion` that keeps only safe topology and ordered content references inline. The local JSONL repository and the PostgreSQL adapter share one wire contract with forced row-level security, authenticated stream heads and checkpoints, legal holds, auditable cryptographic erasure, disposable projection generations, and encrypted backup with verified restore. Replay never requires plaintext.
+
+```bash
+cargo run --locked -p graphhelm-cli -- events verify --repository PATH
+cargo run --locked -p graphhelm-cli -- events rebuild --config OPERATOR_CONFIG --workspace WORKSPACE --project PROJECT --stream STREAM
+cargo run --locked -p graphhelm-cli -- events backup --config OPERATOR_CONFIG --output ARCHIVE
+cargo run --locked -p graphhelm-cli -- events restore --config OPERATOR_CONFIG --archive ARCHIVE
+```
+
+See [docs/milestones/production-event-evidence-store.md](docs/milestones/production-event-evidence-store.md) for trust boundaries, repository formats, hash semantics, keys, retention, limits, diagnostics, rollback, and acceptance evidence.
 
 The product is made up of three open surfaces:
 

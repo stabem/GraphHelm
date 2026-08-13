@@ -1,0 +1,1 @@
+{"artifactId":"artifact-test","locator":"https://token:credential@example.test/object","contentSha256":"0000000000000000000000000000000000000000000000000000000000000000","mediaType":"application/json","byteLength":1,"sensitivity":"internal","metadataVersion":"1.0.0"}

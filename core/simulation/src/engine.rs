@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
-use graphhelm_events::{EventStore, EventStoreError};
-use graphhelm_graph::GraphVersion;
+use graphhelm_events::{EventRepository, EventRepositoryError, PreparedAppend};
+use graphhelm_graph::{GraphVersion, raw_content_sha256};
 use graphhelm_protocols::{
     Clock, Diagnostic, EventEnvelope, EventKind, FixtureOutcome, GraphEdge, IdGenerator, NewEvent,
-    NodeState, NodeStateChanged, SimulationCompleted, SimulationStarted, SimulationStatus,
-    UnknownConditionBehavior,
+    NodeState, NodeStateChanged, OpaqueId, PersistedActor, RepositoryScope, Sensitivity,
+    SimulationCompleted, SimulationStarted, SimulationStatus, UnknownConditionBehavior, WireHash,
 };
 use thiserror::Error;
 
@@ -22,8 +22,10 @@ struct ControlledLoop {
 }
 
 pub struct SimulationServices<'a> {
-    pub event_store: &'a dyn EventStore,
-    pub stream_id: &'a str,
+    pub event_repository: &'a dyn EventRepository,
+    pub scope: RepositoryScope,
+    pub stream_id: OpaqueId,
+    pub actor: PersistedActor,
     pub clock: &'a dyn Clock,
     pub ids: &'a dyn IdGenerator,
 }
@@ -50,14 +52,14 @@ impl SimulationResult {
 #[derive(Debug, Error)]
 pub enum SimulationError {
     #[error(transparent)]
-    EventStore(#[from] EventStoreError),
+    Repository(#[from] EventRepositoryError),
 }
 
 impl SimulationError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::EventStore(error) => error.code(),
+            Self::Repository(error) => error.code(),
         }
     }
 }
@@ -68,7 +70,8 @@ pub fn simulate(
     fixtures: &SimulationFixtures,
     services: &SimulationServices<'_>,
 ) -> Result<SimulationResult, SimulationError> {
-    let simulation_id = services.ids.next_id("simulation");
+    let simulation_id = OpaqueId::parse(services.ids.next_id("simulation"))
+        .map_err(|_| SimulationError::Repository(EventRepositoryError::Invalid))?;
     let started_at = services.clock.now();
     let mut pending: BTreeSet<_> = graph.graph().spec.nodes.keys().cloned().collect();
     let mut queue: VecDeque<_> = graph.graph().spec.entrypoints.iter().cloned().collect();
@@ -76,10 +79,17 @@ pub fn simulate(
     let mut transitions = Vec::new();
     let mut diagnostics = Vec::new();
     let mut status = SimulationStatus::Running;
-    let mut pending_events = vec![NewEvent {
-        idempotency_key: format!("{simulation_id}:started"),
-        kind: EventKind::SimulationStarted(SimulationStarted {}),
-    }];
+    let graph_hash = WireHash::parse(graph.content_hash().as_str())
+        .map_err(|_| SimulationError::Repository(EventRepositoryError::Invalid))?;
+    let mut pending_events = vec![simulation_event(
+        simulation_idempotency_key(b"started", &simulation_id, None, 0)?,
+        services,
+        EventKind::SimulationStarted(SimulationStarted {
+            simulation_id: simulation_id.clone(),
+            graph_version: graph.number(),
+            graph_hash,
+        }),
+    )];
     let mut controlled_loops = controlled_loops(graph);
     let invalid_limit = controlled_loops
         .iter()
@@ -119,7 +129,8 @@ pub fn simulate(
                 &mut states,
                 &mut transitions,
                 &mut pending_events,
-            );
+                services,
+            )?;
             transition(
                 &simulation_id,
                 &node_id,
@@ -127,21 +138,25 @@ pub fn simulate(
                 &mut states,
                 &mut transitions,
                 &mut pending_events,
-            );
+                services,
+            )?;
             let outcome = fixtures
                 .node_outcomes
                 .get(&node_id)
                 .cloned()
                 .unwrap_or(FixtureOutcome::Success);
             match outcome {
-                FixtureOutcome::Success => transition(
-                    &simulation_id,
-                    &node_id,
-                    NodeState::Succeeded,
-                    &mut states,
-                    &mut transitions,
-                    &mut pending_events,
-                ),
+                FixtureOutcome::Success => {
+                    transition(
+                        &simulation_id,
+                        &node_id,
+                        NodeState::Succeeded,
+                        &mut states,
+                        &mut transitions,
+                        &mut pending_events,
+                        services,
+                    )?;
+                }
                 FixtureOutcome::Failure => {
                     transition(
                         &simulation_id,
@@ -150,7 +165,8 @@ pub fn simulate(
                         &mut states,
                         &mut transitions,
                         &mut pending_events,
-                    );
+                        services,
+                    )?;
                     status = SimulationStatus::Failed;
                     break;
                 }
@@ -162,7 +178,8 @@ pub fn simulate(
                         &mut states,
                         &mut transitions,
                         &mut pending_events,
-                    );
+                        services,
+                    )?;
                     diagnostics.push(Diagnostic::error(
                         "GHSIM001_UNKNOWN_CONDITION",
                         "fixture outcome is unknown",
@@ -253,22 +270,32 @@ pub fn simulate(
         }
     }
 
-    pending_events.push(NewEvent {
-        idempotency_key: format!("{simulation_id}:completed"),
-        kind: EventKind::SimulationCompleted(SimulationCompleted {
+    pending_events.push(simulation_event(
+        simulation_idempotency_key(
+            b"completed",
+            &simulation_id,
+            None,
+            u64::try_from(transitions.len())
+                .map_err(|_| SimulationError::Repository(EventRepositoryError::LimitExceeded))?,
+        )?,
+        services,
+        EventKind::SimulationCompleted(SimulationCompleted {
+            simulation_id: simulation_id.clone(),
             status: status.clone(),
         }),
-    });
-    let next = services
-        .event_store
-        .read_stream(services.stream_id)?
-        .last()
-        .map_or(1, |event| event.sequence + 1);
-    let events = services
-        .event_store
-        .append_batch(services.stream_id, next, &pending_events)?;
+    ));
+    let next = next_sequence(services)?;
+    let request = PreparedAppend::new(
+        services.scope.clone(),
+        services.stream_id.clone(),
+        next,
+        pending_events,
+        vec![],
+        vec![],
+    )?;
+    let events = services.event_repository.append_atomic(&request)?;
     Ok(SimulationResult {
-        simulation_id,
+        simulation_id: simulation_id.to_string(),
         started_at,
         status,
         node_states: states,
@@ -344,23 +371,85 @@ fn reachable(
 }
 
 fn transition(
-    simulation_id: &str,
+    simulation_id: &OpaqueId,
     node_id: &str,
     next: NodeState,
     states: &mut BTreeMap<String, NodeState>,
     transitions: &mut Vec<(String, NodeState)>,
     events: &mut Vec<NewEvent>,
-) {
+    services: &SimulationServices<'_>,
+) -> Result<(), SimulationError> {
     let previous = states.insert(node_id.to_owned(), next.clone());
     transitions.push((node_id.to_owned(), next.clone()));
-    events.push(NewEvent {
-        idempotency_key: format!("{simulation_id}:{node_id}:{}", transitions.len()),
-        kind: EventKind::NodeStateChanged(NodeStateChanged {
-            node_id: node_id.to_owned(),
-            from: previous,
-            to: next,
+    let ordinal = u64::try_from(transitions.len())
+        .map_err(|_| SimulationError::Repository(EventRepositoryError::LimitExceeded))?;
+    let idempotency_key =
+        simulation_idempotency_key(b"transition", simulation_id, Some(node_id), ordinal)?;
+    let node_id = OpaqueId::parse(node_id)
+        .map_err(|_| SimulationError::Repository(EventRepositoryError::Invalid))?;
+    events.push(simulation_event(
+        idempotency_key,
+        services,
+        EventKind::NodeStateChanged(NodeStateChanged {
+            simulation_id: simulation_id.clone(),
+            node_id,
+            previous_state: previous,
+            next_state: next,
         }),
-    });
+    ));
+    Ok(())
+}
+
+fn simulation_idempotency_key(
+    phase: &[u8],
+    simulation_id: &OpaqueId,
+    node_id: Option<&str>,
+    ordinal: u64,
+) -> Result<OpaqueId, SimulationError> {
+    fn push_part(material: &mut Vec<u8>, part: &[u8]) -> Result<(), SimulationError> {
+        let length = u32::try_from(part.len())
+            .map_err(|_| SimulationError::Repository(EventRepositoryError::LimitExceeded))?;
+        material.extend_from_slice(&length.to_be_bytes());
+        material.extend_from_slice(part);
+        Ok(())
+    }
+
+    let mut material = Vec::with_capacity(
+        64_usize
+            .saturating_add(simulation_id.as_str().len())
+            .saturating_add(node_id.map_or(0, str::len)),
+    );
+    push_part(&mut material, b"graphhelm-simulation-idempotency-v1")?;
+    push_part(&mut material, phase)?;
+    push_part(&mut material, simulation_id.as_str().as_bytes())?;
+    push_part(&mut material, node_id.unwrap_or("").as_bytes())?;
+    material.extend_from_slice(&ordinal.to_be_bytes());
+    let digest = raw_content_sha256(&material)
+        .map_err(|_| SimulationError::Repository(EventRepositoryError::Invalid))?;
+    OpaqueId::parse(format!("ev-{}", digest.as_str()))
+        .map_err(|_| SimulationError::Repository(EventRepositoryError::Invalid))
+}
+
+fn simulation_event(
+    idempotency_key: OpaqueId,
+    services: &SimulationServices<'_>,
+    kind: EventKind,
+) -> NewEvent {
+    NewEvent::new(
+        idempotency_key,
+        services.actor.clone(),
+        Sensitivity::Internal,
+        kind,
+        vec![],
+        vec![],
+    )
+}
+
+fn next_sequence(services: &SimulationServices<'_>) -> Result<u64, SimulationError> {
+    services
+        .event_repository
+        .next_sequence(&services.scope, services.stream_id.as_str())
+        .map_err(SimulationError::Repository)
 }
 
 enum Readiness {
@@ -451,4 +540,138 @@ fn terminals_succeeded(graph: &GraphVersion, states: &BTreeMap<String, NodeState
                 .filter_map(serde_json::Value::as_str)
                 .all(|id| states.get(id) == Some(&NodeState::Succeeded))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use chrono::{TimeZone, Utc};
+    use graphhelm_events::{ActiveVersion, EventPage};
+    use graphhelm_protocols::{
+        ActorId, ArtifactId, EvidenceId, ExecutionId, PersistedActorType, ProjectId, WorkspaceId,
+    };
+
+    use super::*;
+
+    struct HundredThousandEventRepository(AtomicUsize);
+    impl EventRepository for HundredThousandEventRepository {
+        fn append_atomic(
+            &self,
+            _: &PreparedAppend,
+        ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+            unreachable!()
+        }
+        fn read_stream(
+            &self,
+            _: &RepositoryScope,
+            _: &str,
+            _: usize,
+            _: Option<&str>,
+        ) -> Result<EventPage, EventRepositoryError> {
+            panic!("paginated reload used")
+        }
+        fn read_replay_stream(
+            &self,
+            _: &RepositoryScope,
+            _: &str,
+        ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+            unreachable!()
+        }
+        fn next_sequence(&self, _: &RepositoryScope, _: &str) -> Result<u64, EventRepositoryError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(100_001)
+        }
+        fn evidence_exists(
+            &self,
+            _: &RepositoryScope,
+            _: &EvidenceId,
+        ) -> Result<bool, EventRepositoryError> {
+            unreachable!()
+        }
+        fn artifact_exists(
+            &self,
+            _: &RepositoryScope,
+            _: &ArtifactId,
+        ) -> Result<bool, EventRepositoryError> {
+            unreachable!()
+        }
+        fn active_version(
+            &self,
+            _: &RepositoryScope,
+            _: &str,
+        ) -> Result<Option<ActiveVersion>, EventRepositoryError> {
+            unreachable!()
+        }
+        fn committed_events_for_idempotency(
+            &self,
+            _: &RepositoryScope,
+            _: &str,
+            _: &OpaqueId,
+        ) -> Result<Option<Vec<EventEnvelope>>, EventRepositoryError> {
+            unreachable!()
+        }
+    }
+    struct FixedClock;
+    impl Clock for FixedClock {
+        fn now(&self) -> chrono::DateTime<Utc> {
+            Utc.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+        }
+    }
+    struct NoIds;
+    impl IdGenerator for NoIds {
+        fn next_id(&self, _: &'static str) -> String {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn hundred_thousand_event_sequence_uses_one_direct_repository_load() {
+        let repository = HundredThousandEventRepository(AtomicUsize::new(0));
+        let services = SimulationServices {
+            event_repository: &repository,
+            scope: RepositoryScope::new(
+                WorkspaceId::parse("workspace-1").unwrap(),
+                ProjectId::parse("project-1").unwrap(),
+                Some(ExecutionId::parse("execution-1").unwrap()),
+            ),
+            stream_id: OpaqueId::parse("stream-1").unwrap(),
+            actor: PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-1").unwrap(),
+            ),
+            clock: &FixedClock,
+            ids: &NoIds,
+        };
+        assert_eq!(next_sequence(&services).unwrap(), 100_001);
+        assert_eq!(repository.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn derived_idempotency_key_is_stable_and_binds_every_transition_component() {
+        let first_simulation = OpaqueId::parse("simulation-a").unwrap();
+        let second_simulation = OpaqueId::parse("simulation-b").unwrap();
+        let first = simulation_idempotency_key(b"transition", &first_simulation, Some("node-a"), 1)
+            .unwrap();
+        assert_eq!(
+            first,
+            simulation_idempotency_key(b"transition", &first_simulation, Some("node-a"), 1)
+                .unwrap()
+        );
+        assert_ne!(
+            first,
+            simulation_idempotency_key(b"transition", &second_simulation, Some("node-a"), 1)
+                .unwrap()
+        );
+        assert_ne!(
+            first,
+            simulation_idempotency_key(b"transition", &first_simulation, Some("node-b"), 1)
+                .unwrap()
+        );
+        assert_ne!(
+            first,
+            simulation_idempotency_key(b"transition", &first_simulation, Some("node-a"), 2)
+                .unwrap()
+        );
+    }
 }

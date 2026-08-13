@@ -30,12 +30,18 @@
 
     {"id":"schema.agent.invalid.purpose","kind":"schema","schema":"agent","input":"conformance/schemas/invalid/agent.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/purpose"]}},
     {"id":"schema.agent.valid.minimum","kind":"schema","schema":"agent","input":"conformance/schemas/valid/agent.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.artifact-reference.invalid.credential-bearing-locator","kind":"schema","schema":"artifact-reference","input":"conformance/schemas/invalid/artifact-reference.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/locator"]}},
+    {"id":"schema.artifact-reference.valid.minimum","kind":"schema","schema":"artifact-reference","input":"conformance/schemas/valid/artifact-reference.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.claim.invalid.confidence","kind":"schema","schema":"claim","input":"conformance/schemas/invalid/claim.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/confidence"]}},
     {"id":"schema.claim.valid.minimum","kind":"schema","schema":"claim","input":"conformance/schemas/valid/claim.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.context-capsule.invalid.version","kind":"schema","schema":"context-capsule","input":"conformance/schemas/invalid/context-capsule.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/version"]}},
     {"id":"schema.context-capsule.valid.minimum","kind":"schema","schema":"context-capsule","input":"conformance/schemas/valid/context-capsule.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.edge.invalid.type","kind":"schema","schema":"edge","input":"conformance/schemas/invalid/edge.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/type"]}},
     {"id":"schema.edge.valid.minimum","kind":"schema","schema":"edge","input":"conformance/schemas/valid/edge.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.event-envelope.invalid.missing-previous-hash","kind":"schema","schema":"event-envelope","input":"conformance/schemas/invalid/event-envelope.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/"]}},
+    {"id":"schema.event-envelope.valid.minimum","kind":"schema","schema":"event-envelope","input":"conformance/schemas/valid/event-envelope.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.evidence-record.invalid.plaintext","kind":"schema","schema":"evidence-record","input":"conformance/schemas/invalid/evidence-record.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/"]}},
+    {"id":"schema.evidence-record.valid.minimum","kind":"schema","schema":"evidence-record","input":"conformance/schemas/valid/evidence-record.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.extension.invalid.kind","kind":"schema","schema":"extension","input":"conformance/schemas/invalid/extension.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/kind"]}},
     {"id":"schema.extension.valid.minimum","kind":"schema","schema":"extension","input":"conformance/schemas/valid/extension.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.graph-signal.invalid.severity","kind":"schema","schema":"graph-signal","input":"conformance/schemas/invalid/graph-signal.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/severity"]}},
@@ -44,7 +50,13 @@
     {"id":"schema.graph.valid.minimum","kind":"schema","schema":"graph","input":"conformance/schemas/valid/graph.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.node.invalid.optionality","kind":"schema","schema":"node","input":"conformance/schemas/invalid/node.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/optionality"]}},
     {"id":"schema.node.valid.minimum","kind":"schema","schema":"node","input":"conformance/schemas/valid/node.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.persisted-graph-version.invalid.authoring-plaintext","kind":"schema","schema":"persisted-graph-version","input":"conformance/schemas/invalid/persisted-graph-version.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/topology/nodes/start"]}},
+    {"id":"schema.persisted-graph-version.valid.minimum","kind":"schema","schema":"persisted-graph-version","input":"conformance/schemas/valid/persisted-graph-version.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.policy-waiver.invalid.graph-version","kind":"schema","schema":"policy-waiver","input":"conformance/schemas/invalid/policy-waiver.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/graphVersion"]}},
-    {"id":"schema.policy-waiver.valid.minimum","kind":"schema","schema":"policy-waiver","input":"conformance/schemas/valid/policy-waiver.json","expect":{"ok":true,"codes":[]}}
+    {"id":"schema.policy-waiver.valid.minimum","kind":"schema","schema":"policy-waiver","input":"conformance/schemas/valid/policy-waiver.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.repository-scope.invalid.missing-project","kind":"schema","schema":"repository-scope","input":"conformance/schemas/invalid/repository-scope.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/"]}},
+    {"id":"schema.repository-scope.valid.minimum","kind":"schema","schema":"repository-scope","input":"conformance/schemas/valid/repository-scope.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.sensitivity.invalid.unknown","kind":"schema","schema":"sensitivity","input":"conformance/schemas/invalid/sensitivity.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/"]}},
+    {"id":"schema.sensitivity.valid.minimum","kind":"schema","schema":"sensitivity","input":"conformance/schemas/valid/sensitivity.json","expect":{"ok":true,"codes":[]}}
   ]
 }

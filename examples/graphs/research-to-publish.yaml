@@ -127,6 +127,7 @@ spec:
       type: deploy
       name: Publicar
       objective: Publicar no destino configurado.
+      targetRef: environment://staging
       optionality: required
       completion:
         requires:

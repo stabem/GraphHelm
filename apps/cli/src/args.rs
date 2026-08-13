@@ -19,6 +19,70 @@ pub struct Cli {
 pub enum TopLevel {
     Graph(GraphArgs),
     Schema(SchemaArgs),
+    Events(EventsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EventsArgs {
+    #[command(subcommand)]
+    pub command: EventsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EventsCommand {
+    /// Verifies a repository's format and, when a range is supplied, its hash chain.
+    Verify {
+        #[arg(long)]
+        repository: Option<PathBuf>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        stream: Option<String>,
+        #[arg(long)]
+        start: Option<u64>,
+        #[arg(long = "max-events")]
+        max_events: Option<u32>,
+    },
+    /// Rebuilds a disposable projection generation from retained canonical history.
+    Rebuild {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        stream: Option<String>,
+        #[arg(long)]
+        generation: Option<u64>,
+        #[arg(long = "page-size")]
+        page_size: Option<u32>,
+    },
+    /// Writes a new encrypted backup archive. An existing target is never overwritten.
+    Backup {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Restores an authenticated archive into the configured, already-empty target database.
+    ///
+    /// The destination is the database named by the configuration's `adminUrl`. The operator
+    /// refuses to proceed unless that database is fresh, so there is no target flag to pass.
+    Restore {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        archive: PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -91,6 +155,14 @@ pub enum GraphCommand {
     Replay {
         #[arg(long)]
         events: PathBuf,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        stream: Option<String>,
     },
 }
 

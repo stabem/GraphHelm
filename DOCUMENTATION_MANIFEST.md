@@ -7,9 +7,9 @@
 | `CODEX_BOOTSTRAP_PROMPT.md` | 19003 | 2548 |
 | `MASTER_PRD.md` | 22719 | 3247 |
 | `README.md` | 7261 | 747 |
-| `SPEC_COMMIT` | 41 | 1 |
+| `SPEC_COMMIT` | 42 | 1 |
 | `VERSION` | 12 | 1 |
-| `docs/DECISION_REGISTER.md` | 4574 | 740 |
+| `docs/DECISION_REGISTER.md` | 6402 | 981 |
 | `docs/GLOSSARY.md` | 3722 | 497 |
 | `docs/INDEX.md` | 1500 | 117 |
 | `docs/agents/AGENTS_SKILLS_PLUGINS.md` | 10310 | 1458 |
@@ -29,17 +29,17 @@
 | `docs/product/ROADMAP_AND_ACCEPTANCE.md` | 8906 | 1325 |
 | `docs/reference/EXAMPLE_EXECUTIONS.md` | 7899 | 1095 |
 | `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md` | 3955 | 535 |
-| `docs/reference/REFERENCE_STACK_AND_ADRS.md` | 7627 | 997 |
+| `docs/reference/REFERENCE_STACK_AND_ADRS.md` | 22012 | 2844 |
 | `docs/security/SECURITY_ISOLATION_THREAT_MODEL.md` | 14003 | 1931 |
 | `docs/superpowers/specs/2026-08-08-graphhelm-design.md` | 1989 | 260 |
 | `docs/ux/STUDIO_SPEC.md` | 16954 | 2344 |
-| `examples/graphs/manual-override-deploy.yaml` | 2100 | 144 |
-| `examples/graphs/research-to-publish.yaml` | 5089 | 371 |
-| `examples/graphs/software-feature.yaml` | 5192 | 394 |
-| `examples/manifests/context-capsule.yaml` | 823 | 53 |
-| `examples/manifests/dream-report.yaml` | 491 | 42 |
-| `examples/manifests/extension.yaml` | 677 | 52 |
-| `examples/manifests/project-agent.yaml` | 1049 | 79 |
+| `examples/graphs/manual-override-deploy.yaml` | 2024 | 144 |
+| `examples/graphs/research-to-publish.yaml` | 4956 | 373 |
+| `examples/graphs/software-feature.yaml` | 5016 | 394 |
+| `examples/manifests/context-capsule.yaml` | 794 | 53 |
+| `examples/manifests/dream-report.yaml` | 468 | 42 |
+| `examples/manifests/extension.yaml` | 647 | 52 |
+| `examples/manifests/project-agent.yaml` | 1010 | 79 |
 | `schemas/agent.schema.json` | 1389 | 103 |
 | `schemas/claim.schema.json` | 1302 | 106 |
 | `schemas/context-capsule.schema.json` | 1685 | 133 |
@@ -48,7 +48,7 @@
 | `schemas/graph-signal.schema.json` | 1076 | 90 |
 | `schemas/graph.schema.json` | 2209 | 172 |
 | `schemas/node.schema.json` | 2214 | 176 |
-| `schemas/policy-waiver.schema.json` | 915 | 71 |
+| `schemas/policy-waiver.schema.json` | 1818 | 129 |
 
 **Total files listed:** 47
-**Total words across counted text files:** 36636
+**Total words across counted text files:** 38784

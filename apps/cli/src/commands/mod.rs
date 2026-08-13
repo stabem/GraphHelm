@@ -1,4 +1,5 @@
 mod draft;
+mod events;
 mod hash;
 mod lint;
 mod replay;
@@ -9,13 +10,11 @@ mod validate;
 use std::sync::Arc;
 
 use chrono::Utc;
-use graphhelm_events::{EventStore, JsonlEventStore};
+use graphhelm_events::{EventRepositoryError, LocalEventRepository};
 use graphhelm_graph::GraphVersion;
-use graphhelm_protocols::{
-    Actor, ActorType, Clock, EventKind, GraphImported, GraphVersionPublished, IdGenerator, NewEvent,
-};
+use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
-use crate::args::{DraftCommand, GraphCommand, SchemaCommand, TopLevel};
+use crate::args::{DraftCommand, EventsCommand, GraphCommand, SchemaCommand, TopLevel};
 use crate::output::Outcome;
 
 pub fn run(command: TopLevel) -> Outcome {
@@ -37,7 +36,19 @@ pub fn run(command: TopLevel) -> Outcome {
                     events,
                 } => draft::run(&base_file, &draft_file, &actor, &events),
             },
-            GraphCommand::Replay { events } => replay::run(&events),
+            GraphCommand::Replay {
+                events,
+                workspace,
+                project,
+                execution,
+                stream,
+            } => replay::run(
+                &events,
+                workspace.as_deref(),
+                project.as_deref(),
+                execution.as_deref(),
+                stream.as_deref(),
+            ),
         },
         TopLevel::Schema(schema) => match schema.command {
             SchemaCommand::Catalog { catalog } => schema::catalog::run(&catalog),
@@ -59,6 +70,56 @@ pub fn run(command: TopLevel) -> Outcome {
                 schema: name,
             } => schema::view::run(&catalog, &name),
         },
+        TopLevel::Events(events) => match events.command {
+            EventsCommand::Verify {
+                repository,
+                config,
+                workspace,
+                project,
+                execution,
+                stream,
+                start,
+                max_events,
+            } => events::verify::run(events::verify::Request {
+                repository: repository.as_deref(),
+                config: config.as_deref(),
+                workspace: workspace.as_deref(),
+                project: project.as_deref(),
+                execution: execution.as_deref(),
+                stream: stream.as_deref(),
+                start,
+                max_events,
+            }),
+            EventsCommand::Rebuild {
+                config,
+                workspace,
+                project,
+                execution,
+                stream,
+                generation,
+                page_size,
+            } => events::rebuild::run(events::rebuild::Request {
+                config: config.as_deref(),
+                workspace: workspace.as_deref(),
+                project: project.as_deref(),
+                execution: execution.as_deref(),
+                stream: stream.as_deref(),
+                generation,
+                page_size,
+            }),
+            EventsCommand::Backup { config, output } => {
+                events::backup::run(events::backup::Request {
+                    config: config.as_deref(),
+                    output: &output,
+                })
+            }
+            EventsCommand::Restore { config, archive } => {
+                events::restore::run(events::restore::Request {
+                    config: config.as_deref(),
+                    archive: &archive,
+                })
+            }
+        },
     }
 }
 
@@ -78,8 +139,10 @@ impl IdGenerator for UuidIds {
     }
 }
 
-pub(super) fn event_store(path: &std::path::Path) -> JsonlEventStore {
-    JsonlEventStore::new(path, Arc::new(SystemClock), Arc::new(UuidIds))
+pub(super) fn event_store(
+    path: &std::path::Path,
+) -> Result<LocalEventRepository, EventRepositoryError> {
+    LocalEventRepository::open(path, Arc::new(SystemClock), Arc::new(UuidIds))
 }
 
 pub(super) fn publish_loaded(
@@ -90,38 +153,18 @@ pub(super) fn publish_loaded(
         .map_err(|error| error.to_string())
 }
 
-pub(super) fn ensure_imported(
-    store: &JsonlEventStore,
-    version: &GraphVersion,
-    source: &str,
-) -> Result<(), String> {
-    let stream_id = &version.graph().metadata.execution_id;
-    if store
-        .read_stream(stream_id)
-        .map_err(|error| error.to_string())?
-        .is_empty()
-    {
-        let events = [
-            NewEvent {
-                idempotency_key: format!("import:{}", version.content_hash()),
-                kind: EventKind::GraphImported(GraphImported {
-                    source: source.into(),
-                }),
-            },
-            NewEvent {
-                idempotency_key: format!("publish:{}", version.content_hash()),
-                kind: EventKind::GraphVersionPublished(Box::new(GraphVersionPublished {
-                    version: version.to_record(),
-                })),
-            },
-        ];
-        store
-            .append_batch(stream_id, 1, &events)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
 pub(super) fn owner(id: &str) -> Actor {
     Actor::new(ActorType::Owner, id)
+}
+
+pub(super) fn repository_error(command: &'static str, error: &EventRepositoryError) -> Outcome {
+    Outcome::application(
+        command,
+        graphhelm_protocols::Diagnostic::error(
+            error.code(),
+            error.to_string(),
+            "/events",
+            "event-repository",
+        ),
+    )
 }

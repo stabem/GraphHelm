@@ -1,0 +1,600 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/event-envelope.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Production Event Envelope",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "scope",
+    "streamId",
+    "sequence",
+    "occurredAt",
+    "idempotencyKey",
+    "actor",
+    "sensitivity",
+    "kind",
+    "evidenceRefs",
+    "artifactRefs",
+    "previousHash",
+    "eventHash"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0.0"},
+    "eventId": {"$ref": "#/$defs/opaqueId"},
+    "scope": {"$ref": "repository-scope.schema.json"},
+    "streamId": {"$ref": "#/$defs/opaqueId"},
+    "sequence": {"$ref": "#/$defs/positiveSafeInteger"},
+    "occurredAt": {"$ref": "#/$defs/timestamp"},
+    "idempotencyKey": {"$ref": "#/$defs/opaqueId"},
+    "actor": {"$ref": "#/$defs/actor"},
+    "sensitivity": {"$ref": "sensitivity.schema.json"},
+    "kind": {"$ref": "#/$defs/eventKind"},
+    "evidenceRefs": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {"$ref": "#/$defs/evidenceReference"},
+      "uniqueItems": true
+    },
+    "artifactRefs": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "artifact-reference.schema.json"},
+      "uniqueItems": true
+    },
+    "previousHash": {"$ref": "#/$defs/wireHash"},
+    "eventHash": {"$ref": "#/$defs/wireHash"}
+  },
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "actorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "wireHash": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]|23:59:60)(?:\\.[0-9]{1,9})?Z$",
+      "format": "date-time"
+    },
+    "safeCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "actor": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["owner", "human", "agent", "system"]},
+        "id": {"$ref": "#/$defs/actorId"}
+      },
+      "additionalProperties": false
+    },
+    "scopeWithExecution": {
+      "allOf": [
+        {"$ref": "repository-scope.schema.json"},
+        {"required": ["executionId"]}
+      ]
+    },
+    "projectScope": {
+      "allOf": [
+        {"$ref": "repository-scope.schema.json"},
+        {"not": {"required": ["executionId"]}}
+      ]
+    },
+    "evidenceReference": {
+      "type": "object",
+      "required": ["evidenceId", "contentSha256", "ciphertextSha256"],
+      "properties": {
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "contentSha256": {"$ref": "#/$defs/rawSha256"},
+        "ciphertextSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "path", "component"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+        },
+        "severity": {"enum": ["error", "warning"]},
+        "path": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^(/([^/~]|~[01])*)*$"
+        },
+        "component": {
+          "enum": [
+            "schema",
+            "graph",
+            "policy",
+            "governor",
+            "simulation",
+            "events",
+            "evidence",
+            "artifact",
+            "retention",
+            "projection",
+            "integrity",
+            "repository"
+          ]
+        },
+        "sourceContentSha256": {"$ref": "#/$defs/rawSha256"},
+        "detailEvidenceId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "graphImported": {
+      "type": "object",
+      "required": ["sourceSha256", "sourceKind"],
+      "properties": {
+        "sourceSha256": {"$ref": "#/$defs/rawSha256"},
+        "sourceKind": {"enum": ["graph_document", "generated"]}
+      },
+      "additionalProperties": false
+    },
+    "validationFailed": {
+      "type": "object",
+      "required": ["diagnostics"],
+      "properties": {"diagnostics": {"$ref": "#/$defs/diagnostics"}},
+      "additionalProperties": false
+    },
+    "versionPublished": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {"version": {"$ref": "persisted-graph-version.schema.json"}},
+      "additionalProperties": false
+    },
+    "draftProposed": {
+      "type": "object",
+      "required": ["draftId", "expectedVersion", "expectedHash", "operationCount"],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "expectedVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "expectedHash": {"$ref": "#/$defs/wireHash"},
+        "operationCount": {"type": "integer", "minimum": 1, "maximum": 1024}
+      },
+      "additionalProperties": false
+    },
+    "draftRejected": {
+      "type": "object",
+      "required": ["draftId", "reasonCode", "diagnostics"],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "diagnostics": {"$ref": "#/$defs/diagnostics"},
+        "detailEvidenceId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "draftApplied": {
+      "type": "object",
+      "required": ["draftId", "graphVersion", "graphHash"],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "graphHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "obligationEvaluated": {
+      "type": "object",
+      "required": [
+        "draftId",
+        "requirementId",
+        "status",
+        "evidenceIds",
+        "reasonCode",
+        "overrideable"
+      ],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "requirementId": {"$ref": "#/$defs/opaqueId"},
+        "status": {"enum": ["satisfied", "unsatisfied", "waived", "impossible"]},
+        "evidenceIds": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/opaqueId"},
+          "uniqueItems": true
+        },
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "overrideable": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "waiverCreated": {
+      "type": "object",
+      "required": ["waiver"],
+      "properties": {"waiver": {"$ref": "policy-waiver.schema.json"}},
+      "additionalProperties": false
+    },
+    "simulationStarted": {
+      "type": "object",
+      "required": ["simulationId", "graphVersion", "graphHash"],
+      "properties": {
+        "simulationId": {"$ref": "#/$defs/opaqueId"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "graphHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "nodeState": {
+      "enum": [
+        "draft",
+        "linting",
+        "ready",
+        "queued",
+        "running",
+        "waiting_input",
+        "waiting_capacity",
+        "paused",
+        "blocked",
+        "succeeded",
+        "failed",
+        "waived",
+        "skipped",
+        "cancelled",
+        "invalidated"
+      ]
+    },
+    "nodeStateChanged": {
+      "type": "object",
+      "required": ["simulationId", "nodeId", "previousState", "nextState"],
+      "properties": {
+        "simulationId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "previousState": {
+          "oneOf": [
+            {"$ref": "#/$defs/nodeState"},
+            {"type": "null"}
+          ]
+        },
+        "nextState": {"$ref": "#/$defs/nodeState"}
+      },
+      "additionalProperties": false
+    },
+    "simulationCompleted": {
+      "type": "object",
+      "required": ["simulationId", "status"],
+      "properties": {
+        "simulationId": {"$ref": "#/$defs/opaqueId"},
+        "status": {"enum": ["running", "completed", "failed", "paused", "blocked"]}
+      },
+      "additionalProperties": false
+    },
+    "authenticationTag": {
+      "type": "object",
+      "required": ["keyId", "algorithm", "tagSha256"],
+      "properties": {
+        "keyId": {"$ref": "#/$defs/opaqueId"},
+        "algorithm": {"enum": ["hmac-sha256", "blake3-keyed"]},
+        "tagSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "checkpointCreated": {
+      "type": "object",
+      "required": ["streamId", "sequence", "eventHash", "repositoryFormat", "authenticationTag"],
+      "properties": {
+        "streamId": {"$ref": "#/$defs/opaqueId"},
+        "sequence": {"$ref": "#/$defs/positiveSafeInteger"},
+        "eventHash": {"$ref": "#/$defs/wireHash"},
+        "repositoryFormat": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32,
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "authenticationTag": {"$ref": "#/$defs/authenticationTag"}
+      },
+      "additionalProperties": false
+    },
+    "retentionPolicyVersion": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 32,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "erasablePriorState": {"enum": ["available", "expired", "missing_key", "integrity_failed"]},
+    "erasureRequested": {
+      "type": "object",
+      "required": [
+        "evidenceScope",
+        "operationId",
+        "evidenceId",
+        "keyHandleId",
+        "retentionPolicyId",
+        "retentionPolicyVersion",
+        "authority",
+        "reasonCode",
+        "priorState",
+        "state",
+        "requestedAt"
+      ],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "operationId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "keyHandleId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyVersion": {"$ref": "#/$defs/retentionPolicyVersion"},
+        "authority": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "priorState": {"$ref": "#/$defs/erasablePriorState"},
+        "state": {"const": "erasure_pending"},
+        "requestedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "erasureCompleted": {
+      "type": "object",
+      "required": [
+        "evidenceScope",
+        "operationId",
+        "evidenceId",
+        "keyHandleId",
+        "retentionPolicyId",
+        "retentionPolicyVersion",
+        "authority",
+        "reasonCode",
+        "ciphertextSha256",
+        "providerReceiptId",
+        "providerEpoch",
+        "priorState",
+        "state",
+        "requestedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "operationId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "keyHandleId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyVersion": {"$ref": "#/$defs/retentionPolicyVersion"},
+        "authority": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "ciphertextSha256": {"$ref": "#/$defs/rawSha256"},
+        "providerReceiptId": {"$ref": "#/$defs/opaqueId"},
+        "providerEpoch": {"$ref": "#/$defs/positiveSafeInteger"},
+        "priorState": {"const": "erasure_pending"},
+        "state": {"const": "erased"},
+        "requestedAt": {"$ref": "#/$defs/timestamp"},
+        "completedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "ciphertextDeleted": {
+      "type": "object",
+      "required": ["evidenceScope", "operationId", "evidenceId", "ciphertextSha256", "deletedAt"],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "operationId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "ciphertextSha256": {"$ref": "#/$defs/rawSha256"},
+        "deletedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "legalHoldChanged": {
+      "type": "object",
+      "required": ["evidenceScope", "holdId", "evidenceId", "authority", "reasonCode", "state", "changedAt"],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "holdId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "authority": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "state": {"enum": ["placed", "released"]},
+        "changedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "eventKind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "graph_imported"},
+            "data": {"$ref": "#/$defs/graphImported"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "graph_validation_failed"},
+            "data": {"$ref": "#/$defs/validationFailed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "graph_version_published"},
+            "data": {"$ref": "#/$defs/versionPublished"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "draft_proposed"},
+            "data": {"$ref": "#/$defs/draftProposed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "draft_rejected"},
+            "data": {"$ref": "#/$defs/draftRejected"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "draft_applied"},
+            "data": {"$ref": "#/$defs/draftApplied"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "policy_obligation_evaluated"},
+            "data": {"$ref": "#/$defs/obligationEvaluated"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "policy_waiver_created"},
+            "data": {"$ref": "#/$defs/waiverCreated"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "simulation_started"},
+            "data": {"$ref": "#/$defs/simulationStarted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "node_state_changed"},
+            "data": {"$ref": "#/$defs/nodeStateChanged"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "simulation_completed"},
+            "data": {"$ref": "#/$defs/simulationCompleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "integrity_checkpoint_created"},
+            "data": {"$ref": "#/$defs/checkpointCreated"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_erasure_requested"},
+            "data": {"$ref": "#/$defs/erasureRequested"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_erasure_completed"},
+            "data": {"$ref": "#/$defs/erasureCompleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_ciphertext_deleted"},
+            "data": {"$ref": "#/$defs/ciphertextDeleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_legal_hold_changed"},
+            "data": {"$ref": "#/$defs/legalHoldChanged"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_imported"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_validation_failed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "draft_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "draft_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "draft_applied"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "policy_obligation_evaluated"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "policy_waiver_created"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "simulation_started"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "node_state_changed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "simulation_completed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "integrity_checkpoint_created"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_requested"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_completed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_ciphertext_deleted"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_legal_hold_changed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}}
+  ],
+  "additionalProperties": false
+}

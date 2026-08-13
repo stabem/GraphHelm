@@ -2,9 +2,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{TimeZone, Utc};
-use graphhelm_events::{EventStore, JsonlEventStore, replay};
+use graphhelm_events::{LocalEventRepository, replay};
 use graphhelm_graph::GraphVersion;
-use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator, SimulationStatus};
+use graphhelm_protocols::{
+    Actor, ActorId, ActorType, Clock, ExecutionId, IdGenerator, OpaqueId, PersistedActor,
+    PersistedActorType, ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
+};
 use graphhelm_simulation::{SimulationFixtures, SimulationServices, simulate};
 
 struct FixedClock;
@@ -17,6 +20,8 @@ impl Clock for FixedClock {
 
 #[derive(Default)]
 struct SequenceIds(AtomicU64);
+
+static IDS: SequenceIds = SequenceIds(AtomicU64::new(0));
 
 impl IdGenerator for SequenceIds {
     fn next_id(&self, prefix: &'static str) -> String {
@@ -40,8 +45,31 @@ fn version() -> GraphVersion {
     .unwrap()
 }
 
-fn store(path: &std::path::Path) -> JsonlEventStore {
-    JsonlEventStore::new(path, Arc::new(FixedClock), Arc::new(SequenceIds::default()))
+fn store(path: &std::path::Path) -> LocalEventRepository {
+    LocalEventRepository::open(path, Arc::new(FixedClock), Arc::new(SequenceIds::default()))
+        .unwrap()
+}
+
+fn scope(stream: &str) -> RepositoryScope {
+    RepositoryScope::new(
+        WorkspaceId::parse("workspace-test").unwrap(),
+        ProjectId::parse("project-test").unwrap(),
+        Some(ExecutionId::parse(stream).unwrap()),
+    )
+}
+
+fn services<'a>(store: &'a LocalEventRepository, stream: &str) -> SimulationServices<'a> {
+    SimulationServices {
+        event_repository: store,
+        scope: scope(stream),
+        stream_id: OpaqueId::parse(stream).unwrap(),
+        actor: PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-simulation").unwrap(),
+        ),
+        clock: &FixedClock,
+        ids: &IDS,
+    }
 }
 
 #[test]
@@ -51,31 +79,64 @@ fn same_graph_and_fixtures_emit_same_ordered_transition_kinds() {
     let first_store = store(&first_dir.path().join("events.jsonl"));
     let second_store = store(&second_dir.path().join("events.jsonl"));
     let fixtures = SimulationFixtures::default();
-    let first = simulate(
-        &version(),
-        &fixtures,
-        &SimulationServices {
-            event_store: &first_store,
-            stream_id: "exec-1",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
-    )
-    .unwrap();
-    let second = simulate(
-        &version(),
-        &fixtures,
-        &SimulationServices {
-            event_store: &second_store,
-            stream_id: "exec-1",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
-    )
-    .unwrap();
+    let first = simulate(&version(), &fixtures, &services(&first_store, "exec-1")).unwrap();
+    let second = simulate(&version(), &fixtures, &services(&second_store, "exec-1")).unwrap();
 
     assert_eq!(first.transition_trace(), second.transition_trace());
     assert_eq!(first.status, SimulationStatus::Completed);
+}
+
+#[test]
+fn maximum_wire_ids_produce_bounded_distinct_idempotency_keys() {
+    struct MaximumId;
+    impl IdGenerator for MaximumId {
+        fn next_id(&self, _: &'static str) -> String {
+            "s".repeat(128)
+        }
+    }
+
+    let base = version();
+    let mut graph = base.graph().clone();
+    let node_id = "n".repeat(128);
+    let node = graph.spec.nodes["plan"].clone();
+    graph.spec.nodes.clear();
+    graph.spec.nodes.insert(node_id.clone(), node);
+    graph.spec.entrypoints = vec![node_id.clone()];
+    graph.spec.edges.clear();
+    graph.spec.completion = serde_json::json!({"terminalNodes": [node_id]});
+    let graph = GraphVersion::publish(
+        graph,
+        None,
+        Actor::new(ActorType::Owner, "owner-local"),
+        Utc.with_ymd_and_hms(2026, 8, 8, 11, 0, 0).unwrap(),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let repository = store(&directory.path().join("max-wire-ids"));
+    let services = SimulationServices {
+        event_repository: &repository,
+        scope: scope("exec-max-wire-ids"),
+        stream_id: OpaqueId::parse("exec-max-wire-ids").unwrap(),
+        actor: PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-simulation").unwrap(),
+        ),
+        clock: &FixedClock,
+        ids: &MaximumId,
+    };
+
+    let result = simulate(&graph, &SimulationFixtures::default(), &services).unwrap();
+    let keys = result
+        .events
+        .iter()
+        .map(|event| event.idempotency_key.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(keys.len(), result.events.len());
+    assert!(keys.iter().all(|key| key.len() <= 128));
+    assert!(
+        keys.iter()
+            .all(|key| !key.contains('n') && !key.contains('s'))
+    );
 }
 
 #[test]
@@ -95,12 +156,7 @@ fn unknown_condition_pauses_instead_of_guessing() {
     let result = simulate(
         &graph,
         &SimulationFixtures::default(),
-        &SimulationServices {
-            event_store: &loop_store,
-            stream_id: "exec-unknown",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
+        &services(&loop_store, "exec-unknown"),
     )
     .unwrap();
 
@@ -116,17 +172,15 @@ fn fresh_store_replay_matches_simulation_projection() {
     let result = simulate(
         &version(),
         &SimulationFixtures::default(),
-        &SimulationServices {
-            event_store: &first,
-            stream_id: "exec-replay",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
+        &services(&first, "exec-replay"),
     )
     .unwrap();
     drop(first);
-    let events = store(&path).read_stream("exec-replay").unwrap();
-    let projection = replay(&events).unwrap();
+    let events = store(&path)
+        .read_stream(&scope("exec-replay"), "exec-replay", 1000, None)
+        .unwrap()
+        .events;
+    let projection = replay(&scope("exec-replay"), "exec-replay", &events).unwrap();
 
     assert_eq!(projection.node_states, result.node_states);
     assert_eq!(projection.simulation_status, Some(result.status));
@@ -167,12 +221,7 @@ fn controlled_cycle_runs_exactly_to_its_iteration_bound() {
     let result = simulate(
         &graph,
         &SimulationFixtures::default(),
-        &SimulationServices {
-            event_store: &independent_store,
-            stream_id: "exec-loop",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
+        &services(&independent_store, "exec-loop"),
     )
     .unwrap();
 
@@ -226,12 +275,7 @@ fn independent_loops_keep_separate_bounds_and_huge_limits_block() {
     let result = simulate(
         &published,
         &SimulationFixtures::default(),
-        &SimulationServices {
-            event_store: &independent_loop_store,
-            stream_id: "exec-independent-loops",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
+        &services(&independent_loop_store, "exec-independent-loops"),
     )
     .unwrap();
     for (id, expected) in [("loop-a", 2), ("loop-b", 3)] {
@@ -267,12 +311,7 @@ fn independent_loops_keep_separate_bounds_and_huge_limits_block() {
     let blocked = simulate(
         &huge,
         &SimulationFixtures::default(),
-        &SimulationServices {
-            event_store: &huge_store,
-            stream_id: "exec-huge-loop",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
+        &services(&huge_store, "exec-huge-loop"),
     )
     .unwrap();
     assert_eq!(blocked.status, SimulationStatus::Blocked);
@@ -302,12 +341,7 @@ fn loop_metadata_on_an_acyclic_node_does_not_repeat_it() {
     let result = simulate(
         &graph,
         &SimulationFixtures::default(),
-        &SimulationServices {
-            event_store: &event_store,
-            stream_id: "exec-acyclic-loop-metadata",
-            clock: &FixedClock,
-            ids: &SequenceIds::default(),
-        },
+        &services(&event_store, "exec-acyclic-loop-metadata"),
     )
     .unwrap();
     assert_eq!(

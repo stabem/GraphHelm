@@ -34,6 +34,10 @@ fn command() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
 }
 
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
 fn args(values: impl IntoIterator<Item = impl Into<OsString>>) -> Vec<OsString> {
     values.into_iter().map(Into::into).collect()
 }
@@ -469,6 +473,20 @@ fn five_schema_commands_return_one_json_document_with_exact_names() {
     let stdout = String::from_utf8_lossy(&migrated.stdout);
     assert!(!stdout.contains("do-not-echo"));
     assert!(!stdout.contains("apiVersion"));
+}
+
+#[test]
+fn checked_in_catalog_reports_the_single_safe_1_0_0_release() {
+    let catalog = repository_root().join("schemas/catalog.json");
+    let output = run_catalog(&catalog);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value = output_json(&output);
+    assert_eq!(value["data"]["releaseVersion"], "1.0.0");
+    assert_eq!(value["data"]["schemaCount"], 15);
 }
 
 #[test]

@@ -1,8 +1,12 @@
 use std::path::Path;
 
+use graphhelm_protocols::{
+    ActorId, ExecutionId, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope,
+    WorkspaceId,
+};
 use graphhelm_simulation::{SimulationFixtures, SimulationServices};
 
-use crate::commands::{SystemClock, UuidIds, ensure_imported, event_store, owner, publish_loaded};
+use crate::commands::{SystemClock, UuidIds, event_store, owner, publish_loaded, repository_error};
 use crate::output::Outcome;
 
 pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
@@ -20,17 +24,30 @@ pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
         Ok(version) => version,
         Err(error) => return Outcome::internal("graph.simulate", error),
     };
-    let store = event_store(events);
-    if let Err(error) = ensure_imported(&store, &version, &loaded.source) {
-        return Outcome::internal("graph.simulate", error);
-    }
+    let store = match event_store(events) {
+        Ok(store) => store,
+        Err(error) => return repository_error("graph.simulate", &error),
+    };
     let fixtures = match fixtures.map(load_fixtures).transpose() {
         Ok(value) => value.unwrap_or_default(),
         Err(error) => return Outcome::domain("graph.simulate", vec![error]),
     };
     let services = SimulationServices {
-        event_store: &store,
-        stream_id: &version.graph().metadata.execution_id,
+        event_repository: &store,
+        scope: RepositoryScope::new(
+            WorkspaceId::parse("workspace-local").expect("constant workspace id is valid"),
+            ProjectId::parse("project-local").expect("constant project id is valid"),
+            Some(
+                ExecutionId::parse(&version.graph().metadata.execution_id)
+                    .expect("validated graph execution id is wire-safe"),
+            ),
+        ),
+        stream_id: OpaqueId::parse(&version.graph().metadata.execution_id)
+            .expect("validated graph execution id is wire-safe"),
+        actor: PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-cli").expect("constant actor id is valid"),
+        ),
         clock: &SystemClock,
         ids: &UuidIds,
     };
@@ -46,7 +63,9 @@ pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
                 "events": result.events,
             }),
         ),
-        Err(error) => Outcome::internal("graph.simulate", error.to_string()),
+        Err(graphhelm_simulation::SimulationError::Repository(error)) => {
+            repository_error("graph.simulate", &error)
+        }
     }
 }
 

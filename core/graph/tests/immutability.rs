@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use chrono::{TimeZone, Utc};
-use graphhelm_graph::GraphVersion;
+use graphhelm_graph::{GraphError, GraphVersion};
 use graphhelm_protocols::{Actor, ActorType, GraphVersionRef};
 
 fn load() -> graphhelm_protocols::ExecutionGraph {
@@ -63,4 +63,26 @@ fn record_round_trip_recomputes_and_checks_semantic_hash() {
     let mut tampered = record;
     tampered.content_hash = graphhelm_protocols::SemanticHash::new("sha256:bad");
     assert!(GraphVersion::from_record(tampered).is_err());
+}
+
+#[test]
+fn maximum_predecessor_version_is_rejected_without_overflow() {
+    let mut graph = load();
+    graph.metadata.version = u64::MAX;
+
+    let error = GraphVersion::publish(
+        graph,
+        Some(GraphVersionRef {
+            number: u64::MAX,
+            content_hash: graphhelm_protocols::SemanticHash::new(format!(
+                "sha256:{}",
+                "0".repeat(64)
+            )),
+        }),
+        actor(),
+        Utc.with_ymd_and_hms(2026, 8, 8, 12, 0, 0).unwrap(),
+    )
+    .unwrap_err();
+
+    assert_eq!(error, GraphError::InvalidPredecessor);
 }

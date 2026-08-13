@@ -1,8 +1,13 @@
+use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
-use graphhelm_graph::semantic_hash;
-use graphhelm_protocols::ExecutionGraph;
+use chrono::{TimeZone, Utc};
+use graphhelm_graph::{GraphVersion, canonical_content_bytes, raw_content_sha256, semantic_hash};
+use graphhelm_protocols::{Actor, ActorType, ExecutionGraph};
+use graphhelm_schema::OfflineSchemaSet;
 use proptest::prelude::*;
+use serde_json::{Value, json};
 
 fn load() -> ExecutionGraph {
     graphhelm_schema::load_graph(
@@ -70,6 +75,107 @@ fn operational_metadata_changes_semantic_hash() {
     );
 }
 
+fn event_schema_set() -> OfflineSchemaSet {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let resources = [
+        "agent",
+        "artifact-reference",
+        "claim",
+        "context-capsule",
+        "edge",
+        "event-envelope",
+        "evidence-record",
+        "extension",
+        "graph",
+        "graph-signal",
+        "node",
+        "persisted-graph-version",
+        "policy-waiver",
+        "repository-scope",
+        "sensitivity",
+    ]
+    .into_iter()
+    .map(|name| {
+        let document: Value = serde_json::from_slice(
+            &fs::read(root.join(format!("schemas/{name}.schema.json"))).unwrap(),
+        )
+        .unwrap();
+        (name.to_owned(), document)
+    })
+    .collect::<BTreeMap<_, _>>();
+    OfflineSchemaSet::compile(resources).unwrap()
+}
+
+// Prevents persistence hardening from requiring the real canonicalizer to rename safe
+// operational metadata into an x-* namespace.
+#[test]
+fn current_graph_version_producer_validates_safe_operational_metadata_without_renaming() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let schemas = event_schema_set();
+    let persisted_version: Value = serde_json::from_slice(
+        &fs::read(root.join("conformance/schemas/valid/persisted-graph-version.json")).unwrap(),
+    )
+    .unwrap();
+    for name in [
+        "software-feature.yaml",
+        "manual-override-deploy.yaml",
+        "research-to-publish.yaml",
+    ] {
+        let mut graph = graphhelm_schema::load_graph(&root.join("examples/graphs").join(name))
+            .unwrap()
+            .graph;
+        graph.metadata.properties.insert(
+            "retryPolicy".into(),
+            json!({
+                "maxAttempts": 3,
+                "strategy": "fixed",
+                "retryableCodes": ["capacity", "timeout"]
+            }),
+        );
+        let version = GraphVersion::publish(
+            graph,
+            None,
+            Actor::new(ActorType::Owner, "owner-test"),
+            Utc.with_ymd_and_hms(2026, 8, 9, 0, 0, 0).unwrap(),
+        )
+        .unwrap()
+        .to_record();
+        let record = serde_json::to_value(version).unwrap();
+        assert_eq!(
+            record["graph"]["metadata"]["retryPolicy"],
+            record["semantic"]["metadata"]["retryPolicy"],
+            "{name}"
+        );
+    }
+
+    let event = json!({
+        "schemaVersion": "1.0.0",
+        "eventId": "event-test",
+        "scope": {
+            "workspaceId": "workspace-test",
+            "projectId": "project-test",
+            "executionId": "execution-test"
+        },
+        "streamId": "stream-test",
+        "sequence": 1,
+        "occurredAt": "2026-08-09T00:00:00Z",
+        "idempotencyKey": "idempotency-test",
+        "actor": {"type": "system", "id": "system-test"},
+        "sensitivity": "internal",
+        "kind": {"type": "graph_version_published", "data": {"version": persisted_version}},
+        "evidenceRefs": [],
+        "artifactRefs": [],
+        "previousHash": "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3",
+        "eventHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    });
+    let diagnostics = schemas.validate(
+        "https://p50.dev/schemas/event-envelope.schema.json",
+        &event,
+        "conformance",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
 #[test]
 fn descriptive_and_history_metadata_do_not_change_semantic_hash() {
     let base = load();
@@ -119,10 +225,24 @@ fn canonical_examples_have_reviewed_golden_hashes() {
         ),
         (
             "research-to-publish.yaml",
-            "sha256:989a231a5d19d8f80f02c39229273460fa0c01997e9a9a4daa563a2eec470288".to_string(),
+            "sha256:9f8fff5d5f7d4b5bf0af3a38f06aa3492ba9656943bd0a798cbe81bcf5aebf43".to_string(),
         ),
     ];
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn externalized_json_content_is_canonical_across_nested_map_order() {
+    let forward = json!({"outer": {"zeta": 2, "alpha": 1}, "items": [{"b": true, "a": false}]});
+    let reverse = json!({"items": [{"a": false, "b": true}], "outer": {"alpha": 1, "zeta": 2}});
+    let forward = canonical_content_bytes(&forward).unwrap();
+    let reverse = canonical_content_bytes(&reverse).unwrap();
+
+    assert_eq!(forward, reverse);
+    assert_eq!(
+        raw_content_sha256(&forward).unwrap(),
+        raw_content_sha256(&reverse).unwrap()
+    );
 }
 
 proptest! {

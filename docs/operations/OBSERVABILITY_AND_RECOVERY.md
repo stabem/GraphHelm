@@ -170,7 +170,21 @@ Reference SLOs, to be calibrated per hardware/provider:
 
 Secrets do not enter the checkpoint; only references.
 
-### 11.3 Resume
+### 11.3 Integrity checkpoints
+
+The Event/Evidence Store keeps a second, cryptographic kind of checkpoint. It anchors a stream prefix with an authentication tag produced by the `KeyProvider`, and its canonical bytes include the key version and the provider revocation epoch. Reads bind the physical tail to the provider-authenticated stream head and, when a checkpoint is present, bind the bounded suffix to it. A database-only attacker cannot rehash a suffix and replace the head without a fresh provider tag.
+
+Verify a range with the operator CLI:
+
+```bash
+graphhelm events verify --config OPERATOR_CONFIG \
+  --workspace WORKSPACE --project PROJECT --stream STREAM \
+  --start 1 --max-events 100000
+```
+
+`--repository PATH` verifies only that a local repository declares the supported format. Range verification is a PostgreSQL capability and is refused against a local repository rather than silently skipped. A verification failure is `GHE005_INTEGRITY_FAILURE` and is an incident: stop writes to the affected stream and restore from an authenticated backup.
+
+### 11.4 Resume
 
 Before resuming:
 
@@ -303,6 +317,14 @@ Quarantine; no reuse; alert; separate privileged cleanup job.
 
 Studio receives the diff, rebases, and needs to reconfirm operational changes.
 
+### 17.9 Event/Evidence Store corrupted
+
+Integrity verification, a migration-ledger mismatch, or a rejected authenticated head means the repository is no longer trustworthy. Stop writes, keep the damaged database for forensics, and restore into a fresh distinct target following 19.4. A local repository crash that left unreachable Evidence blobs is not corruption: reopening the repository deletes orphan blobs and staging files and republishes the active marker from replayed events.
+
+### 17.10 Key provider unavailable
+
+`GHK001_KEY_UNAVAILABLE` means the sealed keyring, the root key material, or the revocation journal cannot be authenticated. Canonical replay continues because it never requires plaintext; Evidence reads and executable materialization fail closed. Restore the keyring from its own separately encrypted backup. An obsolete keyring whose monotonic revocation state was not preserved can resurrect content that was cryptographically erased, so keyring recovery is a compliance-relevant action and must be recorded.
+
 ## 18. Replay
 
 Replay reconstructs:
@@ -325,6 +347,20 @@ Modes:
 - failure reproduction.
 
 Re-execution creates a new execution and does not alter the original.
+
+Replay never requires evidence plaintext. Erased or unavailable evidence replays as a typed unavailability; only executable materialization fails, and only when the missing content slot is required.
+
+### 18.1 Projection rebuild
+
+Projections are disposable and are always rebuildable from the canonical journal. A rebuild creates a fresh generation, consumes bounded verified pages, transactionally advances a hash-bound watermark, rechecks the source head, and activates only a complete generation. A failed rebuild or a failed swap leaves the previous active generation unchanged, so a rebuild is safe to run against a live stream.
+
+```bash
+graphhelm events rebuild --config OPERATOR_CONFIG \
+  --workspace WORKSPACE --project PROJECT --stream STREAM \
+  --generation N --page-size 1000
+```
+
+The generation must be new. `GHE005_INTEGRITY_FAILURE` from a rebuild means the stored cursor, hash, or projection version cannot safely resume; rebuild into the next generation instead of repairing the old one. Rebuild is a PostgreSQL operation; the local repository stores no projection generations.
 
 ## 19. Export and backup
 
@@ -354,6 +390,30 @@ Re-execution creates a new execution and does not alter the original.
 
 The runbook defines RPO/RTO according to deployment. Single-node default: daily full backup plus frequent incremental events/artifacts. Enterprise production may use streaming replicas/object versioning.
 
+### 19.4 Event/Evidence Store backup and restore
+
+Both commands read one bounded JSON operator configuration from `--config` or `GRAPHHELM_EVENTS_CONFIG`. It must be a regular file, not a symbolic link, and not group- or world-accessible on Unix. It declares the administrative DSN, an absolute passfile, the sealed keyring directory and key ID, absolute `pg_dump` and `pg_restore` paths with pinned SHA-256 digests and versions, and a process timeout. The 32-byte root key is never in that file; it is supplied as 64 lowercase hexadecimal characters in `GRAPHHELM_EVENTS_KEY`, so a leaked configuration alone cannot unwrap Evidence.
+
+Backup:
+
+```bash
+graphhelm events backup --config OPERATOR_CONFIG --output ARCHIVE
+```
+
+The dump is streamed through ordered 1 MiB authenticated-encryption chunks with an authenticated manifest binding source identity, pinned tool versions and digests, the migration, schema, and privilege contracts, provider metadata, counts, and totals. Publication is atomic and no-replace: an existing `--output` path is never overwritten, so archives are written under new names and rotated by the operator.
+
+Restore:
+
+```bash
+graphhelm events restore --config OPERATOR_CONFIG --archive ARCHIVE
+```
+
+Restore accepts only a fresh, distinct target and never modifies the source. It authenticates the whole archive before trusting any metadata, rejects an observable provider-epoch rollback, and after loading verifies the migration, schema, RLS, policy, trigger, function, and grant contracts, every bounded event chain and checkpoint, references and Evidence state, retention authorities, holds, receipts, tombstones and cleanup, and an independent projection rebuild. Only then does it return a verification receipt. Select the restored database only after that receipt.
+
+A failed restore leaves the partial target disabled behind an authenticated marker and requires manual recovery; nothing is renamed or dropped automatically by database name. Back up the sealed keyring separately and at least as often as the database: an archive whose key material is lost is unreadable, and an archive restored against an obsolete keyring is rejected.
+
+Restore tests are mandatory and non-destructive by construction, because restore always targets a new database. Run one on the current archive on the cadence the deployment runbook sets.
+
 ## 20. Retention
 
 Configurable by data class:
@@ -371,6 +431,22 @@ Configurable by data class:
 
 Event Store "immutable" means not rewriting within the retention period. Legal/owner expiration may create a tombstone/cryptographic erasure per compliance design, preserving minimal metadata and a deletion audit.
 
+### 20.1 Erasure and legal-hold audit
+
+Erasure is a prepared, revoked, and finalized saga, and every stage is auditable from the journal alone. The audit trail for one operation is the requested event carrying scope, operation, Evidence and key-handle identity, policy identity and version, authority, reason code and prior state; the completed event adding the ciphertext digest, provider receipt, and provider epoch; the minimal tombstone; and the physical cleanup receipt. Event and Evidence history is never rewritten, so an erased item remains visible as erased.
+
+Legal holds are authenticated append-only place and release records, and every eligibility decision reconstructs and verifies hold history before deciding. A hold committed before prepare blocks erasure with `GHEV002_LEGAL_HOLD`; a hold placed afterwards cannot resurrect pending or erased content. `GHEV003_RETENTION_INELIGIBLE` means policy, age, scope, or state does not permit the action, not that the request failed.
+
+Audit checks an operator can perform:
+
+- every finalized operation has a matching tombstone and completion event;
+- every cleanup receipt maps bijectively to its `EvidenceCiphertextDeleted` event and reproduces its canonical request digest;
+- the provider revocation epoch never regresses between backups;
+- no Evidence sits in `erasure_pending` past the reconciliation window;
+- every active hold has an authenticated place record and no unmatched release.
+
+Restore reruns all of these before returning its receipt, so a restored database that passes verification has an intact erasure audit trail.
+
 ## 21. Alerts
 
 - runtime offline;
@@ -385,7 +461,12 @@ Event Store "immutable" means not rewriting within the retention period. Legal/o
 - Dreams regression/rollback;
 - stale critical doc;
 - plugin vulnerability;
-- backup failed.
+- backup failed;
+- restore verification failed;
+- event chain or checkpoint verification failed;
+- key provider unavailable;
+- erasure operation pending past reconciliation;
+- projection rebuild failed.
 
 Channels are plugins; local notifications by default.
 
@@ -422,7 +503,10 @@ The reference implementation uses OpenTelemetry semantics and local export. An e
 - graph stuck;
 - production deploy failure;
 - Dreams rollback;
-- project export/import.
+- project export/import;
+- event chain integrity failure;
+- projection rebuild;
+- evidence erasure and legal-hold audit.
 
 ## 25. Acceptance criteria
 
@@ -435,4 +519,8 @@ The reference implementation uses OpenTelemetry semantics and local export. An e
 - secret does not appear in logs/export;
 - quarantine prevents reuse;
 - backup/restore is testable;
-- metrics are local by default.
+- metrics are local by default;
+- replay succeeds without evidence plaintext;
+- erased required content blocks execution instead of degrading it;
+- a projection can be rebuilt from events without touching canonical history;
+- restore verifies the whole database before the target is selectable.

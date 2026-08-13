@@ -1,36 +1,55 @@
-use graphhelm_protocols::{EventEnvelope, NewEvent};
 use thiserror::Error;
 
-/// Append-only event store failures with stable diagnostic codes.
+/// Stable, redacted local repository failures.
 #[derive(Debug, Error)]
-pub enum EventStoreError {
-    #[error("expected next sequence {expected}, but stream requires {actual}")]
-    SequenceConflict { expected: u64, actual: u64 },
-    #[error("committed event batch is corrupt: {0}")]
-    CorruptBatch(String),
-    #[error("event store I/O failed: {0}")]
-    Io(#[from] std::io::Error),
+pub enum EventRepositoryError {
+    #[error("repository sequence conflicts with the append request")]
+    SequenceConflict,
+    #[error("repository idempotency key conflicts with committed input")]
+    IdempotencyConflict,
+    #[error("repository integrity verification failed")]
+    Integrity,
+    /// A stored batch failed its own checksum, as distinct from a broken hash chain.
+    #[error("repository batch checksum does not match its contents")]
+    CorruptBatch,
+    /// A projection generation cannot resume from the watermark it was asked to continue.
+    #[error("projection watermark does not match the requested generation")]
+    WatermarkMismatch,
+    #[error("repository input exceeds a deterministic limit")]
+    LimitExceeded,
+    #[error("repository format is unsupported")]
+    UnsupportedFormat,
+    #[error("repository input is invalid")]
+    Invalid,
+    #[error("repository content is not safe for persistence")]
+    UnsafePersistence,
+    #[error("repository replay requires an explicit scope and stream selection")]
+    StreamSelectionRequired,
+    #[error("repository storage operation failed")]
+    Storage,
 }
 
-impl EventStoreError {
+impl EventRepositoryError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::SequenceConflict { .. } => "GHE001_SEQUENCE_CONFLICT",
-            Self::CorruptBatch(_) => "GHE002_CORRUPT_BATCH",
-            Self::Io(_) => "GHE002_CORRUPT_BATCH",
+            Self::SequenceConflict => "GHE001_SEQUENCE_CONFLICT",
+            Self::IdempotencyConflict => "GHE003_IDEMPOTENCY_CONFLICT",
+            Self::Integrity => "GHE005_INTEGRITY_FAILURE",
+            Self::CorruptBatch => "GHE002_CORRUPT_BATCH",
+            Self::WatermarkMismatch => "GHPROJ001_WATERMARK_MISMATCH",
+            Self::LimitExceeded => "GHE006_LIMIT_EXCEEDED",
+            Self::UnsupportedFormat => "GHE007_UNSUPPORTED_FORMAT",
+            Self::Invalid => "GHE004_INVALID_EVENT",
+            Self::UnsafePersistence => "GHE009_EXTERNALIZATION_FAILED",
+            Self::StreamSelectionRequired => "GHE010_STREAM_SELECTION_REQUIRED",
+            Self::Storage => "GHE008_STORAGE_FAILURE",
         }
     }
 }
 
-/// Ordered atomic append and stream read boundary.
-pub trait EventStore: Send + Sync {
-    fn append_batch(
-        &self,
-        stream_id: &str,
-        expected_next_sequence: u64,
-        events: &[NewEvent],
-    ) -> Result<Vec<EventEnvelope>, EventStoreError>;
-
-    fn read_stream(&self, stream_id: &str) -> Result<Vec<EventEnvelope>, EventStoreError>;
+impl From<std::io::Error> for EventRepositoryError {
+    fn from(_: std::io::Error) -> Self {
+        Self::Storage
+    }
 }

@@ -21,7 +21,7 @@ const STATES: [NodeState; 16] = [
     NodeState::Invalidated,
 ];
 
-const OUTCOMES: [NodeOutcome; 11] = [
+const OUTCOMES: [NodeOutcome; 13] = [
     NodeOutcome::Started,
     NodeOutcome::Succeeded,
     NodeOutcome::RetryableFailure,
@@ -33,6 +33,8 @@ const OUTCOMES: [NodeOutcome; 11] = [
     NodeOutcome::Skipped,
     NodeOutcome::Cancelled,
     NodeOutcome::Invalidated,
+    NodeOutcome::Paused,
+    NodeOutcome::Interrupted,
 ];
 
 fn request(state: usize, outcome: usize, attempts: u32, identical: u32) -> TransitionRequest {
@@ -59,14 +61,16 @@ proptest! {
         prop_assert_eq!(apply_transition(&request), apply_transition(&request));
     }
 
-    /// A ghost never reaches a running state by any path, at any counter value.
+    /// A ghost never reaches a running state by any path, at any counter value. A ghost cannot be
+    /// paused either: pause holds work that has started toward running, and a ghost is a proposal
+    /// that never runs.
     #[test]
     fn a_ghost_never_becomes_runnable(outcome in 0usize..64, attempts in 0u32..64, identical in 0u32..64) {
         let mut request = request(0, outcome, attempts, identical);
         request.current = NodeState::Ghost;
         match apply_transition(&request) {
             Ok(next) => prop_assert!(
-                !matches!(next, NodeState::Queued | NodeState::Running),
+                !matches!(next, NodeState::Queued | NodeState::Running | NodeState::Paused),
                 "a ghost reached {next:?}"
             ),
             Err(ExecutionError::IllegalTransition) => {}

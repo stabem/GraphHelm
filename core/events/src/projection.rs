@@ -771,6 +771,30 @@ fn apply_projection_event(
                 .checked_add(1)
                 .ok_or(ReplayError::LimitExceeded)?;
         }
+        EventKind::ExecutionPaused(payload) => {
+            // `ExecutionStarted` sets `execution_id` and `mode` but leaves `simulation_status`
+            // `None` — nothing sets it until `simulation_started`, `simulation_completed` or
+            // `execution_completed` folds. A fresh, not-yet-simulating execution is therefore
+            // `None`, and pausing it is coherent history exactly like pausing one already
+            // `Running`.
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+                || !matches!(
+                    projection.simulation_status,
+                    None | Some(SimulationStatus::Running)
+                )
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.simulation_status = Some(SimulationStatus::Paused);
+        }
+        EventKind::ExecutionResumed(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+                || projection.simulation_status != Some(SimulationStatus::Paused)
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.simulation_status = Some(SimulationStatus::Running);
+        }
         EventKind::SimulationCompleted(payload) => {
             projection.simulation_status = Some(payload.status.clone());
         }

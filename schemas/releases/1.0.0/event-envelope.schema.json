@@ -293,7 +293,7 @@
       },
       "additionalProperties": false
     },
-    "simulationStatus": {"enum": ["running", "completed", "failed", "paused", "blocked"]},
+    "simulationStatus": {"enum": ["running", "completed", "failed", "paused", "blocked", "cancelled"]},
     "simulationCompleted": {
       "type": "object",
       "required": ["simulationId", "status"],
@@ -308,7 +308,7 @@
       "enum": [
         "started", "succeeded", "retryable_failure", "terminal_failure",
         "needs_input", "needs_capacity", "approved", "waived",
-        "skipped", "cancelled", "invalidated"
+        "skipped", "cancelled", "invalidated", "paused", "interrupted"
       ]
     },
     "executionStarted": {
@@ -399,6 +399,22 @@
         "draftId": {"$ref": "#/$defs/opaqueId"},
         "mode": {"$ref": "#/$defs/executionMode"},
         "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"}
+      },
+      "additionalProperties": false
+    },
+    "executionPaused": {
+      "type": "object",
+      "required": ["executionId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "executionResumed": {
+      "type": "object",
+      "required": ["executionId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"}
       },
       "additionalProperties": false
     },
@@ -698,6 +714,24 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "execution_paused"},
+            "data": {"$ref": "#/$defs/executionPaused"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_resumed"},
+            "data": {"$ref": "#/$defs/executionResumed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "integrity_checkpoint_created"},
             "data": {"$ref": "#/$defs/checkpointCreated"}
           },
@@ -761,6 +795,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "signal_recorded"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "ghost_node_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "mutation_accepted"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_paused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_resumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "integrity_checkpoint_created"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_requested"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_completed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},

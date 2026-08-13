@@ -1,5 +1,13 @@
 # Specification Changelog
 
+## Graph Engine and Governor, 04e — 2026-08-13
+
+- `NodeOutcome::{Paused, Interrupted}` and `SimulationStatus::Cancelled` added, appended so no existing wire name moves; `execution_paused` and `execution_resumed` grow the closed event set from 23 to 25, with the envelope schema corrected in place under D-037 and both catalog digests recomputed. Cancel is a final status per §13, not a new event kind.
+- Three transition arms close long-named gaps: `Blocked` gains its owner resume path (open since 04a), graceful pause holds `Ready`/`Queued` work, and an interrupted running node can only become `Blocked` — a crash is not an outcome the executor reported, and anything but blocking would authorize a retry nobody judged safe.
+- Pause and resume fold with coherent-history guards; an incoherent pause or resume is corrupt.
+- Pure `recovery_plan` and `resume_preconditions` added; §11.4's undecidable items are named, not approximated. The checkpoint is the `ProjectionGeneration` 04b already ships — no second checkpoint type exists.
+- The composed lifecycle test drives every pure piece since 04a through pause, crash, recovery, owner approval, resume and completion, and the full history replays byte-identically, including split through `apply_page`. Three findings for 04f are recorded in the milestone document: resume does not demand triage of blocked nodes, the honest crash-recovery order is pause-recover-approve, and `MAX_IDENTICAL_OUTCOMES` is structurally unreachable for retry loops, a design defect 04f must resolve.
+
 ## Graph Engine and Governor, 04d — 2026-08-13
 
 - Three governance event kinds added — `signal_recorded`, `ghost_node_proposed`, `mutation_accepted` — growing the closed set from 20 to 23; the `1.0.0` envelope schema corrected in place under D-037 with both copies byte-identical and both catalog digests recomputed. `signal_recorded` carries no free-form content per D-036: typed fields plus a digest binding the record to the raw envelope bytes destined for encrypted Evidence.

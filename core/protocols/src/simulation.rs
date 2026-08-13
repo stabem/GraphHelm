@@ -53,6 +53,13 @@ pub enum NodeOutcome {
     Cancelled,
     /// An upstream change invalidated a completed node's output.
     Invalidated,
+    /// The owner paused work that had not started. Only `Ready` and `Queued` nodes pause; a
+    /// running node in this milestone completes instantly, and interrupting real work is
+    /// Milestone 05's problem.
+    Paused,
+    /// The execution stopped while this node was running, so its effects are unknown. The only
+    /// legal consequence is `Blocked`: nothing may resume a node whose effects are unknown.
+    Interrupted,
 }
 
 /// How much autonomy the owner has granted this execution, per D-022.
@@ -105,6 +112,9 @@ pub enum SimulationStatus {
     Failed,
     Paused,
     Blocked,
+    /// Cancelled by the owner. History is not erased and partial effects are recorded, per
+    /// `OBSERVABILITY_AND_RECOVERY.md` §13.
+    Cancelled,
 }
 
 /// A deterministic node outcome supplied to the effect-free simulator.

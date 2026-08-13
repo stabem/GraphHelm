@@ -14,11 +14,11 @@ use graphhelm_events::{
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
     ActorId, Clock, EventEnvelope, EventKind, ExecutionId, ExecutionMode, ExecutionModeChanged,
-    ExecutionStarted, GhostNodeProposed, IdGenerator, MutationAccepted, NewEvent,
-    NodeOutcome as Outcome, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor,
-    PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
-    SignalRecorded as SignalRecordedPayload, SignalSeverity, SignalSourceKind, WireHash,
-    WorkspaceId,
+    ExecutionPaused, ExecutionResumed, ExecutionStarted, GhostNodeProposed, IdGenerator,
+    MutationAccepted, NewEvent, NodeOutcome as Outcome, NodeOutcomeRecorded, NodeState, OpaqueId,
+    PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
+    SignalRecorded as SignalRecordedPayload, SignalSeverity, SignalSourceKind, SimulationStatus,
+    WireHash, WorkspaceId,
 };
 
 const STREAM: &str = "stream-execution-test";
@@ -104,7 +104,12 @@ fn precondition(outcome: Outcome) -> NodeState {
         | Outcome::NeedsCapacity
         | Outcome::Waived
         | Outcome::Skipped
-        | Outcome::Cancelled => NodeState::Running,
+        | Outcome::Cancelled
+        | Outcome::Interrupted => NodeState::Running,
+        // Only `Ready` and `Queued` nodes pause; `apply_transition` does not yet accept this
+        // outcome from either (that arm ships in Task 5), so no fixture in this file drives it
+        // through `execution_events` yet. This arm exists to keep `precondition` exhaustive.
+        Outcome::Paused => NodeState::Ready,
     }
 }
 
@@ -261,6 +266,130 @@ fn replay_is_identical_across_runs() {
 fn a_mode_change_is_reflected_in_the_projection() {
     let projection = replay(&scope(), STREAM, &started_then_mode_changed()).unwrap();
     assert_eq!(projection.mode, Some(ExecutionMode::Manual));
+}
+
+/// An execution start followed by a pause. `simulation_status` is `None` right after
+/// `execution_started` — nothing sets it until `simulation_started`, `simulation_completed` or
+/// `execution_completed` folds — so this pins the `None -> Paused` half of the pause guard.
+fn started_then_paused() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "execution-paused",
+            EventKind::ExecutionPaused(ExecutionPaused { execution_id }),
+        ),
+    ])
+}
+
+/// A start, a pause, then a resume. Resuming restores `Running`.
+fn paused_then_resumed() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "execution-paused",
+            EventKind::ExecutionPaused(ExecutionPaused {
+                execution_id: execution_id.clone(),
+            }),
+        ),
+        event(
+            "execution-resumed",
+            EventKind::ExecutionResumed(ExecutionResumed { execution_id }),
+        ),
+    ])
+}
+
+/// A start followed by two pauses. The second pause finds `simulation_status` already `Paused`,
+/// which is not `None | Some(Running)` — this history cannot have happened.
+fn paused_twice() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "execution-paused-1",
+            EventKind::ExecutionPaused(ExecutionPaused {
+                execution_id: execution_id.clone(),
+            }),
+        ),
+        event(
+            "execution-paused-2",
+            EventKind::ExecutionPaused(ExecutionPaused { execution_id }),
+        ),
+    ])
+}
+
+/// A start followed directly by a resume, with no pause in between. `simulation_status` is
+/// `None`, not `Some(Paused)` — this history cannot have happened.
+fn resumed_without_pause() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "execution-resumed",
+            EventKind::ExecutionResumed(ExecutionResumed { execution_id }),
+        ),
+    ])
+}
+
+/// Pausing sets the aggregate status; resuming restores it. Both are coherent-history guards, not
+/// judgments — the resume preconditions live in `graphhelm_execution`.
+#[test]
+fn pause_and_resume_fold_into_the_aggregate_status() {
+    let projection = replay(&scope(), STREAM, &paused_then_resumed()).unwrap();
+    assert_eq!(
+        projection.simulation_status,
+        Some(SimulationStatus::Running)
+    );
+
+    let paused = replay(&scope(), STREAM, &started_then_paused()).unwrap();
+    assert_eq!(paused.simulation_status, Some(SimulationStatus::Paused));
+}
+
+/// Pausing an execution that is not running, or resuming one that is not paused, is history that
+/// cannot have happened.
+#[test]
+fn an_incoherent_pause_or_resume_is_corrupt() {
+    assert_eq!(
+        replay(&scope(), STREAM, &paused_twice()).unwrap_err(),
+        ReplayError::Corrupt
+    );
+    assert_eq!(
+        replay(&scope(), STREAM, &resumed_without_pause()).unwrap_err(),
+        ReplayError::Corrupt
+    );
 }
 
 fn resume_via_generation(first: &[EventEnvelope], second: &[EventEnvelope]) -> ExecutionProjection {

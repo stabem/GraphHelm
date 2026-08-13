@@ -101,7 +101,7 @@ fn event_fixture(kind: Value, project_level: bool) -> Value {
 }
 
 #[test]
-fn all_twenty_three_safe_event_variants_strictly_round_trip_against_schema() {
+fn all_twenty_five_safe_event_variants_strictly_round_trip_against_schema() {
     let diagnostic = json!({
         "code":"GHP001_SAFE","severity":"error","path":"/topology","component":"governor"
     });
@@ -186,6 +186,14 @@ fn all_twenty_three_safe_event_variants_strictly_round_trip_against_schema() {
             false,
         ),
         (
+            json!({"type":"execution_paused","data":{"executionId":"execution-1"}}),
+            false,
+        ),
+        (
+            json!({"type":"execution_resumed","data":{"executionId":"execution-1"}}),
+            false,
+        ),
+        (
             json!({"type":"integrity_checkpoint_created","data":{"streamId":"stream-1","sequence":1,"eventHash":hash,"repositoryFormat":"1.0.0","authenticationTag":{"keyId":"key-1","algorithm":"hmac-sha256","tagSha256":raw}}}),
             true,
         ),
@@ -207,7 +215,7 @@ fn all_twenty_three_safe_event_variants_strictly_round_trip_against_schema() {
         ),
     ];
 
-    assert_eq!(variants.len(), 23);
+    assert_eq!(variants.len(), 25);
     for (kind, project_level) in variants {
         let document = event_fixture(kind, project_level);
         assert_schema_valid(EVENT_ID, &document);
@@ -246,6 +254,22 @@ fn governance_event_kinds_round_trip_with_exact_wire_names() {
             "mutation_accepted",
             json!({"executionId":"execution-1","draftId":"draft-1","mode":"autopilot","graphVersion":4}),
         ),
+    ];
+    for (name, data) in cases {
+        let wire = json!({"type": name, "data": data});
+        let kind: EventKind = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&kind).unwrap(), wire, "{name}");
+    }
+}
+
+/// The pause and resume lifecycle kinds round-trip with exact wire names, modelled on
+/// `governance_event_kinds_round_trip_with_exact_wire_names`. The envelope schema does not accept
+/// these kinds yet — that is Task 3 — so this test only exercises Rust serialization.
+#[test]
+fn lifecycle_event_kinds_round_trip_with_exact_wire_names() {
+    let cases = [
+        ("execution_paused", json!({"executionId":"execution-1"})),
+        ("execution_resumed", json!({"executionId":"execution-1"})),
     ];
     for (name, data) in cases {
         let wire = json!({"type": name, "data": data});
@@ -1256,6 +1280,22 @@ fn the_envelope_schema_accepts_every_governance_event_kind() {
         json!({"type":"signal_recorded","data":{"executionId":"execution-1","signalId":"signal-1","sourceKind":"node","sourceId":"node-a","kind":"unexpected_dependency","severity":"high","envelopeSha256":digest}}),
         json!({"type":"ghost_node_proposed","data":{"executionId":"execution-1","nodeId":"ghost-a","draftId":"draft-1"}}),
         json!({"type":"mutation_accepted","data":{"executionId":"execution-1","draftId":"draft-1","mode":"autopilot","graphVersion":4}}),
+    ] {
+        assert_envelope_valid(data);
+    }
+}
+
+/// The envelope schema accepts the two lifecycle kinds themselves, and the widened `nodeOutcome`
+/// and `simulationStatus` enums accept the new values they gained: `interrupted` (paired with the
+/// `Blocked` consequence the transition table requires) and `cancelled`. Modelled on
+/// `the_envelope_schema_accepts_every_execution_event_kind`.
+#[test]
+fn the_envelope_schema_accepts_the_lifecycle_event_kinds() {
+    for data in [
+        json!({"type":"execution_paused","data":{"executionId":"execution-1"}}),
+        json!({"type":"execution_resumed","data":{"executionId":"execution-1"}}),
+        json!({"type":"execution_completed","data":{"executionId":"execution-1","status":"cancelled"}}),
+        json!({"type":"node_outcome_recorded","data":{"executionId":"execution-1","nodeId":"start","outcome":"interrupted","nextState":"blocked"}}),
     ] {
         assert_envelope_valid(data);
     }

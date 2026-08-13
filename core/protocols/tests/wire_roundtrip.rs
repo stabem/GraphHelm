@@ -117,7 +117,7 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
         assert_eq!(serde_json::to_value(state).unwrap(), expected);
     }
 
-    // All eleven, not a sample. The point of this loop is pinning snake_case conversion, and
+    // All thirteen, not a sample. The point of this loop is pinning snake_case conversion, and
     // leaving NeedsInput out while pinning its sibling NeedsCapacity would miss exactly the
     // multi-word case it exists to catch.
     let outcomes = [
@@ -132,6 +132,8 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
         (NodeOutcome::Skipped, "skipped"),
         (NodeOutcome::Cancelled, "cancelled"),
         (NodeOutcome::Invalidated, "invalidated"),
+        (NodeOutcome::Paused, "paused"),
+        (NodeOutcome::Interrupted, "interrupted"),
     ];
     for (outcome, expected) in outcomes {
         assert_eq!(serde_json::to_value(outcome).unwrap(), expected);
@@ -146,6 +148,7 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
         (SimulationStatus::Completed, "completed"),
         (SimulationStatus::Failed, "failed"),
         (SimulationStatus::Paused, "paused"),
+        (SimulationStatus::Cancelled, "cancelled"),
     ] {
         assert_eq!(serde_json::to_value(status).unwrap(), expected);
     }

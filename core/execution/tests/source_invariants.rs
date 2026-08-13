@@ -12,6 +12,25 @@ const TRANSITION: &str = include_str!("../src/transition.rs");
 const SIGNAL: &str = include_str!("../src/signal.rs");
 const READY: &str = include_str!("../src/ready.rs");
 const PROGRESS: &str = include_str!("../src/progress.rs");
+const RECOVERY: &str = include_str!("../src/recovery.rs");
+
+/// The `[dependencies]` table only, stopping at the next `[section]` header.
+///
+/// Purity is a claim about what ships in the compiled library, not about what a test file needs
+/// to compose a fixture. Task 7 (04e) added `graphhelm-simulation`, `chrono` and `tempfile` under
+/// `[dev-dependencies]` so `execution_lifecycle.rs` can drive `FixtureExecutor` and a real
+/// repository — none of that links into the crate a downstream consumer builds. Scoping the scan
+/// to `[dependencies]` keeps the invariant meaningful instead of forbidding legitimate dev-only
+/// test tooling.
+fn production_dependencies(manifest: &str) -> &str {
+    let start = manifest
+        .find("[dependencies]")
+        .expect("manifest must declare a [dependencies] table")
+        + "[dependencies]".len();
+    let rest = &manifest[start..];
+    let end = rest.find("\n[").map_or(rest.len(), |offset| offset);
+    &rest[..end]
+}
 
 /// Strips line comments so prose cannot decide the outcome in either direction.
 ///
@@ -24,6 +43,24 @@ fn code_only(source: &str) -> String {
         .filter(|line| !line.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The production-dependency slice reads only the `[dependencies]` table, so a dependency
+/// smuggled into a table the slice never reaches would be invisible to both scans above. There is
+/// exactly one legitimate place for a production dependency in this crate, so any other
+/// dependency-carrying table is forbidden outright.
+#[test]
+fn no_other_dependency_table_exists() {
+    for line in MANIFEST.lines() {
+        let trimmed = line.trim();
+        let is_table = trimmed.starts_with('[');
+        let carries_dependencies = trimmed.contains("dependencies");
+        let allowed = trimmed == "[dependencies]" || trimmed == "[dev-dependencies]";
+        assert!(
+            !(is_table && carries_dependencies && !allowed),
+            "unexpected dependency table: {trimmed}"
+        );
+    }
 }
 
 /// This crate must stay pure. A clock, a random source or an *adapter* dependency would make replay
@@ -40,6 +77,7 @@ fn code_only(source: &str) -> String {
 /// this crate depends on — the invariant was over-broad, not the design.
 #[test]
 fn the_execution_crate_has_no_impure_dependency() {
+    let production = production_dependencies(MANIFEST);
     for forbidden in [
         "tokio",
         "sqlx",
@@ -52,7 +90,7 @@ fn the_execution_crate_has_no_impure_dependency() {
         "adapters/",
     ] {
         assert!(
-            !MANIFEST.contains(forbidden),
+            !production.contains(forbidden),
             "core/execution must not depend on {forbidden}"
         );
     }
@@ -62,7 +100,7 @@ fn the_execution_crate_has_no_impure_dependency() {
 /// so adding a dependency is a deliberate edit to a test rather than a silent manifest change.
 #[test]
 fn the_execution_crate_depends_on_exactly_the_declared_crates() {
-    let declared: Vec<&str> = MANIFEST
+    let declared: Vec<&str> = production_dependencies(MANIFEST)
         .lines()
         .filter(|line| line.starts_with("graphhelm-"))
         .map(|line| line.split_whitespace().next().unwrap_or_default())
@@ -80,6 +118,7 @@ fn no_source_file_reads_a_clock_or_randomness() {
         ("signal.rs", SIGNAL),
         ("ready.rs", READY),
         ("progress.rs", PROGRESS),
+        ("recovery.rs", RECOVERY),
     ] {
         let code = code_only(source);
         for forbidden in [

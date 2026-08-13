@@ -815,11 +815,14 @@ dependencies = [
 name = "graphhelm-execution"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "graphhelm-events",
  "graphhelm-protocols",
+ "graphhelm-simulation",
  "proptest",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

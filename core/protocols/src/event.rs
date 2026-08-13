@@ -146,7 +146,7 @@ impl EventEnvelope {
     }
 }
 
-/// The closed set of 23 replay-safe production events.
+/// The closed set of 25 replay-safe production events.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
@@ -168,6 +168,8 @@ pub enum EventKind {
     SignalRecorded(SignalRecorded),
     GhostNodeProposed(GhostNodeProposed),
     MutationAccepted(MutationAccepted),
+    ExecutionPaused(ExecutionPaused),
+    ExecutionResumed(ExecutionResumed),
     IntegrityCheckpointCreated(IntegrityCheckpointCreated),
     EvidenceErasureRequested(EvidenceErasureRequested),
     EvidenceErasureCompleted(EvidenceErasureCompleted),
@@ -373,6 +375,22 @@ pub struct MutationAccepted {
     pub draft_id: OpaqueId,
     pub mode: ExecutionMode,
     pub graph_version: u64,
+}
+
+/// The owner paused the execution, per D-019 and §12's graceful pause: nodes not yet started are
+/// held; nothing in flight is interrupted in this milestone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionPaused {
+    pub execution_id: OpaqueId,
+}
+
+/// The owner resumed a paused execution. The resume preconditions in `graphhelm_execution` gate
+/// whether this may be appended; the fold only checks it is coherent history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionResumed {
+    pub execution_id: OpaqueId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

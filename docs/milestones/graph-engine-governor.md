@@ -1,8 +1,8 @@
 # Graph Engine and Governor
 
-Status: 04a and 04b implemented on this branch. Toolchain: Rust 1.97.1, edition 2024. Schema baseline: `1.0.0`, envelope contract corrected in place per D-037 to carry the four execution event kinds.
+Status: 04a through 04e implemented; 04f (driver and operator CLI) remains. Toolchain: Rust 1.97.1, edition 2024. Schema baseline: `1.0.0`, envelope contract corrected in place per D-037 to carry the four execution event kinds.
 
-Milestone 03 made persistence production-safe but nothing executed a published graph. This milestone starts making a published graph run. Only two of its six plans, 04a and 04b, are done: the pure execution contracts and the durable execution projection. Nothing here schedules a node, dispatches a signal, or runs an operator command yet.
+Milestone 03 made persistence production-safe but nothing executed a published graph. This milestone makes a published graph run. Five of its six plans are done: the pure execution contracts, the durable execution projection, the scheduler, in-flight governance, and the lifecycle with crash recovery. Nothing here drives production work or runs an operator command yet — the driver and CLI are 04f.
 
 ## What 04a shipped: pure execution contracts
 
@@ -109,7 +109,7 @@ The guard itself lives in `ProjectionRebuilder::rebuild` (`core/events/src/proje
 
 - **Dependencies are fail-closed.** *Every* incoming edge gates a node, whatever its `EdgeType`. A node never runs before something it is connected downstream of. Refining this per edge type needs the condition evaluation 04d brings; guessing now would let a node run early.
 - **A predecessor releases its dependent only when `Succeeded`, `Waived` or `Skipped`.** Waived and skipped count because an owner exercising D-019 sovereignty must not stall the run. `Failed`, `Cancelled` and `Blocked` deliberately do not release anything.
-- **Only `Ready` nodes are dispatchable.** An untouched node behaves as `Draft` and reaches `Ready` through approval; dispatching a draft would propose work `apply_transition` rejects, and a test now pins that every dispatchable state accepts a `Started`. Resuming `Paused`, `WaitingInput` or `WaitingCapacity` is 04e's business.
+- **Only `Ready` nodes are dispatchable.** An untouched node behaves as `Draft` and reaches `Ready` through approval; dispatching a draft would propose work `apply_transition` rejects, and a test now pins that every dispatchable state accepts a `Started`. Resuming `Paused`, `WaitingInput` or `WaitingCapacity` is the lifecycle's business, not the scheduler's — the resume arm itself predates 04e; what 04e added is a producer for `Paused`, so the arm finally has something to resume.
 
 `NodeState::Ghost` is excluded by construction from both rules: a ghost is never dispatchable and never releases a dependent. That is what makes decision 5.2's "consumes no tokens" structural rather than a convention someone has to remember. `core/execution/tests/scheduling_properties.rs` samples it across randomised assignments of the other nodes' states (proptest, not exhaustion), and was verified able to fail by adding `Ghost` to the dispatchable set.
 
@@ -197,15 +197,52 @@ Three accounting seams are known and deferred: ghost births have no domain budge
 
 Nothing appends these events, externalizes the Evidence, or drives intake — the decisions await the 04f driver, which also owns acceptance-to-publication wiring over the existing M03 `apply_draft` and `prepare_draft_publication`. Signal-to-draft translation — what a proposal *contains* — is not designed yet. The five undetected no-progress conditions stay undetected until signals flow in production. The `simulate()`/`FixtureExecutor` divergence tracked since 04c remains open.
 
+## What 04e shipped: pause, resume, cancel and recovery
+
+### The vocabulary
+
+`NodeOutcome` gained `Paused` and `Interrupted`; `SimulationStatus` gained `Cancelled`. All three appended at the end of their enums, so every existing wire name is untouched by construction. Cancel needed no new event kind: §13 defines it as a final status with partial effects recorded, and `execution_completed` already carries a status. Two event kinds were added — `execution_paused` and `execution_resumed` — growing the closed set from 23 to 25, with the envelope schema corrected in place per D-037, both copies byte-identical, both catalog digests recomputed.
+
+### The transitions
+
+Three arms, each closing a gap named in earlier milestones (`core/execution/src/transition.rs`):
+
+- `(Blocked, Approved) -> Ready` — the owner resume path out of `Blocked`, open since 04a. Approval makes the node dispatchable on the next scheduler pass; nothing auto-starts out of a manual intervention.
+- `(Ready | Queued, Paused) -> Paused` — graceful pause holds work that has not started. A running node is not pausable in this milestone (it completes instantly under the effect-free executor), and a ghost is not pausable in any: the ghost arm precedes the pause arm, and `a_ghost_never_becomes_runnable` now excludes `Paused` as a ghost destination too.
+- `(Running, Interrupted) -> Blocked` — a node running when the execution stopped has unknown effects, and `Blocked` is the only legal consequence. `Interrupted` exists as its own outcome precisely because a crash is not something the executor reported; mapping it onto `RetryableFailure` would silently authorize a retry nobody judged safe. Verified able to fail by making the arm return `Queued` — the silent-retry bug — which `an_interrupted_running_node_blocks` catches.
+
+The fold guards pause and resume as coherent history: pausing an execution that is not running, or resuming one that is not paused, is `Corrupt` (`an_incoherent_pause_or_resume_is_corrupt`, sabotage-proven).
+
+### Recovery and resume preconditions
+
+`core/execution/src/recovery.rs`, pure and covered by the purity source scan. `recovery_plan` names exactly the `Running` nodes in deterministic order. `resume_preconditions` enforces §11.4's decidable subset — an execution exists, is `Paused`, no node is `Running`, and the graph version to resume against matches — and its rustdoc names what it does not validate: lease renewal, route health, sandbox recreation and session invalidation are Milestone 05's.
+
+The checkpoint question was answered by refusing to build a second checkpoint: the decidable subset of §11.2's content — graph version, node states, attempts, mode, counters, watermark — is exactly the `ProjectionGeneration` that 04b made durable, atomically swapped and rebuild-proven.
+
+### The composed lifecycle, proven
+
+`core/execution/tests/execution_lifecycle.rs` is the first time every pure piece since 04a runs together: `ready_set` proposes, `dispatch_plan` bounds, `FixtureExecutor` executes, `apply_transition` decides, the fold records, `recovery_plan` and `resume_preconditions` gate the lifecycle. The driver is a test-only loop; the production driver remains 04f. A three-node chain runs, pauses, crashes on a fresh history, recovers, is owner-approved, resumes and completes — and the entire history replays byte-identically, both directly and split through `ProjectionGeneration::apply_page`. The replay assertion was proven non-vacuous by mutating one serialized byte.
+
+### Findings for 04f, discovered by composing
+
+Three things the composition surfaced that no single piece showed:
+
+1. **`resume_preconditions` accepts an execution with `Blocked` nodes.** The gate refuses `Running` nodes (unrecovered interruptions) but not `Blocked` ones — so a driver can legally resume an execution whose interrupted nodes were recorded but never triaged by an owner. The blocked nodes simply never dispatch. Whether resume should also demand triage is a 04f design call, recorded here rather than decided silently.
+2. **The honest crash-recovery order is: pause first, recover second, approve third.** `execution_paused` folds legally while a node is still `Running` (its guard checks only the aggregate status), which is what lets `resume_preconditions` be observed refusing with `UnrecoveredInterruption`. The working sequence a driver must follow: fold `execution_paused` while the node is still `Running`, record the interruption (`Running -> Blocked`), owner-approve the blocked node, then resume. This is the order `execution_lifecycle.rs` actually executes and asserts; the plan's original narration (recover before pausing) makes the `UnrecoveredInterruption` refusal unobservable, because by then no node is `Running`.
+3. **`MAX_IDENTICAL_OUTCOMES` is structurally unreachable for retry loops — a design defect to resolve in 04f, not an observation.** `Running` is reachable only via `(Queued, Started)`, so any state-machine-conforming history interleaves a `Started` between consecutive failures of one node, and the run-length counter resets every time. This holds for *any* driver, not just the test's: a persistently failing node exhausts `MAX_NODE_ATTEMPTS`, never `MAX_IDENTICAL_OUTCOMES`. The bound remains live only for outcomes that repeat without redispatch (`NeedsInput`/`NeedsCapacity` self-loops). 04f must either remove the dead condition from the retry arm or redesign the counting so the bound is reachable where intended. `a_failing_node_blocks_and_owner_resumes` pins the behaviour as it actually is.
+4. **A waiting node rides through a pause untouched, and resume could redispatch it blindly.** `execution_paused`'s guard checks only the aggregate status, so pausing with a node in `WaitingInput` or `WaitingCapacity` is legal — but the pause arm accepts only `Ready | Queued`, so the waiting node stays waiting, unmarked. The pre-existing `(WaitingInput | WaitingCapacity | Paused, Started) -> Queued` arm means a resume driver that naively walks non-terminal nodes and emits `Started` would redispatch a waiting node as if its wait condition had resolved, without anything having checked that it did. The 04f driver must resume only the nodes it paused.
+
+
+One test-infrastructure correction rode along: the manifest purity scan now reads only the `[dependencies]` table, because purity is a claim about the compiled library and the lifecycle test legitimately needs `graphhelm-simulation`, `chrono` and `tempfile` as dev-dependencies. The exact-dependency pin still holds for production dependencies.
+
 ## Explicitly out of scope
 
-Nothing below exists yet. It is scoped to milestones 04e and 04f:
+Nothing below exists yet. It is scoped to milestone 04f:
 
 - **Wiring `simulate()` through `FixtureExecutor` and `apply_transition`,** resolving the divergences tabulated above.
-- **04e — Pause, resume, cancel, recovery.** Checkpoint content, resume preconditions, crash recovery of an interrupted execution.
 - **04f — Operator CLI, gate, documentation.** JSON-only `execution start|status|signal|approve|pause|resume|cancel` commands and the milestone-closing gate integration and final review.
 
-Two consequences of this follow directly from `apply_transition`'s table, worth stating plainly: `Paused` and `Linting` are accepted as transition *sources* (`(S::Draft | S::Linting, O::Approved) => Ok(S::Ready)`, and `(S::WaitingInput | S::WaitingCapacity | S::Paused, O::Started) => Ok(S::Queued)`), but nothing in 04a or 04b ever produces a node in either state — pause and lint completion arrive with 04e. `Blocked` similarly has no resume path in the current transition table: nothing maps `(S::Blocked, _)` to any state except `(_, O::Waived) => Ok(S::Waived)` and `(_, O::Skipped) => Ok(S::Skipped)`, and `(_, O::Cancelled)`; there is no `(S::Blocked, O::Started)` or equivalent that returns a node to `Queued`. A resume path for `Blocked` is 04e's job.
+One consequence of this still stands from `apply_transition`'s table: `Linting` is accepted as a transition *source* (`(S::Draft | S::Linting, O::Approved) => Ok(S::Ready)`) but nothing produces a node in that state — lint completion belongs to the authoring flow, not this milestone. `Paused` gained its producers in 04e (`(Ready | Queued, Paused) -> Paused`), and `Blocked` gained its owner resume path there too (`(Blocked, Approved) -> Ready`).
 
 ## Acceptance evidence
 

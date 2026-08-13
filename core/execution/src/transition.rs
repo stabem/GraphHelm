@@ -73,13 +73,24 @@ pub fn apply_transition(request: &TransitionRequest) -> Result<NodeState, Execut
         (S::Ghost, _) => Err(ExecutionError::IllegalTransition),
 
         (S::Draft | S::Linting, O::Approved) => Ok(S::Ready),
+        // The owner's resume path out of Blocked, missing since 04a. Approval makes the node
+        // dispatchable on the next scheduler pass; nothing auto-starts out of a manual
+        // intervention — the scheduler's normal cycle does.
+        (S::Blocked, O::Approved) => Ok(S::Ready),
         (S::Ready, O::Started) => Ok(S::Queued),
         (S::Queued, O::Started) => Ok(S::Running),
+
+        // Graceful pause holds work that has not started. A running node completes instantly in
+        // this milestone, so it is not pausable; interrupting real work is Milestone 05's.
+        (S::Ready | S::Queued, O::Paused) => Ok(S::Paused),
 
         (S::Running, O::Succeeded) => Ok(S::Succeeded),
         (S::Running, O::TerminalFailure) => Ok(S::Failed),
         (S::Running, O::NeedsInput) => Ok(S::WaitingInput),
         (S::Running, O::NeedsCapacity) => Ok(S::WaitingCapacity),
+        // The execution stopped while this node was running, so its effects are unknown. Blocked
+        // is the only legal consequence: nothing may resume a node whose effects are unknown.
+        (S::Running, O::Interrupted) => Ok(S::Blocked),
 
         // Retry is bounded by counters only. Exhaustion blocks for an owner decision rather than
         // failing silently, so no work is discarded without a record.
@@ -196,5 +207,50 @@ mod tests {
             apply_transition(&request(NodeState::Blocked, NodeOutcome::Waived, 3)).unwrap(),
             NodeState::Waived
         );
+    }
+
+    /// The owner's resume path out of Blocked, missing since 04a. Approval makes the node
+    /// dispatchable on the next scheduler pass; per D-020's spirit nothing auto-starts out of a
+    /// manual intervention — the scheduler's normal cycle does.
+    #[test]
+    fn an_owner_approval_readies_a_blocked_node() {
+        assert_eq!(
+            apply_transition(&request(NodeState::Blocked, NodeOutcome::Approved, 3)).unwrap(),
+            NodeState::Ready
+        );
+    }
+
+    /// Graceful pause holds work that has not started. A running node is not pausable in this
+    /// milestone, and a ghost is not pausable in any.
+    #[test]
+    fn pause_holds_ready_and_queued_work_only() {
+        for from in [NodeState::Ready, NodeState::Queued] {
+            assert_eq!(
+                apply_transition(&request(from, NodeOutcome::Paused, 0)).unwrap(),
+                NodeState::Paused
+            );
+        }
+        for from in [NodeState::Running, NodeState::Ghost, NodeState::Succeeded] {
+            assert!(
+                apply_transition(&request(from, NodeOutcome::Paused, 0)).is_err(),
+                "{from:?} must not pause"
+            );
+        }
+    }
+
+    /// A node running when the execution stopped has unknown effects. Blocked is the only legal
+    /// consequence; anything else would resume work nobody judged safe.
+    #[test]
+    fn an_interrupted_running_node_blocks() {
+        assert_eq!(
+            apply_transition(&request(NodeState::Running, NodeOutcome::Interrupted, 1)).unwrap(),
+            NodeState::Blocked
+        );
+        for from in [NodeState::Ready, NodeState::Queued, NodeState::Paused] {
+            assert!(
+                apply_transition(&request(from, NodeOutcome::Interrupted, 0)).is_err(),
+                "{from:?} was not running; interruption does not apply"
+            );
+        }
     }
 }

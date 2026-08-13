@@ -23,6 +23,7 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+graphhelm-execution = { path = "../execution" }
 static_assertions.workspace = true
 tempfile.workspace = true
 zeroize.workspace = true

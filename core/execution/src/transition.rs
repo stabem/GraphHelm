@@ -3,34 +3,9 @@
 //! `apply_transition` is total over its inputs and consults no clock, no randomness and no I/O, so
 //! replaying the same request always yields the same state. Every bound it applies is a counter.
 
-use graphhelm_protocols::NodeState;
+use graphhelm_protocols::{NodeOutcome, NodeState};
 
 use crate::bounds::{MAX_IDENTICAL_OUTCOMES, MAX_NODE_ATTEMPTS};
-
-/// What happened to a node, as reported by the executor or the owner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NodeOutcome {
-    /// The scheduler dispatched the node.
-    Started,
-    Succeeded,
-    /// Failed in a way a further attempt could resolve.
-    RetryableFailure,
-    /// Failed in a way no further attempt can resolve.
-    TerminalFailure,
-    /// The node is waiting on input that has not arrived.
-    NeedsInput,
-    /// The node is waiting on capacity, such as an exhausted subscription quota.
-    NeedsCapacity,
-    /// The owner approved a proposed expansion.
-    Approved,
-    /// The owner waived the obligation blocking this node.
-    Waived,
-    /// The owner or a dependency failure removed this node from the run.
-    Skipped,
-    Cancelled,
-    /// An upstream change invalidated a completed node's output.
-    Invalidated,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionError {

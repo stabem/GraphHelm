@@ -1,8 +1,9 @@
 use chrono::{TimeZone, Utc};
 use graphhelm_protocols::{
-    Actor, ActorType, DraftOperation, DraftRejected, EventKind, ExecutionGraph, GraphDraft,
-    GraphImported, GraphSourceKind, ManualOverride, NodeState, OpaqueId, PolicyWaiver, RawSha256,
-    SafeCode, SemanticHash, SimulationStarted, SimulationStatus, WaiverScope, WireHash,
+    Actor, ActorType, DraftOperation, DraftRejected, EventKind, ExecutionGraph, ExecutionMode,
+    GraphDraft, GraphImported, GraphSourceKind, ManualOverride, NodeOutcome, NodeState, OpaqueId,
+    PolicyWaiver, RawSha256, SafeCode, SemanticHash, SimulationStarted, SimulationStatus,
+    WaiverScope, WireHash,
 };
 
 #[test]
@@ -116,6 +117,30 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
         assert_eq!(serde_json::to_value(state).unwrap(), expected);
     }
 
+    // All eleven, not a sample. The point of this loop is pinning snake_case conversion, and
+    // leaving NeedsInput out while pinning its sibling NeedsCapacity would miss exactly the
+    // multi-word case it exists to catch.
+    let outcomes = [
+        (NodeOutcome::Started, "started"),
+        (NodeOutcome::Succeeded, "succeeded"),
+        (NodeOutcome::RetryableFailure, "retryable_failure"),
+        (NodeOutcome::TerminalFailure, "terminal_failure"),
+        (NodeOutcome::NeedsInput, "needs_input"),
+        (NodeOutcome::NeedsCapacity, "needs_capacity"),
+        (NodeOutcome::Approved, "approved"),
+        (NodeOutcome::Waived, "waived"),
+        (NodeOutcome::Skipped, "skipped"),
+        (NodeOutcome::Cancelled, "cancelled"),
+        (NodeOutcome::Invalidated, "invalidated"),
+    ];
+    for (outcome, expected) in outcomes {
+        assert_eq!(serde_json::to_value(outcome).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_value::<NodeOutcome>(serde_json::json!(expected)).unwrap(),
+            outcome
+        );
+    }
+
     for (status, expected) in [
         (SimulationStatus::Running, "running"),
         (SimulationStatus::Completed, "completed"),
@@ -154,4 +179,17 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
     for (kind, expected) in kinds {
         assert_eq!(serde_json::to_value(kind).unwrap()["type"], expected);
     }
+
+    for (mode, expected) in [
+        (ExecutionMode::Autopilot, "autopilot"),
+        (ExecutionMode::Supervised, "supervised"),
+        (ExecutionMode::Manual, "manual"),
+    ] {
+        assert_eq!(serde_json::to_value(mode).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_value::<ExecutionMode>(serde_json::json!(expected)).unwrap(),
+            mode
+        );
+    }
+    assert!(serde_json::from_value::<ExecutionMode>(serde_json::json!("god_mode")).is_err());
 }

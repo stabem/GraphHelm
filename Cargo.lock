@@ -794,6 +794,7 @@ dependencies = [
  "chrono",
  "fs2",
  "getrandom 0.4.3",
+ "graphhelm-execution",
  "graphhelm-graph",
  "graphhelm-protocols",
  "graphhelm-schema",

@@ -165,6 +165,10 @@ Stores and delivers secrets by reference and lease. Authenticated model runtimes
 
 Append-only record of operational facts. Events are immutable; corrections are new events.
 
+The closed set of replay-safe event kinds currently has 20 members: graph lifecycle (`GraphImported`, `GraphValidationFailed`, `GraphVersionPublished`), drafts (`DraftProposed`, `DraftRejected`, `DraftApplied`), policy (`PolicyObligationEvaluated`, `PolicyWaiverCreated`), simulation (`SimulationStarted`, `NodeStateChanged`, `SimulationCompleted`), execution (`ExecutionStarted`, `ExecutionModeChanged`, `NodeOutcomeRecorded`, `ExecutionCompleted`), integrity (`IntegrityCheckpointCreated`), and Evidence lifecycle (`EvidenceErasureRequested`, `EvidenceErasureCompleted`, `EvidenceCiphertextDeleted`, `EvidenceLegalHoldChanged`). The four execution kinds and the `ghost` node state are the wire surface Milestone 04a/04b added to the Milestone 03 baseline; nothing yet publishes them outside tests, because scheduling and in-flight governance (04c/04d) do not exist yet.
+
+The execution projection is a disposable, rebuildable fold over this journal, not a mutable table: replaying the same events twice yields byte-identical state, and a discarded generation rebuilt from a checkpoint lands on the same state as a direct replay. It exposes the current execution's autonomy mode and, per node, an attempt count and a run of consecutive identical outcomes — both derived entirely by folding history, never read from an event payload. See [docs/milestones/graph-engine-governor.md](../milestones/graph-engine-governor.md) for what folds them and what is still missing (scheduling, signal intake, pause/resume, the operator CLI).
+
 ### 3.16 Project Knowledge Graph
 
 Materializes entities, claims, relations, temporality, confidence, conflicts, and provenance from events and documents.

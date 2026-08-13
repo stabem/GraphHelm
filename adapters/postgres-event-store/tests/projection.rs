@@ -1,8 +1,17 @@
 mod support;
 
+use std::sync::Arc;
+
 use graphhelm_events::{
-    AsyncEventRepository, EventRepositoryError, ProjectionGeneration, ProjectionRebuildRequest,
-    ProjectionRepository,
+    AsyncEventRepository, EventRepositoryError, PreparedAppend, ProjectionGeneration,
+    ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, RepositoryFuture,
+    StreamHead,
+};
+use graphhelm_postgres_event_store::PostgresEventStore;
+use graphhelm_protocols::{
+    ActorId, EventKind, ExecutionMode, ExecutionStarted, NewEvent, NodeOutcome,
+    NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedActorType, RepositoryScope,
+    Sensitivity, WireHash,
 };
 use sqlx::Row;
 
@@ -499,6 +508,178 @@ fn projection_rows_are_scoped_immutable_and_corruption_fails_closed() {
                 .await,
             Err(EventRepositoryError::Integrity | EventRepositoryError::UnsupportedFormat)
         ));
+        database.cleanup().await;
+    });
+}
+
+/// One `ExecutionStarted` and the two `NodeOutcomeRecorded` hops of one dispatch, so the generation
+/// resumed below carries
+/// real execution state (`executionId`, `mode`, `nodeAttempts`, `lastOutcome`,
+/// `identicalOutcomes`) rather than only the pre-04b fields.
+fn execution_events(execution: &str) -> Vec<NewEvent> {
+    let execution_id = OpaqueId::parse(execution).unwrap();
+    let actor_running = PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse("system.test").unwrap(),
+    );
+    let actor = PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse("system.test").unwrap(),
+    );
+    vec![
+        NewEvent::new(
+            OpaqueId::parse("key-watermark-started").unwrap(),
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+            Vec::new(),
+            Vec::new(),
+        ),
+        NewEvent::new(
+            OpaqueId::parse("key-watermark-outcome").unwrap(),
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                execution_id: execution_id.clone(),
+                node_id: OpaqueId::parse("start").unwrap(),
+                outcome: NodeOutcome::Started,
+                next_state: NodeState::Queued,
+            }),
+            Vec::new(),
+            Vec::new(),
+        ),
+        // Dispatch is two hops: Ready -> Queued, then Queued -> Running. Only the second is an
+        // attempt, so emitting just the first would leave nodeAttempts at zero.
+        NewEvent::new(
+            OpaqueId::parse("key-watermark-running").unwrap(),
+            actor_running,
+            Sensitivity::Internal,
+            EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                execution_id,
+                node_id: OpaqueId::parse("start").unwrap(),
+                outcome: NodeOutcome::Started,
+                next_state: NodeState::Running,
+            }),
+            Vec::new(),
+            Vec::new(),
+        ),
+    ]
+}
+
+/// A `ProjectionRepository` that always answers `load_generation` with a fixed, pre-built
+/// generation, regardless of the identity the caller actually requested. It stands in for a
+/// hypothetically buggy or compromised storage layer, which is the only way to exercise the
+/// domain-level guard in `ProjectionRebuilder::rebuild` in isolation: the real Postgres adapter's
+/// own `load_generation` cannot return a mismatched generation (its query filters by the exact
+/// requested identity, and `decode_generation` additionally rejects a stored row whose embedded
+/// watermark disagrees with its own columns), so that guard is otherwise unreachable through the
+/// adapter alone. Everything else delegates to the real adapter so `save_generation`/`load_active`/
+/// `swap_active` still run the genuine authenticated code path.
+struct MismatchedProjectionRepository {
+    inner: Arc<PostgresEventStore>,
+    stored: ProjectionGeneration,
+}
+
+impl ProjectionRepository for MismatchedProjectionRepository {
+    fn load_generation<'a>(
+        &'a self,
+        _request: &'a ProjectionRebuildRequest,
+    ) -> RepositoryFuture<'a, Result<Option<ProjectionGeneration>, EventRepositoryError>> {
+        Box::pin(async move { Ok(Some(self.stored.clone())) })
+    }
+
+    fn save_generation<'a>(
+        &'a self,
+        generation: ProjectionGeneration,
+    ) -> RepositoryFuture<'a, Result<(), EventRepositoryError>> {
+        self.inner.save_generation(generation)
+    }
+
+    fn load_active<'a>(
+        &'a self,
+        scope: RepositoryScope,
+        stream_id: String,
+        projection_name: String,
+        projection_version: u32,
+    ) -> RepositoryFuture<'a, Result<Option<ProjectionGeneration>, EventRepositoryError>> {
+        self.inner
+            .load_active(scope, stream_id, projection_name, projection_version)
+    }
+
+    fn swap_active<'a>(
+        &'a self,
+        generation: ProjectionGeneration,
+        expected_source_head: Option<StreamHead>,
+    ) -> RepositoryFuture<'a, Result<(), EventRepositoryError>> {
+        self.inner.swap_active(generation, expected_source_head)
+    }
+}
+
+/// `GHPROJ001_WATERMARK_MISMATCH` was shipped in milestone 03 with no test ever observed to
+/// produce it (see `.superpowers/sdd/2026-08-09-production-event-evidence-store/
+/// final-review-findings.md:591`). It is raised in exactly one place,
+/// `ProjectionRebuilder::rebuild` (`core/events/src/projection.rs`), when a stored generation's
+/// identity does not match the one requested to resume — a defense-in-depth guard against a
+/// storage layer that hands back the wrong generation. This test drives that guard directly with
+/// `MismatchedProjectionRepository`, and proves that a generation carrying real execution state
+/// (D-022 mode, attempt counts, outcome runs) is rejected exactly the same as an old-format one:
+/// adding fields to `ExecutionProjection` did not loosen the identity check that guards the swap.
+#[test]
+#[ignore = "requires GRAPHHELM_TEST_ADMIN_URL"]
+fn a_generation_with_mismatched_identity_is_rejected_as_watermark_mismatch_even_with_execution_state()
+ {
+    support::runtime().block_on(async {
+        let database = support::TestDatabase::new().await;
+        let scope = support::scope("projection-watermark-mismatch");
+        let stream = "stream-projection-watermark-mismatch";
+
+        let events = database
+            .repository
+            .append_atomic(
+                PreparedAppend::new(
+                    scope.clone(),
+                    OpaqueId::parse(stream).unwrap(),
+                    1,
+                    execution_events(scope.execution_id().unwrap().as_str()),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // The generation storage actually hands back describes generation 2, carrying execution
+        // state folded from the real history above, while the request below asks to resume
+        // generation 1. That is precisely a "cursor/hash/version cannot safely resume" case.
+        let mut stored = ProjectionGeneration::new(
+            scope.clone(),
+            stream.to_owned(),
+            "execution-projection".to_owned(),
+            1,
+            2,
+        )
+        .unwrap();
+        stored.apply_page(&events).unwrap();
+        assert!(stored.projection().execution_id.is_some());
+        assert_eq!(stored.projection().mode, Some(ExecutionMode::Supervised));
+        assert_eq!(stored.projection().node_attempts.get("start"), Some(&1));
+
+        let projections = Arc::new(MismatchedProjectionRepository {
+            inner: database.repository.clone(),
+            stored,
+        });
+        let rebuilder = ProjectionRebuilder::new(database.repository.clone(), projections);
+        let mismatched_request = request(scope, stream, 1);
+
+        let error = rebuilder.rebuild(mismatched_request).await.unwrap_err();
+        assert!(matches!(error, EventRepositoryError::WatermarkMismatch));
+        assert_eq!(error.code(), "GHPROJ001_WATERMARK_MISMATCH");
         database.cleanup().await;
     });
 }

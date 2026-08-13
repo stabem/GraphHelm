@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionId, NodeState, OpaqueId,
-    PersistedGraphVersion, PolicyWaiver, ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
+    EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionId, ExecutionMode, NodeOutcome,
+    NodeState, OpaqueId, PersistedGraphVersion, PolicyWaiver, ProjectId, RepositoryScope,
+    SimulationStatus, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -135,6 +136,12 @@ pub enum EvidenceAvailability {
 }
 
 /// Pure replay result rebuilt only from the safe journal projection.
+///
+/// `Option<T>` tolerates an absent key on its own; serde only special-cases `Option`. A collection
+/// field needs an explicit `#[serde(default)]` to load empty when it is absent — but only the
+/// fields added after a generation format shipped should carry one. Defaulting a field that every
+/// stored generation already has would let a truncated state load silently as empty instead of
+/// failing, which is the opposite of what a corrupted generation should do.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionProjection {
@@ -148,6 +155,42 @@ pub struct ExecutionProjection {
     pub simulation_status: Option<SimulationStatus>,
     pub evidence_availability: BTreeMap<ScopedEvidenceId, EvidenceAvailability>,
     pub legal_holds: BTreeSet<ScopedEvidenceId>,
+    /// The execution this projection describes, once one has started.
+    pub execution_id: Option<String>,
+    /// Autonomy in force, per D-022. `None` until an execution starts.
+    pub mode: Option<ExecutionMode>,
+    /// Attempts observed per node. Derived by folding outcomes, never read from a payload, so
+    /// history stays the single source of truth.
+    #[serde(default)]
+    pub node_attempts: BTreeMap<String, u32>,
+    /// The most recent outcome per node, used to detect consecutive identical outcomes.
+    #[serde(default)]
+    pub last_outcome: BTreeMap<String, NodeOutcome>,
+    /// Consecutive semantically identical outcomes per node, per decision 5.7.
+    ///
+    /// This is the run length *including* the last outcome recorded, which is not the same quantity
+    /// as `TransitionRequest::identical_outcomes` — that one describes the outcome about to be
+    /// reported. They agree only when the next outcome equals `last_outcome`. Read it through
+    /// [`ExecutionProjection::identical_outcomes_for`], or a node whose previous run was of a
+    /// *different* outcome will look stalled on its very first failure.
+    #[serde(default)]
+    pub identical_outcomes: BTreeMap<String, u32>,
+}
+
+impl ExecutionProjection {
+    /// Consecutive identical outcomes already observed for `node`, for the `outcome` about to be
+    /// reported.
+    ///
+    /// Returns 0 when the last recorded outcome differs, which is what makes this safe to hand to
+    /// `TransitionRequest::identical_outcomes`. Reading the raw map instead would block a node on
+    /// its first failure whenever some *other* outcome had already run to the bound.
+    #[must_use]
+    pub fn identical_outcomes_for(&self, node: &str, outcome: NodeOutcome) -> u32 {
+        if self.last_outcome.get(node) != Some(&outcome) {
+            return 0;
+        }
+        self.identical_outcomes.get(node).copied().unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -546,6 +589,10 @@ impl ProjectionGeneration {
     }
 }
 
+// A projection is loaded whole and is size-checked on write and read. Bounding the node maps keeps
+// a hostile history from growing it without limit before that check can reject it.
+const MAX_PROJECTION_NODES: usize = 10_000;
+
 fn apply_projection_event(
     projection: &mut ExecutionProjection,
     active_legal_holds: &mut BTreeSet<(ScopedEvidenceId, String)>,
@@ -619,6 +666,64 @@ fn apply_projection_event(
             projection
                 .node_states
                 .insert(payload.node_id.to_string(), payload.next_state);
+        }
+        EventKind::ExecutionStarted(payload) => {
+            if projection.execution_id.is_some() {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.execution_id = Some(payload.execution_id.to_string());
+            projection.mode = Some(payload.mode);
+        }
+        EventKind::ExecutionModeChanged(payload) => {
+            // An unrooted stream must not acquire an autonomy mode. With no execution started both
+            // sides are None, so the previous-mode comparison alone would let it through.
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+                || projection.mode != payload.previous_mode
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.mode = Some(payload.mode);
+        }
+        EventKind::NodeOutcomeRecorded(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            let node = payload.node_id.to_string();
+            if projection.node_attempts.len() >= MAX_PROJECTION_NODES
+                && !projection.node_attempts.contains_key(&node)
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            // An attempt is one entry into Running, not every report about a node. Gating on
+            // `Started` alone would double-count, because apply_transition needs two of them to
+            // dispatch: Ready -> Queued, then Queued -> Running. Keying on the resulting state is
+            // unambiguous under either journalling convention 04c settles on.
+            let attempts = projection.node_attempts.entry(node.clone()).or_insert(0);
+            if payload.outcome == NodeOutcome::Started && payload.next_state == NodeState::Running {
+                *attempts = attempts.checked_add(1).ok_or(ReplayError::LimitExceeded)?;
+            }
+
+            let run = match projection
+                .last_outcome
+                .insert(node.clone(), payload.outcome)
+            {
+                Some(previous) if previous == payload.outcome => projection
+                    .identical_outcomes
+                    .get(&node)
+                    .copied()
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or(ReplayError::LimitExceeded)?,
+                _ => 1,
+            };
+            projection.identical_outcomes.insert(node.clone(), run);
+            projection.node_states.insert(node, payload.next_state);
+        }
+        EventKind::ExecutionCompleted(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.simulation_status = Some(payload.status.clone());
         }
         EventKind::SimulationCompleted(payload) => {
             projection.simulation_status = Some(payload.status.clone());
@@ -726,107 +831,9 @@ pub fn replay(
         } else {
             projection.stream_id = Some(event.stream_id.to_string());
         }
-        match &event.kind {
-            EventKind::GraphVersionPublished(payload) => {
-                graphhelm_graph::validate_persisted_projection(&payload.version)
-                    .map_err(|_| ReplayError::Corrupt)?;
-                if event.actor != *payload.version.created_by()
-                    || event.scope.execution_id() != Some(payload.version.topology().execution_id())
-                    || graphhelm_graph::validate_publication_evidence_ids(
-                        &event.scope,
-                        &payload.version,
-                    )
-                    .is_err()
-                    || graphhelm_graph::validate_evidence_bijection(
-                        payload.version.content_slots(),
-                        &event.evidence_refs,
-                    )
-                    .is_err()
-                {
-                    return Err(ReplayError::Corrupt);
-                }
-                match &projection.current_graph {
-                    Some(active)
-                        if active.number().checked_add(1) != Some(payload.version.number())
-                            || payload.version.predecessor().is_none_or(|predecessor| {
-                                predecessor.number() != active.number()
-                                    || predecessor.semantic_hash() != active.semantic_hash()
-                            }) =>
-                    {
-                        return Err(ReplayError::Corrupt);
-                    }
-                    None if payload.version.number() != 1
-                        || payload.version.predecessor().is_some() =>
-                    {
-                        return Err(ReplayError::Corrupt);
-                    }
-                    _ => {}
-                }
-                projection.current_graph = Some(payload.version.clone());
-                for slot in payload.version.content_slots() {
-                    projection
-                        .evidence_availability
-                        .entry(scoped_evidence_key(&event.scope, slot.evidence_id()))
-                        .or_insert(EvidenceAvailability::Available);
-                }
-            }
-            EventKind::DraftProposed(payload) => {
-                projection
-                    .proposed_drafts
-                    .push(payload.draft_id.to_string());
-            }
-            EventKind::DraftRejected(payload) => {
-                projection
-                    .rejected_drafts
-                    .push(payload.draft_id.to_string());
-            }
-            EventKind::DraftApplied(payload) => {
-                projection.applied_drafts.push(payload.draft_id.to_string());
-            }
-            EventKind::PolicyWaiverCreated(payload) => {
-                projection.waivers.push(payload.waiver.clone());
-            }
-            EventKind::SimulationStarted(_) => {
-                projection.simulation_status = Some(SimulationStatus::Running);
-            }
-            EventKind::NodeStateChanged(payload) => {
-                projection
-                    .node_states
-                    .insert(payload.node_id.to_string(), payload.next_state);
-            }
-            EventKind::SimulationCompleted(payload) => {
-                projection.simulation_status = Some(payload.status.clone());
-            }
-            EventKind::EvidenceErasureRequested(payload) => {
-                projection.evidence_availability.insert(
-                    scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
-                    EvidenceAvailability::ErasurePending,
-                );
-            }
-            EventKind::EvidenceErasureCompleted(payload) => {
-                projection.evidence_availability.insert(
-                    scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
-                    EvidenceAvailability::Erased,
-                );
-            }
-            EventKind::EvidenceCiphertextDeleted(payload) => {
-                projection.evidence_availability.insert(
-                    scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
-                    EvidenceAvailability::Deleted,
-                );
-            }
-            EventKind::EvidenceLegalHoldChanged(payload) => update_legal_hold_projection(
-                &mut projection,
-                &mut active_legal_holds,
-                scoped_evidence_key(&payload.evidence_scope, &payload.evidence_id),
-                payload.hold_id.as_str(),
-                payload.state,
-            ),
-            EventKind::GraphImported(_)
-            | EventKind::GraphValidationFailed(_)
-            | EventKind::PolicyObligationEvaluated(_)
-            | EventKind::IntegrityCheckpointCreated(_) => {}
-        }
+        // One fold, not two. A second copy of this logic is what would let a rebuilt generation
+        // and a direct replay disagree, which is the property this milestone exists to prove.
+        apply_projection_event(&mut projection, &mut active_legal_holds, event)?;
     }
     Ok(projection)
 }
@@ -858,6 +865,97 @@ fn scoped_evidence_key(
     evidence_id: &EvidenceId,
 ) -> ScopedEvidenceId {
     ScopedEvidenceId::new(scope.clone(), evidence_id.clone())
+}
+
+#[cfg(test)]
+mod execution_fields_tests {
+    use super::*;
+
+    /// A realistic pre-04b generation: every field that already existed is present, and only the
+    /// fields this milestone added are absent.
+    fn older_generation_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "streamId": "stream-1",
+            "currentGraph": null,
+            "proposedDrafts": [],
+            "rejectedDrafts": [],
+            "appliedDrafts": [],
+            "waivers": [],
+            "nodeStates": {"start": "succeeded"},
+            "simulationStatus": "completed",
+            "evidenceAvailability": {},
+            "legalHolds": []
+        })
+    }
+
+    /// The execution fields must round-trip, because a projection generation is persisted as JSON
+    /// and reloaded; a field that serializes but does not deserialize would silently reset on
+    /// every rebuild.
+    #[test]
+    fn execution_fields_survive_a_generation_round_trip() {
+        let mut projection = ExecutionProjection {
+            execution_id: Some("execution-1".to_owned()),
+            mode: Some(graphhelm_protocols::ExecutionMode::Supervised),
+            ..ExecutionProjection::default()
+        };
+        projection.node_attempts.insert("start".to_owned(), 3);
+        projection.last_outcome.insert(
+            "start".to_owned(),
+            graphhelm_protocols::NodeOutcome::RetryableFailure,
+        );
+        projection.identical_outcomes.insert("start".to_owned(), 2);
+
+        let encoded = serde_json::to_string(&projection).unwrap();
+        let decoded: ExecutionProjection = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, projection);
+    }
+
+    /// An older generation predates these fields. It must load with them empty rather than fail,
+    /// because generations are disposable and a rebuild will refill them.
+    ///
+    /// The fixture is a realistic pre-04b generation: every field that already existed is present,
+    /// and only the new ones are absent. An empty `{}` would be a different and weaker test — it
+    /// would pass only by defaulting fields that every stored generation actually has, and that
+    /// would let a truncated state load silently instead of failing.
+    #[test]
+    fn a_generation_written_before_these_fields_still_loads() {
+        let older = older_generation_fixture();
+        let decoded: ExecutionProjection = serde_json::from_value(older).unwrap();
+        assert_eq!(
+            decoded.node_states.get("start"),
+            Some(&NodeState::Succeeded)
+        );
+        assert_eq!(decoded.execution_id, None);
+        assert_eq!(decoded.mode, None);
+        assert!(decoded.node_attempts.is_empty());
+    }
+
+    /// A generation missing a field it should have is corrupt, not old. It must fail rather than
+    /// load empty, or a truncated state would look like a legitimately empty one.
+    ///
+    /// Removing each required key in turn, rather than asserting on a bare `{}`. `{}` proves only
+    /// that the *first* required field is required; every other one could silently acquire a
+    /// default and this test would stay green.
+    #[test]
+    fn a_generation_missing_a_pre_existing_field_fails() {
+        let complete = older_generation_fixture();
+        for required in [
+            "proposedDrafts",
+            "rejectedDrafts",
+            "appliedDrafts",
+            "waivers",
+            "nodeStates",
+            "evidenceAvailability",
+            "legalHolds",
+        ] {
+            let mut truncated = complete.clone();
+            truncated.as_object_mut().unwrap().remove(required).unwrap();
+            assert!(
+                serde_json::from_value::<ExecutionProjection>(truncated).is_err(),
+                "a generation missing {required} must fail rather than load empty"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

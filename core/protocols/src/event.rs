@@ -3,9 +3,10 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ArtifactReference, EventHash, EvidenceId, EvidenceReference, NodeState, OpaqueId,
-    PersistedActor, PersistedDiagnostic, PersistedGraphVersion, PersistedTimestamp, PolicyWaiver,
-    RawSha256, RepositoryScope, SemanticVersion, Sensitivity, SimulationStatus, WireHash,
+    ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode, NodeOutcome,
+    NodeState, OpaqueId, PersistedActor, PersistedDiagnostic, PersistedGraphVersion,
+    PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
+    SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
 };
 
@@ -145,7 +146,7 @@ impl EventEnvelope {
     }
 }
 
-/// The closed set of 16 replay-safe production events.
+/// The closed set of 20 replay-safe production events.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
@@ -160,6 +161,10 @@ pub enum EventKind {
     SimulationStarted(SimulationStarted),
     NodeStateChanged(NodeStateChanged),
     SimulationCompleted(SimulationCompleted),
+    ExecutionStarted(ExecutionStarted),
+    ExecutionModeChanged(ExecutionModeChanged),
+    NodeOutcomeRecorded(NodeOutcomeRecorded),
+    ExecutionCompleted(ExecutionCompleted),
     IntegrityCheckpointCreated(IntegrityCheckpointCreated),
     EvidenceErasureRequested(EvidenceErasureRequested),
     EvidenceErasureCompleted(EvidenceErasureCompleted),
@@ -285,6 +290,44 @@ pub struct NodeStateChanged {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SimulationCompleted {
     pub simulation_id: OpaqueId,
+    pub status: SimulationStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionStarted {
+    pub execution_id: OpaqueId,
+    pub graph_version: u64,
+    pub graph_hash: WireHash,
+    pub mode: ExecutionMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionModeChanged {
+    pub execution_id: OpaqueId,
+    pub previous_mode: Option<ExecutionMode>,
+    pub mode: ExecutionMode,
+}
+
+/// One reported outcome for one node.
+///
+/// `next_state` is the decision `graphhelm_execution::apply_transition` produced. It is recorded
+/// rather than recomputed here because `core/events` must not depend on `core/execution`; the
+/// dependency direction runs the other way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeOutcomeRecorded {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    pub outcome: NodeOutcome,
+    pub next_state: NodeState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionCompleted {
+    pub execution_id: OpaqueId,
     pub status: SimulationStatus,
 }
 

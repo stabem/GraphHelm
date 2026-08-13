@@ -101,7 +101,7 @@ fn event_fixture(kind: Value, project_level: bool) -> Value {
 }
 
 #[test]
-fn all_sixteen_safe_event_variants_strictly_round_trip_against_schema() {
+fn all_twenty_safe_event_variants_strictly_round_trip_against_schema() {
     let diagnostic = json!({
         "code":"GHP001_SAFE","severity":"error","path":"/topology","component":"governor"
     });
@@ -158,6 +158,22 @@ fn all_sixteen_safe_event_variants_strictly_round_trip_against_schema() {
             false,
         ),
         (
+            json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            false,
+        ),
+        (
+            json!({"type":"execution_mode_changed","data":{"executionId":"execution-1","previousMode":null,"mode":"manual"}}),
+            false,
+        ),
+        (
+            json!({"type":"node_outcome_recorded","data":{"executionId":"execution-1","nodeId":"start","outcome":"succeeded","nextState":"succeeded"}}),
+            false,
+        ),
+        (
+            json!({"type":"execution_completed","data":{"executionId":"execution-1","status":"completed"}}),
+            false,
+        ),
+        (
             json!({"type":"integrity_checkpoint_created","data":{"streamId":"stream-1","sequence":1,"eventHash":hash,"repositoryFormat":"1.0.0","authenticationTag":{"keyId":"key-1","algorithm":"hmac-sha256","tagSha256":raw}}}),
             true,
         ),
@@ -179,7 +195,7 @@ fn all_sixteen_safe_event_variants_strictly_round_trip_against_schema() {
         ),
     ];
 
-    assert_eq!(variants.len(), 16);
+    assert_eq!(variants.len(), 20);
     for (kind, project_level) in variants {
         let document = event_fixture(kind, project_level);
         assert_schema_valid(EVENT_ID, &document);
@@ -1093,20 +1109,10 @@ fn persisted_schema_accepts_only_registered_path_content_field_kinds() {
 /// `graphhelm_protocols::simulation::NodeState`), so the wire schema's `nodeState` enum must
 /// accept `"ghost"` too. This guards against the Rust vocabulary and the wire contract drifting
 /// apart again.
-#[test]
-fn node_state_changed_accepts_the_ghost_state_on_the_wire() {
-    let document = event_fixture(
-        json!({
-            "type":"node_state_changed",
-            "data":{
-                "simulationId":"simulation-1",
-                "nodeId":"start",
-                "previousState":null,
-                "nextState":"ghost"
-            }
-        }),
-        false,
-    );
+/// Builds a full envelope around `kind`, validates it against the schema, then round-trips it
+/// through `EventEnvelope` and back, re-validating the re-encoded form.
+fn assert_envelope_valid(kind: Value) {
+    let document = event_fixture(kind, false);
     assert_schema_valid(EVENT_ID, &document);
     let envelope: EventEnvelope = serde_json::from_value(document.clone()).unwrap();
     let encoded = serde_json::to_value(&envelope).unwrap();
@@ -1115,4 +1121,82 @@ fn node_state_changed_accepts_the_ghost_state_on_the_wire() {
         serde_json::from_value::<EventEnvelope>(encoded).unwrap(),
         envelope
     );
+}
+
+#[test]
+fn node_state_changed_accepts_the_ghost_state_on_the_wire() {
+    assert_envelope_valid(json!({
+        "type":"node_state_changed",
+        "data":{
+            "simulationId":"simulation-1",
+            "nodeId":"start",
+            "previousState":null,
+            "nextState":"ghost"
+        }
+    }));
+}
+
+#[test]
+fn execution_event_kinds_round_trip_with_exact_wire_names() {
+    let hash = format!("sha256:{}", "a".repeat(64));
+    let cases = [
+        (
+            "execution_started",
+            json!({"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}),
+        ),
+        (
+            "execution_mode_changed",
+            json!({"executionId":"execution-1","previousMode":"supervised","mode":"manual"}),
+        ),
+        (
+            "node_outcome_recorded",
+            json!({"executionId":"execution-1","nodeId":"start","outcome":"retryable_failure","nextState":"queued"}),
+        ),
+        (
+            "execution_completed",
+            json!({"executionId":"execution-1","status":"failed"}),
+        ),
+    ];
+    for (name, data) in cases {
+        let wire = json!({"type": name, "data": data});
+        let kind: EventKind = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&kind).unwrap(), wire, "{name}");
+    }
+}
+
+/// An absent mode must be an error too. Rejecting only unknown strings leaves the more dangerous
+/// hole open: if `mode` ever gained a serde default, a payload omitting it would deserialize to
+/// Autopilot, the most permissive mode, and no test would notice.
+#[test]
+fn an_execution_cannot_start_without_a_mode() {
+    let hash = format!("sha256:{}", "a".repeat(64));
+    let wire = json!({
+        "type": "execution_started",
+        "data": {"executionId":"execution-1","graphVersion":3,"graphHash":hash}
+    });
+    assert!(serde_json::from_value::<EventKind>(wire).is_err());
+}
+
+/// An unknown mode must not silently become the permissive one.
+#[test]
+fn an_execution_cannot_start_in_an_unknown_mode() {
+    let hash = format!("sha256:{}", "a".repeat(64));
+    let wire = json!({
+        "type": "execution_started",
+        "data": {"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"god_mode"}
+    });
+    assert!(serde_json::from_value::<EventKind>(wire).is_err());
+}
+
+#[test]
+fn the_envelope_schema_accepts_every_execution_event_kind() {
+    let hash = format!("sha256:{}", "a".repeat(64));
+    for data in [
+        json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+        json!({"type":"execution_mode_changed","data":{"executionId":"execution-1","previousMode":null,"mode":"manual"}}),
+        json!({"type":"node_outcome_recorded","data":{"executionId":"execution-1","nodeId":"start","outcome":"succeeded","nextState":"succeeded"}}),
+        json!({"type":"execution_completed","data":{"executionId":"execution-1","status":"completed"}}),
+    ] {
+        assert_envelope_valid(data);
+    }
 }

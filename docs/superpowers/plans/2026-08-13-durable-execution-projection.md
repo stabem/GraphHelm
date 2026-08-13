@@ -328,7 +328,7 @@ In the `EventKind` enum, after `SimulationCompleted(SimulationCompleted),`:
 Run: `cargo +1.97.1 test -p graphhelm-protocols --test persistence_wire`
 Expected: The two new tests PASS.
 
-`persistence_wire.rs` asserts `variants.len() == 16` in two places. Sixteen becomes twenty. Update both, and **only** those two numbers — that assertion is an inventory of event kinds and adding four is exactly what this task does. If any other count in that file moves, stop and report it rather than editing it.
+Leave `persistence_wire.rs`'s `assert_eq!(variants.len(), 16)` alone. Despite its name, that test is a list of JSON fixtures validated against the **wire schema**, not an enumeration of `EventKind` variants — so adding variants does not affect it, and raising it to twenty before the schema accepts the new kinds would break it outright. Task 4 adds the fixtures and moves the count, once the schema can validate them. The same is true of `core/schema-evolution/tests/conformance.rs`, which carries its own copy of that count.
 
 - [ ] **Step 6: Run the whole workspace to find exhaustive matches**
 
@@ -437,10 +437,17 @@ Expected: PASS, including `checked_in_1_0_0_release_is_complete_and_raw_byte_ide
 
 Add a plain `- ` bullet under `## [1.0.0]` in `schemas/CHANGELOG.md` naming the four kinds. Do **not** start it with `- BREAKING `; that prefix is parsed as major-change evidence by `apps/cli/src/commands/schema/check.rs:202`.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Grow the schema-validated fixture lists**
+
+Now that the schema accepts the four kinds, add one fixture per kind to the `variants` list in `persistence_wire.rs`'s round-trip-against-schema test and raise its count from 16 to 20. Do the same for the equivalent list in `core/schema-evolution/tests/conformance.rs`. Both are inventories of schema-valid event fixtures, and this task is what makes four more of them valid.
+
+Run: `cargo +1.97.1 test -p graphhelm-protocols -p graphhelm-schema-evolution --locked`
+Expected: PASS. A failure here means a fixture does not satisfy the schema you just wrote — fix the fixture or the schema, never the count.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add schemas core/protocols/tests/persistence_wire.rs
+git add schemas core/protocols/tests/persistence_wire.rs core/schema-evolution/tests/conformance.rs
 git commit -m "feat(schemas): add the execution event kinds to the envelope contract"
 ```
 

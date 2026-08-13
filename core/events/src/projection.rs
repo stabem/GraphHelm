@@ -589,9 +589,14 @@ impl ProjectionGeneration {
     }
 }
 
-// A projection is loaded whole and is size-checked on write and read. Bounding the node maps keeps
-// a hostile history from growing it without limit before that check can reject it.
-const MAX_PROJECTION_NODES: usize = 10_000;
+/// Resource guard on the projection's per-node maps.
+///
+/// This is **not** one of decision 5.7's bounds. Those are domain limits a real execution can
+/// reach, and reaching one blocks for an owner decision. This one exists so a corrupt or hostile
+/// history cannot grow the maps without limit before the projection's size check can reject it, and
+/// a legitimate execution must never reach it — which is why it sits an order of magnitude above
+/// `MAX_READY_SET`. `graphhelm_execution` pins that relationship in a test.
+pub const MAX_PROJECTION_NODES: usize = 10_000;
 
 fn apply_projection_event(
     projection: &mut ExecutionProjection,

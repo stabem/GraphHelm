@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 chrono.workspace = true
 graphhelm-events = { path = "../events" }
+graphhelm-execution = { path = "../execution" }
 graphhelm-graph = { path = "../graph" }
 graphhelm-protocols = { path = "../protocols" }
 serde.workspace = true

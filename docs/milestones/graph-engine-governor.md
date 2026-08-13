@@ -99,17 +99,72 @@ The guard itself lives in `ProjectionRebuilder::rebuild` (`core/events/src/proje
 
 **The production PostgreSQL adapter cannot structurally reach this guard.** `load_generation`'s SQL already filters by the exact requested identity, and `decode_generation` rejects a stored row whose embedded watermark disagrees with its own columns, with `Integrity` first. So through the real adapter alone, a mismatched generation can never reach `rebuild` in the first place. The new test exercises the guard through `MismatchedProjectionRepository`, a test-double `ProjectionRepository` that always answers `load_generation` with a fixed, pre-built generation regardless of what was requested, while delegating `save_generation`, `load_active`, and `swap_active` to the real adapter so the rest of the path is genuine. This proves the guard exists and works as defence in depth against a buggy or compromised storage-layer implementation — it is not a path the production adapter exercises today. The test also confirms that a mismatched generation carrying real execution state (mode, attempt counts, outcome runs) is rejected exactly the same as an old-format one, so adding fields to `ExecutionProjection` did not loosen the identity check guarding the swap.
 
+## What 04c shipped: the scheduler and the effect-free executor
+
+04c decides *what runs next* and *when to stop trying*. It dispatches nothing and appends no events; both additions are total functions over values, so a replayed execution schedules identically to the original.
+
+### Ready-set computation
+
+`graphhelm_execution::ready_set(spec, states)` answers which nodes may be dispatched now. Three rules define it, each pinned by a test in `core/execution/src/ready.rs` — including the edge-type rule, which a non-`Control` edge now covers:
+
+- **Dependencies are fail-closed.** *Every* incoming edge gates a node, whatever its `EdgeType`. A node never runs before something it is connected downstream of. Refining this per edge type needs the condition evaluation 04d brings; guessing now would let a node run early.
+- **A predecessor releases its dependent only when `Succeeded`, `Waived` or `Skipped`.** Waived and skipped count because an owner exercising D-019 sovereignty must not stall the run. `Failed`, `Cancelled` and `Blocked` deliberately do not release anything.
+- **Only `Ready` nodes are dispatchable.** An untouched node behaves as `Draft` and reaches `Ready` through approval; dispatching a draft would propose work `apply_transition` rejects, and a test now pins that every dispatchable state accepts a `Started`. Resuming `Paused`, `WaitingInput` or `WaitingCapacity` is 04e's business.
+
+`NodeState::Ghost` is excluded by construction from both rules: a ghost is never dispatchable and never releases a dependent. That is what makes decision 5.2's "consumes no tokens" structural rather than a convention someone has to remember. `core/execution/tests/scheduling_properties.rs` samples it across randomised assignments of the other nodes' states (proptest, not exhaustion), and was verified able to fail by adding `Ghost` to the dispatchable set.
+
+Exceeding `MAX_READY_SET` returns `ScheduleError::ReadySetTooLarge` rather than a truncated set, per decision 5.7. A truncated ready set is indistinguishable from a smaller graph and would lose work silently.
+
+### No-progress classification
+
+`classify_progress(projection, node, outcome)` returns `Continue`, `AttemptsExhausted` or `NoProgress`, reading the counters 04b derives against the bounds 04a fixed. Every threshold is a count, never a duration, so the same history reaches the same verdict on a slower machine.
+
+It reads the run length through `ExecutionProjection::identical_outcomes_for` rather than the raw map. The two are different quantities — the map includes the last outcome recorded — and reading the map directly would block a node on its *first* failure whenever some other outcome had already run to the bound. That defect was observed failing before the accessor was used.
+
+**Five of `OBSERVABILITY_AND_RECOVERY.md` §15's seven no-progress conditions are not detected.** Only *retries with no change* and *semantically identical outputs* are decidable from what the projection records. Recurring remediation loops, alternating graph mutations, agent delegation chains, repeated tool failure, and budget consumed without evidence gain need signal intake (04d) or real tool calls (Milestone 05). None of them is approximated.
+
+### The effect-free executor
+
+`graphhelm_simulation::FixtureExecutor` is the first and only milestone-04 implementation of the `NodeExecutor` seam. It consults a fixture table and nothing else — no model, no tool, no sandbox, no network. `Success` maps to `Succeeded`, `Failure` to `RetryableFailure`, and both an explicit `Unknown` and an absent fixture to `NeedsInput`: nobody said what that node does, and waiting is honest where inventing a success is not.
+
+Its answer does not depend on the attempt number, which is tested. An executor whose answer changed with the attempt would make a replay diverge from the run it replays.
+
+**It has no callers.** `simulate()` in `core/simulation/src/engine.rs` still drives its own transitions and reads the fixture table itself, so simulation is not yet a consumer of the execution contract — the seam is defined and implemented, and wiring it is outstanding work, tracked below. Saying otherwise would claim a property no code delivers.
+
+The two disagree today, and the divergences are the work item:
+
+| case | `engine.rs` | `FixtureExecutor` |
+|---|---|---|
+| fixture absent | `Success` → `Succeeded` | `NeedsInput` |
+| `Failure` | `Failed`, run fails | `RetryableFailure`, retryable |
+| `Unknown` | `Paused` + `GHSIM001` | `NeedsInput` |
+| predecessor released by | `Succeeded` only | `Succeeded`, `Waived` or `Skipped` |
+| edge conditions | evaluated | deferred to 04d |
+
+The absent-fixture row is a straight inversion: `FixtureExecutor` argues that inventing a success for an unspecified node is dishonest, while the engine that actually runs invents exactly that. Reconciling them changes simulation's observable behaviour, so it is not a refactor to slip in silently — it needs its own scoped change with the fixture semantics decided deliberately.
+
+### A resource guard is not a domain bound
+
+The 04b review found `MAX_PROJECTION_NODES` returning `LimitExceeded`, which makes a projection permanently unrebuildable, while decision 5.7 says exceeding a bound blocks for an owner decision and never truncates. Both are defensible alone and contradictory together.
+
+They are different kinds of limit, and 04c separates them. `MAX_READY_SET` is a **domain bound**: a real execution reaches it and must block. `MAX_PROJECTION_NODES` is a **resource guard** against a corrupt or hostile history exhausting memory, and a legitimate execution must never reach it. That is only true while it stays above every domain bound, which nothing checked. A module-scope `const` in `core/execution/src/ready.rs` now pins that one relationship — verified to fail `cargo build`, not merely `cargo test`. It compares against `MAX_READY_SET` alone; `MAX_SIGNALS_PER_EXECUTION` is also 10,000 but counts signals rather than nodes, so it is not comparable and is deliberately not asserted.
+
+### The purity invariant, corrected
+
+04a's `source_invariants.rs` forbade `graphhelm-events`, `graphhelm-graph` and `graphhelm-policy` in the manifest. The design's §6 says `core/execution` depends on exactly those crates — the invariant was over-broad, not the design. It now forbids adapters, clocks and randomness, which is what it was always for, and a second test pins the exact dependency set so adding one is a deliberate edit rather than a silent manifest change.
+
 ## Explicitly out of scope
 
-Nothing below exists yet. It is scoped to milestones 04c through 04f:
+Nothing below exists yet. It is scoped to milestones 04d through 04f:
 
-- **04c — Scheduler and effect-free executor.** Ready-set computation, bounded concurrency, retry classification, no-progress detection, and the first `NodeExecutor` implementation. Nothing computes a ready set today; `MAX_READY_SET` is defined but unread.
+- **Bounded concurrency.** The design's 04c line reads "ready-set computation, bounded concurrency, retry classification, no-progress detection". Concurrency is not bounded: `ready_set` caps how many nodes may be ready, not how many may run at once, and `GraphBudgets.max_parallel_model_calls` still has no reader. It belongs with whatever first dispatches work, which is 04d.
+- **Wiring `simulate()` through `FixtureExecutor` and `apply_transition`,** resolving the divergences tabulated above.
 - **04d — In-flight governance.** Signal intake, ghost node lifecycle and approval, Governor mutation publication, owner override with waiver. `TypedSignal` exists and classifies signals, but nothing consumes one; `MAX_ACCEPTED_MUTATIONS` and `MAX_SIGNALS_PER_EXECUTION` are defined but unread.
 - **04e — Pause, resume, cancel, recovery.** Checkpoint content, resume preconditions, crash recovery of an interrupted execution.
 - **04f — Operator CLI, gate, documentation.** JSON-only `execution start|status|signal|approve|pause|resume|cancel` commands and the milestone-closing gate integration and final review.
 
-Two consequences of this follow directly from `apply_transition`'s table, worth stating plainly: `Paused` and `Linting` are accepted as transition *sources* (`(S::Draft | S::Linting, O::Approved) => Ok(S::Ready)`, and `(S::WaitingInput | S::WaitingCapacity | S::Paused, O::Started) => Ok(S::Queued)`), but nothing in 04a or 04b ever produces a node in either state — pause and lint completion arrive with 04c and 04e. `Blocked` similarly has no resume path in the current transition table: nothing maps `(S::Blocked, _)` to any state except `(_, O::Waived) => Ok(S::Waived)` and `(_, O::Skipped) => Ok(S::Skipped)`, and `(_, O::Cancelled)`; there is no `(S::Blocked, O::Started)` or equivalent that returns a node to `Queued`. A resume path for `Blocked` is 04e's job.
+Two consequences of this follow directly from `apply_transition`'s table, worth stating plainly: `Paused` and `Linting` are accepted as transition *sources* (`(S::Draft | S::Linting, O::Approved) => Ok(S::Ready)`, and `(S::WaitingInput | S::WaitingCapacity | S::Paused, O::Started) => Ok(S::Queued)`), but nothing in 04a or 04b ever produces a node in either state — pause and lint completion arrive with 04e. `Blocked` similarly has no resume path in the current transition table: nothing maps `(S::Blocked, _)` to any state except `(_, O::Waived) => Ok(S::Waived)` and `(_, O::Skipped) => Ok(S::Skipped)`, and `(_, O::Cancelled)`; there is no `(S::Blocked, O::Started)` or equivalent that returns a node to `Queued`. A resume path for `Blocked` is 04e's job.
 
 ## Acceptance evidence
 
-`core/execution/tests/source_invariants.rs` and `core/execution/tests/transition_properties.rs` cover purity and the state machine. `core/events/tests/execution_projection.rs` and `adapters/postgres-event-store/tests/projection.rs` cover the projection, its generation compatibility, and the watermark guard; the PostgreSQL suite is `#[ignore]`d in ordinary runs and requires `GRAPHHELM_TEST_ADMIN_URL`, matching Milestone 03's convention.
+`core/execution/tests/source_invariants.rs`, `core/execution/tests/transition_properties.rs` and `core/execution/tests/scheduling_properties.rs` cover purity, the state machine and scheduling. `core/events/tests/execution_projection.rs` and `adapters/postgres-event-store/tests/projection.rs` cover the projection, its generation compatibility, and the watermark guard; the PostgreSQL suite is `#[ignore]`d in ordinary runs and requires `GRAPHHELM_TEST_ADMIN_URL`, matching Milestone 03's convention.

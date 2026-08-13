@@ -5,6 +5,8 @@
 //! reproduces the same decision exactly.
 
 mod bounds;
+mod progress;
+mod ready;
 mod signal;
 mod transition;
 
@@ -13,6 +15,8 @@ pub use bounds::{
     MAX_SIGNALS_PER_EXECUTION,
 };
 pub use graphhelm_protocols::NodeOutcome;
+pub use progress::{Progress, classify_progress};
+pub use ready::{ScheduleError, ready_set};
 pub use signal::{
     SignalError, SignalKind, SignalSeverity, SignalSource, SignalSourceKind, TypedSignal,
 };

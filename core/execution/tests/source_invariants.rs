@@ -9,6 +9,8 @@ const LIB: &str = include_str!("../src/lib.rs");
 const BOUNDS: &str = include_str!("../src/bounds.rs");
 const TRANSITION: &str = include_str!("../src/transition.rs");
 const SIGNAL: &str = include_str!("../src/signal.rs");
+const READY: &str = include_str!("../src/ready.rs");
+const PROGRESS: &str = include_str!("../src/progress.rs");
 
 /// Strips line comments so prose cannot decide the outcome in either direction.
 ///
@@ -23,9 +25,18 @@ fn code_only(source: &str) -> String {
         .join("\n")
 }
 
-/// This crate must stay pure. A clock, a random source or an adapter dependency would make replay
+/// This crate must stay pure. A clock, a random source or an *adapter* dependency would make replay
 /// reproduce a different decision from the same history, which is exactly the defect class the
 /// milestone-03 review had to correct twice.
+///
+/// Scope: this reads one manifest, so it is a **first-party** control. `graphhelm-events` links
+/// `chrono`, `getrandom` and `fs2` transitively, and nothing here can see that. What the crate
+/// guarantees is that its own code calls none of them — which is what the source scan below
+/// enforces, and why that scan must cover every source file.
+///
+/// Depending on another `core` crate is not impurity and never was. The original list forbade
+/// `graphhelm-events`, `graphhelm-graph` and `graphhelm-policy`, which the design explicitly says
+/// this crate depends on — the invariant was over-broad, not the design.
 #[test]
 fn the_execution_crate_has_no_impure_dependency() {
     for forbidden in [
@@ -34,16 +45,28 @@ fn the_execution_crate_has_no_impure_dependency() {
         "chrono",
         "getrandom",
         "rand",
+        "reqwest",
         "graphhelm-postgres",
-        "graphhelm-events",
-        "graphhelm-graph",
-        "graphhelm-policy",
+        "graphhelm-sealed",
+        "adapters/",
     ] {
         assert!(
             !MANIFEST.contains(forbidden),
             "core/execution must not depend on {forbidden}"
         );
     }
+}
+
+/// The narrowing above must not become a licence to depend on anything. This pins the exact set,
+/// so adding a dependency is a deliberate edit to a test rather than a silent manifest change.
+#[test]
+fn the_execution_crate_depends_on_exactly_the_declared_crates() {
+    let declared: Vec<&str> = MANIFEST
+        .lines()
+        .filter(|line| line.starts_with("graphhelm-"))
+        .map(|line| line.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(declared, ["graphhelm-protocols", "graphhelm-events"]);
 }
 
 #[test]
@@ -53,6 +76,8 @@ fn no_source_file_reads_a_clock_or_randomness() {
         ("bounds.rs", BOUNDS),
         ("transition.rs", TRANSITION),
         ("signal.rs", SIGNAL),
+        ("ready.rs", READY),
+        ("progress.rs", PROGRESS),
     ] {
         let code = code_only(source);
         for forbidden in [

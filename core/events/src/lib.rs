@@ -31,8 +31,9 @@ pub use key::{
 };
 pub use local::{LocalEventRepository, LocalFailpoint};
 pub use projection::{
-    EvidenceAvailability, ExecutionProjection, ProjectionGeneration, ProjectionRebuildRequest,
-    ProjectionRebuilder, ProjectionRepository, ProjectionWatermark, ReplayError, replay,
+    EvidenceAvailability, ExecutionProjection, MAX_PROJECTION_NODES, ProjectionGeneration,
+    ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
+    ReplayError, replay,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

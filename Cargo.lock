@@ -815,6 +815,7 @@ dependencies = [
 name = "graphhelm-execution"
 version = "0.1.0"
 dependencies = [
+ "graphhelm-events",
  "graphhelm-protocols",
  "proptest",
  "serde",
@@ -950,6 +951,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "graphhelm-events",
+ "graphhelm-execution",
  "graphhelm-graph",
  "graphhelm-protocols",
  "graphhelm-schema",

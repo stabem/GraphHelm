@@ -72,6 +72,30 @@ pub enum ExecutionMode {
     Manual,
 }
 
+/// Signal severity, from `schemas/graph-signal.schema.json`. A wire vocabulary because
+/// `signal_recorded` carries it; `core/execution` re-exports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SignalSeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// The closed signal source vocabulary, from `schemas/graph-signal.schema.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SignalSourceKind {
+    Node,
+    Runtime,
+    Tool,
+    Test,
+    User,
+    Dream,
+    System,
+}
+
 /// Aggregate simulation state exposed by events and CLI projections.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

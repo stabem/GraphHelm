@@ -8,14 +8,17 @@ use std::sync::{
 
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{
-    ExecutionProjection, LocalEventRepository, PreparedAppend, ProjectionGeneration, replay,
+    ExecutionProjection, LocalEventRepository, PreparedAppend, ProjectionGeneration, ReplayError,
+    replay,
 };
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
     ActorId, Clock, EventEnvelope, EventKind, ExecutionId, ExecutionMode, ExecutionModeChanged,
-    ExecutionStarted, IdGenerator, NewEvent, NodeOutcome as Outcome, NodeOutcomeRecorded,
-    NodeState, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope,
-    Sensitivity, WireHash, WorkspaceId,
+    ExecutionStarted, GhostNodeProposed, IdGenerator, MutationAccepted, NewEvent,
+    NodeOutcome as Outcome, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor,
+    PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
+    SignalRecorded as SignalRecordedPayload, SignalSeverity, SignalSourceKind, WireHash,
+    WorkspaceId,
 };
 
 const STREAM: &str = "stream-execution-test";
@@ -286,4 +289,197 @@ fn a_discarded_generation_rebuilds_to_identical_state() {
         serde_json::to_string(&direct).unwrap(),
         serde_json::to_string(&resumed).unwrap()
     );
+}
+
+/// Emits `execution_started` followed by `n` `signal_recorded` events for distinct signals
+/// sourced from node `"node-a"`.
+fn signal_events(n: usize) -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    let mut new_events = vec![event(
+        "execution-started",
+        EventKind::ExecutionStarted(ExecutionStarted {
+            execution_id: execution_id.clone(),
+            graph_version: 1,
+            graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            mode: ExecutionMode::Supervised,
+        }),
+    )];
+    for index in 0..n {
+        new_events.push(event(
+            format!("signal-{index}"),
+            EventKind::SignalRecorded(SignalRecordedPayload {
+                execution_id: execution_id.clone(),
+                signal_id: OpaqueId::parse(format!("signal-{index}")).unwrap(),
+                source_kind: SignalSourceKind::Node,
+                source_id: OpaqueId::parse("node-a").unwrap(),
+                kind: "no_progress".to_owned(),
+                severity: SignalSeverity::Medium,
+                envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+            }),
+        ));
+    }
+    append(new_events)
+}
+
+/// A start followed by one `ghost_node_proposed` for `"ghost-a"`.
+fn ghost_proposal_events() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "ghost-proposed",
+            EventKind::GhostNodeProposed(GhostNodeProposed {
+                execution_id,
+                node_id: OpaqueId::parse("ghost-a").unwrap(),
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+            }),
+        ),
+    ])
+}
+
+/// A node that already carries a state, via a recorded outcome, before it is proposed as a
+/// ghost. A ghost is born, not transitioned into, so this history cannot have happened.
+fn ghost_proposal_over_existing_node() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    let node_id = OpaqueId::parse("ghost-a").unwrap();
+    let outcome = Outcome::Succeeded;
+    let next_state = apply_transition(&TransitionRequest {
+        current: precondition(outcome),
+        outcome,
+        attempts: 0,
+        identical_outcomes: 0,
+    })
+    .unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "outcome-ghost-a",
+            EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                execution_id: execution_id.clone(),
+                node_id: node_id.clone(),
+                outcome,
+                next_state,
+            }),
+        ),
+        event(
+            "ghost-proposed",
+            EventKind::GhostNodeProposed(GhostNodeProposed {
+                execution_id,
+                node_id,
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+            }),
+        ),
+    ])
+}
+
+/// Started `Supervised`; the acceptance claims `Autopilot`. Mode binds at acceptance (5.5), so
+/// this history cannot have happened.
+fn acceptance_with_mismatched_mode() -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "mutation-accepted",
+            EventKind::MutationAccepted(MutationAccepted {
+                execution_id,
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+                mode: ExecutionMode::Autopilot,
+                graph_version: 2,
+            }),
+        ),
+    ])
+}
+
+/// Started `Autopilot`; `n` acceptances under `Autopilot` with increasing `graph_version`.
+fn acceptance_events(n: usize) -> Vec<EventEnvelope> {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    let mut new_events = vec![event(
+        "execution-started",
+        EventKind::ExecutionStarted(ExecutionStarted {
+            execution_id: execution_id.clone(),
+            graph_version: 1,
+            graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            mode: ExecutionMode::Autopilot,
+        }),
+    )];
+    for index in 0..n {
+        new_events.push(event(
+            format!("mutation-accepted-{index}"),
+            EventKind::MutationAccepted(MutationAccepted {
+                execution_id: execution_id.clone(),
+                draft_id: OpaqueId::parse(format!("draft-{index}")).unwrap(),
+                mode: ExecutionMode::Autopilot,
+                graph_version: index as u64 + 2,
+            }),
+        ));
+    }
+    append(new_events)
+}
+
+/// Signals are counted, not judged. The bound that blocks at MAX_SIGNALS_PER_EXECUTION lives in
+/// the governor; the projection just makes the count replayable.
+#[test]
+fn signals_are_counted_by_folding() {
+    let projection = replay(&scope(), STREAM, &signal_events(3)).unwrap();
+    assert_eq!(projection.signals_recorded, 3);
+}
+
+/// A ghost is born in state Ghost, visible and never scheduled, per decision 5.2.
+#[test]
+fn a_proposed_ghost_appears_in_ghost_state() {
+    let projection = replay(&scope(), STREAM, &ghost_proposal_events()).unwrap();
+    assert_eq!(
+        projection.node_states.get("ghost-a"),
+        Some(&NodeState::Ghost)
+    );
+}
+
+/// A ghost proposal for a node that already has a state is history that cannot have happened.
+#[test]
+fn a_ghost_proposal_for_an_existing_node_is_corrupt() {
+    assert_eq!(
+        replay(&scope(), STREAM, &ghost_proposal_over_existing_node()).unwrap_err(),
+        ReplayError::Corrupt
+    );
+}
+
+/// Mode binds at acceptance, per decision 5.5. An acceptance recorded under a mode the execution
+/// was not in is corrupt, not merely surprising.
+#[test]
+fn an_acceptance_under_the_wrong_mode_is_corrupt() {
+    // started in Supervised, event claims acceptance under Autopilot
+    assert_eq!(
+        replay(&scope(), STREAM, &acceptance_with_mismatched_mode()).unwrap_err(),
+        ReplayError::Corrupt
+    );
+}
+
+#[test]
+fn accepted_mutations_are_counted_by_folding() {
+    let projection = replay(&scope(), STREAM, &acceptance_events(2)).unwrap();
+    assert_eq!(projection.accepted_mutations, 2);
 }

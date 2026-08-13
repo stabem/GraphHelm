@@ -5,6 +5,7 @@
 //! reproduces the same decision exactly.
 
 mod bounds;
+mod dispatch;
 mod progress;
 mod ready;
 mod signal;
@@ -14,10 +15,9 @@ pub use bounds::{
     MAX_ACCEPTED_MUTATIONS, MAX_IDENTICAL_OUTCOMES, MAX_NODE_ATTEMPTS, MAX_READY_SET,
     MAX_SIGNALS_PER_EXECUTION,
 };
-pub use graphhelm_protocols::NodeOutcome;
+pub use dispatch::{DispatchError, dispatch_plan};
+pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
 pub use progress::{Progress, classify_progress};
 pub use ready::{ScheduleError, ready_set};
-pub use signal::{
-    SignalError, SignalKind, SignalSeverity, SignalSource, SignalSourceKind, TypedSignal,
-};
+pub use signal::{SignalError, SignalKind, SignalSource, TypedSignal};
 pub use transition::{ExecutionError, NodeExecutor, TransitionRequest, apply_transition};

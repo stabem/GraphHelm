@@ -6,7 +6,7 @@ use crate::{
     ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode, NodeOutcome,
     NodeState, OpaqueId, PersistedActor, PersistedDiagnostic, PersistedGraphVersion,
     PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
-    SimulationStatus, WireHash,
+    SignalSeverity, SignalSourceKind, SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
 };
 
@@ -146,7 +146,7 @@ impl EventEnvelope {
     }
 }
 
-/// The closed set of 20 replay-safe production events.
+/// The closed set of 23 replay-safe production events.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
@@ -165,6 +165,9 @@ pub enum EventKind {
     ExecutionModeChanged(ExecutionModeChanged),
     NodeOutcomeRecorded(NodeOutcomeRecorded),
     ExecutionCompleted(ExecutionCompleted),
+    SignalRecorded(SignalRecorded),
+    GhostNodeProposed(GhostNodeProposed),
+    MutationAccepted(MutationAccepted),
     IntegrityCheckpointCreated(IntegrityCheckpointCreated),
     EvidenceErasureRequested(EvidenceErasureRequested),
     EvidenceErasureCompleted(EvidenceErasureCompleted),
@@ -329,6 +332,47 @@ pub struct NodeOutcomeRecorded {
 pub struct ExecutionCompleted {
     pub execution_id: OpaqueId,
     pub status: SimulationStatus,
+}
+
+/// A Graph Signal was validated and recorded.
+///
+/// No free-form content, per D-036: the description and the raw envelope are externalized as
+/// encrypted Evidence and referenced by this event's evidence list; `envelope_sha256` binds this
+/// record to those exact bytes. `kind` is the raw type string, preserved even when unrecognized,
+/// because the emitting agent is not authoritative and the record is the evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SignalRecorded {
+    pub execution_id: OpaqueId,
+    pub signal_id: OpaqueId,
+    pub source_kind: SignalSourceKind,
+    pub source_id: OpaqueId,
+    pub kind: String,
+    pub severity: SignalSeverity,
+    pub envelope_sha256: RawSha256,
+}
+
+/// The Governor proposed an expansion. The node exists in state `Ghost` from this moment,
+/// visible and never scheduled, per decision 5.2. Approval travels as the existing
+/// `node_outcome_recorded` with `Approved -> Ready`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GhostNodeProposed {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    pub draft_id: OpaqueId,
+}
+
+/// The Governor accepted a mutation, under the mode in force at acceptance (decision 5.5), and
+/// published `graph_version` as the successor (decision 5.1). The version content travels in the
+/// existing `graph_version_published` event; this records the governance act itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MutationAccepted {
+    pub execution_id: OpaqueId,
+    pub draft_id: OpaqueId,
+    pub mode: ExecutionMode,
+    pub graph_version: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

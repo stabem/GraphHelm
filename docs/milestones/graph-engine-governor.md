@@ -153,13 +153,55 @@ They are different kinds of limit, and 04c separates them. `MAX_READY_SET` is a 
 
 04a's `source_invariants.rs` forbade `graphhelm-events`, `graphhelm-graph` and `graphhelm-policy` in the manifest. The design's §6 says `core/execution` depends on exactly those crates — the invariant was over-broad, not the design. It now forbids adapters, clocks and randomness, which is what it was always for, and a second test pins the exact dependency set so adding one is a deliberate edit rather than a silent manifest change.
 
+## What 04d shipped: in-flight governance decisions
+
+04d lets the Governor decide about a running graph. Every function is pure: nothing here appends an event, externalizes Evidence, or reads a clock — the decisions return what should happen, and the 04f driver makes it happen.
+
+### Three governance event kinds
+
+`signal_recorded`, `ghost_node_proposed` and `mutation_accepted` grow the closed event set from 20 to 23, with the envelope schema corrected in place per D-037, both copies byte-identical and both catalog digests recomputed (`schemas/catalog.json` and the frozen `1.0.0` copy agree; `checked_in_1_0_0_release_is_complete_and_raw_byte_identical` passes unmodified).
+
+`signal_recorded` carries no free-form content, per D-036: the typed fields plus `envelopeSha256`, a digest binding the record to the raw envelope bytes that `admit_signal` returns for externalization as encrypted Evidence. The event contract is stricter than the signal contract — a schema-valid signal whose `id` or `source.id` is not an `OpaqueId` cannot be recorded on the wire, surfacing as `GovernanceError::InvalidSignal` (`core/governor/src/inflight.rs`, documented on `build_signal_record`).
+
+`SignalSeverity` and `SignalSourceKind` moved into `graphhelm-protocols` — they now travel on the wire, and `core/events` cannot import them from `core/execution`. The originals derived only `Deserialize`; the moved enums add `Serialize`, which the wire role requires. `core/execution` re-exports both.
+
+### The fold counts and guards; it does not judge
+
+`ExecutionProjection` gains `signals_recorded` and `accepted_mutations`, both derived by folding history with `checked_add` (field declarations at `core/events/src/projection.rs:176-183`, fold arms in `apply_projection_event`), both `#[serde(default)]` so a pre-04d generation loads with them zero. A ghost is born, not transitioned into: `ghost_node_proposed` inserts `NodeState::Ghost`, and a proposal for a node that already has any state is `Corrupt` — proven able to fail by removing the guard (`a_ghost_proposal_for_an_existing_node_is_corrupt`). An acceptance whose recorded mode disagrees with the projection is `Corrupt` (`an_acceptance_under_the_wrong_mode_is_corrupt`, likewise sabotage-proven): decision 5.5's mode-binding is enforced at replay, not just at decision time.
+
+### The pure decisions
+
+`core/governor/src/inflight.rs`:
+
+- `admit_signal` validates through `TypedSignal::parse`, refuses the signal past `MAX_SIGNALS_PER_EXECUTION` with `SignalBudgetExhausted` — blocking, never dropping, per decision 5.7 — and returns the payload to record, the bytes to externalize, and `may_propose_mutation` from decision 5.4's closed subset.
+- `decide_mutation` rejects an unactionable signal in every mode and at every counter value (`the_unrecognized_kind_can_never_mutate` sweeps mode × counters), blocks at `MAX_ACCEPTED_MUTATIONS` in every mode, and otherwise maps D-022's modes: Autopilot accepts, Supervised requires approval, Manual — and an execution with no mode — rejects. The Manual arm was proven able to fail by making it accept: an autonomy grant nobody approved is the security property here.
+- `override_with_waiver` mirrors the M03 waiver construction at `core/governor/src/apply.rs:323` — the same `PolicyWaiver` struct, the same `graphhelm_schema::validate_waiver` check — bound to `WaiverScope::Node` and the obligation it clears, refusing an empty risk acknowledgement. Decision 5.8 holds: no second waiver shape exists. Two consequences the schema enforces and the tests fixed against reality: the actor must match the `actorId` pattern (no `@`), and a projection with no published graph cannot produce a valid waiver, because `graphVersion` has a schema minimum of 1.
+
+Id and timestamp are injected parameters, exactly as `ApplyServices` injects `ids` and `clock` — this crate never reads a clock or generates an id.
+
+### Ghost approval was already on the wire
+
+No new event kind for it: `node_outcome_recorded` with `Approved -> Ready` exists since 04b and `apply_transition` maps `(Ghost, Approved) -> Ready` since 04a.
+
+### Bounded concurrency
+
+`dispatch_plan(ready, in_flight, max_parallel)` in `core/execution/src/dispatch.rs` selects at most `max_parallel - in_flight` nodes in `BTreeSet` order — a replay dispatches the identical prefix, sabotage-proven by reversing the iterator. `max_parallel == 0` is `DispatchError::ZeroParallelism`, an authoring error surfaced loudly rather than an empty plan returned forever. `GraphBudgets.max_parallel_model_calls` (`Option<u64>`, `core/protocols/src/graph.rs:64`) gets its first reader in the caller's hands; the function keeps minimal `usize` inputs. `dispatch.rs` is covered by the purity source scan.
+
+### Seams the 04f driver must respect
+
+The mode-mismatch guard makes a stale acceptance *stream-poisoning*: an acceptance decided under one mode and appended after a mode change folds as corrupt on every subsequent replay. The decision must be re-derived against the projection as of the append point; `decide_mutation`'s rustdoc says so.
+
+Three accounting seams are known and deferred: ghost births have no domain budget of their own (only the `MAX_PROJECTION_NODES` resource guard, which a signal-saturated execution proposing ghosts could legitimately approach); `node_states` can exceed that guard through the `NodeOutcomeRecorded` and `NodeStateChanged` arms, which guard other maps or nothing; and `MutationAccepted.graph_version` is folded without a successor check against `current_graph` — lineage is enforced by the `graph_version_published` checks, not here.
+
+### What 04d does not do
+
+Nothing appends these events, externalizes the Evidence, or drives intake — the decisions await the 04f driver, which also owns acceptance-to-publication wiring over the existing M03 `apply_draft` and `prepare_draft_publication`. Signal-to-draft translation — what a proposal *contains* — is not designed yet. The five undetected no-progress conditions stay undetected until signals flow in production. The `simulate()`/`FixtureExecutor` divergence tracked since 04c remains open.
+
 ## Explicitly out of scope
 
-Nothing below exists yet. It is scoped to milestones 04d through 04f:
+Nothing below exists yet. It is scoped to milestones 04e and 04f:
 
-- **Bounded concurrency.** The design's 04c line reads "ready-set computation, bounded concurrency, retry classification, no-progress detection". Concurrency is not bounded: `ready_set` caps how many nodes may be ready, not how many may run at once, and `GraphBudgets.max_parallel_model_calls` still has no reader. It belongs with whatever first dispatches work, which is 04d.
 - **Wiring `simulate()` through `FixtureExecutor` and `apply_transition`,** resolving the divergences tabulated above.
-- **04d — In-flight governance.** Signal intake, ghost node lifecycle and approval, Governor mutation publication, owner override with waiver. `TypedSignal` exists and classifies signals, but nothing consumes one; `MAX_ACCEPTED_MUTATIONS` and `MAX_SIGNALS_PER_EXECUTION` are defined but unread.
 - **04e — Pause, resume, cancel, recovery.** Checkpoint content, resume preconditions, crash recovery of an interrupted execution.
 - **04f — Operator CLI, gate, documentation.** JSON-only `execution start|status|signal|approve|pause|resume|cancel` commands and the milestone-closing gate integration and final review.
 

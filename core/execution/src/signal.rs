@@ -6,6 +6,8 @@
 
 use serde::Deserialize;
 
+use graphhelm_protocols::{SignalSeverity, SignalSourceKind};
+
 /// Signal kinds this milestone recognizes, from `HARNESS_SPEC.md` §19.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignalKind {
@@ -31,27 +33,6 @@ impl SignalKind {
             _ => Self::Unrecognized,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SignalSeverity {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SignalSourceKind {
-    Node,
-    Runtime,
-    Tool,
-    Test,
-    User,
-    Dream,
-    System,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

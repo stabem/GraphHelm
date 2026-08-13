@@ -357,6 +357,51 @@
       },
       "additionalProperties": false
     },
+    "signalSeverity": {"enum": ["low", "medium", "high", "critical"]},
+    "signalSourceKind": {"enum": ["node", "runtime", "tool", "test", "user", "dream", "system"]},
+    "signalRecorded": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "signalId",
+        "sourceKind",
+        "sourceId",
+        "kind",
+        "severity",
+        "envelopeSha256"
+      ],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "signalId": {"$ref": "#/$defs/opaqueId"},
+        "sourceKind": {"$ref": "#/$defs/signalSourceKind"},
+        "sourceId": {"$ref": "#/$defs/opaqueId"},
+        "kind": {"type": "string", "minLength": 1},
+        "severity": {"$ref": "#/$defs/signalSeverity"},
+        "envelopeSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "ghostNodeProposed": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "draftId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "draftId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "mutationAccepted": {
+      "type": "object",
+      "required": ["executionId", "draftId", "mode", "graphVersion"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "mode": {"$ref": "#/$defs/executionMode"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"}
+      },
+      "additionalProperties": false
+    },
     "authenticationTag": {
       "type": "object",
       "required": ["keyId", "algorithm", "tagSha256"],
@@ -626,6 +671,33 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "signal_recorded"},
+            "data": {"$ref": "#/$defs/signalRecorded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "ghost_node_proposed"},
+            "data": {"$ref": "#/$defs/ghostNodeProposed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "mutation_accepted"},
+            "data": {"$ref": "#/$defs/mutationAccepted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "integrity_checkpoint_created"},
             "data": {"$ref": "#/$defs/checkpointCreated"}
           },
@@ -686,6 +758,9 @@
     {"properties": {"kind": {"properties": {"type": {"const": "execution_mode_changed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "node_outcome_recorded"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "execution_completed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "signal_recorded"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "ghost_node_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "mutation_accepted"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "integrity_checkpoint_created"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_requested"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_completed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},

@@ -101,7 +101,7 @@ fn event_fixture(kind: Value, project_level: bool) -> Value {
 }
 
 #[test]
-fn all_twenty_safe_event_variants_strictly_round_trip_against_schema() {
+fn all_twenty_three_safe_event_variants_strictly_round_trip_against_schema() {
     let diagnostic = json!({
         "code":"GHP001_SAFE","severity":"error","path":"/topology","component":"governor"
     });
@@ -174,6 +174,18 @@ fn all_twenty_safe_event_variants_strictly_round_trip_against_schema() {
             false,
         ),
         (
+            json!({"type":"signal_recorded","data":{"executionId":"execution-1","signalId":"signal-1","sourceKind":"node","sourceId":"node-a","kind":"unexpected_dependency","severity":"high","envelopeSha256":raw}}),
+            false,
+        ),
+        (
+            json!({"type":"ghost_node_proposed","data":{"executionId":"execution-1","nodeId":"ghost-a","draftId":"draft-1"}}),
+            false,
+        ),
+        (
+            json!({"type":"mutation_accepted","data":{"executionId":"execution-1","draftId":"draft-1","mode":"autopilot","graphVersion":4}}),
+            false,
+        ),
+        (
             json!({"type":"integrity_checkpoint_created","data":{"streamId":"stream-1","sequence":1,"eventHash":hash,"repositoryFormat":"1.0.0","authenticationTag":{"keyId":"key-1","algorithm":"hmac-sha256","tagSha256":raw}}}),
             true,
         ),
@@ -195,7 +207,7 @@ fn all_twenty_safe_event_variants_strictly_round_trip_against_schema() {
         ),
     ];
 
-    assert_eq!(variants.len(), 20);
+    assert_eq!(variants.len(), 23);
     for (kind, project_level) in variants {
         let document = event_fixture(kind, project_level);
         assert_schema_valid(EVENT_ID, &document);
@@ -216,6 +228,40 @@ fn all_twenty_safe_event_variants_strictly_round_trip_against_schema() {
     assert!(serde_json::from_value::<EventEnvelope>(unknown.take()).is_err());
     assert_not_impl_any!(GraphVersionRecord: Into<EventKind>);
     assert_not_impl_any!(graphhelm_protocols::Diagnostic: Into<EventKind>);
+}
+
+#[test]
+fn governance_event_kinds_round_trip_with_exact_wire_names() {
+    let digest = "a".repeat(64);
+    let cases = [
+        (
+            "signal_recorded",
+            json!({"executionId":"execution-1","signalId":"signal-1","sourceKind":"node","sourceId":"node-a","kind":"unexpected_dependency","severity":"high","envelopeSha256":digest}),
+        ),
+        (
+            "ghost_node_proposed",
+            json!({"executionId":"execution-1","nodeId":"ghost-a","draftId":"draft-1"}),
+        ),
+        (
+            "mutation_accepted",
+            json!({"executionId":"execution-1","draftId":"draft-1","mode":"autopilot","graphVersion":4}),
+        ),
+    ];
+    for (name, data) in cases {
+        let wire = json!({"type": name, "data": data});
+        let kind: EventKind = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&kind).unwrap(), wire, "{name}");
+    }
+}
+
+/// An acceptance that does not say which mode it was accepted under is not evidence of anything.
+#[test]
+fn a_mutation_acceptance_without_a_mode_is_rejected() {
+    let wire = json!({
+        "type": "mutation_accepted",
+        "data": {"executionId":"execution-1","draftId":"draft-1","graphVersion":4}
+    });
+    assert!(serde_json::from_value::<EventKind>(wire).is_err());
 }
 
 fn assert_schema_valid(schema_id: &str, document: &Value) {
@@ -1196,6 +1242,20 @@ fn the_envelope_schema_accepts_every_execution_event_kind() {
         json!({"type":"execution_mode_changed","data":{"executionId":"execution-1","previousMode":null,"mode":"manual"}}),
         json!({"type":"node_outcome_recorded","data":{"executionId":"execution-1","nodeId":"start","outcome":"succeeded","nextState":"succeeded"}}),
         json!({"type":"execution_completed","data":{"executionId":"execution-1","status":"completed"}}),
+    ] {
+        assert_envelope_valid(data);
+    }
+}
+
+/// The three governance kinds are execution-scoped, exactly like the durable execution kinds
+/// above. Modelled on `the_envelope_schema_accepts_every_execution_event_kind`.
+#[test]
+fn the_envelope_schema_accepts_every_governance_event_kind() {
+    let digest = "a".repeat(64);
+    for data in [
+        json!({"type":"signal_recorded","data":{"executionId":"execution-1","signalId":"signal-1","sourceKind":"node","sourceId":"node-a","kind":"unexpected_dependency","severity":"high","envelopeSha256":digest}}),
+        json!({"type":"ghost_node_proposed","data":{"executionId":"execution-1","nodeId":"ghost-a","draftId":"draft-1"}}),
+        json!({"type":"mutation_accepted","data":{"executionId":"execution-1","draftId":"draft-1","mode":"autopilot","graphVersion":4}}),
     ] {
         assert_envelope_valid(data);
     }

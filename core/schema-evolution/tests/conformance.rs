@@ -885,7 +885,7 @@ fn serde_tagged_event_kind_serializes_validates_and_round_trips_nested() {
 // Prevents adding a legacy/import receipt branch or silently dropping replay-critical fields from
 // any safe event variant.
 #[test]
-fn all_twenty_event_variants_are_complete_closed_and_replay_safe() {
+fn all_twenty_three_event_variants_are_complete_closed_and_replay_safe() {
     let variants = [
         (
             "graph_imported",
@@ -1005,6 +1005,38 @@ fn all_twenty_event_variants_are_complete_closed_and_replay_safe() {
             false,
         ),
         (
+            "signal_recorded",
+            json!({
+                "executionId": "execution-test",
+                "signalId": "signal-test",
+                "sourceKind": "node",
+                "sourceId": "node-test",
+                "kind": "unexpected_dependency",
+                "severity": "high",
+                "envelopeSha256": raw_digest()
+            }),
+            false,
+        ),
+        (
+            "ghost_node_proposed",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "ghost-test",
+                "draftId": "draft-test"
+            }),
+            false,
+        ),
+        (
+            "mutation_accepted",
+            json!({
+                "executionId": "execution-test",
+                "draftId": "draft-test",
+                "mode": "autopilot",
+                "graphVersion": 4
+            }),
+            false,
+        ),
+        (
             "integrity_checkpoint_created",
             json!({
                 "streamId": "stream-test",
@@ -1055,7 +1087,7 @@ fn all_twenty_event_variants_are_complete_closed_and_replay_safe() {
         ),
     ];
 
-    assert_eq!(variants.len(), 20);
+    assert_eq!(variants.len(), 23);
     for (kind, data, project_scoped) in variants {
         let event = event_envelope(kind, data, project_scoped);
         let diagnostics = validate_current_schema("event-envelope", &event);

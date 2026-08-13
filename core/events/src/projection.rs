@@ -175,6 +175,12 @@ pub struct ExecutionProjection {
     /// *different* outcome will look stalled on its very first failure.
     #[serde(default)]
     pub identical_outcomes: BTreeMap<String, u32>,
+    /// Signals recorded for this execution. Counted here, judged by the governor.
+    #[serde(default)]
+    pub signals_recorded: u32,
+    /// Governor mutations accepted, per decision 5.1. Counted here, judged by the governor.
+    #[serde(default)]
+    pub accepted_mutations: u32,
 }
 
 impl ExecutionProjection {
@@ -730,6 +736,41 @@ fn apply_projection_event(
             }
             projection.simulation_status = Some(payload.status.clone());
         }
+        EventKind::SignalRecorded(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.signals_recorded = projection
+                .signals_recorded
+                .checked_add(1)
+                .ok_or(ReplayError::LimitExceeded)?;
+        }
+        EventKind::GhostNodeProposed(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            let node = payload.node_id.to_string();
+            // A ghost is born, not transitioned into. A node that already has any state cannot
+            // be proposed again; that history cannot have happened.
+            if projection.node_states.contains_key(&node) {
+                return Err(ReplayError::Corrupt);
+            }
+            if projection.node_states.len() >= MAX_PROJECTION_NODES {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection.node_states.insert(node, NodeState::Ghost);
+        }
+        EventKind::MutationAccepted(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+                || projection.mode != Some(payload.mode)
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.accepted_mutations = projection
+                .accepted_mutations
+                .checked_add(1)
+                .ok_or(ReplayError::LimitExceeded)?;
+        }
         EventKind::SimulationCompleted(payload) => {
             projection.simulation_status = Some(payload.status.clone());
         }
@@ -901,6 +942,8 @@ mod execution_fields_tests {
         let mut projection = ExecutionProjection {
             execution_id: Some("execution-1".to_owned()),
             mode: Some(graphhelm_protocols::ExecutionMode::Supervised),
+            signals_recorded: 5,
+            accepted_mutations: 2,
             ..ExecutionProjection::default()
         };
         projection.node_attempts.insert("start".to_owned(), 3);

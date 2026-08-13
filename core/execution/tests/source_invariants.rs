@@ -7,6 +7,7 @@
 const MANIFEST: &str = include_str!("../Cargo.toml");
 const LIB: &str = include_str!("../src/lib.rs");
 const BOUNDS: &str = include_str!("../src/bounds.rs");
+const DISPATCH: &str = include_str!("../src/dispatch.rs");
 const TRANSITION: &str = include_str!("../src/transition.rs");
 const SIGNAL: &str = include_str!("../src/signal.rs");
 const READY: &str = include_str!("../src/ready.rs");
@@ -74,6 +75,7 @@ fn no_source_file_reads_a_clock_or_randomness() {
     for (name, source) in [
         ("lib.rs", LIB),
         ("bounds.rs", BOUNDS),
+        ("dispatch.rs", DISPATCH),
         ("transition.rs", TRANSITION),
         ("signal.rs", SIGNAL),
         ("ready.rs", READY),

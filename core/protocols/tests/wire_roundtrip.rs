@@ -2,8 +2,8 @@ use chrono::{TimeZone, Utc};
 use graphhelm_protocols::{
     Actor, ActorType, DraftOperation, DraftRejected, EventKind, ExecutionGraph, ExecutionMode,
     GraphDraft, GraphImported, GraphSourceKind, ManualOverride, NodeOutcome, NodeState, OpaqueId,
-    PolicyWaiver, RawSha256, SafeCode, SemanticHash, SimulationStarted, SimulationStatus,
-    WaiverScope, WireHash,
+    PolicyWaiver, RawSha256, SafeCode, SemanticHash, SignalSeverity, SignalSourceKind,
+    SimulationStarted, SimulationStatus, WaiverScope, WireHash,
 };
 
 #[test]
@@ -192,4 +192,28 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
         );
     }
     assert!(serde_json::from_value::<ExecutionMode>(serde_json::json!("god_mode")).is_err());
+
+    for (severity, expected) in [
+        (SignalSeverity::Low, "low"),
+        (SignalSeverity::Medium, "medium"),
+        (SignalSeverity::High, "high"),
+        (SignalSeverity::Critical, "critical"),
+    ] {
+        assert_eq!(serde_json::to_value(severity).unwrap(), expected);
+    }
+    for (source, expected) in [
+        (SignalSourceKind::Node, "node"),
+        (SignalSourceKind::Runtime, "runtime"),
+        (SignalSourceKind::Tool, "tool"),
+        (SignalSourceKind::Test, "test"),
+        (SignalSourceKind::User, "user"),
+        (SignalSourceKind::Dream, "dream"),
+        (SignalSourceKind::System, "system"),
+    ] {
+        assert_eq!(serde_json::to_value(source).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_value::<SignalSourceKind>(serde_json::json!(expected)).unwrap(),
+            source
+        );
+    }
 }

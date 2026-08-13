@@ -618,3 +618,30 @@ The milestone doc's diagnostic catalog was updated, including removing its claim
 Rustfmt, workspace Clippy `-D warnings`, and full workspace tests clean. The ignored PostgreSQL
 matrix was not re-run for this round; the change is to error classification in `core/events` and the
 milestone doc, and no SQL was touched.
+
+---
+
+## Correction to the merged commit message
+
+The squash commit `d1d8b24` carries, from branch commit `96b7a89`, the sentence:
+
+> The gate has not yet completed a full green run; that is the next thing to establish.
+
+**That statement is false as of the merge.** It was true when written, and was superseded minutes
+later by the very thing it asked for.
+
+`ci/gate.ps1` completed **three consecutive green runs** on `96b7a89`, the exact commit merged. Each
+reached `[gate] GREEN - every stage passed`, executed both PostgreSQL passes - the C locale and
+`English_United States.1252` - for **84 ignored tests per run**, with zero test failures.
+
+The earlier red that prompted the sentence was not a flaky test. It was the `$IsWindows` defect: a
+PowerShell Core-only variable that, under `Set-StrictMode` on Windows PowerShell 5.1, raises a
+terminating error and aborted the run at the non-C collation stage. The PostgreSQL failure observed
+alongside it was collateral from that teardown, not a genuine defect in
+`admin_operator_binds_pool_profile_and_source_identity`, which has since passed six consecutive
+times.
+
+The commit message is left unedited. Rewriting a published merge commit on the default branch would
+require a force push, would invalidate every existing clone and worktree, and would destroy the
+audit trail this record exists to preserve. An append-only correction is the correct remedy for a
+project whose own event store is append-only.

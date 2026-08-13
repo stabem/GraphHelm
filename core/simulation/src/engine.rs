@@ -379,8 +379,8 @@ fn transition(
     events: &mut Vec<NewEvent>,
     services: &SimulationServices<'_>,
 ) -> Result<(), SimulationError> {
-    let previous = states.insert(node_id.to_owned(), next.clone());
-    transitions.push((node_id.to_owned(), next.clone()));
+    let previous = states.insert(node_id.to_owned(), next);
+    transitions.push((node_id.to_owned(), next));
     let ordinal = u64::try_from(transitions.len())
         .map_err(|_| SimulationError::Repository(EventRepositoryError::LimitExceeded))?;
     let idempotency_key =

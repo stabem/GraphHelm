@@ -618,7 +618,7 @@ fn apply_projection_event(
         EventKind::NodeStateChanged(payload) => {
             projection
                 .node_states
-                .insert(payload.node_id.to_string(), payload.next_state.clone());
+                .insert(payload.node_id.to_string(), payload.next_state);
         }
         EventKind::SimulationCompleted(payload) => {
             projection.simulation_status = Some(payload.status.clone());
@@ -792,7 +792,7 @@ pub fn replay(
             EventKind::NodeStateChanged(payload) => {
                 projection
                     .node_states
-                    .insert(payload.node_id.to_string(), payload.next_state.clone());
+                    .insert(payload.node_id.to_string(), payload.next_state);
             }
             EventKind::SimulationCompleted(payload) => {
                 projection.simulation_status = Some(payload.status.clone());

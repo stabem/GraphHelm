@@ -1688,7 +1688,12 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             connection_limit: 7,
             semantics: {
                 let row: (String, String, String, String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-                    "SELECT pg_encoding_to_char(encoding)::text,datlocprovider::text,datcollate::text,datctype::text,daticulocale::text,daticurules::text,datcollversion::text FROM pg_database WHERE datname=$1"
+                    // `daticulocale` became `datlocale` in PostgreSQL 17. The adapter reads it
+                    // through to_jsonb for exactly that reason; the test must be no less tolerant,
+                    // because the project supports PostgreSQL 16+.
+                    "SELECT pg_encoding_to_char(encoding)::text,datlocprovider::text,datcollate::text,datctype::text,\
+                     COALESCE(to_jsonb(pg_database)->>'datlocale',to_jsonb(pg_database)->>'daticulocale'),\
+                     daticurules::text,datcollversion::text FROM pg_database WHERE datname=$1"
                 ).bind(&recovery_name).fetch_one(&root_pool).await.unwrap();
                 MarkerSemantics {
                     encoding: row.0,

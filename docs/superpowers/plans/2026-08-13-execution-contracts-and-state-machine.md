@@ -103,11 +103,7 @@ proptest.workspace = true
 
 In `Cargo.toml`, add `"core/execution",` to `members` immediately after `"core/simulation",`.
 
-In `[workspace.dependencies]`, add the pinned test dependency:
-
-```toml
-proptest = "=1.9.0"
-```
+No dependency edit is needed: `proptest` is already pinned in `[workspace.dependencies]` and already consumed by `core/graph` and `core/schema-evolution`. Do not change that pin — a downgrade would silently affect two unrelated crates.
 
 - [ ] **Step 7: Create the crate root**
 
@@ -835,7 +831,67 @@ git commit -m "test(execution): prove transitions are total, deterministic and g
 
 ---
 
-### Task 6: Guard the crate's purity and run the gate
+### Task 6: Close the ghost wire drift
+
+**Files:**
+- Modify: `schemas/event-envelope.schema.json` (`$defs/nodeState`)
+- Modify: `schemas/releases/1.0.0/event-envelope.schema.json`
+- Modify: `schemas/catalog.json`, `schemas/releases/1.0.0/catalog.json`
+- Test: `core/protocols/tests/persistence_wire.rs`
+
+Task 1 put `Ghost` in the shared `NodeState` on the argument that one vocabulary cannot drift. But `NodeState` is on the wire through `NodeStateChanged`, and `$defs/nodeState` is a closed enum without `"ghost"`, so Task 1 created exactly the drift it was meant to prevent. Nothing in the repository asserts parity between the Rust enum and the schema enum, so the gap is silent.
+
+Per D-037 (`docs/DECISION_REGISTER.md:43`) the unpublished `1.0.0` baseline is corrected in place; no `1.1.0` is cut. Both copies of the schema must move together and byte-identically, because `core/schema-evolution/tests/catalog_integrity.rs:303-308` compares raw bytes. Never edit one of those tests to make this pass.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `core/protocols/tests/persistence_wire.rs` a case asserting that an event envelope carrying `"nextState": "ghost"` validates. Model it on the existing `node_state_changed` envelope in that file.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Expected: FAIL, `is not valid under any of the schemas listed in the 'oneOf' keyword`.
+
+- [ ] **Step 3: Add the value and mirror the frozen copy**
+
+Insert `"ghost"` after `"draft"` in `$defs/nodeState`, mirroring the Rust variant order. Leave `x-graphhelm-schema-version` at `1.0.0`. Copy the file byte-for-byte over `schemas/releases/1.0.0/event-envelope.schema.json`.
+
+- [ ] **Step 4: Recompute the canonical digest**
+
+There is no tooling for this. The algorithm in `core/schema-evolution/src/canonical.rs:67-98` is: sort object keys byte-wise, preserve array order, serialize compactly, SHA-256, lowercase hex, `sha256:` prefix.
+
+```bash
+python -c "
+import json,hashlib,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+b=json.dumps(d,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')
+print('sha256:'+hashlib.sha256(b).hexdigest())
+" schemas/event-envelope.schema.json
+```
+
+Run it against the *unmodified* file first and confirm it reproduces the digest already stored in `schemas/catalog.json`. If it does not, stop; never commit a hash you could not verify. Then write the new digest into both catalogs and change nothing else in them.
+
+- [ ] **Step 5: Verify**
+
+```
+cargo +1.97.1 run --locked -q -p graphhelm-cli -- schema check --baseline schemas/releases/1.0.0/catalog.json --candidate schemas/catalog.json
+```
+
+Expected: class `unchanged`, impact `none`, `release.ok` true — both sides moved together. An impact of `minor` means the frozen copy is stale.
+
+- [ ] **Step 6: Update the prose that enumerates node states**
+
+`schemas/CHANGELOG.md` (a plain `- ` bullet under `## [1.0.0]`; the prefix `- BREAKING ` is parsed as major-change evidence by `apps/cli/src/commands/schema/check.rs:202`), `MASTER_PRD.md`, and `docs/architecture/SYSTEM_ARCHITECTURE.md`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add schemas core/protocols/tests/persistence_wire.rs MASTER_PRD.md docs/architecture/SYSTEM_ARCHITECTURE.md
+git commit -m "fix(schemas): close the ghost wire drift in event-envelope"
+```
+
+---
+
+### Task 7: Guard the crate's purity and run the gate
 
 **Files:**
 - Create: `core/execution/tests/source_invariants.rs`
@@ -905,6 +961,7 @@ git commit -m "test(execution): enforce the purity boundary with a source invari
 - A ghost node is unreachable from any running state at any counter value.
 - Every bound is a counter; no wall-clock value influences a transition.
 - An unrecognized signal kind is recorded and can never propose a mutation.
+- `NodeState::Ghost` is representable on the wire: `$defs/nodeState` carries `"ghost"` and both catalog digests agree.
 - `./ci/gate.ps1 -SkipPostgres` is green.
 
 ## What this plan deliberately excludes

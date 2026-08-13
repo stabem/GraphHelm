@@ -9,3 +9,4 @@
 - Canonicalized persistence timestamps to uppercase UTC `Z`, four-digit years, and at most nine fractional digits so schema validation and Rust round-trips remain exact.
 - No predecessor release or persistence-format migration exists for this initial baseline.
 - Preserved the provisional `p50.dev` schema IDs and wire-format identifiers.
+- Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the `ghost` node state to `event-envelope.schema.json`'s `nodeState` enum, closing a gap where `graphhelm_protocols::NodeState::Ghost` could not be represented in a `NodeStateChanged` event on the wire.

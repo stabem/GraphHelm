@@ -9,6 +9,7 @@ members = [
   "core/events",
   "core/governor",
   "core/simulation",
+  "core/execution",
   "adapters/sealed-key-provider",
   "adapters/postgres-event-store",
   "apps/cli",

@@ -358,7 +358,7 @@ harness_manifest:
 
 ### 11.3 States
 
-`draft`, `linting`, `ready`, `queued`, `running`, `waiting_input`, `waiting_capacity`, `paused`, `blocked`, `succeeded`, `failed`, `waived`, `skipped`, `cancelled`, `invalidated`.
+`draft`, `ghost`, `linting`, `ready`, `queued`, `running`, `waiting_input`, `waiting_capacity`, `paused`, `blocked`, `succeeded`, `failed`, `waived`, `skipped`, `cancelled`, `invalidated`.
 
 ### 11.4 Transactional editing
 

@@ -1088,3 +1088,31 @@ fn persisted_schema_accepts_only_registered_path_content_field_kinds() {
     projection["contentSlots"][0]["fieldKind"] = json!("filesystem_path");
     assert_schema_invalid(PERSISTED_ID, &projection);
 }
+
+/// `NodeState::Ghost` is part of the one shared vocabulary (see
+/// `graphhelm_protocols::simulation::NodeState`), so the wire schema's `nodeState` enum must
+/// accept `"ghost"` too. This guards against the Rust vocabulary and the wire contract drifting
+/// apart again.
+#[test]
+fn node_state_changed_accepts_the_ghost_state_on_the_wire() {
+    let document = event_fixture(
+        json!({
+            "type":"node_state_changed",
+            "data":{
+                "simulationId":"simulation-1",
+                "nodeId":"start",
+                "previousState":null,
+                "nextState":"ghost"
+            }
+        }),
+        false,
+    );
+    assert_schema_valid(EVENT_ID, &document);
+    let envelope: EventEnvelope = serde_json::from_value(document.clone()).unwrap();
+    let encoded = serde_json::to_value(&envelope).unwrap();
+    assert_schema_valid(EVENT_ID, &encoded);
+    assert_eq!(
+        serde_json::from_value::<EventEnvelope>(encoded).unwrap(),
+        envelope
+    );
+}

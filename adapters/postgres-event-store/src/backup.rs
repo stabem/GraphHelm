@@ -52,8 +52,15 @@ const MAX_ARCHIVE_BYTES: u64 = MAX_BACKUP_BYTES
 const BACKUP_PURPOSE_HEADER: &str = "graphhelm.backup.header.v1";
 const BACKUP_PURPOSE_MANIFEST: &str = "graphhelm.backup.manifest.v1";
 const RESTORE_MARKER_PURPOSE: &str = "graphhelm.restore.marker.v1";
+/// Digest of the schema contract as of migration `0004_scope_guard`.
+///
+/// Updated from `48ef7a42...`, which was computed before `0004` existed. The drift is entirely
+/// that migration's: sixteen `graphhelm_scope_not_empty` CHECK constraints added and sixteen
+/// `graphhelm_scope` policies rewritten, with nothing removed and no unexpected object. Recompute
+/// this only when a migration is intended to change the schema, and prove the delta first — the
+/// point of the pin is to reject drift nobody authorised.
 const EXPECTED_SCHEMA_CONTRACT_SHA256: &str =
-    "48ef7a4253e4d2c2d9c5502c683cfc0e559183e0770c28211d0b64a550b5ebd2";
+    "21a0832a6d144837f88acf9121db021b6d2e28fa57b2f2f26ab8780b57e0f479";
 const UNEXPECTED_DATABASE_OBJECTS_SQL: &str = "SELECT (\
  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
   WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' \

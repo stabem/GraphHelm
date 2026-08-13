@@ -308,6 +308,7 @@ running → completed | completed_with_waivers | failed | cancelled
 ### 8.2 Node
 
 ```text
+ghost → ready
 draft → linting → ready → queued → running
 running → succeeded | failed | paused | waiting_input | waiting_capacity
 failed → retrying → queued

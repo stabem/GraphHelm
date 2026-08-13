@@ -107,6 +107,7 @@ fn normative_add_edge_uses_value_without_path() {
 fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
     let states = [
         (NodeState::Draft, "draft"),
+        (NodeState::Ghost, "ghost"),
         (NodeState::WaitingInput, "waiting_input"),
         (NodeState::WaitingCapacity, "waiting_capacity"),
         (NodeState::Invalidated, "invalidated"),

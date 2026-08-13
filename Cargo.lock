@@ -811,6 +811,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-execution"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-protocols",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "graphhelm-governor"
 version = "0.1.0"
 dependencies = [

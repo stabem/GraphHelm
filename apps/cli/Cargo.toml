@@ -16,8 +16,10 @@ clap.workspace = true
 getrandom.workspace = true
 graphhelm-events = { path = "../../core/events" }
 graphhelm-execution = { path = "../../core/execution" }
+graphhelm-gateway = { path = "../../core/gateway" }
 graphhelm-governor = { path = "../../core/governor" }
 graphhelm-graph = { path = "../../core/graph" }
+graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
 graphhelm-policy = { path = "../../core/policy" }
 graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store" }
 graphhelm-protocols = { path = "../../core/protocols" }
@@ -32,6 +34,7 @@ serde_yaml_ng.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

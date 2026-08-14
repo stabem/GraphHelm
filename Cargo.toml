@@ -10,8 +10,10 @@ members = [
   "core/governor",
   "core/simulation",
   "core/execution",
+  "core/gateway",
   "adapters/sealed-key-provider",
   "adapters/postgres-event-store",
+  "adapters/model-gateway",
   "apps/cli",
 ]
 
@@ -51,6 +53,11 @@ tokio = "=1.53.1"
 # server (Milestone 05a). Default features accepted deliberately: unlike reqwest, none pull in a
 # TLS stack or an alternate backend the workspace would need to prune.
 axum = "=0.8.9"
+# Authorized by ADR-025 (docs/reference/REFERENCE_STACK_AND_ADRS.md) for the Universal Model
+# Gateway's BYOK adapters (Milestone 05b). Default features accepted deliberately: they resolve to
+# rustls + ring only (verified with `cargo tree -p ureq -e features`) — no native-tls, no OpenSSL,
+# no JSON/cookie/multipart helpers this crate does not use.
+ureq = "=3.4.0"
 
 [profile.release]
 lto = "thin"

@@ -1,7 +1,7 @@
 # Runtime
 
-Status: 05a implemented — the Public Runtime API. Five plans remain: the gateway slice (05b), the
-tool broker and tiers (05c), the real async executor (05d), the MCP chat surface (05e), and the
+Status: 05a and 05b implemented — the Public Runtime API and the Gateway slice. Four plans remain:
+the tool broker and tiers (05c), the real async executor (05d), the MCP chat surface (05e), and the
 monitor with the milestone close (05f). Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
 decisions D-039 (chat-first via an official MCP server) and D-040 (the monitor precedes Studio).
 
@@ -9,7 +9,11 @@ Milestone 04 proved governance and durability with an effect-free executor. Mile
 real: model calls, tool calls, isolation — and the surfaces to operate it all. 05a shipped the
 first surface, designed as the multi-agent concurrency contract: several agents can work one
 project through the same API without torn state, with every act attributed, every conflict
-explicit, and every observation flowing through the shared event log.
+explicit, and every observation flowing through the shared event log. 05b shipped the second
+slice: the Universal Model Gateway's route manifest, error taxonomy and capacity policy as a pure
+crate, plus the impure adapters — a credential broker, BYOK HTTP adapters, and native-runtime CLI
+adapters — that let a node's model call actually reach a provider or an official CLI, with quota
+exhaustion parking the node rather than retrying blind or falling back to a paid route on its own.
 
 ## What 05a shipped: `graphhelm serve`
 
@@ -128,7 +132,7 @@ exception list — it passed on its first run, meaning D-039's "never a second p
 rather than being aspired to. When 05d swaps the driver under the API, this test is what proves the
 surfaces did not drift. The `api_http` suite is a named gate stage, proven able to go red.
 
-## Honest limits, stated
+## Honest limits, stated (05a)
 
 - **No documentation surface yet.** Checking and writing docs as first-class endpoints is the
   Living Documentation subsystem, reserved in the architecture's API surface
@@ -144,3 +148,310 @@ surfaces did not drift. The `api_http` suite is a named gate stage, proven able 
   have to come from the store layer; deferred with a pointer here.
 - **Bearer-on-loopback only.** mTLS and any non-local identity remain §3.1 work, refused rather
   than half-built: the server will not bind a non-loopback address at all.
+
+## What 05b shipped: the Gateway slice
+
+### The two crates, and the purity boundary
+
+`core/gateway` (`graphhelm-gateway`) is pure — no clock, no randomness, no filesystem, no network,
+no subprocess — enforced the same way `core/execution`'s purity is: a source-invariant test
+(`core/gateway/tests/source_invariants.rs`) pins the `[dependencies]` table to exactly
+`graphhelm-protocols`, `serde`, `serde_json` (Task 1 needed no error-derive crate — `ManifestError`
+and `GatewayError` each carry a hand-written `Display`, matching `BrokerError`'s convention
+elsewhere in the workspace) and scans every file under `src/` for `std::fs`, `std::time`,
+`std::process`, `rand`, and the concrete I/O types `std::net` exposes
+(`TcpStream`/`TcpListener`/`UdpSocket`/`ToSocketAddrs` — the bare `std::net` path is allowed because
+`manifest.rs` legitimately imports `Ipv4Addr` for a pure loopback-host parse, not a socket). It
+holds the route manifest (`manifest.rs`), the error taxonomy and capacity policy (`taxonomy.rs`),
+minimal candidate filtering (`eligibility.rs`), and the wire-neutral call/reply types both adapter
+families share (`call.rs`).
+
+`adapters/model-gateway` (`graphhelm-model-gateway`) is impure and depends on `core/gateway`, never
+the other way — the same source-invariant test explicitly forbids `core/gateway` from naming
+`graphhelm-model-gateway` or `adapters/` at all. It holds the credential broker (`broker.rs`), the
+`HttpTransport` boundary and its `ureq` implementation (`transport.rs`), the Anthropic/OpenAI BYOK
+adapters (`byok.rs`), the native-runtime CLI adapters (`runtime.rs`), and a test-fixture binary that
+imitates a host CLI (`src/bin/fake_runtime.rs`, doc-commented as such so it cannot be mistaken for
+production code).
+
+### The route manifest: billing and transport as one structural fact
+
+`RouteManifest::from_json` (`core/gateway/src/manifest.rs`) is the only way to obtain a manifest,
+and it enforces every rule in one fixed order: a byte bound (`MAX_MANIFEST_BYTES`, 256 KiB) before
+anything is parsed, then `serde` with `deny_unknown_fields`, then each route's structural rules,
+then a duplicate-id scan (`MAX_ROUTES`, 64). §20's "BYOK and subscription are distinct billing
+relationships" is not left as a convention the caller has to hold by hand — it is a structural pair
+the manifest enforces per route: a `direct_api` route must declare `authentication: api_key`,
+`billingMode: per_token`, `baseUrl`, `model`, and `credentialRef`, must name `provider` as
+`"anthropic"` or `"openai"` (the two wire shapes the BYOK adapters actually speak — Task 4 found the
+manifest didn't constrain this and closed the gap), and must not carry `runtime`/`command`; a
+`native_runtime` route must declare `authentication: account_subscription`,
+`billingMode: subscription_quota`, `runtime`, and a non-empty `command.program`, and must not carry
+`credentialRef`/`baseUrl` at all — the manifest cannot route a broker secret into a runtime that
+owns its own auth, structurally rather than by convention. A route id is 1–64 characters of
+`[a-z0-9_]`. `baseUrl` may use `https://` unconditionally; `http://` is refused unless the host
+parses as loopback (`localhost`, `127.0.0.0/8`, or `::1`) — cleartext is a misconfiguration anywhere
+else. Every route also carries `timeoutSeconds`, defaulted to `DEFAULT_TIMEOUT_SECONDS` (300) via
+`serde`, so no existing manifest needs to declare it; only the native-runtime adapter reads it
+today. `ManifestError`'s `Display` names a route id and the violated rule (or, for `Oversize`, a
+byte count) and never echoes the manifest's own bytes back — the CLI leans on exactly this property
+(below). Ten tests in `core/gateway/tests/manifest_contract.rs` cover this, including a
+non-loopback `http://` refusal, an unrecognized-provider refusal, a `timeoutSeconds` bound
+(`MAX_TIMEOUT_SECONDS`, 86,400s) rejecting an oversized value while accepting the boundary exactly,
+and two marker-planting proofs that a parse failure's `Display`/`Debug` carry only its
+line/column/category and never `serde_json`'s own message.
+
+### The error taxonomy, route health, and the capacity table
+
+`core/gateway/src/taxonomy.rs` defines `GatewayError`, the fourteen-kind closed vocabulary §17
+names verbatim, and `outcome_for_error`, one exhaustive `match` with **no wildcard arm** mapping
+each kind to the `NodeOutcome` the execution engine records:
+
+| Outcome | Errors |
+|---|---|
+| `NeedsCapacity` | `QuotaExhausted`, `RateLimited`, `AuthRequired`, `AuthRevoked` |
+| `RetryableFailure` | `ProviderUnavailable`, `Timeout`, `RuntimeCrashed`, `MalformedOutput` |
+| `TerminalFailure` | `ContextTooLarge`, `ModelRemoved`, `UnsupportedCapability`, `PolicyDenied`, `ToolDenied` |
+| `Cancelled` | `Cancelled` |
+
+The absence of a wildcard arm is deliberate: a fifteenth `GatewayError` variant without a chosen
+consequence breaks the build here rather than silently defaulting. `health_for_error` is a separate,
+narrower question — what one call's failure implies about the *route* going forward, not the node —
+and only four classes answer it: `QuotaExhausted`/`RateLimited` → `WaitingReset`,
+`AuthRequired`/`AuthRevoked` → `AuthRequired`, `ProviderUnavailable` → `Degraded`; everything else (a
+context that was too large this one time, a cancellation) is `None` and leaves route health where
+the caller last observed it. `RouteHealth` itself is the six states §18 names:
+`Available`/`Degraded`/`WaitingReset`/`AuthRequired`/`Unavailable`/`Disabled`. Four tests in
+`core/gateway/tests/capacity_mapping.rs` cover totality, the capacity-class grouping, health
+updates, and `eligible_routes` (`eligibility.rs`): given a manifest, a caller-supplied health map
+(the pure crate holds no registry of its own), and `Requirements { profile, subscription_only }`, it
+returns the enabled routes whose health is `Available` or `Degraded`, serving the requested
+`WorkProfile`, excluding `PerToken` routes when `subscription_only` is true (§19's user control) —
+in manifest order, since scoring within that set (§8.3) is deferred.
+
+### The credential broker: `EvidenceProtector` reuse, no new cryptography
+
+`adapters/model-gateway/src/broker.rs`'s `CredentialBroker` invents no cryptography of its own: it
+wraps `EvidenceProtector<SealedKeyProvider>` exactly as `core/events` already defines it — `store`
+seals a value with `EvidenceProtector::seal`, `lease` opens it with `EvidenceProtector::open` — and
+owns only a durable index, `credentials.json` inside `broker_dir`, written atomically (tmp file,
+then rename). Each entry persists a `SecretReference` (`id`, `provider`, `usable_by`, all bounded
+`[a-z0-9_.-]`/`[a-z0-9_]` tokens), a `revoked` flag, and the full parts of its `SealedEvidence` —
+reference, scope, media type (`application/octet-stream`, since a credential is opaque bytes),
+sensitivity, retention class, algorithm, nonce, ciphertext, and the wrapped key's own parts — with
+the binary fields hex-encoded, reconstructed on every open via `SealedEvidence::new`/
+`WrappedKey::new`. Every credential shares one fixed `RepositoryScope` (workspace `gateway`, project
+`credentials`): the broker is not multi-tenant within a keyring, so Evidence scoping exists here to
+separate records, not to namespace one operator's own store. `lease(id, route_id)` checks
+`usable_by` before ever touching the sealed bytes — a route not in that list gets
+`BrokerError::NotUsableByRoute`, never a value — and a revoked credential (durable across a broker
+reopen) can never be leased again. `list()` returns ids, providers, routes and the revoked flag,
+never a value; `CredentialBroker` caches no plaintext at all — `lease` re-derives `SecretBytes`
+fresh from sealed storage every call. Five tests in `adapters/model-gateway/tests/broker.rs` prove
+this, including `a_tampered_store_file_fails_closed`: flipping one byte of the persisted ciphertext
+on disk is caught by AEAD authentication, so `lease` returns `Err` — there is no partially
+constructed `SecretBytes` to leak — and `broker_errors_and_listings_never_carry_the_value`, which
+formats every reachable error variant and asserts neither the sentinel credential nor the passphrase
+ever appears. The broker's own tests need no real async runtime — like `core/events`'s, they drive
+`EvidenceProtector`'s plain async fns with a hand-rolled, thread-parking `block_on`; the CLI (below)
+bridges the same functions through a real `tokio` current-thread runtime instead, identical in shape
+to `commands::events`'s own precedent.
+
+### ADR-025: `ureq`, and the no-second-TLS-stack finding
+
+The BYOK adapters place outbound HTTPS calls, and nothing before this milestone had pinned an
+outbound HTTP client — ADR-024 pinned `axum` for 05a's *server* side only. ADR-025
+(`docs/reference/REFERENCE_STACK_AND_ADRS.md` §30) pins `ureq = "=3.4.0"`, exact and
+workspace-managed. Default features resolve, per `cargo tree -p ureq -e features`, to exactly
+`rustls` and `gzip` — no `native-tls`, no OpenSSL, no unused extras. The finding that matters most:
+this is **not a second TLS stack** entering the tree. `cargo tree -i ring --locked` confirms `ureq`'s
+`rustls` (`0.23.43`) and `ring` (`0.17.14`) resolve to the identical versions `sqlx`'s existing
+`tls-rustls-ring-native-roots` feature already pinned for the Postgres event store — one crypto
+provider, shared, not two to audit. `UreqTransport` (`transport.rs`) configures its agent with
+`Agent::config_builder().http_status_as_error(false).max_redirects(0).build()`, so a non-2xx
+response comes back as an `Ok(TransportResponse)`, never an `Err` — status interpretation belongs
+entirely to `byok.rs`'s per-provider mapping tables. `max_redirects(0)` is the milestone's final
+review closing a real gap: ureq's own redirect handling strips only `Authorization`/`Cookie`/
+`Content-Length` from a re-sent request, so Anthropic's `x-api-key`/OpenAI's `Authorization: Bearer`
+would otherwise survive to whatever host a 302 named; disabling redirects outright (`/v1/messages`
+and `/v1/chat/completions` never legitimately redirect) still returns the 3xx as `Ok`, never a
+`TooManyRedirects` error, so `byok.rs`'s own catch-all status mapping is what turns it into
+`MalformedOutput`. The constraint ADR-025 records: no code outside `transport.rs` may name `ureq`
+directly; `byok.rs` speaks only `TransportRequest`/`TransportResponse`/`HttpTransport`, the same
+seam its own tests substitute a local `TcpListener` fake behind.
+
+### BYOK Anthropic and OpenAI adapters
+
+`ByokAdapter::call` (`byok.rs`) dispatches on `route.provider()`. Anthropic gets
+`POST {base}/v1/messages` with `x-api-key` and `anthropic-version: 2023-06-01`, body
+`{model, max_tokens, messages}`; OpenAI gets `POST {base}/v1/chat/completions` with
+`Authorization: Bearer <key>`, body `{model, messages}` — `max_tokens` is deliberately not forwarded
+to OpenAI (its chat-completions API splits token-limit parameters by model family in ways this
+milestone does not resolve). Status mapping is a fixed table per provider, not a heuristic, with one
+genuine judgment call: OpenAI's `429` is ambiguous between hard quota exhaustion and ordinary
+throttling, resolved only by sniffing the error body's `type`/`code` for `"insufficient_quota"`
+(`openai_error_is_insufficient_quota`) — everywhere else, `401` → `AuthRequired`, `403` →
+`PolicyDenied` (both providers), Anthropic's `429` → `RateLimited` and `529` → `ProviderUnavailable`,
+any other unrecognized `>=500` → `ProviderUnavailable`, and anything else unmapped or a 2xx body
+that does not parse → `MalformedOutput` — a mystery reply must not park capacity (`NeedsCapacity` is
+reserved for the classes §12 names explicitly), but it also must not invent a more specific meaning
+it cannot support. Usage is always `Option<u64>`, filled only from a figure the provider actually
+reported — an absent `usage` object is `None`, never a guessed zero (§11). `TransportRequest`'s
+manual `Debug` redacts every header *value* while still naming the header, and
+`BYOK_REQUEST_TIMEOUT` is a fixed 60-second constant (the manifest carries no per-route timeout for
+`direct_api` routes, unlike native-runtime's `timeoutSeconds`). Fifteen tests in
+`adapters/model-gateway/tests/byok_adapters.rs` — a from-scratch `TcpListener` fake-server harness
+mirroring `apps/cli/tests/api_http.rs`'s pattern — cover both providers' success paths, every status
+above, absent-usage, `the_api_key_never_appears_in_errors_or_debug` (plants the real sentinel key in
+a live request and asserts it survives in the captured HTTP headers, proving the test is not
+vacuous, while never appearing in any formatted error or `Debug` output), a planted 302 redirect
+proving `UreqTransport` never follows it and the redirect target receives no connection at all, and
+a `native_runtime` route handed to `ByokAdapter` being refused with `UnsupportedCapability` rather
+than panicking on the `baseUrl` it structurally cannot carry.
+
+### Native-runtime adapters: env isolation, stdin-only prompts, deadlines
+
+`RuntimeAdapter::call` (`runtime.rs`) spawns `route.command.program` with `route.command.args` and
+speaks to it over stdio only — never a network call the gateway places itself. The child's
+environment is built from `env_clear()` plus a fixed `ENV_ALLOWLIST` (`PATH`, `PATHEXT`,
+`SYSTEMROOT`, `SYSTEMDRIVE`, `COMSPEC`, `WINDIR`, `TEMP`, `TMP`, `USERPROFILE`, `HOME`, `APPDATA`,
+`LOCALAPPDATA`, `PROGRAMDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`) copied verbatim from the parent,
+plus whatever the caller passes as `extra_env` — production callers pass nothing beyond the
+allowlist; only the test suite uses `extra_env`, to steer `fake_runtime`. `PATHEXT` is a deliberate
+addition beyond the plan's own list, needed for Windows' `PATH` program resolution. `HOME` and
+`APPDATA` stay on the allowlist on purpose: §6.3's separation is that a native runtime owns its own
+authentication — its own login, its own config directory, its own token store — and the gateway
+never touches it, so the CLI needs its ordinary config-location variables to find *its own* auth,
+not the gateway's. This is not yet the stricter Tier 1 sandbox posture; 05c's tool-broker isolation
+is the milestone that tightens this further, and is not built yet. The prompt travels over stdin
+only — never argv, never an environment variable — written on its own background thread, spawned
+before the reader threads and the deadline loop start and joined only after the child has exited or
+been killed: writing directly on the calling thread (the pre-final-review shape) blocks until the
+child drains its stdin, and a prompt bigger than the OS pipe buffer against a stalled or
+never-reading child (`FAKE_RUNTIME_MODE=hang`) hung there forever, before the deadline logic below
+ever ran at all. Stdout/stderr are drained on background threads concurrently with the same 50ms
+`try_wait` poll loop against the deadline (`route.timeout_seconds()`), so a child that writes more
+than one pipe buffer of output cannot be mistaken for hung either; on deadline the child is killed
+and reaped, which unblocks a still-in-flight stdin write with a harmless `BrokenPipe` (joined
+alongside the output threads), and the call reports `GatewayError::Timeout` — now true
+unconditionally, for an oversized prompt exactly as for a slow-to-exit child. Exit `0` parses per
+`RuntimeKind`: `ClaudeCode` expects one JSON object with
+a `result` string and optional `usage`; `Codex` expects JSONL, scanning every line and keeping only
+the last `agent_message` (`usage` is always absent for this shape — nothing in it reports usage this
+milestone knows how to read). A nonzero exit is `QuotaExhausted` when `QUOTA_MARKERS`
+(`["quota", "rate limit"]`, a documented heuristic, case-insensitive substring match over the raw
+concatenation of captured stdout and stderr) matches, otherwise `RuntimeCrashed`; an exit-`0` reply
+that does not parse is `MalformedOutput`. Eight tests in
+`adapters/model-gateway/tests/runtime_adapters.rs` cover both happy shapes, quota/crash/hang/stdin
+routing, the stdin-write regression above (a 1 MiB prompt against a child that never reads stdin at
+all, which hung indefinitely pre-fix), and — the one requiring the most care —
+`the_child_environment_is_an_allowlist_and_never_carries_broker_material`: since mutating this
+process's real environment from inside a test would race every sibling test reading it concurrently,
+this test re-execs the compiled test binary as a child with two sentinel variables set only on that
+`Command`, and has the grandchild (`fake_runtime`, `env-dump` mode) report over a temp file exactly
+what it received — proving the sentinels are filtered rather than merely asserting they were never
+present. The guard is not hypothetical: Task 5's own sabotage (commit `86e518a`) removed
+`env_clear()` from the spawn path and reran this test, which failed by dumping the shell's entire
+ambient environment — including a real, live `SENTRY_AUTH_TOKEN` — into the fake child; restored,
+with the test green again.
+
+### The quota-free probe
+
+`graphhelm gateway probe` (§18: "health probes must not consume excessive quota") never places a
+real model call. For a `direct_api` route it attempts exactly one `CredentialBroker::lease` and
+reports only whether it succeeded — no network call, no value ever printed. For a `native_runtime`
+route it spawns `command.program --version` (never the manifest's own configured `args` — this is a
+liveness probe of the CLI, not a real invocation) under the identical `env_clear()` + allowlist
+discipline as `runtime.rs`'s adapter, with a fixed 10-second budget independent of the route's own
+`timeoutSeconds`. `health` reports `available` on success, `auth_required` for a denied `direct_api`
+lease (revoked, wrong route, or unknown id — a fact about the route, not a CLI failure), or
+`unavailable` for a `native_runtime` spawn/exit failure. What it deliberately does not check: whether
+the model itself still has remaining quota — that can only be learned by placing a real call, which
+a probe by definition never does.
+
+### The CLI surface and codes
+
+`graphhelm gateway routes|probe|credential set|remove` (`apps/cli/src/commands/gateway/`), following
+`commands::events`/`commands::execution`'s existing four-key-envelope pattern exactly. Three new
+failure codes: `GHCLI009_GATEWAY_INVALID` (manifest fails to load or validate, or an argument is
+malformed, missing, or names an unknown route — never echoes manifest bytes, leaning on
+`ManifestError::Display`'s own redaction), `GHCLI010_GATEWAY_CREDENTIAL` (the broker itself could not
+be used: a missing/malformed `GRAPHHELM_GATEWAY_KEY`, a keyring directory that does not exist yet, or
+any `BrokerError`), and `GHCLI011_GATEWAY_PROBE` (a probe-specific refusal neither code above covers
+— this milestone's one case, probing a route the manifest marks `enabled: false`). `credential
+set`/`remove` read the credential value from stdin as one trimmed line, never as an argument, and
+print only `{id, provider, routes}` — never the value; the passphrase comes from
+`GRAPHHELM_GATEWAY_KEY` (64 lowercase hex characters), mirroring the `GRAPHHELM_EVENTS_KEY`
+precedent in `commands::events::config` byte-for-byte. Seven tests in `apps/cli/tests/gateway_cli.rs`
+cover a valid manifest, a manifest refused without leaking a planted marker string, a manifest that
+fails to *parse* (rather than merely fails a structural rule) refused the same way, credential
+set-then-probe going green, a native-runtime probe spawning the `graphhelm` binary itself as its own
+`--version`-answering fixture, credential remove flipping probe to `auth_required`, and a missing
+passphrase being refused as `GHCLI010`. `gateway_cli` is now a named stage in `ci/gate.ps1`'s CLI
+suite list, alongside `cli_smoke`, `schema_cli`, `event_store_cli`, `execution_cli`, and `api_http`.
+
+## Honest limits, stated (05b)
+
+- **JSON manifests, not YAML.** §4's own example is YAML; this milestone's on-disk manifest is JSON
+  (`RouteManifest::from_json`). Revisit when Studio needs to author or edit one directly.
+- **Router scoring (§8.3) and local benchmarks (§10) are deferred.** `eligible_routes` filters to a
+  candidate set and returns it in manifest order; nothing chooses among several eligible routes yet.
+- **The broker's access-audit ledger (§7.1) is deferred.** `CredentialBroker` durably stores,
+  leases, and revokes, but keeps no record of which lease happened when or for which node.
+- **Three of the five route types in §2 are not built.** Only Direct API/BYOK (§2.2) and Native
+  runtime (§2.3) exist; the Aggregator (§2.1), OpenAI-compatible endpoint (§2.4), and local embedded
+  runtime (§2.5) transports are deferred.
+- **Session management (§13) is out of scope.** Every call is stateless — `ModelCall` carries a
+  prompt and a token budget, never a session reference — so native-runtime history and session
+  resume do not exist yet.
+- **Neither tool-use strategy from §14 is built.** §14.1's gateway-native tool calls do not exist —
+  a `ModelReply` is text and usage only. Nor does this milestone implement §14.2's requirements for
+  a native runtime's own agent tools: when a `native_runtime` route spawns Claude Code or Codex,
+  whatever tools that CLI invokes internally are not intercepted, logged, permission-mapped, or
+  workspace-confined by anything in `adapters/model-gateway` — the env allowlist bounds what the
+  spawned *process* can read from the environment, not what the *CLI itself* does with its own tool
+  use once running. That mediation is 05c's Tool Broker and Tier 0/1 isolation.
+- **The host-CLI JSON shapes are fixtures, not verified contracts.** `fake_runtime.rs`'s "happy
+  shapes" — the Claude Code `result` object, the Codex JSONL `agent_message` — are this repository's
+  documented understanding as of this milestone, not a claim about either CLI's real, versioned
+  output. 05e re-verifies against the live hosts.
+- **`QUOTA_MARKERS` is a text-sniffing heuristic, not a wire contract.** Neither host CLI this
+  milestone targets publishes a stable, versioned "out of quota" exit shape to key off instead.
+- **`ModelCall::max_tokens` is accepted but never forwarded to a native-runtime CLI.** The route's
+  own `command.args`, set once in the manifest, fully controls the invocation; there is no per-call
+  channel to carry it through beyond the prompt itself.
+- **The BYOK timeout is a hardcoded constant, not manifest-driven.** `BYOK_REQUEST_TIMEOUT` (60s)
+  applies to every `direct_api` route alike, unlike native-runtime's per-route `timeoutSeconds`.
+- **The probe checks reachability, never remaining model quota.** A successful lease or a clean
+  `--version` exit proves the credential or the program is usable; it says nothing about whether the
+  next real call would succeed against the provider's own limits — learning that requires placing
+  the call, which §18 forbids a health probe from doing.
+- **`credentials.json` persists an unsalted SHA-256 of each credential's plaintext.** This is
+  `EvidenceProtector`'s own content digest (`content_sha256`, computed at seal time and later
+  written verbatim into the broker's persisted entry) — not a hash the broker invented for
+  itself — but storing it durably alongside the ciphertext means an attacker who obtains the file
+  can run an offline dictionary or rainbow-table check against it for a low-entropy credential.
+  Reusing `EvidenceProtector` exactly as `core/events` already defines it (this section's own "no
+  new cryptography" framing above) is what keeps the digest unsalted here; revisit if the Evidence
+  pipeline itself grows a salted variant.
+- **`ContextTooLarge` and `ModelRemoved` currently have no producer.** Both are closed-taxonomy
+  members with a chosen outcome (`TerminalFailure`, `core/gateway/src/taxonomy.rs`), but neither
+  BYOK provider's status-mapping table (`byok.rs`) nor the native-runtime adapter ever returns
+  them: Anthropic's and OpenAI's own 400/404 responses fall through the unmapped-status catch-all
+  to `MalformedOutput` instead, so a call against a context the model genuinely cannot accept is
+  retried as a transient failure rather than treated as the terminal one it actually is. 05d
+  revisits provider-specific body sniffing for these two.
+- **`CredentialBroker::store` on an existing id replaces it and un-revokes it.** Calling `store`
+  again with a previously-used reference id is a rotation, not a second independent credential: the
+  new value overwrites the old sealed entry and resets `revoked` to `false`, even if the credential
+  previously stored under that id had been explicitly revoked. Documented on `store` itself
+  (`adapters/model-gateway/src/broker.rs`); recorded here too because silent un-revocation on
+  rotation is a real behavioral choice an operator relying on `revoke` as a durable kill switch for
+  one id should know about.
+- **Zeroization at the three secret entry points stops at this process's own heap.** The stdin
+  credential read (`apps/cli/src/commands/gateway/credential.rs::read_stdin_secret`), the
+  passphrase-from-env read (`apps/cli/src/commands/gateway/mod.rs::passphrase_from_env`), and the
+  BYOK header build (`adapters/model-gateway/src/byok.rs`) each zeroize every buffer this process
+  controls, but `std::env::var`'s own copy inside the CRT/OS environment block, and any internal
+  buffering `ureq`/its TLS stack perform while writing the `Authorization`/`x-api-key` header onto
+  the wire, are outside this process's reach — PR review IMPORTANT 5's own honest limit.

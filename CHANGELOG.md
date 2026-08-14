@@ -1,5 +1,15 @@
 # Specification Changelog
 
+## Runtime, 05b — 2026-08-14
+
+- `core/gateway` (pure) and `adapters/model-gateway` (impure) added: the Universal Model Gateway's route manifest, error taxonomy, capacity policy, credential broker, and BYOK/native-runtime adapters, with purity enforced by a source-invariant test pinning `core/gateway`'s dependency table to exactly `graphhelm-protocols`/`serde`/`serde_json` and forbidding it from ever naming the adapter crate.
+- `RouteManifest::from_json` makes billing mode and authentication a single structural fact tied to transport (§20): a `direct_api` route requires `api_key`/`per_token`/`baseUrl`/`model`/`credentialRef` and a provider in `{anthropic, openai}`; a `native_runtime` route requires `account_subscription`/`subscription_quota`/`runtime`/`command` and structurally forbids `credentialRef`/`baseUrl`, so the manifest cannot route a broker secret into a runtime that owns its own auth. Cleartext `http://` is refused except to loopback.
+- The fourteen-kind `GatewayError` taxonomy (§17) maps to `NodeOutcome` through one exhaustive match with no wildcard arm: quota/rate/auth failures park the node as `NeedsCapacity` (§12, no automatic paid fallback), provider/timeout/crash/malformed trouble retries, a request the gateway can never satisfy is terminal, cancellation passes through.
+- The credential broker invents no new cryptography — it wraps the existing `EvidenceProtector<SealedKeyProvider>`, persisting sealed parts atomically, enforcing `usable_by` route scoping and durable revocation at `lease()`, and never caching plaintext.
+- ADR-025 pins `ureq =3.4.0` for the BYOK adapters' outbound HTTPS, rustls-only, confirmed to share `sqlx`'s existing `rustls`/`ring` versions rather than adding a second TLS stack. Anthropic and OpenAI adapters map fixed status tables onto the taxonomy; native-runtime adapters spawn Claude Code/Codex under `env_clear()` plus a fixed allowlist and a stdin-only prompt — the isolation proved load-bearing when a sabotage run leaked a live `SENTRY_AUTH_TOKEN` into a fake child before the guard was restored.
+- `graphhelm gateway routes|probe|credential set|remove` added, with a quota-free probe (§18) and `gateway_cli` as a new named gate stage.
+- Honest limits recorded: JSON manifests where the spec shows YAML, router scoring and the broker's access audit deferred, three of the five route types deferred, session management and gateway-native tool calls out of scope, host-CLI JSON shapes are fixtures pending 05e's live re-verification, and the quota-detection marker list is a documented heuristic rather than a wire contract.
+
 ## Runtime, 05a — 2026-08-14
 
 - `graphhelm serve` added: the Public Runtime API as the multi-agent concurrency contract. Loopback-only fail-closed bind, sibling-path bearer token with constant-time comparison, the CLI's four-key envelope on every route.

@@ -266,6 +266,14 @@ impl<K> EvidenceProtector<K> {
     pub const fn new(key_provider: K) -> Self {
         Self { key_provider }
     }
+
+    /// The underlying key provider, for callers that need to `authenticate`/`verify` bytes
+    /// directly rather than through [`EvidenceSealer::seal`]/[`EvidenceOpener::open`] — e.g. an
+    /// entry-level integrity MAC over plaintext metadata that must never itself be encrypted.
+    #[must_use]
+    pub const fn key_provider(&self) -> &K {
+        &self.key_provider
+    }
 }
 
 impl<K: KeyProvider> EvidenceProtector<K> {

@@ -21,6 +21,7 @@ pub enum TopLevel {
     Schema(SchemaArgs),
     Events(EventsArgs),
     Execution(ExecutionArgs),
+    Gateway(GatewayArgs),
     Serve(ServeArgs),
 }
 
@@ -119,6 +120,76 @@ pub enum ExecutionCommand {
         events: PathBuf,
         #[arg(long)]
         execution: Option<String>,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct GatewayArgs {
+    #[command(subcommand)]
+    pub command: GatewayCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GatewayCommand {
+    /// Validates a route manifest and reports every route it declares.
+    Routes {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    /// Quota-free health probe (§18) for one route: a `direct_api` route proves its credential
+    /// leases from the broker; a `native_runtime` route proves its CLI spawns and exits cleanly on
+    /// `--version`. Never places a real model call and never prints a credential value.
+    Probe {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        route: String,
+        #[arg(long)]
+        broker: Option<PathBuf>,
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
+    },
+    /// Manages BYOK credentials held in the broker.
+    Credential(CredentialArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CredentialArgs {
+    #[command(subcommand)]
+    pub command: CredentialCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CredentialCommand {
+    /// Stores a credential. The value is read from stdin — one trimmed line — and is never
+    /// accepted as an argument.
+    Set {
+        #[arg(long)]
+        broker: PathBuf,
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
+        #[arg(long = "ref")]
+        reference: String,
+        #[arg(long)]
+        provider: String,
+        #[arg(long = "usable-by")]
+        usable_by: String,
+    },
+    /// Revokes a credential. A revoked credential can never be leased again, including after the
+    /// broker is reopened.
+    Remove {
+        #[arg(long)]
+        broker: PathBuf,
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
+        #[arg(long = "ref")]
+        reference: String,
     },
 }
 

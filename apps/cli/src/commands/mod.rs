@@ -1,6 +1,7 @@
 mod draft;
 mod events;
 mod execution;
+mod gateway;
 mod hash;
 mod lint;
 mod replay;
@@ -17,7 +18,8 @@ use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
-    DraftCommand, EventsCommand, ExecutionCommand, GraphCommand, SchemaCommand, TopLevel,
+    CredentialCommand, DraftCommand, EventsCommand, ExecutionCommand, GatewayCommand, GraphCommand,
+    SchemaCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -164,6 +166,40 @@ pub fn run(command: TopLevel) -> Outcome {
             ExecutionCommand::Cancel { events, execution } => {
                 execution::cancel::run(&events, execution.as_deref())
             }
+        },
+        TopLevel::Gateway(gateway_args) => match gateway_args.command {
+            GatewayCommand::Routes { manifest } => gateway::routes::run(&manifest),
+            GatewayCommand::Probe {
+                manifest,
+                route,
+                broker,
+                keyring,
+                key_id,
+            } => gateway::probe::run(
+                &manifest,
+                &route,
+                broker.as_deref(),
+                keyring.as_deref(),
+                key_id.as_deref(),
+            ),
+            GatewayCommand::Credential(credential_args) => match credential_args.command {
+                CredentialCommand::Set {
+                    broker,
+                    keyring,
+                    key_id,
+                    reference,
+                    provider,
+                    usable_by,
+                } => gateway::credential::set(
+                    &broker, &keyring, &key_id, &reference, &provider, &usable_by,
+                ),
+                CredentialCommand::Remove {
+                    broker,
+                    keyring,
+                    key_id,
+                    reference,
+                } => gateway::credential::remove(&broker, &keyring, &key_id, &reference),
+            },
         },
         TopLevel::Serve(args) => serve::run(&args.events, &args.bind),
     }

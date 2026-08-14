@@ -96,6 +96,7 @@ An immutable, versioned `Context Capsule`, with:
 
 - materialized content;
 - artifact/context refs;
+- stable per-item ids (the citation and utilization unit, §6.4);
 - summaries;
 - provenance;
 - conflicts;
@@ -117,7 +118,7 @@ Small, stable context:
 - relevant policies;
 - essential glossary.
 
-Must be short, versioned, and different per scope.
+Must be short, versioned, and different per scope, bounded by its layer ceiling (§8.1).
 
 ### 4.2 Task Capsule
 
@@ -203,6 +204,7 @@ relevance
 × evidence_strength
 × decision_impact
 × contract_fit
+× observed_utilization
 − redundancy
 − token_cost
 − contamination_risk
@@ -211,6 +213,25 @@ relevance
 ### 6.3 Contradictions
 
 When a relevant item contradicts another, both enter with status and provenance. The compiler does not silently merge them.
+
+### 6.4 Observed utilization
+
+The loop that makes capsules cheaper with use — the structural advantage over an agent that
+carries full context and never learns what it wasted:
+
+- every capsule item carries a stable id (§3.2);
+- the node's structured output cites the ids it relied on, riding the existing evidence-ref
+  channel (HARNESS_SPEC §18.2) — grounding, not chain-of-thought;
+- utilization is recorded per item and per retrieval recipe; the §17 metrics (irrelevant
+  context ratio, per-item utilization) are computed from these citations, not estimated;
+- `observed_utilization` enters the ranking with decay and a floor: a never-yet-included
+  item is not penalized, and utilization can demote but never overrule `scope_permission`
+  or contract-required evidence (§14.3's rule: never save by removing required evidence);
+- Dreams consumes the same signal through its existing `retrieval recipe optimization`
+  category (§14.4); recipe changes ship as normal Dreams proposals, shadow-validated.
+
+An explicitly referenced rule document (§12.5) is exempt from utilization demotion: an
+explicit contract reference is a binding, not a retrieval guess.
 
 ## 7. Efficient representation
 
@@ -228,6 +249,12 @@ The compiler chooses:
 
 Large files never enter in full by default.
 
+Index-first strategy: when the node holds a retrieval capability, the compiler may prefer a
+one-line-per-item index of handles over materialized content — the agent pulls exactly what
+it needs through the auditable expansion request (§8.2), under its leases. Prefer it for
+exploratory objectives where relevance is genuinely unknown at compile time; the expansion
+rate metric (§17) is the guard against a node that thrashes instead of reading its index.
+
 ## 8. Context budget
 
 ### 8.1 Allocation
@@ -241,6 +268,11 @@ Budget is divided by priority:
 5. project conventions;
 6. memories;
 7. optional background.
+
+Each capsule layer (§4) declares a budget ceiling, with configurable defaults per scope.
+Exceeding a ceiling is a linter finding, resolved by a cheaper representation (§7) or a
+recorded exclusion — never silently absorbed. A ceiling bounds a layer; it never removes
+contract-required evidence (§14.3's rule in the harness applies here unchanged).
 
 ### 8.2 Expansion request
 
@@ -275,6 +307,14 @@ Cache key includes:
 - blind exclusions.
 
 A change invalidates only dependent fragments. A new marketing file does not invalidate an unrelated backend capsule.
+
+Provider prompt-cache awareness: assembly is canonical and deterministic so the model
+provider's prefix cache hits on every repeated call, not just the compiler's own cache —
+the stable prefix first (versioned Project Kernel, then stable content ordered by item id),
+volatile material last (Task/Node Capsules, dependency outputs, deltas); cache boundaries
+align with the provider's breakpoints where the route supports them; the same capsule
+version always serializes to the same bytes. The §17 cache-hit metric covers both caches,
+reported separately.
 
 ## 10. Reviewer isolation
 
@@ -601,8 +641,10 @@ Every change goes through conformance tests. Dreams does not silently promote a 
 - tokens allocated/used;
 - relevant evidence recall;
 - irrelevant context ratio;
+- per-item utilization rate (from cited ids, §6.4);
 - expansion rate;
-- cache hit;
+- cache hit (compiler and provider prefix, separately);
+- layer ceiling violations;
 - stale item rate;
 - contradiction exposure;
 - downstream quality correlation.
@@ -630,6 +672,8 @@ Every change goes through conformance tests. Dreams does not silently promote a 
 
 - no agent receives full history by default;
 - every Context Capsule has provenance and exclusions;
+- utilization is computed from the node's cited item ids, and it demotes ranking without ever overruling permission filters or contract-required evidence;
+- a layer ceiling violation is a linter finding resolved by compression or a recorded exclusion, never silently absorbed;
 - an expansion request is auditable;
 - relevant conflict appears explicitly;
 - the Event Store remains immutable;

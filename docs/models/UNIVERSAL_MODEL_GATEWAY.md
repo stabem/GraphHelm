@@ -112,6 +112,7 @@ The adapter declares and tests:
 - authentication status;
 - usage reporting;
 - safety restrictions;
+- prompt cache behavior: `none | implicit_prefix | explicit_breakpoints`, minimum cacheable prefix, cache TTL, and cache write cost multiplier — the fields the compiler's cache-aware assembly (`CONTEXT_KNOWLEDGE_DREAMS.md` §9) aligns to;
 - data residency/retention metadata when known.
 
 Capabilities are versioned because providers change.
@@ -291,7 +292,7 @@ Results are local and feed the router. Benchmarking must not send private data t
 
 - input tokens;
 - output tokens;
-- cache;
+- cache read tokens and cache write tokens (the effective hit ratio derives from them; a write-heavy pattern can cost more than an uncached call and must be visible);
 - tool calls;
 - monetary cost;
 - rate limits.
@@ -316,6 +317,19 @@ Do not invent token counts/cost when the runtime does not provide them.
 - energy optional;
 - queue time;
 - model load time.
+
+### 11.4 Graded marginal cost
+
+Every route reports one normalized `marginal_cost` per call, with an explicit grade recorded
+alongside the value and the routing decision:
+
+- `exact` — observed monetary cost (APIs/aggregators, §11.1);
+- `estimate` — fraction of the observed quota window consumed (subscriptions, §11.2; grading,
+  never inventing, per the rule above);
+- `unknown` — permitted; a consumer treats it as neutral, never as zero.
+
+This is the contract half only: it defines the unit and the record. Scoring over it and budget
+enforcement against it belong to the router and harness implementations.
 
 ## 12. Exhausted capacity policy
 

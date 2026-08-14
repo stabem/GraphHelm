@@ -459,7 +459,8 @@ The runtime intercepts an incompatible action, emits a Graph Signal, checkpoints
 - mutations;
 - context expansion;
 - CPU/memory/storage;
-- network egress.
+- network egress;
+- measurement and calibration overhead, capped as a declared fraction of the spend it measures.
 
 ### 14.2 Savings strategies
 

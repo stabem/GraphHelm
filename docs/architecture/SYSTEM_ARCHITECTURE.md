@@ -297,6 +297,9 @@ Each output records a semantic hash of:
 
 A mutation invalidates only outputs whose dependent hash changed.
 
+Every persisted cache key in the system must be a declared subset of these dependency-hash
+components; the Tool Broker's read cache is the first declared instance.
+
 ## 8. State machines
 
 ### 8.1 Execution

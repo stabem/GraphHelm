@@ -105,6 +105,9 @@ An immutable, versioned `Context Capsule`, with:
 - dependency hash;
 - expansion policy.
 
+User-pinned items are ordinary capsule items: stable ids, layer ceilings (§8.1) and utilization
+recording (§6.4) apply; they are demotion-exempt like explicit rule references.
+
 ## 4. Capsule layers
 
 ### 4.1 Project Kernel

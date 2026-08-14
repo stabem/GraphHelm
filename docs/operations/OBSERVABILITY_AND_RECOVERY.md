@@ -55,7 +55,8 @@ Required IDs:
 - graph_simulation_failures;
 - cost/time estimate error;
 - capability gaps;
-- agent reuse rate.
+- agent reuse rate;
+- telemetry overhead (storage bytes, compute seconds, measurement tokens per subsystem), with aggregation joins off the execution critical path.
 
 ## 5. Execution metrics
 

@@ -289,11 +289,21 @@ Every call passes through:
 3. capability lease;
 4. policy;
 5. path/network/secret validation;
-6. sandbox routing;
-7. execution;
-8. redaction;
-9. artifact persistence;
-10. event emission.
+6. read cache;
+7. sandbox routing;
+8. execution;
+9. redaction;
+10. artifact persistence;
+11. event emission.
+
+The read cache (step 6) applies only to tools with a declared freshness class (§11.3): a hit
+returns the already-persisted artifact reference and digest instead of executing. The key is
+`tool id@version + canonical input hash + lease scope + source snapshot` — a declared subset of
+the dependency-hash components (`SYSTEM_ARCHITECTURE.md` §7.2) — with no expiry inside a
+snapshot: a snapshot-keyed hit is provably exact. `drifting` tools are not cached in v1. Every
+decision is recorded as a `ReuseDecision` event, and an `EvidenceErasureCompleted` for the
+underlying artifact is a mandatory invalidation input — a cache must never serve
+cryptographically erased evidence.
 
 ### 11.3 Effects
 
@@ -308,6 +318,16 @@ A tool declares:
 - network egress.
 
 This influences gating and isolation.
+
+For caching, a read-only tool additionally declares a freshness class:
+
+- `immutable_by_input` — the output is a pure function of the input;
+- `snapshot_closed` — exact within a source snapshot, invalid across snapshots;
+- `drifting` — external state may change between identical calls.
+
+A TTL is the wrong instrument for the first two (too short wastes re-execution, too long is
+wrong across snapshots); the snapshot key carries the freshness, and `drifting` tools are
+simply not cached until a calibrated refresh mechanism exists.
 
 ## 12. Plugins
 

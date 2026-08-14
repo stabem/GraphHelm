@@ -436,10 +436,15 @@ retry:
     - invalid_user_input
   beforeRetry:
     - reset_sandbox
-    - recompile_context
+    - refresh_context_delta
 ```
 
 Retries count toward `maxAttempts`; graph remediation loops are different and are also limited.
+
+`refresh_context_delta` follows `CONTEXT_KNOWLEDGE_DREAMS.md` §8.3: a retry receives the delta
+since the previous capsule plus stable references, never an unconditional recompilation — full
+recompilation is reserved for failure categories whose failure invalidates the capsule itself
+(for example a sandbox crash).
 
 ## 22. Completion
 

@@ -90,7 +90,9 @@ prompt
 12. execution pauses if a route hits its quota;
 13. user resumes once capacity is available;
 14. docs and claims are updated;
-15. export reproduces the timeline.
+15. export reproduces the timeline;
+16. the execution's context-efficiency figure (§9.2) and per-node token counts are visible in local observability alongside the recorded full-context estimate;
+17. the user requests a second feature with a distinct objective signature on the same repository, and the system demonstrates measurably lower compiled-context cost through reuse — capsule compilation cache hits, provider prompt-cache hits, agent reuse — with the cited `ReuseDecision` events visible in the timeline (reuse across distinct work, not replay of identical work).
 
 ## 4. Phase 2 — generalization of capabilities
 
@@ -246,6 +248,19 @@ Percentage of user-accepted executions that satisfy completion contracts with no
 
 Must not be optimized in isolation; track alongside quality.
 
+The estimator for `estimated_tokens_full_context` is versioned and deterministic, and its
+identity rules are fixed: the method id includes the retrieval-recipe version; a recipe change
+starts a new series (no cross-series comparison); and the paired inline arm of §11.2 is the
+calibration reference, with a declared error tolerance that flags — never blocks — per-execution
+reporting. The v1 estimator is a free compiler byproduct: ranking already token-counts every
+eligible candidate for its token-cost term, so the capsule manifest records
+`eligible_candidate_tokens` and `tokens_saved = eligible − shipped` per node, stated explicitly
+as a conservative lower bound on the true full-context baseline.
+
+A future economy metric or mechanism proposal is admissible only if it names which measured
+metric it will move and which producer it consumes from — unmeasurable-but-plausible does not
+qualify.
+
 ### 9.3 Orchestration efficiency
 
 - useful nodes / total nodes;
@@ -292,7 +307,9 @@ Set of tasks of varying complexity. Evaluate:
 - relevant evidence recall;
 - irrelevant token ratio;
 - conflict detection;
-- stale information avoidance.
+- stale information avoidance;
+- paired full-context arm: every benchmark task also runs as a single full-context inline agent, scored on tokens and quality together — the thesis's falsification arm (explicit runs only; D-016 stands, nothing fires automatically on live workloads);
+- the slope: over the fixed corpus executed repeatedly, graded cost per task is non-increasing at paired-arm quality parity, with cited `ReuseDecision` event ids decomposing which reuse mechanisms produced each reduction.
 
 ### 11.3 Reviewer benchmark
 
@@ -339,7 +356,8 @@ Set of tasks of varying complexity. Evaluate:
 - backup/restore;
 - security review;
 - extension SDK;
-- complete docs.
+- complete docs;
+- capsule runs pass the paired-arm context benchmark (§11.2) at parity-or-better quality with materially fewer tokens.
 
 ### 1.0
 

@@ -35,6 +35,7 @@
 
 - [Threat model and isolation](security/SECURITY_ISOLATION_THREAT_MODEL.md)
 - [Observability and recovery](operations/OBSERVABILITY_AND_RECOVERY.md)
+- [Quality gates and deployment](operations/QUALITY_GATES_AND_DEPLOYMENT.md)
 
 ## Open source
 

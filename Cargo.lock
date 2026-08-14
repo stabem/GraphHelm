@@ -764,6 +764,7 @@ dependencies = [
  "chrono",
  "clap",
  "graphhelm-events",
+ "graphhelm-execution",
  "graphhelm-governor",
  "graphhelm-graph",
  "graphhelm-policy",

@@ -20,6 +20,91 @@ pub enum TopLevel {
     Graph(GraphArgs),
     Schema(SchemaArgs),
     Events(EventsArgs),
+    Execution(ExecutionArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ExecutionArgs {
+    #[command(subcommand)]
+    pub command: ExecutionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExecutionCommand {
+    /// Publishes a graph, starts an execution and drives it to quiescence.
+    Start {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
+        #[arg(long)]
+        mode: String,
+        #[arg(long)]
+        execution: Option<String>,
+    },
+    /// Replays a stream and reports the execution's current state — the operator's triage view.
+    Status {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+    },
+    /// Admits a Graph Signal envelope, externalizes its evidence, and reports the governance
+    /// verdict for the mode in force. Evidence externalizes to an operator-supplied file, not the
+    /// encrypted Evidence store — the sealed-provider pipeline expects the Governor's own content
+    /// slots, which a signal envelope does not have; operator-grade encrypted externalization of
+    /// signal envelopes is Milestone 05 work.
+    Signal {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        signal: PathBuf,
+        #[arg(long = "evidence-out")]
+        evidence_out: PathBuf,
+    },
+    /// The owner approves a `Ghost` or `Blocked` node, readying it. Does not auto-drive: nothing
+    /// auto-starts out of a manual intervention (D-020); run `resume` to continue.
+    Approve {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        node: String,
+    },
+    /// Holds every dispatchable node (`Ready`/`Queued`), refusing unless the aggregate status is
+    /// unset or `Running`.
+    Pause {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+    },
+    /// Recovers any crashed node, gates on the resume preconditions, then re-dispatches exactly
+    /// the nodes the pause held and drives to quiescence again. `--file` names the graph the
+    /// execution started with — the driver has no other source of the spec to drive against.
+    Resume {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
+        #[arg(long)]
+        execution: Option<String>,
+    },
+    /// Cancels every non-terminal node and completes the execution as `Cancelled`. Refuses when
+    /// the execution is already terminal.
+    Cancel {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]

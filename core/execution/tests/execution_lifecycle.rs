@@ -21,8 +21,9 @@ use graphhelm_events::{
     ExecutionProjection, LocalEventRepository, PreparedAppend, ProjectionGeneration, replay,
 };
 use graphhelm_execution::{
-    MAX_NODE_ATTEMPTS, NodeExecutor, Progress, ResumeError, TransitionRequest, apply_transition,
-    classify_progress, dispatch_plan, ready_set, recovery_plan, resume_preconditions,
+    MAX_IDENTICAL_OUTCOMES, MAX_NODE_ATTEMPTS, NodeExecutor, Progress, ResumeError,
+    TransitionRequest, apply_transition, classify_progress, dispatch_plan, ready_set,
+    recovery_plan, resume_preconditions,
 };
 use graphhelm_protocols::{
     ActorId, Clock, EdgeType, EventEnvelope, EventKind, ExecutionCompleted, ExecutionId,
@@ -368,11 +369,14 @@ fn the_composed_lifecycle_pauses_recovers_completes_and_replays() {
     // while a node is still Running (the fold only inspects the aggregate's own status, never node
     // states). So the honest order is: drive to the crash point, pause the aggregate *while the
     // node is still Running* (proving the refusal with its real reason), THEN fold the interrupted
-    // outcome to recover it. A second surprise: `resume_preconditions` already returns `Ok(())`
-    // immediately after that recovery fold, before any owner approval — the pure gate only checks
-    // for `Running` nodes, never `Blocked` ones. Owner-approving the blocked node is necessary for
-    // the execution to make forward progress after resume (a `Blocked` node never dispatches on its
-    // own), but it is not a precondition `resume_preconditions` itself enforces.
+    // outcome to recover it.
+    //
+    // 04e finding 1, resolved by Task 2 (04f): before that fix, `resume_preconditions` returned
+    // `Ok(())` immediately after this recovery fold, before any owner had looked at the blocked
+    // node — recorded but never triaged. Now the projection tells an *untriaged* interruption
+    // (`Blocked` with `last_outcome == Interrupted`) apart from a node blocked for any other
+    // reason, and refuses resume until the owner acts on it. Approving is the triage act: it
+    // overwrites `last_outcome`, which is exactly what lets the check below pass afterwards.
     let mut crash_journal = Journal::new();
     crash_journal.append(vec![execution_started_event(&execution_id)]);
     approve_untouched(&mut crash_journal, &execution_id, &spec);
@@ -431,10 +435,14 @@ fn the_composed_lifecycle_pauses_recovers_completes_and_replays() {
     assert_eq!(projection.node_states.get("b"), Some(&NodeState::Blocked));
     assert!(recovery_plan(&projection).is_empty());
 
-    // The pure gate already passes here — see the finding above.
-    assert_eq!(resume_preconditions(&projection, None), Ok(()));
+    // Recovered but untriaged: Task 2 refuses resume here until the owner has looked at it.
+    assert_eq!(
+        resume_preconditions(&projection, None),
+        Err(ResumeError::UntriagedInterruption)
+    );
 
     // The owner resumes the blocked node so it is schedulable again once the execution resumes.
+    // Approving is the triage act itself — it is what resume_preconditions above was waiting for.
     record_outcome(
         &mut crash_journal,
         &execution_id,
@@ -511,16 +519,30 @@ fn the_composed_lifecycle_pauses_recovers_completes_and_replays() {
     assert_eq!(first_json, generation_json);
 }
 
-/// Proves the composition can fail: a fixture that always retries drives the transition table's
-/// blocking condition on `(Running, RetryableFailure)`, then the owner resumes it exactly like
+/// Proves the composition can fail — and now blocks earlier than 04e's driver could reach it: a
+/// fixture that always retries drives `classify_progress` to `NoProgress` at exactly
+/// `MAX_IDENTICAL_OUTCOMES`, the transition table's `(Running, RetryableFailure)` arm confirms the
+/// same verdict on the very next attempt, and the owner resumes the blocked node exactly like
 /// `an_owner_approval_readies_a_blocked_node` pins at the unit level.
 ///
-/// Note for the report: this scenario exhausts via `attempts`, not `identical_outcomes`, even
-/// though `classify_progress` and `apply_transition` both judge either. Every retry cycle folds
-/// `Started` between failures (the real redispatch a scheduler performs), and `Started` becomes
-/// the node's `last_outcome` each time — so `identical_outcomes_for(node, RetryableFailure)`
-/// resets to 0 on every cycle and never reaches `MAX_IDENTICAL_OUTCOMES`. Only the `attempts`
-/// counter, which survives the redispatch, ever reaches its bound.
+/// Note for the report — reworked for Task 1 (04f): the 04e version of this test exhausted via
+/// `attempts` (8 retries) rather than `identical_outcomes`, because every retry cycle folded a
+/// `Started` between failures and the *old* fold let `Started` overwrite `last_outcome`, so
+/// `identical_outcomes_for(node, RetryableFailure)` reset to 0 every cycle and never reached
+/// `MAX_IDENTICAL_OUTCOMES`. Task 1 stops `Started` from touching `last_outcome`/
+/// `identical_outcomes` at all, so the run of `RetryableFailure`s now survives the dispatch hop
+/// between cycles — and `MAX_IDENTICAL_OUTCOMES` (3) is smaller than `MAX_NODE_ATTEMPTS` (8), so
+/// the identical-outcomes bound is now the one that fires.
+///
+/// The two guards fire at genuinely different points, confirmed by driving both: `classify_progress`
+/// is *predictive* — `identical_outcomes_for` reports the run already observed, so reading it with
+/// the outcome actually repeating (`RetryableFailure`, never `Started`: Task 1 makes `Started`
+/// dispatch bookkeeping that can never become `last_outcome`) flags `NoProgress` as soon as 3
+/// consecutive failures are on record, one cycle *before* a 4th attempt would be made. The
+/// transition table's own counter check inside `(Running, RetryableFailure)` is *confirming* — it
+/// judges the count already observed prior to the failure it is deciding, so it only actually
+/// returns `Blocked` when that 4th failure is recorded. This test's loop stops at the first signal,
+/// asserts it, then drives the one further cycle needed to observe the second.
 #[test]
 fn a_failing_node_blocks_and_owner_resumes() {
     let execution_id = OpaqueId::parse("execution-lifecycle").unwrap();
@@ -547,7 +569,14 @@ fn a_failing_node_blocks_and_owner_resumes() {
     let mut cycle = 0_u32;
     loop {
         let projection = journal.projection();
-        if classify_progress(&projection, "a", NodeOutcome::Started) != Progress::Continue {
+        // The outcome actually repeating is `RetryableFailure`, not `Started`: after Task 1,
+        // `Started` never becomes `last_outcome`, so asking classify_progress about `Started`
+        // could never observe this run (that was true before Task 1 too, for a different reason —
+        // 04e's fold reset `last_outcome` to `Started` every cycle, but the run for `Started`
+        // itself never reached 3 either, since a retried node folds only one `Started` hop per
+        // cycle, not two).
+        if classify_progress(&projection, "a", NodeOutcome::RetryableFailure) != Progress::Continue
+        {
             break;
         }
         cycle += 1;
@@ -578,17 +607,61 @@ fn a_failing_node_blocks_and_owner_resumes() {
             outcome,
             format!("a-failure-{cycle}"),
         );
-        // (Running, RetryableFailure) re-dispatches to Queued until attempts are exhausted.
-        assert!(matches!(next, NodeState::Queued | NodeState::Blocked));
+        // classify_progress gated every cycle in this loop to Continue, so none of them may reach
+        // the transition table's own block — that would mean the predictive signal missed a run
+        // the confirming one caught, which Task 1 does not allow.
+        assert_eq!(next, NodeState::Queued);
     }
+
+    // classify_progress now flags the run after exactly MAX_IDENTICAL_OUTCOMES consecutive
+    // failures — three cycles, not the eight `attempts` would have needed under 04e's broken fold.
+    // This is Task 1's headline claim, proven directly rather than inferred.
+    assert_eq!(cycle, MAX_IDENTICAL_OUTCOMES);
+    let projection = journal.projection();
+    assert_eq!(projection.node_states.get("a"), Some(&NodeState::Queued));
+    assert_eq!(
+        projection.node_attempts.get("a"),
+        Some(&MAX_IDENTICAL_OUTCOMES)
+    );
+    assert_eq!(
+        projection.identical_outcomes_for("a", NodeOutcome::RetryableFailure),
+        MAX_IDENTICAL_OUTCOMES
+    );
+    assert_eq!(
+        classify_progress(&projection, "a", NodeOutcome::RetryableFailure),
+        Progress::NoProgress
+    );
+
+    // Drive the one further cycle classify_progress just refused, to observe the transition
+    // table's own (Running, RetryableFailure) counter condition confirm the same verdict directly.
+    // The Queued -> Running hop is legal unconditionally — Design call 1 makes `Started` dispatch
+    // bookkeeping, not a judgment call — and this time `apply_transition` sees the run already at
+    // MAX_IDENTICAL_OUTCOMES and blocks instead of requeuing.
+    record_outcome(
+        &mut journal,
+        &execution_id,
+        "a",
+        NodeOutcome::Started,
+        "a-running-confirming",
+    );
+    let outcome = executor.execute("a", 0).unwrap();
+    assert_eq!(outcome, NodeOutcome::RetryableFailure);
+    let next = record_outcome(
+        &mut journal,
+        &execution_id,
+        "a",
+        outcome,
+        "a-failure-confirming",
+    );
+    assert_eq!(next, NodeState::Blocked);
 
     let projection = journal.projection();
     assert_eq!(projection.node_states.get("a"), Some(&NodeState::Blocked));
-    assert_eq!(projection.node_attempts.get("a"), Some(&MAX_NODE_ATTEMPTS));
-    assert_eq!(
-        classify_progress(&projection, "a", NodeOutcome::Started),
-        Progress::AttemptsExhausted
-    );
+    // Attempts sits one above the run length that blocked it, nowhere near MAX_NODE_ATTEMPTS (8):
+    // the identical-outcomes bound fired first, exactly Design call 1's intent for a retry loop.
+    let attempts_at_block = MAX_IDENTICAL_OUTCOMES + 1;
+    assert_eq!(projection.node_attempts.get("a"), Some(&attempts_at_block));
+    assert!(attempts_at_block < MAX_NODE_ATTEMPTS);
 
     // The owner's resume path out of Blocked.
     record_outcome(

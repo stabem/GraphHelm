@@ -1,5 +1,13 @@
 # Specification Changelog
 
+## Graph Engine and Governor, 04f — Milestone 04 complete — 2026-08-13
+
+- The driver ships in `apps/cli`: drive-to-quiescence over every pure piece, with `Queued` nodes unioned into the dispatch candidates so retries redispatch, every `next_state` from `apply_transition`, every append through the production store.
+- JSON-only `execution start|status|signal|approve|pause|resume|cancel` with redaction-safe codes. Evidence is written before any event that references it; an unrecordable signal preserves its envelope and says so; approval is the triage act and never auto-drives; resume redispatches only what pause held.
+- Two semantic corrections landed first: `Started` no longer touches run-length accounting, making `MAX_IDENTICAL_OUTCOMES` fire for retry loops, and resume refuses untriaged interruptions and only them.
+- The operator story runs end to end through the binary and the final stream replays byte-identically; `execution_cli` is a gate stage, proven able to fail.
+- The acceptance map in the milestone document ties all eight §8 criteria to named tests, with the gaps in the same table: file-based signal evidence, undesigned signal-to-draft translation, unbudgeted ghost births, the resume file-trust seam, and the intentional simulate/executor divergence.
+
 ## Graph Engine and Governor, 04e — 2026-08-13
 
 - `NodeOutcome::{Paused, Interrupted}` and `SimulationStatus::Cancelled` added, appended so no existing wire name moves; `execution_paused` and `execution_resumed` grow the closed event set from 23 to 25, with the envelope schema corrected in place under D-037 and both catalog digests recomputed. Cancel is a final status per §13, not a new event kind.

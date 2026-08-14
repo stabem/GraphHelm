@@ -714,20 +714,26 @@ fn apply_projection_event(
                 *attempts = attempts.checked_add(1).ok_or(ReplayError::LimitExceeded)?;
             }
 
-            let run = match projection
-                .last_outcome
-                .insert(node.clone(), payload.outcome)
-            {
-                Some(previous) if previous == payload.outcome => projection
-                    .identical_outcomes
-                    .get(&node)
-                    .copied()
-                    .unwrap_or(0)
-                    .checked_add(1)
-                    .ok_or(ReplayError::LimitExceeded)?,
-                _ => 1,
-            };
-            projection.identical_outcomes.insert(node.clone(), run);
+            // `Started` is dispatch bookkeeping. It counts as an attempt when it enters `Running`,
+            // but it neither extends nor breaks a run of identical work outcomes — otherwise the
+            // two-hop dispatch pattern makes MAX_IDENTICAL_OUTCOMES structurally unreachable,
+            // which the 04e review proved holds for every state-machine-conforming driver.
+            if payload.outcome != NodeOutcome::Started {
+                let run = match projection
+                    .last_outcome
+                    .insert(node.clone(), payload.outcome)
+                {
+                    Some(previous) if previous == payload.outcome => projection
+                        .identical_outcomes
+                        .get(&node)
+                        .copied()
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or(ReplayError::LimitExceeded)?,
+                    _ => 1,
+                };
+                projection.identical_outcomes.insert(node.clone(), run);
+            }
             projection.node_states.insert(node, payload.next_state);
         }
         EventKind::ExecutionCompleted(payload) => {

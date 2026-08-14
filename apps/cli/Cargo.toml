@@ -13,6 +13,7 @@ path = "src/main.rs"
 chrono.workspace = true
 clap.workspace = true
 graphhelm-events = { path = "../../core/events" }
+graphhelm-execution = { path = "../../core/execution" }
 graphhelm-governor = { path = "../../core/governor" }
 graphhelm-graph = { path = "../../core/graph" }
 graphhelm-policy = { path = "../../core/policy" }

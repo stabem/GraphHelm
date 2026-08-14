@@ -1,5 +1,6 @@
 mod draft;
 mod events;
+mod execution;
 mod hash;
 mod lint;
 mod replay;
@@ -14,7 +15,9 @@ use graphhelm_events::{EventRepositoryError, LocalEventRepository};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
-use crate::args::{DraftCommand, EventsCommand, GraphCommand, SchemaCommand, TopLevel};
+use crate::args::{
+    DraftCommand, EventsCommand, ExecutionCommand, GraphCommand, SchemaCommand, TopLevel,
+};
 use crate::output::Outcome;
 
 pub fn run(command: TopLevel) -> Outcome {
@@ -118,6 +121,47 @@ pub fn run(command: TopLevel) -> Outcome {
                     config: config.as_deref(),
                     archive: &archive,
                 })
+            }
+        },
+        TopLevel::Execution(execution) => match execution.command {
+            ExecutionCommand::Start {
+                file,
+                events,
+                fixtures,
+                mode,
+                execution,
+            } => execution::start::run(
+                &file,
+                &events,
+                fixtures.as_deref(),
+                &mode,
+                execution.as_deref(),
+            ),
+            ExecutionCommand::Status { events, execution } => {
+                execution::status::run(&events, execution.as_deref())
+            }
+            ExecutionCommand::Signal {
+                events,
+                execution,
+                signal,
+                evidence_out,
+            } => execution::signal::run(&events, execution.as_deref(), &signal, &evidence_out),
+            ExecutionCommand::Approve {
+                events,
+                execution,
+                node,
+            } => execution::approve::run(&events, execution.as_deref(), &node),
+            ExecutionCommand::Pause { events, execution } => {
+                execution::pause::run(&events, execution.as_deref())
+            }
+            ExecutionCommand::Resume {
+                file,
+                events,
+                fixtures,
+                execution,
+            } => execution::resume::run(&file, &events, fixtures.as_deref(), execution.as_deref()),
+            ExecutionCommand::Cancel { events, execution } => {
+                execution::cancel::run(&events, execution.as_deref())
             }
         },
     }

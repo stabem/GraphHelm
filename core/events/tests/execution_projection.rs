@@ -15,10 +15,10 @@ use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
     ActorId, Clock, EventEnvelope, EventKind, ExecutionId, ExecutionMode, ExecutionModeChanged,
     ExecutionPaused, ExecutionResumed, ExecutionStarted, GhostNodeProposed, IdGenerator,
-    MutationAccepted, NewEvent, NodeOutcome as Outcome, NodeOutcomeRecorded, NodeState, OpaqueId,
-    PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
-    SignalRecorded as SignalRecordedPayload, SignalSeverity, SignalSourceKind, SimulationStatus,
-    WireHash, WorkspaceId,
+    MutationAccepted, NewEvent, NodeOutcome, NodeOutcome as Outcome, NodeOutcomeRecorded,
+    NodeState, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
+    Sensitivity, SignalRecorded as SignalRecordedPayload, SignalSeverity, SignalSourceKind,
+    SimulationStatus, WireHash, WorkspaceId,
 };
 
 const STREAM: &str = "stream-execution-test";
@@ -230,6 +230,25 @@ fn identical_outcomes_count_consecutively_and_reset() {
     )
     .unwrap();
     assert_eq!(interrupted.identical_outcomes.get("start"), Some(&1));
+}
+
+/// `Started` is dispatch bookkeeping, not a semantic outcome of work. It must not break a run of
+/// identical failures, or the no-progress bound can never fire for a retry loop — the state
+/// machine forces a `Started` between any two failures of one node (04e finding 3).
+#[test]
+fn dispatch_hops_do_not_break_an_identical_outcome_run() {
+    let events = execution_events(&[
+        Outcome::RetryableFailure,
+        Outcome::Started,
+        Outcome::Started,
+        Outcome::RetryableFailure,
+    ]);
+    let projection = replay(&scope(), STREAM, &events).unwrap();
+    assert_eq!(projection.identical_outcomes.get("start"), Some(&2));
+    assert_eq!(
+        projection.identical_outcomes_for("start", NodeOutcome::RetryableFailure),
+        2
+    );
 }
 
 /// The state recorded on the wire is the decision apply_transition produced. The projection stores

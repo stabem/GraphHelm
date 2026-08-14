@@ -6,7 +6,7 @@
 //! Milestone 05's; naming them here is deliberate, so nothing pretends to validate them.
 
 use graphhelm_events::ExecutionProjection;
-use graphhelm_protocols::{NodeState, SimulationStatus};
+use graphhelm_protocols::{NodeOutcome, NodeState, SimulationStatus};
 
 /// The nodes whose effects are unknown, in deterministic order.
 ///
@@ -32,6 +32,13 @@ pub enum ResumeError {
     /// A node is still marked running: the interruption has not been recovered, and resuming
     /// would run work whose predecessor effects are unknown.
     UnrecoveredInterruption,
+    /// A node is `Blocked` with its last recorded outcome `Interrupted`: the crash was recovered
+    /// (`Running -> Blocked`) but nobody has looked at it since. Resume refuses until the owner
+    /// approves, waives, skips or cancels each such node — the triage act the projection can
+    /// decide on its own, without a runtime. A node `Blocked` for any other reason (attempts
+    /// exhausted, no progress) does not hold resume: the owner may legitimately resume the rest of
+    /// the graph and deal with it later (04e finding 1, resolved).
+    UntriagedInterruption,
     /// The graph version to resume against is not the one the projection recorded.
     VersionMismatch,
 }
@@ -58,6 +65,12 @@ pub fn resume_preconditions(
     {
         return Err(ResumeError::UnrecoveredInterruption);
     }
+    if projection.node_states.iter().any(|(node, state)| {
+        *state == NodeState::Blocked
+            && projection.last_outcome.get(node) == Some(&NodeOutcome::Interrupted)
+    }) {
+        return Err(ResumeError::UntriagedInterruption);
+    }
     match (resume_against_version, &projection.current_graph) {
         (Some(requested), Some(current)) if requested != current.number() => {
             Err(ResumeError::VersionMismatch)
@@ -70,7 +83,7 @@ pub fn resume_preconditions(
 mod tests {
     use super::*;
     use graphhelm_events::ExecutionProjection;
-    use graphhelm_protocols::{NodeState, SimulationStatus};
+    use graphhelm_protocols::{NodeOutcome, NodeState, SimulationStatus};
 
     fn projection(
         nodes: &[(&str, NodeState)],
@@ -158,6 +171,29 @@ mod tests {
             resume_preconditions(&unstarted, None),
             Err(ResumeError::NotStarted)
         );
+    }
+
+    /// An interruption that was recorded but never looked at must hold resume. A node blocked for
+    /// any other reason does not: the owner may resume the rest of the graph and deal with it
+    /// later (04e finding 1, resolved).
+    #[test]
+    fn resume_refuses_an_untriaged_interruption_but_not_other_blocks() {
+        let mut interrupted =
+            projection(&[("a", NodeState::Blocked)], Some(SimulationStatus::Paused));
+        interrupted
+            .last_outcome
+            .insert("a".to_owned(), NodeOutcome::Interrupted);
+        assert_eq!(
+            resume_preconditions(&interrupted, None),
+            Err(ResumeError::UntriagedInterruption)
+        );
+
+        let mut exhausted =
+            projection(&[("a", NodeState::Blocked)], Some(SimulationStatus::Paused));
+        exhausted
+            .last_outcome
+            .insert("a".to_owned(), NodeOutcome::RetryableFailure);
+        assert_eq!(resume_preconditions(&exhausted, None), Ok(()));
     }
 
     /// Resuming against a different graph version than the projection recorded is refused: the

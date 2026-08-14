@@ -69,7 +69,8 @@ Human materializations:
 - research reports;
 - decision logs;
 - changelogs;
-- task summaries.
+- task summaries;
+- business rules (atomic rule documents, §12.5).
 
 A document is a versioned view of knowledge, not the sole truth.
 
@@ -374,6 +375,50 @@ Freshness score considers:
 
 The documentation branch uses a snapshot/claim watermark. If code/decisions change before the commit, the materializer rebases or marks it stale; it does not publish an inconsistent document.
 
+### 12.5 Atomic rule documents
+
+A business rule is materialized as its own document: one file, one rule, one stable id.
+
+```yaml
+document:
+  id: rule-refund-window
+  kind: rule
+  path: docs/rules/refund-window.md
+  scope: project
+  status: current
+  source_claims: [claim-refund-window-days]
+  source_evidence: [...]
+  materializer_version: 1
+  generated_sections: [statement, edge_cases]
+  human_owned_sections: [rationale]
+  last_validated_at: ...
+```
+
+Properties:
+
+- one rule per document, small enough to be included whole in a capsule;
+- the id is stable and referenceable from node contracts;
+- the body states the rule, its rationale, and its edge cases; the underlying claims remain the truth (§2.3's rule applies — the document is a view).
+
+Explicit binding:
+
+- a node/task contract may reference rule ids directly;
+- a referenced rule enters the Context Capsule whole, with provenance, counted against budget;
+- retrieval (§6) may add unreferenced-but-relevant rules; an explicit reference is never dropped by ranking — only by the permission/scope filter, and then it is recorded as an exclusion;
+- explicit references make inclusion deterministic where search alone would be probabilistic.
+
+Update loop:
+
+- after execution, the `documentation_impact` signal names the rule ids touched;
+- the materializer updates generated sections through the claim lifecycle (§11.3): the change enters as a candidate and is validated per claim type;
+- an executor's own edit never validates its own rule — validation requires deterministic evidence, another evaluator, or a user decision, exactly as §11.3 already demands;
+- concurrent updates follow §12.4's watermark.
+
+When not to split:
+
+- narrative documents (architecture, runbooks, reports) stay whole; a rule document is for a normative, referenceable statement with clear applicability;
+- a rule that cannot be stated apart from its surrounding narrative is a section of that document, not a rule document.
+
 ## 13. Agent memory
 
 ### 13.1 What can be remembered
@@ -589,6 +634,7 @@ Every change goes through conformance tests. Dreams does not silently promote a 
 - relevant conflict appears explicitly;
 - the Event Store remains immutable;
 - document diff points to claims/evidence;
+- an explicitly referenced rule document is included whole or recorded as an exclusion; its post-execution update enters as a candidate, never as direct truth;
 - memory without TTL/evidence is not validated;
 - Dreams operates in shadow and has rollback;
 - a code finding becomes a normal task;

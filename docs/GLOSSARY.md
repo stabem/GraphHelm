@@ -64,6 +64,8 @@
 
 **Provenance** — origin and derivation chain of a piece of information, artifact, or decision.
 
+**Rule Document** — atomic Living Documentation unit: one business rule per file with a stable id, referenced explicitly by node contracts and updated post-execution as a candidate through the claim lifecycle.
+
 **Runtime** — daemon and services running on the user's VPS.
 
 **Shadow Workspace** — isolated snapshot used to test Dreams changes before commit.

@@ -12,6 +12,7 @@
 ## Experience
 
 - [Studio — screens and interaction](ux/STUDIO_SPEC.md)
+- [Chat surface — host plugin and operator skills](ux/CHAT_SURFACE_SPEC.md)
 
 ## Architecture
 

@@ -54,7 +54,12 @@ pub(super) struct Failure {
 }
 
 impl Failure {
-    fn into_outcome(self, command: &'static str) -> Outcome {
+    /// Widened from private to `pub(crate)` (Milestone 05a Task 2): `commands::serve` maps this
+    /// same redaction-safe shape onto an HTTP response body (`respond_failure` in
+    /// `serve/mod.rs`) so a `Failure` originating here — code, message, pointer, and the
+    /// `"execution-cli"` `source` below — reaches the wire exactly as the CLI would have printed
+    /// it, rather than being reconstructed a second time with a different `source`.
+    pub(crate) fn into_outcome(self, command: &'static str) -> Outcome {
         Outcome::domain(
             command,
             vec![Diagnostic::error(
@@ -275,6 +280,36 @@ pub(super) fn record_outcome(
     node: &str,
     outcome: NodeOutcome,
 ) -> Result<NodeState, Failure> {
+    record_outcome_with_key(
+        store,
+        scope,
+        stream,
+        execution_id,
+        actor,
+        node,
+        outcome,
+        idempotency_key("node-outcome"),
+    )
+}
+
+/// `record_outcome`, generalized to accept the appended event's idempotency key explicitly rather
+/// than always minting a fresh one internally. Added (Milestone 05a Task 3) for the Public Runtime
+/// API's idempotent-retry semantics: `approve` (the only command past `start` that is both wired
+/// to the API in this milestone and reaches this helper) needs to derive its key deterministically
+/// from the caller's `Idempotency-Key` header instead of a fresh UUID. `record_outcome` above
+/// becomes a thin wrapper so `cancel.rs`, `pause.rs` and `resume.rs` — untouched by this task —
+/// keep compiling and behaving exactly as before with zero edits of their own.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn record_outcome_with_key(
+    store: &LocalEventRepository,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    node: &str,
+    outcome: NodeOutcome,
+    key: OpaqueId,
+) -> Result<NodeState, Failure> {
     let projection = replay_projection(store, scope, stream.as_str())?;
     let current = projection
         .node_states
@@ -302,7 +337,7 @@ pub(super) fn record_outcome(
         scope,
         stream,
         NewEvent::new(
-            idempotency_key("node-outcome"),
+            key,
             actor.clone(),
             Sensitivity::Internal,
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {

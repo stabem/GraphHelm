@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use graphhelm_protocols::{
-    EventKind, ExecutionPaused, NewEvent, NodeOutcome, NodeState, OpaqueId, Sensitivity,
-    SimulationStatus,
+    EventKind, ExecutionPaused, NewEvent, NodeOutcome, NodeState, OpaqueId, PersistedActor,
+    Sensitivity, SimulationStatus,
 };
 
 use super::{
@@ -17,11 +17,47 @@ const COMMAND: &str = "execution.pause";
 /// Holds every dispatchable node (`Ready`/`Queued`), refusing unless the aggregate status is
 /// `None` or `Running` — said here, before the fold's own `ExecutionPaused` guard would call a
 /// second pause corrupt.
+///
+/// Calls `execute` with the owner actor and a fresh per-invocation idempotency key, exactly as
+/// before Milestone 05a Task 4 — byte-identical CLI behaviour (the same pattern Task 3 established
+/// for `signal`/`approve`).
 pub fn run(events: &Path, execution: Option<&str>) -> Outcome {
-    finish(COMMAND, execute(events, execution), |value| value)
+    finish(
+        COMMAND,
+        execute(
+            events,
+            execution,
+            owner_actor(),
+            idempotency_key("execution-paused"),
+        ),
+        |value| value,
+    )
 }
 
-fn execute(events: &Path, execution: Option<&str>) -> Result<serde_json::Value, Failure> {
+/// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as
+/// explicit parameters — the mechanical widening the plan's file table names, exactly as Task 3
+/// did for `signal`/`approve`.
+///
+/// `key` is used for exactly the one event that identifies "this pause command happened":
+/// `ExecutionPaused`. The per-node `Paused` holds below still mint their own fresh keys through
+/// `record_outcome` (unchanged from before this task) because their count varies with however many
+/// nodes are `Ready`/`Queued` at the moment of the call — a variable-count fan-out cannot derive
+/// deterministic keys from a fixed per-command suffix the way a single, always-present event can.
+/// This is not a gap in the idempotent-retry guarantee: `run_idempotent_mutation`'s pre-flight
+/// check classifies purely on `ExecutionPaused`'s derived key, and a retry it classifies as
+/// `Complete` never calls this function a second time (see `serve::mod::run_idempotent_mutation`),
+/// so the fan-out's fresh keys are never at risk of a double-apply from a caller's retry — they
+/// only need to be valid, non-colliding keys for the one genuinely fresh attempt that reaches them.
+/// They are still attributed to the caller's `actor`, matching this file's pre-existing behaviour
+/// (holding a node is a direct, deterministic, non-branching consequence of the pause decision
+/// itself, not the driver's own bookkeeping — unlike `drive_to_quiescence`'s hops, nothing here
+/// calls an executor or branches on its outcome).
+pub(crate) fn execute(
+    events: &Path,
+    execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
+) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, projection) = load_projection(&store, execution)?;
 
@@ -46,14 +82,13 @@ fn execute(events: &Path, execution: Option<&str>) -> Result<serde_json::Value, 
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
     let execution_id = OpaqueId::parse(&execution_id)
         .map_err(|_| execution_state("the execution identifier is not wire-safe", "/execution"))?;
-    let actor = owner_actor();
 
     append_event(
         &store,
         &scope,
         &stream_id,
         NewEvent::new(
-            idempotency_key("execution-paused"),
+            key,
             actor.clone(),
             Sensitivity::Internal,
             EventKind::ExecutionPaused(ExecutionPaused {

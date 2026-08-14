@@ -15,6 +15,21 @@ fn json(output: &[u8]) -> Value {
     serde_json::from_slice(output).unwrap()
 }
 
+/// `execution status`'s `data` carries `headSequence` (Milestone 05a Task 2's one shared-surface
+/// change: `execution status` and the Public Runtime API's `GET /v1/executions/{id}` now share the
+/// exact same `execute()`, and the CLI command gains the field "for free" as a result); `execution
+/// start`'s own response does not carry it — `start.rs` is untouched by that task, deliberately, so
+/// as not to ripple into `pause.rs`/`resume.rs`/`cancel.rs`, which share `render()` with it and are
+/// out of scope until Milestone 05a Task 4. Strips `headSequence` back out so a `status` reply can
+/// still be asserted byte-for-byte against a `start` reply; callers assert `headSequence` itself
+/// separately at each call site.
+fn without_head_sequence(mut data: Value) -> Value {
+    if let Some(object) = data.as_object_mut() {
+        object.remove("headSequence");
+    }
+    data
+}
+
 /// Both nodes of the two-node fixture graph succeed, so the driver runs it to completion in one
 /// pass over `implementation` and one over `deploy`.
 fn all_success_fixtures(directory: &Path) -> PathBuf {
@@ -95,8 +110,13 @@ fn start_drives_a_two_node_graph_to_completion_and_status_reports_it_independent
     let status_value = json(&status.stdout);
     assert_eq!(status_value["ok"], true);
     assert_eq!(status_value["command"], "execution.status");
+    assert!(
+        status_value["data"]["headSequence"].as_u64().unwrap() > 0,
+        "a finished execution's stream must have a positive head: {status_value}"
+    );
     assert_eq!(
-        status_value["data"], start_value["data"],
+        without_head_sequence(status_value["data"].clone()),
+        start_value["data"],
         "status must independently replay to the same data start reported"
     );
 }
@@ -201,7 +221,12 @@ fn start_blocks_a_no_progress_node_and_leaves_its_dependent_ready() {
         .output()
         .unwrap();
     assert!(status.status.success());
-    assert_eq!(json(&status.stdout)["data"], start_value["data"]);
+    let status_data = json(&status.stdout)["data"].clone();
+    assert!(
+        status_data["headSequence"].as_u64().unwrap() > 0,
+        "an open execution's stream must still have a positive head: {status_data}"
+    );
+    assert_eq!(without_head_sequence(status_data), start_value["data"]);
 }
 
 // ---------------------------------------------------------------------------

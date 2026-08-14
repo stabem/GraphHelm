@@ -5,6 +5,7 @@ mod hash;
 mod lint;
 mod replay;
 mod schema;
+mod serve;
 mod simulate;
 mod validate;
 
@@ -164,6 +165,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution::cancel::run(&events, execution.as_deref())
             }
         },
+        TopLevel::Serve(args) => serve::run(&args.events, &args.bind),
     }
 }
 

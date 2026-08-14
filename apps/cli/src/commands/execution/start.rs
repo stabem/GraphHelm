@@ -3,20 +3,27 @@ use std::path::Path;
 use graphhelm_events::PreparedAppend;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    EventKind, ExecutionId, ExecutionMode, ExecutionStarted, IdGenerator, NewEvent, OpaqueId,
+    EventKind, ExecutionId, ExecutionMode, ExecutionStarted, NewEvent, OpaqueId, PersistedActor,
     ProjectId, RepositoryScope, Sensitivity, WireHash, WorkspaceId,
 };
 
 use super::driver::drive_to_quiescence;
 use super::{
-    Failure, PROJECT, WORKSPACE, argument, execution_state, finish, load_fixtures, render,
-    replay_failure, repository_failure,
+    Failure, PROJECT, WORKSPACE, argument, execution_state, finish, idempotency_key, load_fixtures,
+    render, replay_failure, repository_failure,
 };
-use crate::commands::{UuidIds, event_store, owner, publish_loaded};
+use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
 
 const COMMAND: &str = "execution.start";
 
+/// Calls `execute` with the system actor and a fresh per-invocation idempotency key, exactly as
+/// before Milestone 05a Task 4 — byte-identical CLI behaviour. Unlike `pause`/`resume`/`cancel`,
+/// this stays `system_actor()` rather than `owner_actor()`: `start` has never been one of D-019's
+/// owner-initiated commands (see `owner_actor`'s own doc comment, which lists `approve`, `pause`,
+/// `resume`, `cancel`, `signal` and pointedly not `start`) — it is attributed identically to `graph
+/// simulate`. This task's widening does not change that for the CLI; it only lets the Public
+/// Runtime API supply a real caller actor instead (see `execute`'s own doc comment).
 pub fn run(
     file: &Path,
     events: &Path,
@@ -40,17 +47,50 @@ pub fn run(
     };
     finish(
         COMMAND,
-        execute(&version, events, fixtures, mode, execution),
+        execute(
+            &version,
+            events,
+            fixtures,
+            mode,
+            execution,
+            super::system_actor(),
+            idempotency_key("execution-started"),
+        ),
         |value| value,
     )
 }
 
-fn execute(
+/// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as
+/// explicit parameters, exactly as Task 3 did for `signal`/`approve`.
+///
+/// `key` is used for exactly the one event that identifies "this start command happened":
+/// `ExecutionStarted`. `actor` attributes that same event — over the API this is the caller's real
+/// owner/agent identity from the request headers, satisfying "every mutation is attributed"; the
+/// CLI keeps passing `system_actor()` (see `run`), so CLI output is unchanged.
+///
+/// `drive_to_quiescence` below is **not** given `actor`: it is called with its own fresh
+/// `system_actor()`, deliberately decoupled. Before this task both were the same value (`actor` was
+/// always `system_actor()` on the CLI path, so the two calls were indistinguishable), which is
+/// exactly why decoupling them here is safe — CLI behaviour does not change. What the decoupling
+/// buys is honesty on the API path: `drive_to_quiescence`'s dispatch loop calls a real executor and
+/// its event count varies with the graph and fixtures (many `NodeOutcomeRecorded` hops, each with
+/// its own fresh key — see `driver.rs`'s own `idempotency_key` calls, untouched by this task) — it
+/// is the driver's own bookkeeping, not a caller decision, and per the plan's endpoint contract
+/// `System` is reserved for exactly that. A variable-count sequence of events also cannot derive
+/// deterministic keys from `key`'s single fixed suffix the way the one `ExecutionStarted` event
+/// can, so `run_idempotent_mutation`'s pre-flight Complete/Partial classification only ever looks at
+/// `ExecutionStarted`'s derived key — never at the drive loop's. A retry recognized as `Complete`
+/// from that one key never re-enters this function (see `serve::mod::run_idempotent_mutation`), so
+/// the drive loop's fresh keys are never at risk of a caller-triggered double-apply; they only need
+/// to be valid, non-colliding keys for the one genuinely fresh attempt that reaches them.
+pub(crate) fn execute(
     version: &GraphVersion,
     events: &Path,
     fixtures: Option<&Path>,
     mode: &str,
     execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
     let mode = parse_mode(mode)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
@@ -76,7 +116,6 @@ fn execute(
         ));
     }
 
-    let actor = super::system_actor();
     let graph_hash = WireHash::parse(version.content_hash().as_str()).map_err(|_| {
         execution_state(
             "the graph hash could not be represented on the wire",
@@ -92,9 +131,8 @@ fn execute(
         stream_id.clone(),
         next_sequence,
         vec![NewEvent::new(
-            OpaqueId::parse(UuidIds.next_id("execution-started"))
-                .expect("uuid-derived id is wire-safe"),
-            actor.clone(),
+            key,
+            actor,
             Sensitivity::Internal,
             EventKind::ExecutionStarted(ExecutionStarted {
                 execution_id: stream_id.clone(),
@@ -119,7 +157,7 @@ fn execute(
         stream_id.as_str(),
         &version.graph().spec,
         &fixtures,
-        &actor,
+        &super::system_actor(),
     )?;
 
     Ok(render(&projection))

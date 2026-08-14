@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use graphhelm_protocols::{NodeOutcome, NodeState, OpaqueId};
+use graphhelm_protocols::{NodeOutcome, NodeState, OpaqueId, PersistedActor};
 
 use super::{
-    Failure, execution_state, finish, load_projection, node_state_label, owner_actor,
-    record_outcome, render, replay_projection, repository_failure,
+    Failure, execution_state, finish, idempotency_key, load_projection, node_state_label,
+    owner_actor, record_outcome_with_key, render, replay_projection, repository_failure,
 };
 use crate::commands::event_store;
 use crate::output::Outcome;
@@ -17,14 +17,33 @@ const COMMAND: &str = "execution.approve";
 /// Does not auto-drive afterwards: D-020's rule that nothing auto-starts out of a manual
 /// intervention. The owner runs `resume` next (an already-`start`ed execution quiesces again on
 /// its next `resume` too).
+///
+/// Calls `execute` with the owner actor and a fresh per-invocation idempotency key, exactly as
+/// before Milestone 05a Task 3 — byte-identical CLI behaviour.
 pub fn run(events: &Path, execution: Option<&str>, node: &str) -> Outcome {
-    finish(COMMAND, execute(events, execution, node), |value| value)
+    finish(
+        COMMAND,
+        execute(
+            events,
+            execution,
+            node,
+            owner_actor(),
+            idempotency_key("node-outcome"),
+        ),
+        |value| value,
+    )
 }
 
-fn execute(
+/// Widened from private to `pub(crate)` (Milestone 05a Task 3), gaining `actor` and `key` as
+/// explicit parameters — the mechanical widening the plan's file table names, plus the one
+/// additional parameter the idempotent-retry semantics require (see `signal::execute`'s identical
+/// note). No other logic changed.
+pub(crate) fn execute(
     events: &Path,
     execution: Option<&str>,
     node: &str,
+    actor: PersistedActor,
+    key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, projection) = load_projection(&store, execution)?;
@@ -53,8 +72,7 @@ fn execute(
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
     let execution_id = OpaqueId::parse(&execution_id)
         .map_err(|_| execution_state("the execution identifier is not wire-safe", "/execution"))?;
-    let actor = owner_actor();
-    record_outcome(
+    record_outcome_with_key(
         &store,
         &scope,
         &stream_id,
@@ -62,6 +80,7 @@ fn execute(
         &actor,
         node,
         NodeOutcome::Approved,
+        key,
     )?;
 
     let projection = replay_projection(&store, &scope, &stream)?;

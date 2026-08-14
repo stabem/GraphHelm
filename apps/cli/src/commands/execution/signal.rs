@@ -3,7 +3,9 @@ use std::path::Path;
 use graphhelm_governor::{
     GovernanceError, MutationDecision, RejectionReason, admit_signal, decide_mutation,
 };
-use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, Sensitivity, SignalRecorded};
+use graphhelm_protocols::{
+    EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, SignalRecorded,
+};
 
 use super::{
     Failure, append_event, argument, execution_state, finish, idempotency_key, load_projection,
@@ -23,26 +25,62 @@ const COMMAND: &str = "execution.signal";
 /// would fabricate a content position 04d never defined. `envelope_sha256` on the recorded event
 /// still binds the record to these exact bytes. Operator-grade encrypted externalization of
 /// signal envelopes is Milestone 05 work.
+///
+/// Reads `--signal` itself (the one CLI-only step in this command — Milestone 05a Task 3 moved it
+/// out of `execute` so the Public Runtime API's `POST .../signal` can drive the same shared logic
+/// from a JSON body's inline envelope instead of a file), then calls `execute` with the owner actor
+/// and a fresh per-invocation idempotency key, exactly as before this task — byte-identical CLI
+/// behaviour.
 pub fn run(events: &Path, execution: Option<&str>, signal: &Path, evidence_out: &Path) -> Outcome {
     finish(
         COMMAND,
-        execute(events, execution, signal, evidence_out),
+        run_from_file(events, execution, signal, evidence_out),
         |value| value,
     )
 }
 
-fn execute(
+fn run_from_file(
     events: &Path,
     execution: Option<&str>,
     signal: &Path,
     evidence_out: &Path,
 ) -> Result<serde_json::Value, Failure> {
+    let raw = std::fs::read(signal)
+        .map_err(|_| argument("--signal does not name a readable file", "/signal"))?;
+    execute(
+        events,
+        execution,
+        &raw,
+        evidence_out,
+        owner_actor(),
+        idempotency_key("signal-recorded"),
+    )
+}
+
+/// The shared core: admits `signal` (already-read bytes — a file's contents from the CLI, or an
+/// inline JSON body re-serialized from the API, see `commands::serve::routes::signal`), externalizes
+/// its evidence, appends the recorded signal attributed to `actor` under `key`, and reports the
+/// governance verdict for the mode in force.
+///
+/// Widened from private to `pub(crate)` (Milestone 05a Task 3), gaining `actor` and `key` as
+/// explicit parameters — the mechanical widening the plan's file table names, plus the one
+/// additional parameter the idempotent-retry semantics require: a caller-supplied key rather than
+/// this function minting its own fresh one, so the API path can derive it deterministically from
+/// `Idempotency-Key` while the CLI (`run_from_file`, above) keeps minting a fresh one exactly as
+/// before. No other logic changed.
+pub(crate) fn execute(
+    events: &Path,
+    execution: Option<&str>,
+    signal: &[u8],
+    evidence_out: &Path,
+    actor: PersistedActor,
+    key: OpaqueId,
+) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, projection) = load_projection(&store, execution)?;
 
-    let raw = std::fs::read(signal)
-        .map_err(|_| argument("--signal does not name a readable file", "/signal"))?;
-    let envelope: serde_json::Value = serde_json::from_slice(&raw)
+    let raw = signal;
+    let envelope: serde_json::Value = serde_json::from_slice(raw)
         .map_err(|_| signal_invalid("the signal envelope is not valid JSON", "/signal"))?;
 
     let admitted = match admit_signal(&projection, &envelope) {
@@ -56,7 +94,7 @@ fn execute(
         Err(GovernanceError::UnrecordableIdentity) => {
             // The record cannot go on the wire, but the envelope itself is still evidence: write
             // the original bytes before refusing, so nothing the operator submitted is lost.
-            std::fs::write(evidence_out, &raw).map_err(|_| {
+            std::fs::write(evidence_out, raw).map_err(|_| {
                 execution_state(
                     "the signal's identity cannot be recorded, and the evidence file could not \
                      be written either; nothing was preserved",
@@ -110,8 +148,8 @@ fn execute(
         &scope,
         &stream_id,
         NewEvent::new(
-            idempotency_key("signal-recorded"),
-            owner_actor(),
+            key,
+            actor,
             Sensitivity::Internal,
             EventKind::SignalRecorded(admitted.record.clone()),
             vec![],

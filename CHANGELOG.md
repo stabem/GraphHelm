@@ -1,5 +1,14 @@
 # Specification Changelog
 
+## Runtime, 05a — 2026-08-14
+
+- `graphhelm serve` added: the Public Runtime API as the multi-agent concurrency contract. Loopback-only fail-closed bind, sibling-path bearer token with constant-time comparison, the CLI's four-key envelope on every route.
+- Endpoints one-to-one with the seven execution commands plus status (now carrying `headSequence`) and a paged events tail that refuses rather than truncates. A fresh mutation's own reply now carries `headSequence` too (a serve-layer enrichment; CLI mutation output is unchanged), closing the extra-GET gap on `If-Match`-chained writes.
+- Every mutation attributed from headers (`owner`/`agent`; `system` reserved for the driver's hops) and idempotent under full retry: decision-event keys derive from the caller's command key plus a fixed suffix plus a content digest, and a pre-flight classifies them Absent/Complete/Partial/**Divergent** against the stream history it already has in hand. **Fixed in final review**: the pre-flight was content-blind — key presence alone, no check that a committed key's event actually carried the same request — so reusing an `Idempotency-Key` across two different bodies got silently absorbed as a completed retry of the first, its real effect never applied. The digest closes that: a byte-identical retry still re-derives the same key (Complete, unchanged), a divergent reuse now derives a same-prefix-different-digest key and is refused 409 before the store is touched. The header is capped at 64 characters to keep the longer derived key within `OpaqueId`'s limit. `If-Match` gives optimistic concurrency with the current head in every 409.
+- The eight-agent storm holds across consecutive runs — no 500s, coherent replay, byte-identical double replay, full attribution — and its sabotage was caught synchronously by the fold rejecting the incoherent history inside the causing request.
+- CLI-API parity pinned with an empty exception list; `api_http` is a named gate stage proven able to fail. axum `=0.8.9` recorded as ADR-024.
+- Honest limits recorded: no documentation surface yet (Living Docs arrives into this same API), ~3 req/s on the current-thread runtime as the baseline 05d must beat, unknown executions read as empty, mTLS deferred.
+
 ## Graph Engine and Governor, 04f — Milestone 04 complete — 2026-08-13
 
 - The driver ships in `apps/cli`: drive-to-quiescence over every pure piece, with `Queued` nodes unioned into the dispatch candidates so retries redispatch, every `next_state` from `apply_transition`, every append through the production store.

@@ -10,8 +10,10 @@ name = "graphhelm"
 path = "src/main.rs"
 
 [dependencies]
+axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
+getrandom.workspace = true
 graphhelm-events = { path = "../../core/events" }
 graphhelm-execution = { path = "../../core/execution" }
 graphhelm-governor = { path = "../../core/governor" }

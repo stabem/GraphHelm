@@ -21,6 +21,21 @@ pub enum TopLevel {
     Schema(SchemaArgs),
     Events(EventsArgs),
     Execution(ExecutionArgs),
+    Serve(ServeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ServeArgs {
+    /// The events directory the server reads and writes through the shared command layer; the
+    /// same directory a co-located `graphhelm execution`/`events` invocation would use. Created
+    /// if it does not already exist.
+    #[arg(long)]
+    pub events: PathBuf,
+    /// The address to bind, e.g. `127.0.0.1:8080` or `127.0.0.1:0` for an OS-assigned port.
+    /// Refused unless it names a loopback address — the Public Runtime API is never exposed
+    /// beyond localhost.
+    #[arg(long)]
+    pub bind: String,
 }
 
 #[derive(Debug, Args)]

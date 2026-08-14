@@ -3,7 +3,8 @@ use std::path::Path;
 use graphhelm_execution::{ResumeError, recovery_plan, resume_preconditions};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    EventKind, ExecutionResumed, NewEvent, NodeOutcome, NodeState, OpaqueId, Sensitivity,
+    EventKind, ExecutionResumed, NewEvent, NodeOutcome, NodeState, OpaqueId, PersistedActor,
+    Sensitivity,
 };
 
 use super::driver::drive_to_quiescence;
@@ -19,6 +20,10 @@ const COMMAND: &str = "execution.resume";
 
 /// Recovers any crashed node, gates on the resume preconditions, re-dispatches exactly the nodes
 /// the pause held, and drives to quiescence again.
+///
+/// Calls `execute` with the owner actor and a fresh per-invocation idempotency key, exactly as
+/// before Milestone 05a Task 4 — byte-identical CLI behaviour (the same pattern Task 3 established
+/// for `signal`/`approve`).
 pub fn run(
     file: &Path,
     events: &Path,
@@ -41,16 +46,41 @@ pub fn run(
     };
     finish(
         COMMAND,
-        execute(&version, events, fixtures, execution),
+        execute(
+            &version,
+            events,
+            fixtures,
+            execution,
+            owner_actor(),
+            idempotency_key("execution-resumed"),
+        ),
         |value| value,
     )
 }
 
-fn execute(
+/// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as
+/// explicit parameters, exactly as Task 3 did for `signal`/`approve`.
+///
+/// `key` is used for exactly the one event that identifies "this resume command happened":
+/// `ExecutionResumed`. The crash-recovery `Interrupted` records and the paused-node `Started`
+/// redispatches below still mint their own fresh keys through `record_outcome` (unchanged) for the
+/// same variable-count reasoning `pause::execute`'s doc comment gives — both are attributed to
+/// `actor` (the owner's/caller's decision to resume implies triaging and redispatching), matching
+/// this file's pre-existing behaviour.
+///
+/// The drive that follows (`drive_to_quiescence`) is a separate matter and was *already* split
+/// from the owner's decision before this task (the 04f actor split this file's own comment below
+/// names): it is called with a fresh `system_actor()`, never with `actor`, so the driver's own hops
+/// stay attributed to the system regardless of who invoked resume over the API. This task preserves
+/// that split unchanged — only the decision-side `actor`/`key` moved from being minted internally
+/// to being accepted as parameters.
+pub(crate) fn execute(
     version: &GraphVersion,
     events: &Path,
     fixtures: Option<&Path>,
     execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
@@ -59,7 +89,6 @@ fn execute(
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
     let initial = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
-    let actor = owner_actor();
 
     // Crash triage on entry (the pause-recover-approve order 04e settled): every node still
     // `Running` when the execution stopped has unknown effects. `recovery_plan` names them, and
@@ -102,7 +131,7 @@ fn execute(
         &scope,
         &stream_id,
         NewEvent::new(
-            idempotency_key("execution-resumed"),
+            key,
             actor.clone(),
             Sensitivity::Internal,
             EventKind::ExecutionResumed(ExecutionResumed {

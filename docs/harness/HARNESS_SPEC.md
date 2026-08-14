@@ -261,6 +261,11 @@ Each node receives:
 - prohibited content;
 - expansion condition.
 
+Initial budgets and recipe choices are sized by the observed utilization of comparable past
+nodes (`CONTEXT_KNOWLEDGE_DREAMS.md` §6.4), with a floor for node shapes not seen before.
+Learning shrinks optional background first and §14.3 stands unchanged: contract-required
+evidence is never removed by a utilization-informed budget.
+
 ## 10. Model Candidate Planner
 
 ### 10.1 Model profiles
@@ -287,11 +292,18 @@ route_score = capability_fit
             + tool_fit
             + privacy_fit
             + independence_bonus
+            + cache_affinity
             − latency_penalty
             − marginal_cost
             − quota_risk
             − correlated_error_risk
 ```
+
+`cache_affinity`: a route whose provider prefix cache is warm for the capsule's stable prefix
+(`CONTEXT_KNOWLEDGE_DREAMS.md` §9's canonical assembly) has a genuinely lower marginal cost —
+quality ties resolve toward the warm route, and nodes sharing a stable prefix prefer the same
+route. It never overrides the diversity requirements of §10.3 or `privacy_fit`: an independent
+review that must change provider changes provider, cold cache and all.
 
 ### 10.3 Diversity
 
@@ -549,6 +561,7 @@ The agent delivers:
 - structured output;
 - artifacts;
 - evidence refs;
+- cited context ids — the capsule item ids the output relied on, the utilization producer of `CONTEXT_KNOWLEDGE_DREAMS.md` §6.4;
 - uncertainty;
 - missing information;
 - graph signals;
@@ -635,6 +648,12 @@ gate:
   override: owner_allowed
 ```
 
+Method ordering is a rule, not a preference: deterministic methods run before model-based
+methods of the same requirement, and a deterministic failure short-circuits the model-based
+methods — the gate fails without spending them. This elevates §14.2's "deterministic checks
+before an LLM reviewer" from a savings strategy to gate flow. §21.3 is untouched: the
+requirement never changes, only the order and the spend.
+
 ### 21.2 Families
 
 - unit/integration/e2e tests;
@@ -692,6 +711,11 @@ Execution concludes when:
 - there is no active required branch;
 - the current Graph Version is stable;
 - documentation/knowledge update has a state allowed by policy.
+
+When the global completion contract is already satisfied and every remaining active branch is
+`optional` with low expected value (§11.2), the Governor may cancel those branches through
+§20.2's existing cancel-branch mutation, with the reason recorded — never a `required`
+branch, and never silently: the cancellation is an ordinary governed mutation in the history.
 
 Result:
 
@@ -791,6 +815,7 @@ A compliant implementation must:
 - prevent direct agent mutation;
 - support structured graph signals;
 - support context capsules;
+- surface cited context ids in node output;
 - support user override and waiver;
 - preserve event history;
 - limit graph expansion;

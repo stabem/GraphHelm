@@ -78,7 +78,13 @@ pub(super) fn drive_to_quiescence(
             None => 1_usize,
             Some(value) => usize::try_from(value).unwrap_or(usize::MAX),
         };
-        let plan = dispatch_plan(&candidates, running, max_parallel).map_err(|_| {
+        let plan = dispatch_plan(
+            &candidates,
+            &projection.node_attempts,
+            running,
+            max_parallel,
+        )
+        .map_err(|_| {
             execution_state(
                 "the execution has zero parallelism and can never progress",
                 "/execution/dispatch",

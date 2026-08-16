@@ -23,6 +23,7 @@ graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
 graphhelm-policy = { path = "../../core/policy" }
 graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store" }
 graphhelm-protocols = { path = "../../core/protocols" }
+graphhelm-runtime = { path = "../../core/runtime" }
 graphhelm-schema = { path = "../../core/schema" }
 graphhelm-schema-evolution = { path = "../../core/schema-evolution" }
 graphhelm-sealed-key-provider = { path = "../../adapters/sealed-key-provider" }

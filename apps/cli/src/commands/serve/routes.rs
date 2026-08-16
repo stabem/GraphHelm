@@ -4,18 +4,26 @@
 //! the only write path, whether reached from a terminal or from HTTP.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use graphhelm_graph::GraphVersion;
-use graphhelm_protocols::Diagnostic;
+use graphhelm_protocols::{ActorId, Diagnostic, PersistedActor, PersistedActorType};
+use graphhelm_runtime::driver::{StoreOpen, drive_to_quiescence_async};
+use graphhelm_runtime::executor::{AsyncNodeExecutor, PortExecutor};
+use graphhelm_runtime::fixture::FixtureAsyncExecutor;
+use graphhelm_simulation::FixtureExecutor;
+use graphhelm_tool_broker::lease::{Capability, ToolLease};
 
+use super::ports::{ServeModelPort, ServeToolPort, build_sealer};
 use super::{
     MutationError, ServeState, parse_mutation_headers, respond, respond_failure,
     run_idempotent_mutation,
 };
+use crate::commands::execution::PreparedDrive;
 use crate::commands::{event_store, execution, owner, publish_loaded};
 use crate::output::Outcome;
 
@@ -242,6 +250,11 @@ pub(super) async fn start(
         );
     };
     let mode = mode.to_owned();
+    // Cloned ahead of the closure below — `state` is cheap to clone (every field is
+    // `Arc`-backed) and `execution_id` is a plain owned `String` — so `async move` can take
+    // ownership of its own copies while the outer call still borrows the originals directly.
+    let drive_state = state.clone();
+    let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
         &state.events,
@@ -249,19 +262,42 @@ pub(super) async fn start(
         START_COMMAND,
         identity,
         |actor, key| {
-            let version =
-                load_and_publish(&file, START_COMMAND).map_err(MutationError::Prepared)?;
-            Ok(execution::start::execute(
-                &version,
-                &state.events,
-                fixtures.as_deref(),
-                &mode,
-                Some(execution_id.as_str()),
-                actor,
-                key,
-            )?)
+            Box::pin(async move {
+                let version =
+                    load_and_publish(&file, START_COMMAND).map_err(MutationError::Prepared)?;
+                // Reported deviation from the literal STEP 4 wording (see `drive_is_viable_for`'s
+                // own doc comment): the async drive is used whenever it CAN run this graph — a
+                // real executor is configured, or every node type classifies as Cognitive/Tool —
+                // and the unchanged sync `execute` is kept otherwise, so a real example graph like
+                // `examples/graphs/manual-override-deploy.yaml` (which carries a `deploy` node
+                // `core/runtime`'s `build_work` refuses regardless of executor) still completes
+                // exactly as the 05a fixture-only server always drove it.
+                if drive_is_viable_for(&drive_state, &version.graph().spec) {
+                    let prepared = execution::start::execute_prepared(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        &mode,
+                        Some(drive_execution_id.as_str()),
+                        actor,
+                        key,
+                    )?;
+                    drive(&drive_state, &drive_execution_id, prepared, &payload).await
+                } else {
+                    Ok(execution::start::execute(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        &mode,
+                        Some(drive_execution_id.as_str()),
+                        actor,
+                        key,
+                    )?)
+                }
+            })
         },
     )
+    .await
 }
 
 /// `POST /v1/executions/{id}/signal`: the CLI's `--signal <file>` becomes an inline JSON body field
@@ -321,6 +357,15 @@ pub(super) async fn signal(
         );
     };
     let evidence_out = PathBuf::from(evidence_out);
+    // Milestone 05d Task 9 STEP 5: flips the Task 6 declared discrepancy — when the server was
+    // launched with a keyring (`state.sealing`), the signal route now seals through it, exactly
+    // as the CLI's own `execution signal --keyring` does; absent a keyring, the API seam keeps
+    // its 05a behavior (operator file only, no seal). Cloned ahead of the closure (cheap: `Arc`s
+    // and an owned `String`) so `async move` owns its copies while the outer call still borrows
+    // `state.events`/`execution_id` directly.
+    let sealing = state.sealing.clone();
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
         &state.events,
@@ -328,16 +373,20 @@ pub(super) async fn signal(
         SIGNAL_COMMAND,
         identity,
         |actor, key| {
-            Ok(execution::signal::execute(
-                &state.events,
-                Some(execution_id.as_str()),
-                &signal_bytes,
-                &evidence_out,
-                actor,
-                key,
-            )?)
+            Box::pin(async move {
+                Ok(execution::signal::execute(
+                    &events,
+                    Some(drive_execution_id.as_str()),
+                    &signal_bytes,
+                    &evidence_out,
+                    actor,
+                    key,
+                    sealing.as_deref(),
+                )?)
+            })
         },
     )
+    .await
 }
 
 /// `POST /v1/executions/{id}/approve`: body `{"node": "<name>"}`, mirroring the CLI's `--node`.
@@ -370,6 +419,8 @@ pub(super) async fn approve(
         );
     };
     let node = node.to_owned();
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
         &state.events,
@@ -377,15 +428,18 @@ pub(super) async fn approve(
         APPROVE_COMMAND,
         identity,
         |actor, key| {
-            Ok(execution::approve::execute(
-                &state.events,
-                Some(execution_id.as_str()),
-                &node,
-                actor,
-                key,
-            )?)
+            Box::pin(async move {
+                Ok(execution::approve::execute(
+                    &events,
+                    Some(drive_execution_id.as_str()),
+                    &node,
+                    actor,
+                    key,
+                )?)
+            })
         },
     )
+    .await
 }
 
 /// `POST /v1/executions/{id}/pause`: no request body — mirrors the CLI's `execution pause`, which
@@ -394,12 +448,34 @@ pub(super) async fn approve(
 /// (`parse_mutation_headers`): there is no field here that could make two `pause` calls under the
 /// same `Idempotency-Key` logically different requests, so this command's derived key never varies
 /// with whatever bytes, if any, a caller happens to send.
+///
+/// Milestone 05d Task 9 STEP 5: an optional body `{"mode": "immediate"}` — absent, or any other
+/// value, keeps the graceful behavior above byte-identical. `"immediate"` looks the execution up
+/// in `state.cancels`: a live async drive gets `send(true)` on its cancel channel, then this
+/// handler polls `execution::status::execute` (the same read `GET /v1/executions/{id}` uses)
+/// every 100ms for up to 10s until `execution_paused` has folded, and replies with that status.
+/// The route itself appends NOTHING in immediate mode — `drive_to_quiescence_async` appends
+/// `execution_paused` itself once every in-flight node is recorded `Interrupted` — so a caller's
+/// `Idempotency-Key` is still validated (header shape only) but never turned into an event here.
+/// No live sender (an idle execution, or a fixture drive with nothing in flight) falls through to
+/// the existing graceful `execute` below, the 04f pause.
 #[allow(clippy::result_large_err)] // see `start`'s doc comment
 pub(super) async fn pause(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
+    let payload: serde_json::Value = if body.is_empty() {
+        serde_json::Value::Null
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(_) => return bad_request(PAUSE_COMMAND, "the request body is not valid JSON", "/"),
+        }
+    };
+    let immediate = payload.get("mode").and_then(serde_json::Value::as_str) == Some("immediate");
+
     let identity = match parse_mutation_headers(
         &headers,
         PAUSE_COMMAND,
@@ -410,20 +486,56 @@ pub(super) async fn pause(
         Ok(identity) => identity,
         Err(response) => return response,
     };
+
+    if immediate {
+        let sender = {
+            let cancels = state.cancels.lock().await;
+            cancels.get(&execution_id).cloned()
+        };
+        if let Some(sender) = sender {
+            let _ = sender.send(true);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                if let Ok(value) = execution::status::execute(&state.events, Some(&execution_id))
+                    && value.get("status") == Some(&serde_json::json!("paused"))
+                {
+                    return respond(
+                        StatusCode::OK,
+                        Outcome::success(PAUSE_COMMAND, value).output,
+                    );
+                }
+                if std::time::Instant::now() >= deadline {
+                    return respond_failure(
+                        PAUSE_COMMAND,
+                        driver_failure(
+                            "the execution did not record execution_paused within the immediate-stop budget",
+                        ),
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
     run_idempotent_mutation(
         &state.events,
         &execution_id,
         PAUSE_COMMAND,
         identity,
         |actor, key| {
-            Ok(execution::pause::execute(
-                &state.events,
-                Some(execution_id.as_str()),
-                actor,
-                key,
-            )?)
+            Box::pin(async move {
+                Ok(execution::pause::execute(
+                    &events,
+                    Some(drive_execution_id.as_str()),
+                    actor,
+                    key,
+                )?)
+            })
         },
     )
+    .await
 }
 
 /// `POST /v1/executions/{id}/resume`: body `{"file": "<path>", "fixtures": "<path, omitted for
@@ -463,6 +575,8 @@ pub(super) async fn resume(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    let drive_state = state.clone();
+    let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
         &state.events,
@@ -470,18 +584,34 @@ pub(super) async fn resume(
         RESUME_COMMAND,
         identity,
         |actor, key| {
-            let version =
-                load_and_publish(&file, RESUME_COMMAND).map_err(MutationError::Prepared)?;
-            Ok(execution::resume::execute(
-                &version,
-                &state.events,
-                fixtures.as_deref(),
-                Some(execution_id.as_str()),
-                actor,
-                key,
-            )?)
+            Box::pin(async move {
+                let version =
+                    load_and_publish(&file, RESUME_COMMAND).map_err(MutationError::Prepared)?;
+                // See `start`'s matching branch for why the async drive is conditional.
+                if drive_is_viable_for(&drive_state, &version.graph().spec) {
+                    let prepared = execution::resume::execute_prepared(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        Some(drive_execution_id.as_str()),
+                        actor,
+                        key,
+                    )?;
+                    drive(&drive_state, &drive_execution_id, prepared, &payload).await
+                } else {
+                    Ok(execution::resume::execute(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        Some(drive_execution_id.as_str()),
+                        actor,
+                        key,
+                    )?)
+                }
+            })
         },
     )
+    .await
 }
 
 /// `POST /v1/executions/{id}/cancel`: no request body — mirrors the CLI's `execution cancel`, which
@@ -503,18 +633,174 @@ pub(super) async fn cancel(
         Ok(identity) => identity,
         Err(response) => return response,
     };
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
     run_idempotent_mutation(
         &state.events,
         &execution_id,
         CANCEL_COMMAND,
         identity,
         |actor, key| {
-            Ok(execution::cancel::execute(
-                &state.events,
-                Some(execution_id.as_str()),
-                actor,
-                key,
-            )?)
+            Box::pin(async move {
+                Ok(execution::cancel::execute(
+                    &events,
+                    Some(drive_execution_id.as_str()),
+                    actor,
+                    key,
+                )?)
+            })
         },
     )
+    .await
+}
+
+// -------------------------------------------------------------------------------------------
+// Milestone 05d Task 9 STEP 4: the async drive half `start`/`resume` share, once their own
+// decision event has already committed via `execute_prepared`.
+// -------------------------------------------------------------------------------------------
+
+/// Whether `drive` (the async driver) can run `spec` at all: a real executor is configured, or
+/// every node type in the graph classifies as Cognitive/Tool (`graphhelm_runtime::classify`).
+///
+/// Reported deviation from the task's literal STEP 4 wording ("None → `FixtureAsyncExecutor`
+/// unconditionally"): `drive_to_quiescence_async`'s own `build_work` (`core/runtime/src/driver.rs`,
+/// already-done Task 8 code, out of this task's scope to redesign) refuses to dispatch ANY node
+/// whose type is not Agent/Planner/Classifier/Evaluator/Tool — regardless of which
+/// `AsyncNodeExecutor` is wired, fixture or real. A `FixtureExecutor` (the CLI's own sync
+/// `NodeExecutor`) has no such restriction: it answers by node id alone, so it has always been
+/// able to drive graphs like `examples/graphs/manual-override-deploy.yaml` (a `deploy` node) that
+/// `api_http.rs`'s existing suite depends on completing. Routing every fixture-only `start`/
+/// `resume` through the async driver unconditionally, as first attempted, broke that suite
+/// outright (observed directly: three tests failed with the drive stalling at the first
+/// unsupported node, `SimulationStatus` staying `null`/`running` forever — see this task's final
+/// report for the full trace). This predicate keeps the async drive for graphs it can actually
+/// finish (letting a fixture story exercise the real async path — STEP 6 test 1 — and every
+/// real-executor story use it, per the design) while falling back to the unchanged sync `execute`
+/// for anything else, which is what keeps the existing suite green.
+fn drive_is_viable_for(state: &ServeState, spec: &graphhelm_protocols::GraphSpec) -> bool {
+    state.runtime.is_some()
+        || spec
+            .nodes
+            .values()
+            .all(|node| graphhelm_runtime::classify::work_kind(&node.node_type).is_ok())
+}
+
+/// A driver-side failure (a `DriverError` from `drive_to_quiescence_async`) mapped onto the
+/// existing `execution::Failure` surface: a stable code that is not one of `respond_failure`'s
+/// specifically-classified codes, so it falls through to that function's 500 default — "an app
+/// failure with a stable code", never the driver's own internal error text.
+const DRIVER_FAILURE_CODE: &str = "GHCLI016_DRIVER_FAILURE";
+
+fn driver_failure(message: &str) -> execution::Failure {
+    execution::Failure {
+        code: DRIVER_FAILURE_CODE,
+        message: message.to_owned(),
+        pointer: "/execution".to_owned(),
+    }
+}
+
+/// The `PersistedActor` every async drive's own bookkeeping is attributed to — the async mirror
+/// of the CLI's `system_actor()`, distinct so the log can still tell "an HTTP-driven story's own
+/// hops" from a CLI-driven one if that ever matters, though today both fold to the same `System`
+/// actor type.
+fn runtime_actor() -> PersistedActor {
+    PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse("system-runtime").expect("constant actor id is valid"),
+    )
+}
+
+/// Runs the async drive for a `PreparedDrive` the decision half (`execute_prepared`) already
+/// committed: builds the sealer/executor from `state`, registers a cancel channel under
+/// `execution_id` (STEP 5's `pause {"mode":"immediate"}` needs it live), drives to quiescence,
+/// deregisters, and renders the projection into the SAME reply shape `execution::render` (the
+/// sync path) produces — `execution::start`/`execution::resume`'s own `execute` calls the exact
+/// same `render`, so the two paths cannot drift.
+///
+/// `payload` is the request's own JSON body: an optional `"project"` field names the directory
+/// `ServeToolPort` is built against (FIXED decision — defaults to the server process's current
+/// working directory when absent, since the request shape carries no other signal and the tool
+/// host needs a project directory to root Tier 0 reads and Tier 1 worktrees against).
+async fn drive(
+    state: &ServeState,
+    execution_id: &str,
+    prepared: PreparedDrive,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, MutationError> {
+    let sealer = build_sealer(state.sealing.as_deref())
+        .map_err(|message| MutationError::from(driver_failure(&message)))?;
+    let ids = Arc::new(crate::commands::UuidIds);
+    let events = state.events.clone();
+    let store_open: StoreOpen = Arc::new(move || event_store(&events));
+
+    let executor: Arc<dyn AsyncNodeExecutor> = match &state.runtime {
+        Some(wiring) => {
+            let model = ServeModelPort::build(wiring)
+                .await
+                .map_err(|message| MutationError::from(driver_failure(&message)))?;
+            let project = payload
+                .get("project")
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok())
+                .ok_or_else(|| {
+                    MutationError::from(driver_failure(
+                        "no \"project\" was given and the server's working directory could not be read",
+                    ))
+                })?;
+            let tools = ServeToolPort::build(wiring, &project)
+                .map_err(|message| MutationError::from(driver_failure(&message)))?;
+            let lease = ToolLease {
+                actor: "runtime".to_owned(),
+                capabilities: [
+                    Capability::RepositoryRead,
+                    Capability::RepositoryWrite,
+                    Capability::ShellExecute,
+                    Capability::TestsExecute,
+                ]
+                .into_iter()
+                .collect(),
+                programs: wiring.allow_programs.iter().cloned().collect(),
+            };
+            Arc::new(PortExecutor {
+                model: Arc::new(model),
+                tools: Arc::new(tools),
+                route_id: wiring.route.id().to_owned(),
+                lease,
+                actor: "runtime".to_owned(),
+            })
+        }
+        None => {
+            let fixtures = FixtureExecutor::new(prepared.fixtures.clone());
+            Arc::new(FixtureAsyncExecutor::new(fixtures))
+        }
+    };
+
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    state
+        .cancels
+        .lock()
+        .await
+        .insert(execution_id.to_owned(), cancel_tx);
+
+    let result = drive_to_quiescence_async(
+        store_open,
+        sealer,
+        ids,
+        prepared.scope,
+        prepared.stream,
+        prepared.execution_id,
+        prepared.spec,
+        executor,
+        runtime_actor(),
+        cancel_rx,
+    )
+    .await;
+
+    state.cancels.lock().await.remove(execution_id);
+
+    match result {
+        Ok(projection) => Ok(execution::render(&projection)),
+        Err(error) => Err(MutationError::from(driver_failure(&error.to_string()))),
+    }
 }

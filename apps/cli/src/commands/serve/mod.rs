@@ -1,8 +1,12 @@
+pub(super) mod ports;
 mod routes;
 
+use std::collections::HashMap;
+use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
@@ -11,14 +15,18 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_protocols::{
     ActorId, Diagnostic, EventEnvelope, OpaqueId, PersistedActor, PersistedActorType,
 };
 
+use crate::args::ServeArgs;
 use crate::commands::events::runtime;
+use crate::commands::execution::signal::SignalKeyring;
 use crate::commands::{event_store, execution};
 use crate::output::{CommandOutput, Outcome};
+use ports::RuntimeWiring;
 
 /// Failures of `serve` itself: a malformed or non-loopback `--bind`, or the token/events
 /// directory could not be prepared. Reused from `events`/`execution`'s identical shape (see
@@ -101,6 +109,19 @@ struct ServeState {
     /// concurrency model: the store's own exclusive append lock is what serializes concurrent
     /// writers safely, not anything this server does.
     events: Arc<Path>,
+    /// Milestone 05d Task 9: the real-executor wiring, present only when `serve` was launched
+    /// with the full `{manifest, broker, keyring, key-id, route, staging}` group (STEP 2's
+    /// grouping rule). `None` keeps the 05a fixture-only shape unchanged.
+    runtime: Option<Arc<RuntimeWiring>>,
+    /// The keyring coordinates alone, present whenever `--keyring`/`--key-id` were given —
+    /// independently of `runtime` (STEP 2: `{keyring, key-id}` is its own all-or-none group,
+    /// usable on its own as sealing-only configuration for the `signal` route). When `runtime` is
+    /// `Some`, this is always `Some` too (real-executor mode requires both groups).
+    sealing: Option<Arc<SignalKeyring>>,
+    /// One cancellation sender per in-flight async drive, keyed by execution id — registered
+    /// before `drive_to_quiescence_async` starts and deregistered once it returns. `pause
+    /// {"mode":"immediate"}` (STEP 5) looks a live execution up here to interrupt it.
+    cancels: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -108,26 +129,122 @@ struct ServeState {
 /// function only ever *returns* on a setup failure — once the server starts accepting
 /// connections it runs until the process is killed, by design (there is no shutdown endpoint in
 /// this milestone).
-pub fn run(events: &Path, bind: &str) -> Outcome {
-    match execute(events, bind) {
+pub fn run(args: &ServeArgs) -> Outcome {
+    match execute(args) {
         Ok(()) => Outcome::success(COMMAND, serde_json::json!({})),
         Err(failure) => failure.into_outcome(COMMAND),
     }
 }
 
-fn execute(events: &Path, bind: &str) -> Result<(), Failure> {
-    let address = parse_loopback_bind(bind)?;
-    std::fs::create_dir_all(events)
+fn execute(args: &ServeArgs) -> Result<(), Failure> {
+    let address = parse_loopback_bind(&args.bind)?;
+    std::fs::create_dir_all(&args.events)
         .map_err(|_| serve_invalid("the events directory could not be created", "/events"))?;
-    let token = ensure_token(events)?;
+    let token = ensure_token(&args.events)?;
+    let (runtime_wiring, sealing) = build_wiring(args)?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
-        events: Arc::from(events),
+        events: Arc::from(args.events.as_path()),
+        runtime: runtime_wiring.map(Arc::new),
+        sealing: sealing.map(Arc::new),
+        cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     };
 
     let rt =
         runtime().map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
     rt.block_on(serve_forever(address, state))
+}
+
+/// STEP 2's grouping rule, enforced once at startup (`serve_invalid` on violation) rather than
+/// per-request: `{manifest, broker, route, staging}` is all-or-none; `{keyring, key-id}` is
+/// all-or-none; real-executor mode (a non-`None` `RuntimeWiring`) additionally requires BOTH
+/// groups present together. A manifest is loaded and validated here (`RouteManifest::from_json`,
+/// fail fast) and the configured `--route` is resolved to a cloned `ModelRoute` — never re-parsed
+/// per drive.
+#[allow(clippy::type_complexity)]
+fn build_wiring(
+    args: &ServeArgs,
+) -> Result<(Option<RuntimeWiring>, Option<SignalKeyring>), Failure> {
+    let executor_group = [
+        args.manifest.is_some(),
+        args.broker.is_some(),
+        args.route.is_some(),
+        args.staging.is_some(),
+    ];
+    let executor_all = executor_group.iter().all(|present| *present);
+    let executor_none = executor_group.iter().all(|present| !*present);
+    if !executor_all && !executor_none {
+        return Err(serve_invalid(
+            "--manifest, --broker, --route and --staging must be given together or not at all",
+            "/arguments",
+        ));
+    }
+    let keyring_group = [args.keyring.is_some(), args.key_id.is_some()];
+    let keyring_all = keyring_group.iter().all(|present| *present);
+    let keyring_none = keyring_group.iter().all(|present| !*present);
+    if !keyring_all && !keyring_none {
+        return Err(serve_invalid(
+            "--keyring and --key-id must be given together or not at all",
+            "/arguments",
+        ));
+    }
+    if executor_all && !keyring_all {
+        return Err(serve_invalid(
+            "the real-executor flags require --keyring and --key-id as well",
+            "/arguments",
+        ));
+    }
+
+    let sealing = if keyring_all {
+        let keyring = args.keyring.clone().expect("keyring_all guarantees Some");
+        let key_id = args.key_id.clone().expect("keyring_all guarantees Some");
+        Some(SignalKeyring {
+            directory: keyring,
+            key_id,
+        })
+    } else {
+        None
+    };
+
+    let runtime = if executor_all {
+        let manifest_path = args
+            .manifest
+            .as_ref()
+            .expect("executor_all guarantees Some");
+        let bytes = std::fs::read(manifest_path)
+            .map_err(|_| serve_invalid("--manifest does not name a readable file", "/manifest"))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| serve_invalid("--manifest is not valid UTF-8", "/manifest"))?;
+        let manifest = RouteManifest::from_json(&text)
+            .map_err(|error| serve_invalid(&error.to_string(), "/manifest"))?;
+        let route_id = args.route.as_ref().expect("executor_all guarantees Some");
+        let route = manifest
+            .routes()
+            .iter()
+            .find(|route| route.id() == route_id)
+            .ok_or_else(|| {
+                serve_invalid("--route does not name a route in the manifest", "/route")
+            })?
+            .clone();
+        let mut allow_programs = args.allow_program.clone();
+        if allow_programs.is_empty() {
+            allow_programs = vec!["git".to_owned(), "cargo".to_owned()];
+        }
+        Some(RuntimeWiring {
+            route,
+            broker_dir: args.broker.clone().expect("executor_all guarantees Some"),
+            keyring_dir: args.keyring.clone().expect("executor_all guarantees Some"),
+            key_id: args.key_id.clone().expect("executor_all guarantees Some"),
+            staging: args.staging.clone().expect("executor_all guarantees Some"),
+            tests_runner: args.tests_runner.clone(),
+            allow_programs,
+            path_prepend: args.path_prepend.clone(),
+        })
+    } else {
+        None
+    };
+
+    Ok((runtime, sealing))
 }
 
 async fn serve_forever(address: SocketAddr, state: ServeState) -> Result<(), Failure> {
@@ -575,12 +692,20 @@ impl From<execution::Failure> for MutationError {
 /// post-append `GHE003_IDEMPOTENCY_CONFLICT` arm below is the same classification applied again for
 /// the narrow race where two identical retries both pass the pre-flight check before either
 /// commits.
-fn run_idempotent_mutation(
+/// The boxed-future shape every mutation's `run` closure now returns (Milestone 05d Task 9: the
+/// `start`/`resume` drive half is genuinely async — `spawn_blocking`, `tokio::select!` — so
+/// `run_idempotent_mutation` itself became `async fn` and awaits this rather than calling a plain
+/// synchronous closure). Every other mutation (`signal`/`approve`/`pause`/`cancel`) simply wraps
+/// its unchanged synchronous body in `Box::pin(async move { ... })`.
+type MutationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<serde_json::Value, MutationError>> + Send + 'a>>;
+
+async fn run_idempotent_mutation<'a>(
     events: &Path,
     execution: &str,
     command: &'static str,
     identity: MutationIdentity,
-    run: impl FnOnce(PersistedActor, OpaqueId) -> Result<serde_json::Value, MutationError>,
+    run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
     match classify_existing_keys(
         events,
@@ -622,7 +747,7 @@ fn run_idempotent_mutation(
     }
 
     let key = identity.keys[0].full.clone();
-    match run(identity.actor, key) {
+    match run(identity.actor, key).await {
         Ok(mut value) => {
             // Milestone 05a follow-up Important: a fresh mutation success previously carried no
             // `headSequence` (only `status` and a recognized retry's `reply_with_current_status`

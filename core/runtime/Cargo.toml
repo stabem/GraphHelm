@@ -1,0 +1,25 @@
+[package]
+name = "graphhelm-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphhelm-events = { path = "../events" }
+graphhelm-execution = { path = "../execution" }
+graphhelm-gateway = { path = "../gateway" }
+graphhelm-protocols = { path = "../protocols" }
+graphhelm-simulation = { path = "../simulation" }
+graphhelm-tool-broker = { path = "../tool-broker" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+
+[dev-dependencies]
+chrono.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

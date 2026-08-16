@@ -313,6 +313,24 @@ fn replay_projection(events: &Path) -> Value {
     json(&output.stdout)["data"].clone()
 }
 
+/// 64 lowercase hex characters — the out-of-band key material `GRAPHHELM_EVENTS_KEY`
+/// carries (Milestone 05d Task 6: the signal command refuses to run without a keyring).
+const SIGNAL_KEY_HEX: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+
+/// Creates the sealed keyring the signal command's mandatory `--keyring` flag names.
+fn signal_keyring(directory: &Path) -> PathBuf {
+    let keyring = directory.join("signal-keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let material: Vec<u8> = vec![1; 32];
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        &keyring,
+        "signal-key",
+        graphhelm_events::SecretBytes::new(material),
+    )
+    .unwrap();
+    keyring
+}
+
 fn signal_envelope(id: &str, kind: &str) -> serde_json::Value {
     serde_json::json!({
         "id": id,
@@ -343,6 +361,7 @@ fn signal_admits_a_valid_envelope_and_reports_the_governance_verdict() {
     let envelope_value = signal_envelope("signal-1", "no_progress");
     let envelope_path = write_json(directory.path(), "signal.json", &envelope_value);
     let evidence_out = directory.path().join("evidence.json");
+    let keyring = signal_keyring(directory.path());
 
     let output = command()
         .args([
@@ -356,7 +375,12 @@ fn signal_admits_a_valid_envelope_and_reports_the_governance_verdict() {
             envelope_path.to_str().unwrap(),
             "--evidence-out",
             evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
         ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
         .output()
         .unwrap();
     assert!(
@@ -395,6 +419,7 @@ fn signal_rejects_a_garbage_envelope_without_writing_or_appending() {
         &serde_json::json!({"not": "a signal"}),
     );
     let evidence_out = directory.path().join("evidence.json");
+    let keyring = signal_keyring(directory.path());
 
     let output = command()
         .args([
@@ -408,7 +433,12 @@ fn signal_rejects_a_garbage_envelope_without_writing_or_appending() {
             envelope_path.to_str().unwrap(),
             "--evidence-out",
             evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
         ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
@@ -437,6 +467,7 @@ fn signal_preserves_evidence_for_an_unrecordable_identity_and_refuses() {
     let envelope_path = write_json(directory.path(), "unrecordable.json", &envelope_value);
     let raw_bytes = std::fs::read(&envelope_path).unwrap();
     let evidence_out = directory.path().join("evidence.json");
+    let keyring = signal_keyring(directory.path());
 
     let output = command()
         .args([
@@ -450,7 +481,12 @@ fn signal_preserves_evidence_for_an_unrecordable_identity_and_refuses() {
             envelope_path.to_str().unwrap(),
             "--evidence-out",
             evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
         ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
@@ -478,6 +514,103 @@ fn signal_preserves_evidence_for_an_unrecordable_identity_and_refuses() {
     );
 }
 
+/// Milestone 05d Task 6: the envelope now ALSO seals into the encrypted Evidence store —
+/// the `signal_recorded` event carries the sealed reference, the store holds the blob, and
+/// `envelopeSha256` equals the sealed plaintext's digest (the reference's content digest),
+/// binding record and Evidence to the same bytes. `--evidence-out` is kept: operator copy.
+#[test]
+fn a_signal_envelope_is_sealed_beside_its_record() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = all_success_fixtures(directory.path());
+    start(&events, &fixtures, "supervised", "exec_signal_sealed");
+
+    let envelope_path = write_json(
+        directory.path(),
+        "signal.json",
+        &signal_envelope("signal-sealed-1", "no_progress"),
+    );
+    let evidence_out = directory.path().join("evidence.json");
+    let keyring = signal_keyring(directory.path());
+
+    let output = command()
+        .args([
+            "execution",
+            "signal",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_signal_sealed",
+            "--signal",
+            envelope_path.to_str().unwrap(),
+            "--evidence-out",
+            evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(evidence_out.exists(), "the operator copy is kept");
+
+    struct WallClock;
+    impl graphhelm_protocols::Clock for WallClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
+    #[derive(Default)]
+    struct Ids(AtomicU64);
+    impl graphhelm_protocols::IdGenerator for Ids {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+        }
+    }
+    let repository = graphhelm_events::LocalEventRepository::open(
+        &events,
+        Arc::new(WallClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let (stream, history) = repository.read_unique_replay_stream().unwrap();
+    let scope = stream.scope.clone();
+    let recorded = history
+        .iter()
+        .find_map(|envelope| match &envelope.kind {
+            graphhelm_protocols::EventKind::SignalRecorded(record) => Some((envelope, record)),
+            _ => None,
+        })
+        .expect("a signal_recorded event exists");
+    let (envelope, record) = recorded;
+    assert_eq!(
+        envelope.evidence_refs.len(),
+        1,
+        "the record carries its sealed reference"
+    );
+    let reference = &envelope.evidence_refs[0];
+    assert!(
+        repository
+            .evidence_exists(&scope, reference.evidence_id())
+            .unwrap(),
+        "the store holds the sealed envelope"
+    );
+    assert_eq!(
+        reference.content_sha256().as_str(),
+        record.envelope_sha256.as_str(),
+        "envelopeSha256 equals the sealed plaintext's digest"
+    );
+}
+
 /// The scenario Step 4's sabotage targets directly: if `--evidence-out` cannot be written,
 /// nothing may be appended, because an event whose evidence was not preserved would violate the
 /// fail-closed contract. Pointing `--evidence-out` at a directory makes the write fail.
@@ -495,6 +628,7 @@ fn signal_fails_closed_when_the_evidence_path_is_unwritable() {
     );
     let evidence_out = directory.path().join("evidence-directory");
     std::fs::create_dir_all(&evidence_out).unwrap();
+    let keyring = signal_keyring(directory.path());
 
     let output = command()
         .args([
@@ -508,7 +642,12 @@ fn signal_fails_closed_when_the_evidence_path_is_unwritable() {
             envelope_path.to_str().unwrap(),
             "--evidence-out",
             evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
         ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
@@ -986,6 +1125,7 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
         &signal_envelope("story-signal-1", "no_progress"),
     );
     let evidence_out = directory.path().join("evidence.json");
+    let keyring = signal_keyring(directory.path());
     let signal_output = command()
         .args([
             "execution",
@@ -998,7 +1138,12 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
             envelope_path.to_str().unwrap(),
             "--evidence-out",
             evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
         ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
         .output()
         .unwrap();
     assert!(
@@ -1107,4 +1252,56 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
         replay_first.stdout, replay_second.stdout,
         "two independent replays of the same finished stream must be byte-identical"
     );
+}
+
+/// Milestone 05d Task 7 (the M04 ledger's resume file-trust seam): resume derives the supplied
+/// file's content hash exactly as start does and refuses a mismatch against the published
+/// `current_graph` BEFORE any recovery append — the store is untouched by a refused resume.
+#[test]
+fn resume_refuses_a_graph_file_that_does_not_match_the_started_hash() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure", "deploy": "success"}),
+    );
+    start(&events, &fixtures, "supervised", "exec_resume_hash");
+    pause(&events, "exec_resume_hash");
+    let head_before = status(&events, "exec_resume_hash")["headSequence"].clone();
+
+    // Tamper one byte of a node's objective in a COPY of the graph file.
+    let pristine = root().join("examples/graphs/manual-override-deploy.yaml");
+    let tampered_text =
+        std::fs::read_to_string(&pristine)
+            .unwrap()
+            .replacen("objective:", "objective: X", 1);
+    let tampered = directory.path().join("tampered.yaml");
+    std::fs::write(&tampered, tampered_text).unwrap();
+
+    let refused = command()
+        .args([
+            "execution",
+            "resume",
+            "--file",
+            tampered.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--execution",
+            "exec_resume_hash",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "a tampered graph must refuse");
+    let reply = json(&refused.stdout);
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI005_EXECUTION_STATE");
+    assert_eq!(reply["diagnostics"][0]["path"], "/execution/graph");
+
+    // BEFORE any recovery append: the head did not move under the refusal.
+    let head_after = status(&events, "exec_resume_hash")["headSequence"].clone();
+    assert_eq!(head_before, head_after, "a refused resume appends nothing");
+
+    // The pristine file still resumes.
+    resume(&events, &fixtures, "exec_resume_hash");
 }

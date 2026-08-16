@@ -149,7 +149,16 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 signal,
                 evidence_out,
-            } => execution::signal::run(&events, execution.as_deref(), &signal, &evidence_out),
+                keyring,
+                key_id,
+            } => execution::signal::run(
+                &events,
+                execution.as_deref(),
+                &signal,
+                &evidence_out,
+                &keyring,
+                &key_id,
+            ),
             ExecutionCommand::Approve {
                 events,
                 execution,
@@ -227,7 +236,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 } => gateway::credential::remove(&broker, &keyring, &key_id, &reference),
             },
         },
-        TopLevel::Serve(args) => serve::run(&args.events, &args.bind),
+        TopLevel::Serve(args) => serve::run(&args),
     }
 }
 

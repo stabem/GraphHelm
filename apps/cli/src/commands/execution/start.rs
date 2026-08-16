@@ -9,8 +9,8 @@ use graphhelm_protocols::{
 
 use super::driver::drive_to_quiescence;
 use super::{
-    Failure, PROJECT, WORKSPACE, argument, execution_state, finish, idempotency_key, load_fixtures,
-    render, replay_failure, repository_failure,
+    Failure, PROJECT, PreparedDrive, WORKSPACE, argument, execution_state, finish, idempotency_key,
+    load_fixtures, render, replay_failure, repository_failure,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -92,6 +92,35 @@ pub(crate) fn execute(
     actor: PersistedActor,
     key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
+    let prepared = execute_prepared(version, events, fixtures, mode, execution, actor, key)?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let projection = drive_to_quiescence(
+        &store,
+        &prepared.scope,
+        prepared.stream.as_str(),
+        &prepared.spec,
+        &prepared.fixtures,
+        &super::system_actor(),
+    )?;
+
+    Ok(render(&projection))
+}
+
+/// The decision half of `execute` (Milestone 05d Task 9's `execute_prepared` split): everything
+/// through the `ExecutionStarted` append. Returns the [`PreparedDrive`] handoff the drive half —
+/// sync (`execute`, above) or async (`serve::routes::start`) — needs to run
+/// `drive_to_quiescence`/`drive_to_quiescence_async` afterward. `execute` is exactly
+/// `execute_prepared` plus the same sync drive and render as before this split: CLI behavior is
+/// byte-identical.
+pub(crate) fn execute_prepared(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    mode: &str,
+    execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
+) -> Result<PreparedDrive, Failure> {
     let mode = parse_mode(mode)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
@@ -151,16 +180,13 @@ pub(crate) fn execute(
         .append_atomic(&request)
         .map_err(|error| repository_failure(&error))?;
 
-    let projection = drive_to_quiescence(
-        &store,
-        &scope,
-        stream_id.as_str(),
-        &version.graph().spec,
-        &fixtures,
-        &super::system_actor(),
-    )?;
-
-    Ok(render(&projection))
+    Ok(PreparedDrive {
+        scope,
+        stream: stream_id.clone(),
+        execution_id: stream_id,
+        spec: version.graph().spec.clone(),
+        fixtures,
+    })
 }
 
 fn parse_mode(mode: &str) -> Result<ExecutionMode, Failure> {

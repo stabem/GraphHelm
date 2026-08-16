@@ -863,6 +863,7 @@ dependencies = [
  "graphhelm-policy",
  "graphhelm-postgres-event-store",
  "graphhelm-protocols",
+ "graphhelm-runtime",
  "graphhelm-schema",
  "graphhelm-schema-evolution",
  "graphhelm-sealed-key-provider",
@@ -1022,6 +1023,26 @@ dependencies = [
  "serde_yaml_ng",
  "static_assertions",
  "thiserror",
+]
+
+[[package]]
+name = "graphhelm-runtime"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "graphhelm-events",
+ "graphhelm-execution",
+ "graphhelm-gateway",
+ "graphhelm-protocols",
+ "graphhelm-simulation",
+ "graphhelm-tool-broker",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

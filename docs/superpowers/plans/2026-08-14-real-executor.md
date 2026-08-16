@@ -14,12 +14,12 @@
 
 ## Binding process rules (every task, no exceptions)
 
-1. **The code wins over the plan.** This plan was written against main at `0e1f095`. It additionally *names* interfaces from 05b (#24) and 05c (#25) that are not on main yet — every such reference is tagged `[RECONCILE]` and collected in Task 0, which runs first and rewrites the tags into real signatures. **Do not start implementation until 05b and 05c are merged**; if either landed differently than its plan, Task 0 absorbs the difference and reports it.
+1. **The code wins over the plan.** This plan was written against main at `0e1f095`. It additionally *names* interfaces from 05b (#24) and 05c (#25) that are not on main yet — every such reference is tagged `[RECONCILE]` and collected in Task 0, which runs first and rewrites the tags into real signatures. **Task 0 ran against main `9d15bf4` (05b+05c merged)**: every tag below is rewritten to the real signature; the one genuine discrepancy (the record's missing reuse-decision fields) and the two registry decisions (GHCLI005 family, no #35 trigger) are recorded in the What-already-exists section.
 2. **This plan adds NO event kinds and touches NO schema.** `NodeOutcomeRecorded` and `signal_recorded` are carried unchanged; Evidence attaches through `NewEvent::new`'s existing `evidence_refs` parameter (`core/protocols/src/event.rs:78`) and `PreparedAppend`'s existing `evidence` vector. If a task believes it needs a new kind or a payload change, STOP and report NEEDS_CONTEXT citing D-037's ritual.
 3. **`core/execution` stays pure and its invariants stay green.** The two edits this plan makes there (Tasks 2–3) are pure functions over values; `source_invariants.rs` must pass unmodified. `core/runtime` is a *different kind* of crate — async, I/O-adjacent — and must never appear in a pure crate's dependency table (the §9 risk, made a rule).
 4. **Workspace clippy is the bar:** `cargo +1.97.1 clippy --workspace --all-targets --all-features --locked -- -D warnings` clean at every commit.
 5. **Every new guard must be observed failing once.** Sabotage, watch the named test fail, restore from a `cp` backup, never `git checkout --`.
-6. **New CLI test binaries must be added to `ci/gate.ps1` by name** (after 05b/05c the suite list is expected as `('cli_smoke','schema_cli','event_store_cli','execution_cli','api_http','gateway_cli','tool_cli')`; this plan adds `runtime_http`).
+6. **New CLI test binaries must be added to `ci/gate.ps1` by name** (confirmed at Task 0: the merged list is exactly `('cli_smoke','schema_cli','event_store_cli','execution_cli','api_http','gateway_cli','tool_cli')`; this plan adds `runtime_http`).
 7. **Free-form content never enters an event** (D-036). Model reply text, tool streams, prompt text, signal envelopes: Evidence or operator files, never payload fields. Every new payload-shaped struct in this plan carries digests and references only.
 8. **The driver never invents an outcome** (the 04f rule). Every recorded outcome is what a port actually returned or a typed mapping of its error — no fabrication on predicted bounds, no synthesized success.
 9. **Run `cargo +1.97.1 fmt --all` before every commit.** Commit per task: `type(scope): description`, body explains why, trailer `Co-Authored-By: Claude Code <noreply@anthropic.com>`.
@@ -38,8 +38,11 @@ Until 05c's implementation completes, this branch touches exactly one file: this
 - `ready_set(spec, states)` with fail-closed every-edge gating (`core/execution/src/ready.rs`) — Task 3 refines per edge type.
 - The condition fixture subset the simulator already evaluates (`core/simulation/src/engine.rs:499-516`: `bool` literal, `"true"`/`"false"` strings, fixture lookup) — the runtime adopts the *literal* subset only.
 - The 05a serve layer: `run_idempotent_mutation`, `ServeState`, per-request store open/drop, and the CLI–API parity test `the_cli_and_the_api_report_identical_status_for_the_same_story` — the regression net for the driver swap.
-- `[RECONCILE]` 05b: `core/gateway`'s `ModelCall`/`ModelReply`/`Usage`, `GatewayError`, `outcome_for_error` (total, failure-shaped codomain), `ByokAdapter::call(&self, key, request)`, `RuntimeAdapter::call(&self, request)`, the credential broker's `lease`.
-- `[RECONCILE]` 05c: `graphhelm-tool-broker`'s `ToolCall`/`ToolLease`/`ToolCallRecord`/`ToolDisposition`; `graphhelm-tool-host`'s `ToolHost::invoke(&self, call, lease, actor) -> (ToolCallRecord, CapturedStreams)`, `HostConfig`.
+- **Reconciled (Task 0, main 9d15bf4)** 05b: `graphhelm_gateway::{ModelCall { prompt, max_tokens }, ModelReply { text, usage }, Usage}`, `GatewayError` (14 kinds), `outcome_for_error` total with the failure-shaped codomain; `ByokAdapter::call(&self, key: &SecretBytes, request: &ModelCall) -> Result<ModelReply, GatewayError>` (`adapters/model-gateway/src/byok.rs:68`) and `RuntimeAdapter::call(&self, request: &ModelCall)` (`runtime.rs:120`) — both **synchronous**, so the async driver wraps them in `spawn_blocking` exactly as planned; `CredentialBroker::lease(&self, id, route_id) -> Result<SecretBytes, BrokerError>` (async).
+- **Reconciled (Task 0, main 9d15bf4)** 05c: `ToolCall`/`ToolLease` as planned; `ToolDisposition { Completed { exit_code: i32 }, Denied { rule: String }, TimedOut, HostError { code: String } }`; `ToolCallRecord` carries `reused: bool` and digest-only stream references; `ToolHost::invoke(&self, call: &ToolCall, lease: &ToolLease, actor: &str) -> (ToolCallRecord, CapturedStreams)` and `HostConfig { workspace, limits, tests_runner, tests_runner_env, path_prepend, keep_workspace }` confirmed; the `ReadCache` exposes `tag_evidence`/`invalidate_evidence` for the erasure wiring.
+- **Task 0 discrepancy (real, must be absorbed by Task 5/6):** the merged `ToolCallRecord` does NOT expose `key_digest`, `freshness_class` or `forced_reason` — the cache decision's identity stays inside the host. The Step 2c producer needs them, so the 05d work extends `graphhelm-tool-host` with a small public reuse-decision summary beside the record (normal in-milestone change, reviewed as part of its task) rather than deriving undeducible values.
+- **Task 0 code-registry decision:** `GHCLI015` is reserved by the merged 05e plan and untouched in code; the resume cross-check refusal (Task 7) uses the existing `GHCLI005_EXECUTION_STATE` family — no new code taken by 05d.
+- **Task 0 queue check (#35):** none of the five spec-debt triggers fires on merged main — the ReadCache is snapshot-closed-only (no drifting cache), and no simulator, Governor milestone or claim lifecycle entered implementation.
 
 ## The 04f seams this plan closes, named
 
@@ -79,12 +82,12 @@ Until 05c's implementation completes, this branch touches exactly one file: this
 
 ---
 
-### Task 0: reconciliation — rewrite `[RECONCILE]` tags into merged reality
+### Task 0: reconciliation — rewrite `[RECONCILE]` tags into merged reality ✅ (ran 2026-08-16 against main 9d15bf4)
 
 **Files:**
 - Modify: this plan document only.
 
-- [ ] **Step 1:** With 05b and 05c merged, read `core/gateway/src/{call,taxonomy,manifest}.rs`, `adapters/model-gateway/src/{byok,runtime,broker}.rs`, `core/tool-broker/src/{call,lease,record}.rs`, `adapters/tool-host/src/{host,workspace,process}.rs`. For every `[RECONCILE]` item in this document, replace the assumed signature with the real one (types, paths, async-ness, error shapes). Pay specific attention to: whether gateway adapters are sync (05b planned sync `ureq`/subprocess — the async driver then wraps them in `spawn_blocking`) and the exact shape of `ToolHost::invoke`'s return.
+- [x] **Step 1:** With 05b and 05c merged, read `core/gateway/src/{call,taxonomy,manifest}.rs`, `adapters/model-gateway/src/{byok,runtime,broker}.rs`, `core/tool-broker/src/{call,lease,record}.rs`, `adapters/tool-host/src/{host,workspace,process}.rs`. For every `[RECONCILE]` item in this document, replace the assumed signature with the real one (types, paths, async-ness, error shapes). Pay specific attention to: whether gateway adapters are sync (05b planned sync `ureq`/subprocess — the async driver then wraps them in `spawn_blocking`) and the exact shape of `ToolHost::invoke`'s return.
 - [ ] **Step 2:** Commit the reconciled plan: `docs(plan): reconcile the 05d plan against merged 05b and 05c`. Report every signature that differed.
 
 ---
@@ -163,7 +166,7 @@ pub trait AsyncNodeExecutor: Send + Sync {
 - [ ] **Step 3: The ports**, `src/ports.rs` — dependency inversion so the executor is testable without adapters:
 
 ```rust
-/// [RECONCILE] Shapes mirror core/gateway's ModelCall/ModelReply; confirm in Task 0.
+/// Reconciled: mirrors the merged core/gateway ModelCall/ModelReply exactly (Task 0).
 pub trait ModelPort: Send + Sync {
     fn call<'a>(
         &'a self,
@@ -172,7 +175,7 @@ pub trait ModelPort: Send + Sync {
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<graphhelm_gateway::ModelReply, graphhelm_gateway::GatewayError>> + Send + 'a>>;
 }
 
-/// [RECONCILE] Mirrors graphhelm-tool-broker types; the host adapter implements it in apps/cli.
+/// Reconciled: the merged graphhelm-tool-broker types, verbatim (Task 0); the host adapter implements it in apps/cli.
 pub trait ToolPort: Send + Sync {
     fn invoke<'a>(
         &'a self,
@@ -181,7 +184,7 @@ pub trait ToolPort: Send + Sync {
         actor: &'a str,
     ) -> std::pin::Pin<Box<dyn Future<Output = ToolPortResult> + Send + 'a>>;
 }
-// ToolPortResult = (ToolCallRecord, CapturedStreams-shaped bytes) [RECONCILE]
+// ToolPortResult = (ToolCallRecord, CapturedStreams) — the merged 05c shape (Task 0), plus the reuse-decision summary the Task 0 discrepancy adds.
 ```
 
 - [ ] **Step 4: Green, fmt, workspace clippy. Commit** `feat(runtime): async executor seam and adapter ports`.
@@ -339,7 +342,7 @@ fn a_tool_record_maps_by_disposition_and_seals_record_plus_streams() {
     // → RetryableFailure; TimedOut → RetryableFailure; Denied → TerminalFailure (a lease
     // refusal will not heal by retrying the same call); HostError → RetryableFailure.
     // Sealables: ("record", application/json, the ToolCallRecord JSON), ("stdout"/"stderr",
-    // text/plain, stream bytes). [RECONCILE] against 05c's merged ToolDisposition variants.
+    // text/plain, stream bytes). Merged ToolDisposition variants confirmed: Completed{exit_code}/Denied{rule}/TimedOut/HostError{code} (Task 0).
 }
 
 #[test]
@@ -405,7 +408,7 @@ fn a_signal_envelope_is_sealed_beside_its_record() {
 - [ ] **Step 2c: Discharge the `ReuseDecision` obligation (review finding).** The 05c
 amendment ships the kind with the executor named as its producer — this task is where that
 promise lands. When the ToolPort's returned record carries `reused: true` (or `forced_fresh`
-with its reason `[RECONCILE]` against the merged 05c shape), the writer appends a
+with its reason — served by the reuse-decision summary the Task 0 discrepancy adds to the host), the writer appends a
 `ReuseDecision` event alongside the outcome — same `PreparedAppend`, populated from the
 record's decision, freshness class, key digest and evidence ref, `node_id: Some(...)`. The
 fold arm is already on main as an explicit no-op ledger (05c Task 9b); test: a tool-node run
@@ -478,7 +481,7 @@ fn immediate_stop_interrupts_in_flight_work_and_blocks_it() {
 fn a_cancelled_tool_child_is_actually_dead() {
     // Tool-kind node with a fake ToolPort that spawns a real sleeping child process and
     // kills it on cancel (the port contract: cancellation propagates; the 05c host's
-    // deadline kill is the mechanism [RECONCILE]) — assert the child pid is gone before
+    // deadline kill is the mechanism — run_in_workspace's kill+reap, confirmed at Task 0) — assert the child pid is gone before
     // the outcome is recorded. If pid-liveness proves untestable portably, narrow to: the
     // port's cancel hook ran before record; report the narrowing.
 }
@@ -516,7 +519,7 @@ The driver therefore separates concurrent WORK from serialized WRITES:
   contract gains a cancel hook: `ModelPort::cancel_all(&self)` and `ToolPort::cancel_all(&self)`
   (or a per-call `CancelHandle` if Task 0 finds the adapters expose one — the code wins),
   with defined semantics per adapter: a subprocess-backed port kills its children (the 05c
-  host's kill path is the mechanism `[RECONCILE]`); an HTTP-backed port CANNOT abort a request
+  host's kill path is the mechanism, confirmed at Task 0); an HTTP-backed port CANNOT abort a request
   mid-flight — its bound is the transport timeout, and this is an honest limit named in
   Task 10, not hidden behind the hook. The immediate-stop test asserts the subprocess case
   kills for real; the HTTP case asserts the outcome is discarded-after-completion (recorded
@@ -532,13 +535,13 @@ The driver therefore separates concurrent WORK from serialized WRITES:
 - Create: `apps/cli/tests/runtime_http.rs`
 - Modify: `ci/gate.ps1` (add `runtime_http`)
 
-- [ ] **Step 1: Failing tests** in `apps/cli/tests/runtime_http.rs` (the `api_http.rs` spawn/fake patterns; ports wired to the 05b fake-server + 05c fake-tool fixtures `[RECONCILE]`):
+- [ ] **Step 1: Failing tests** in `apps/cli/tests/runtime_http.rs` (the `api_http.rs` spawn/fake patterns; ports wired to the 05b fake-server pattern (`tests/byok_adapters.rs`) and 05c's `fake_tool` via `path_prepend` — both confirmed at Task 0):
   - **the fixture bridge first (review finding):** the parity test drives a fixture story, and nothing async executes fixtures — add `FixtureAsyncExecutor` in `core/runtime` (a thin `AsyncNodeExecutor` over `graphhelm_simulation::FixtureExecutor`, same table, same absent-fixture-is-`NeedsInput` semantics, immediately-ready future) so the API's async driver can run the 05a scripted story without a gateway; it is a test-support type, `#[doc(hidden)]`, and the sync CLI path never touches it;
   - the 05a scripted story through the API now drives via the async driver (over `FixtureAsyncExecutor`) and the final `status` still matches the CLI's for the same story on a fresh store (**the parity test is the contract**: run the existing `the_cli_and_the_api_report_identical_status_for_the_same_story` unchanged — it must stay green through the swap);
   - a real end-to-end: agent node (fake Anthropic server) + tool node (fake tool) runs to completion over HTTP with sealed evidence readable from the store and byte-identical double replay — **the milestone's §8 acceptance sentence as one test**;
   - `POST /v1/executions/{id}/pause` with `{"mode":"immediate"}` interrupts an in-flight node (fake port held open), records `Interrupted → Blocked`, and a subsequent resume refuses with the untriaged-interruption failure until approve — the graceful default (`"mode"` absent) unchanged;
   - measure and print (eprintln, captured by the test log) the storm-shaped throughput number for the milestone doc — assert nothing about it beyond completion (the 05a baseline is recorded prose, not a gate).
-- [ ] **Step 2: Implement.** Port wiring in serve: build `PortExecutor` from the gateway manifest/broker config flags (`serve` gains the manifest/keyring/staging flags, mirroring the 05b/05c CLI precedents `[RECONCILE]`); `start`/`resume` handlers call `drive_to_quiescence_async`; the CLI's `execution start/resume` keep calling the synchronous 04f driver **unchanged** (the design's §6.1 split, verbatim).
+- [ ] **Step 2: Implement.** Port wiring in serve: build `PortExecutor` from the gateway manifest/broker config flags (`serve` gains the manifest/keyring/staging flags, mirroring the merged `gateway`/`tool` CLI flag precedents — confirmed at Task 0; serve gained no flags from 05c itself); `start`/`resume` handlers call `drive_to_quiescence_async`; the CLI's `execution start/resume` keep calling the synchronous 04f driver **unchanged** (the design's §6.1 split, verbatim).
 - [ ] **Step 3: Gate stage** `runtime_http` (rule 6), proven able to go red via the 05b misspell pattern. **Step 4: Sabotage:** point the API's resume at the sync driver transiently; the immediate-stop HTTP test fails (sync path cannot interrupt); restore. **Step 5: fmt, clippy, commit** `feat(cli): the API drives the async runtime executor`.
 
 ---

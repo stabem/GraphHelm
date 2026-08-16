@@ -40,6 +40,30 @@ pub struct ServeArgs {
     /// beyond localhost.
     #[arg(long)]
     pub bind: String,
+    /// Milestone 05d Task 9: the real-executor wiring. Optional as a GROUP — see
+    /// `commands::serve::mod`'s startup validation for the exact all-or-none rule this and its
+    /// siblings below must satisfy. Absent entirely, `serve` stays the fixture-only 05a server.
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
+    #[arg(long)]
+    pub broker: Option<PathBuf>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long = "key-id")]
+    pub key_id: Option<String>,
+    #[arg(long)]
+    pub route: Option<String>,
+    #[arg(long)]
+    pub staging: Option<PathBuf>,
+    #[arg(long = "tests-runner", default_value = "cargo")]
+    pub tests_runner: String,
+    /// Repeatable; defaults to `git`+`cargo` when empty (the same default the plan gives
+    /// `graphhelm tool invoke`'s equivalent flag).
+    #[arg(long = "allow-program")]
+    pub allow_program: Vec<String>,
+    /// Repeatable; directories joined ahead of the child's inherited PATH.
+    #[arg(long = "path-prepend")]
+    pub path_prepend: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -84,6 +108,13 @@ pub enum ExecutionCommand {
         signal: PathBuf,
         #[arg(long = "evidence-out")]
         evidence_out: PathBuf,
+        /// Sealed keyring directory; the envelope now also seals into the Evidence store
+        /// (Milestone 05d Task 6) — the command refuses to run without a keyring rather than
+        /// silently skipping the seal. The 32-byte key arrives via `GRAPHHELM_EVENTS_KEY`.
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
     },
     /// The owner approves a `Ghost` or `Blocked` node, readying it. Does not auto-drive: nothing
     /// auto-starts out of a manual intervention (D-020); run `resume` to continue.

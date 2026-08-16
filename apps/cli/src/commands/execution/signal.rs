@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use graphhelm_events::{EvidenceInput, EvidenceProtector, EvidenceSealer, SecretBytes};
+use graphhelm_sealed_key_provider::SealedKeyProvider;
 
 use graphhelm_governor::{
     GovernanceError, MutationDecision, RejectionReason, admit_signal, decide_mutation,
@@ -31,10 +34,35 @@ const COMMAND: &str = "execution.signal";
 /// from a JSON body's inline envelope instead of a file), then calls `execute` with the owner actor
 /// and a fresh per-invocation idempotency key, exactly as before this task — byte-identical CLI
 /// behaviour.
-pub fn run(events: &Path, execution: Option<&str>, signal: &Path, evidence_out: &Path) -> Outcome {
+/// The keyring coordinates the CLI surface makes mandatory (Milestone 05d Task 6): the
+/// signal command refuses to run without a keyring rather than silently skipping the seal.
+/// The API seam still passes `None` — HTTP-side sealing lands with the serve keyring wiring
+/// (a declared Task 6 discrepancy, not a silent skip: the CLI cannot reach that path).
+pub(crate) struct SignalKeyring {
+    pub(crate) directory: PathBuf,
+    pub(crate) key_id: String,
+}
+
+pub fn run(
+    events: &Path,
+    execution: Option<&str>,
+    signal: &Path,
+    evidence_out: &Path,
+    keyring: &Path,
+    key_id: &str,
+) -> Outcome {
     finish(
         COMMAND,
-        run_from_file(events, execution, signal, evidence_out),
+        run_from_file(
+            events,
+            execution,
+            signal,
+            evidence_out,
+            &SignalKeyring {
+                directory: keyring.to_path_buf(),
+                key_id: key_id.to_owned(),
+            },
+        ),
         |value| value,
     )
 }
@@ -44,6 +72,7 @@ fn run_from_file(
     execution: Option<&str>,
     signal: &Path,
     evidence_out: &Path,
+    keyring: &SignalKeyring,
 ) -> Result<serde_json::Value, Failure> {
     let raw = std::fs::read(signal)
         .map_err(|_| argument("--signal does not name a readable file", "/signal"))?;
@@ -54,7 +83,41 @@ fn run_from_file(
         evidence_out,
         owner_actor(),
         idempotency_key("signal-recorded"),
+        Some(keyring),
     )
+}
+
+/// Mirrors `commands::events::config`'s provider construction: the 32-byte key never rides a
+/// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters.
+fn open_sealer(keyring: &SignalKeyring) -> Result<EvidenceProtector<SealedKeyProvider>, Failure> {
+    let invalid = || {
+        argument(
+            "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters",
+            "/keyring",
+        )
+    };
+    let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| invalid())?;
+    if encoded.len() != 64
+        || !encoded
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
+        return Err(invalid());
+    }
+    let mut material = Vec::with_capacity(32);
+    let bytes = encoded.as_bytes();
+    for pair in bytes.chunks(2) {
+        let value = u8::from_str_radix(std::str::from_utf8(pair).map_err(|_| invalid())?, 16)
+            .map_err(|_| invalid())?;
+        material.push(value);
+    }
+    let provider = SealedKeyProvider::open(
+        &keyring.directory,
+        keyring.key_id.clone(),
+        SecretBytes::new(material),
+    )
+    .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
+    Ok(EvidenceProtector::new(provider))
 }
 
 /// The shared core: admits `signal` (already-read bytes — a file's contents from the CLI, or an
@@ -75,6 +138,7 @@ pub(crate) fn execute(
     evidence_out: &Path,
     actor: PersistedActor,
     key: OpaqueId,
+    sealing: Option<&SignalKeyring>,
 ) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, projection) = load_projection(&store, execution)?;
@@ -141,21 +205,70 @@ pub(crate) fn execute(
         )
     })?;
 
+    // Milestone 05d Task 6: the envelope ALSO seals into the Evidence store, before the
+    // append — the same fail-closed rule. `envelope_sha256` digests exactly these bytes, so
+    // the sealed reference's content digest and the record agree by construction.
+    let sealed = match sealing {
+        Some(keyring) => {
+            let protector = open_sealer(keyring)?;
+            let input = EvidenceInput::new(
+                format!("signal-{}", signal_id(&admitted.record)),
+                "application/json",
+                Sensitivity::Confidential,
+                "standard",
+                SecretBytes::new(admitted.externalize.clone()),
+            )
+            .map_err(|_| execution_state("the signal envelope cannot be sealed", "/signal"))?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .map_err(|_| execution_state("the sealing runtime could not start", "/keyring"))?;
+            let sealed = runtime
+                .block_on(protector.seal(scope.clone(), input))
+                .map_err(|_| {
+                    execution_state(
+                        "the envelope could not be sealed; nothing was recorded",
+                        "/keyring",
+                    )
+                })?;
+            Some(sealed)
+        }
+        None => None,
+    };
+
     let stream_id = OpaqueId::parse(&stream)
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
-    append_event(
-        &store,
-        &scope,
-        &stream_id,
-        NewEvent::new(
-            key,
-            actor,
-            Sensitivity::Internal,
-            EventKind::SignalRecorded(admitted.record.clone()),
-            vec![],
-            vec![],
-        ),
-    )?;
+    let evidence_refs = sealed
+        .as_ref()
+        .map(|item| vec![item.reference().clone()])
+        .unwrap_or_default();
+    let event = NewEvent::new(
+        key,
+        actor,
+        Sensitivity::Internal,
+        EventKind::SignalRecorded(admitted.record.clone()),
+        evidence_refs,
+        vec![],
+    );
+    match sealed {
+        Some(item) => {
+            let next_sequence = store
+                .next_sequence(&scope, stream_id.as_str())
+                .map_err(|error| repository_failure(&error))?;
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                stream_id.clone(),
+                next_sequence,
+                vec![event],
+                vec![item],
+                vec![],
+            )
+            .map_err(|error| repository_failure(&error))?;
+            store
+                .append_atomic(&request)
+                .map_err(|error| repository_failure(&error))?;
+        }
+        None => append_event(&store, &scope, &stream_id, event)?,
+    }
 
     // "Right now" per `decide_mutation`'s own contract means the projection folded to the append
     // point; nothing between the read above and this append could have changed `mode` or

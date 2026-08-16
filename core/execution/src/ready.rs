@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use graphhelm_protocols::{GraphSpec, NodeState};
+use graphhelm_protocols::{EdgeType, GraphEdge, GraphSpec, NodeState};
 
 use crate::bounds::MAX_READY_SET;
 
@@ -62,6 +62,30 @@ const _RESOURCE_GUARD_EXCEEDS_THE_NODE_BOUND: () = assert!(
     "a legitimate execution can reach the projection guard"
 );
 
+/// Whether this edge still holds its dependent back, given the predecessor's state — the 05d
+/// refinement of 04c's every-edge rule, additive on exactly two decidable cases and proven so
+/// by property (`every_other_shape_is_exactly_the_04c_rule`).
+///
+/// Both deltas are deliberate and both are pinned by test:
+///
+/// - **A literal `false` condition is statically dead**: the edge never gates, no matter its
+///   type or its predecessor. Execution evaluates only the simulator's deterministic literal
+///   subset (minus fixtures, which execution does not have); every non-literal condition stays
+///   FAIL-CLOSED and gates exactly as an unconditioned edge — 04c's rule.
+/// - **A `Failure` edge releases on `Failed` and only `Failed`**: that is what a failure route
+///   IS. This both GRANTS readiness 04c never granted (the handler runs when its source
+///   failed) and REMOVES 04c's spurious release (the handler no longer runs when its source
+///   succeeded, was waived or was skipped — nothing failed).
+fn edge_gates(edge: &GraphEdge, predecessor: NodeState) -> bool {
+    if edge.condition.as_ref() == Some(&serde_json::Value::Bool(false)) {
+        return false;
+    }
+    match edge.edge_type {
+        EdgeType::Failure => predecessor != NodeState::Failed,
+        _ => !satisfies_dependents(predecessor),
+    }
+}
+
 /// Computes the set of nodes that may be dispatched now.
 ///
 /// # Errors
@@ -70,12 +94,9 @@ pub fn ready_set(
     spec: &GraphSpec,
     states: &BTreeMap<String, NodeState>,
 ) -> Result<BTreeSet<String>, ScheduleError> {
-    let mut predecessors: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut predecessors: BTreeMap<&str, Vec<&GraphEdge>> = BTreeMap::new();
     for edge in &spec.edges {
-        predecessors
-            .entry(edge.to.as_str())
-            .or_default()
-            .push(edge.from.as_str());
+        predecessors.entry(edge.to.as_str()).or_default().push(edge);
     }
 
     let mut ready = BTreeSet::new();
@@ -85,9 +106,15 @@ pub fn ready_set(
         if !is_dispatchable(state) {
             continue;
         }
-        let satisfied = predecessors.get(node_id.as_str()).is_none_or(|sources| {
-            sources.iter().all(|source| {
-                satisfies_dependents(states.get(*source).copied().unwrap_or(NodeState::Draft))
+        let satisfied = predecessors.get(node_id.as_str()).is_none_or(|incoming| {
+            incoming.iter().all(|edge| {
+                !edge_gates(
+                    edge,
+                    states
+                        .get(edge.from.as_str())
+                        .copied()
+                        .unwrap_or(NodeState::Draft),
+                )
             })
         });
         if satisfied {

@@ -1,8 +1,8 @@
 # Runtime
 
-Status: 05a, 05b and 05c implemented — the Public Runtime API, the Gateway slice, and the Tool
-Broker with Tier 0/1 isolation. Three plans remain: the real async executor (05d), the MCP chat
-surface (05e), and the monitor with the milestone close (05f). Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
+Status: 05a through 05d implemented — the Public Runtime API, the Gateway slice, the Tool Broker
+with Tier 0/1 isolation, and the real async executor. Two plans remain: the MCP chat surface
+(05e) and the monitor with the milestone close (05f). Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
 decisions D-039 (chat-first via an official MCP server) and D-040 (the monitor precedes Studio).
 
 Milestone 04 proved governance and durability with an effect-free executor. Milestone 05 makes it
@@ -17,7 +17,11 @@ exhaustion parking the node rather than retrying blind or falling back to a paid
 processes — every call passing a pure authorization pipeline, then executing either in place
 (Tier 0 reads) or inside an ephemeral, scrubbed git worktree (Tier 1) that is born and dies within
 one call, with credentials structurally absent from the workspace and the absence proven by a named
-test rather than asserted.
+test rather than asserted. 05d made the work real: the fixture behind the executor seam is replaced
+by model calls through the gateway and tool calls through the broker, every reply and stream
+sealed as Evidence in the same atomic append as its outcome, the API driving through a truly
+async single-writer loop with immediate stop — and the CLI's synchronous path byte-identical
+throughout, the parity test as the tripwire it was built to be.
 
 ## What 05a shipped: `graphhelm serve`
 
@@ -628,3 +632,147 @@ is a named gate stage, proven able to go red.
 - **Fixed CLI execution limits.** `tool invoke` runs with a 300-second deadline and an 8 MiB
   output cap as documented constants; per-call limits are configuration surface that arrives with
   05d's node contract, not before.
+
+## What 05d shipped: the real executor
+
+### `core/runtime`, and the arrow that never flips
+
+The async crate the design's §6.1 promised: the `AsyncNodeExecutor` seam (`NodeWork`/
+`WorkOutcome`/`Sealable`/`WorkSummary`, boxed-future form because the driver holds ports as
+`Arc<dyn …>`), the dependency-inverting `ModelPort`/`ToolPort` whose stream and reuse-summary
+types are runtime-owned (this crate may name the pure vocabularies and never an adapter — pinned
+from both sides by source invariants, including the reverse assertion that `core/execution` never
+names `graphhelm-runtime` back), deterministic prompt assembly from the node contract (fixed
+field table, never map iteration; length-prefixed digest computed at assembly), and the closed
+classification: Agent/Planner/Classifier/Evaluator are cognitive, Tool is tool, everything else
+is a typed refusal the driver never dispatches — a refusal is never laundered into an outcome the
+fold would record.
+
+### The executor, honest to one authority
+
+`PortExecutor` delegates every gateway error to 05b's `outcome_for_error` — one authority on what
+parks, retries and terminates, sabotage-proven against a local second mapping. Tool dispositions
+map with a lease denial as terminal (it will not heal by retrying the same call). An empty model
+reply is a `RetryableFailure`, never a success and never a park: `NeedsInput` would wait for
+input nothing in this milestone can deliver — the plan review's finding, now pinned by test. Every
+piece of free-form material (the reply, the tool record, both streams) becomes a `Sealable`; the
+event-safe summary carries numbers only, and a test scans the serialized summary for planted
+reply content.
+
+### Evidence-before-append, generalized — and the ledger's first producer
+
+`record_outcome_with_evidence` is 04f's `record_outcome` with the invariant extended: reread,
+`apply_transition`, seal every sealable — and only then one `append_atomic` whose event names
+exactly the sealed references (`exec-{id}-{node}-a{attempt}-{suffix}`, attempt-scoped so retries
+never collide, `Confidential` because replies and streams are user material). A sealing failure
+appends nothing — proven by the sabotage that reordered append-first and left an event with no
+evidence. The 05c amendment's obligation lands here too: a tool outcome carrying the port's reuse
+summary appends its `ReuseDecision` beside the outcome in the same `PreparedAppend`, hit and miss
+both recorded, replay-stable against the ledger's no-op fold arm. The signal command now seals
+its envelope beside the operator copy (`--keyring`/`--key-id` mandatory, refusing rather than
+silently skipping; `envelopeSha256` equals the sealed plaintext's digest by construction), and
+the HTTP signal path seals through the serve keyring when configured.
+
+### The two `core/execution` refinements (M04 ledger)
+
+Dispatch is attempt-fair and deterministic: `dispatch_plan` sorts by `(attempts, node)` so a
+persistently retrying, alphabetically earlier node can no longer starve a sibling's first attempt
+— with a property pinning both determinism and the ordering invariant. Readiness is edge-aware
+for the decidable subset: a literal-`false` condition is statically dead and never gates; a
+`Failure` edge releases on `Failed` and only `Failed` — the refinement both GRANTS readiness 04c
+never granted and REMOVES its spurious release of failure handlers after success, both deltas
+documented on `edge_gates` and the additivity property proving every other shape is exactly the
+04c rule.
+
+### The resume cross-check (the last 04f seam)
+
+Resume derives the supplied file's content hash exactly as start does and refuses a mismatch
+BEFORE any recovery append — a refused resume leaves the store untouched, proven by an immobile
+head sequence under refusal. The load-bearing discovery: `current_graph` is populated only by the
+M03-era graph-publication event class the CLI start never appends, so the plan's refuse-on-`None`
+would have refused every CLI resume (four pre-existing tests went red on contact). The check
+honors `current_graph` when a publication exists and falls back to the `graph_hash` the
+`execution_started` payload records; only an execution with neither refuses outright.
+
+### The async driver: one writer, real concurrency, immediate stop
+
+`drive_to_quiescence_async` reproduces the 04f sequencing event-for-event (pinned by a test that
+compares the stream shape and replays it twice byte-identically) with work running concurrently
+in a `JoinSet` up to `max_parallel_model_calls` — proven at the port's own counters with a
+semaphore and zero sleeps — while every write stays serialized through the loop itself: the
+driver task is the single writer, each store touch inside `spawn_blocking` so the OS-exclusive
+lock never parks an async worker. Immediate stop composes the 04e pieces in order: the ports'
+cancel hooks, aborted futures, `Interrupted → Blocked` per aborted node (the silent-retry
+sabotage fails exactly as 04e demands), `execution_paused` closing the story, and resume refusing
+with `UntriagedInterruption` until an owner approves. The cancelled-tool test kills a real child
+process and proves the pid dead before anything records.
+
+### The API drives async — and the CLI does not change
+
+`execute_prepared` splits start/resume into the decision half (through the
+`ExecutionStarted`/`ExecutionResumed` append) and the drive; the CLI's `execute` recombines them
+with the sync 04f drive — byte-identical, its whole suite the proof — while the serve handlers
+drive through `drive_to_quiescence_async`. Serve gains the grouped runtime flags
+(`--manifest`/`--broker`/`--route`/`--staging` all-or-none; `--keyring`/`--key-id` all-or-none;
+real-executor mode requires both groups, validated fail-fast at startup), the port
+implementations construct the borrow-shaped sync adapters inside `spawn_blocking`, `pause`
+accepts `{"mode":"immediate"}` through a cancellation registry (the driver appends
+`execution_paused`; the route appends nothing), and `FixtureAsyncExecutor` — delegating to the
+real `FixtureExecutor`, so the async path cannot drift from the sync fixture meaning — lets a
+fixture story exercise the true async path. The 05a CLI–API parity test survived the swap
+unchanged, which is exactly what it exists to prove.
+
+The milestone's §8 sentence is one named green test:
+`an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence` — an agent node against a
+replying fake provider (the reply sealed beside its outcome), a tool node running real `git`
+inside an ephemeral Tier 1 worktree (record and both streams sealed), completion over HTTP, and
+`graph replay` twice, byte-identical. `runtime_http` is a named gate stage, proven able to go
+red; the sync-driver sabotage made the immediate-stop test blow its whole deadline — the proof
+that the swap matters.
+
+## Honest limits, stated (05d)
+
+- **The viability gate, precisely.** The async driver dispatches only the closed classification
+  (cognitive + tool). Graphs carrying other node types fall back to the byte-identical sync path
+  on fixture-only servers — but on a server WITH a real executor configured, a mixed graph
+  drives async and quiesces WITHOUT completing: unsupported nodes are refused (never dispatched,
+  never invented), the plan empties, and no `execution_completed` appends — `status` stays
+  `null`/running. Correct for this milestone's acceptance graphs (agent+tool only), named here
+  so nobody mistakes quiescence for completion on a mixed graph. Widening the classification is
+  future node-type work, not a driver defect.
+- **The serve keyring does double duty.** One physical keyring, two passphrase envs:
+  `GRAPHHELM_GATEWAY_KEY` opens it for the credential broker, `GRAPHHELM_EVENTS_KEY` for the
+  driver's evidence sealer. Divergent envs fail at the provider open — never silent corruption —
+  but the shape is a conflation: separate keyrings (gateway vs events domains) are the honest
+  refinement, deferred to the 05e-era serve work.
+- **`ReuseDecision` never fires on the serve path.** `ToolHost::invoke` exposes only the
+  `reused: bool` on the record, not a `ReuseSummary`-shaped accessor, so `ToolPortResult.reuse`
+  is always `None` in the serve wiring and the ledger's producer operates only where the driver
+  is handed a summary directly. The host-side accessor is the recorded extension.
+- **HTTP model calls cannot be aborted mid-flight.** `ModelPort::cancel_all` is a no-op for the
+  BYOK path: dropping the future abandons a `spawn_blocking` body, whose bound is the transport
+  timeout; a reply arriving after cancel is discarded, recorded as `Interrupted`, never as the
+  late reply. The tool side kills real children (proven); the `ToolHost` itself exposes no kill
+  surface to the port — the subprocess deadline machinery is the bound.
+- **Prompt assembly is the node contract only.** No Context Compiler, no capsules, no retrieved
+  context — `objective` plus the `agent.ephemeral` fields in a fixed order.
+- **One route, no scoring.** The serve `--route` flag picks the manifest route; 05b's deferred
+  scoring stays deferred.
+- **`artifact_refs` stays empty.** Evidence covers replies, records and streams; the artifact
+  store design has not landed.
+- **Throughput, recorded in its own unit.** The 05a baseline was ≈3 requests/second for single
+  API requests on the current-thread runtime. This milestone measures full fixture STORIES —
+  start-to-completion, ~10 serialized appends each with per-append store opens — at ≈0.17
+  stories/second on the same runtime. The units are not comparable and no comparison is claimed;
+  both numbers exist so future work has honest baselines.
+- **`project` defaults to the server's working directory.** A start/resume body may carry
+  `"project"` for the tool host's worktree source; omitted, the serve process's CWD is the
+  project — a local-operator convenience consistent with D-040's local-by-construction premise,
+  and a thing to make explicit the moment serve is ever fronted by anything.
+- **A fixture-only server fails real stories closed.** Without the keyring group, the driver's
+  sealer is a `RefusingSealer`: fixture stories seal nothing and run; any story that produces a
+  sealable refuses rather than appending unsealed material.
+- **Still absent, still named:** the five no-progress conditions needing signal intake;
+  compensation execution (recorded, not compensated); session management; SSE; the local store
+  exposes evidence availability rather than a sealed read (the Postgres adapter owns
+  `EvidenceRepository`).

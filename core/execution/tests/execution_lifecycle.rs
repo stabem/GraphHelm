@@ -302,7 +302,8 @@ fn the_composed_lifecycle_pauses_recovers_completes_and_replays() {
             .values()
             .filter(|state| matches!(state, NodeState::Queued | NodeState::Running))
             .count();
-        let plan = dispatch_plan(&ready, in_flight, 1).unwrap();
+        let plan =
+            dispatch_plan(&ready, &journal.projection().node_attempts, in_flight, 1).unwrap();
         assert!(
             !plan.is_empty(),
             "the chain must never stall in this scenario"

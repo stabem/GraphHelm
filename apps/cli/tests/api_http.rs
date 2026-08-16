@@ -1747,18 +1747,46 @@ fn run_story_over_cli(events: &Path, directory: &Path) -> Value {
         &signal_envelope("signal-parity-cli", "no_progress"),
     );
     let signal_out = directory.join("cli-parity-evidence.json");
-    let signal = cli(&[
-        "execution",
-        "signal",
-        "--events",
-        events.to_str().unwrap(),
-        "--execution",
-        PARITY_EXECUTION,
-        "--signal",
-        signal_path.to_str().unwrap(),
-        "--evidence-out",
-        signal_out.to_str().unwrap(),
-    ]);
+    // Milestone 05d Task 6: the CLI signal command now requires a keyring (the envelope also
+    // seals into the Evidence store); the API path is unchanged. One inline invocation rather
+    // than widening `cli()` with environment plumbing for a single caller.
+    let keyring = directory.join("parity-signal-keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        &keyring,
+        "signal-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let signal_output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "execution",
+            "signal",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            PARITY_EXECUTION,
+            "--signal",
+            signal_path.to_str().unwrap(),
+            "--evidence-out",
+            signal_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env(
+            "GRAPHHELM_EVENTS_KEY",
+            "0101010101010101010101010101010101010101010101010101010101010101",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        signal_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&signal_output.stdout)
+    );
+    let signal: Value = serde_json::from_slice(&signal_output.stdout).unwrap();
     assert_eq!(signal["ok"], true, "{signal}");
 
     let approve = cli(&[

@@ -15,9 +15,9 @@ use graphhelm_events::{
 };
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EventEnvelope, EventKind, ExecutionId, IdGenerator, NewEvent, NodeOutcome,
-    NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedActorType, ProjectId,
-    RepositoryScope, Sensitivity, SimulationStatus, WorkspaceId,
+    ActorId, Diagnostic, EventEnvelope, EventKind, ExecutionId, GraphSpec, IdGenerator, NewEvent,
+    NodeOutcome, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedActorType,
+    ProjectId, RepositoryScope, Sensitivity, SimulationStatus, WorkspaceId,
 };
 use graphhelm_simulation::SimulationFixtures;
 
@@ -44,6 +44,19 @@ const SOURCE: &str = "execution-cli";
 /// operator-local workspace and project, with the execution identity carrying the rest.
 pub(super) const WORKSPACE: &str = "workspace-local";
 pub(super) const PROJECT: &str = "project-local";
+
+/// The decision half's handoff to the drive half (Milestone 05d Task 9's `execute_prepared`
+/// split): everything `start`/`resume` need to know to run `drive_to_quiescence`/
+/// `drive_to_quiescence_async` after their own decision event has already committed. Defined once
+/// here — both `start.rs` and `resume.rs` produce and consume the same shape, and `serve::routes`
+/// (Task 9 STEP 4) reads its fields directly to build the async drive.
+pub(crate) struct PreparedDrive {
+    pub(crate) scope: RepositoryScope,
+    pub(crate) stream: OpaqueId,
+    pub(crate) execution_id: OpaqueId,
+    pub(crate) spec: GraphSpec,
+    pub(crate) fixtures: SimulationFixtures,
+}
 
 /// A redaction-safe operator failure — see `commands::events`'s identical pattern. Only a stable
 /// code, a fixed message and a JSON Pointer ever reach the user.

@@ -130,3 +130,136 @@ proptest! {
         }
     }
 }
+
+// ---- Task 3 (05d): edge-aware readiness for the decidable subset ----
+
+/// A two-node spec with one configurable edge a→b.
+fn pair_spec(edge_type: EdgeType, condition: Option<serde_json::Value>) -> GraphSpec {
+    let mut spec = GraphSpec {
+        entrypoints: vec!["a".to_owned()],
+        nodes: BTreeMap::new(),
+        edges: Vec::new(),
+        budgets: Default::default(),
+        policies: Vec::new(),
+        completion: serde_json::Value::Null,
+    };
+    spec.nodes.insert("a".to_owned(), agent_node());
+    spec.nodes.insert("b".to_owned(), agent_node());
+    spec.edges.push(GraphEdge {
+        id: "e0".to_owned(),
+        from: "a".to_owned(),
+        to: "b".to_owned(),
+        edge_type,
+        payload_schema: None,
+        condition,
+        on_false: None,
+        on_unknown: None,
+        bindings: BTreeMap::new(),
+        priority: None,
+    });
+    spec
+}
+
+fn pair_states(a: NodeState) -> BTreeMap<String, NodeState> {
+    let mut states = BTreeMap::new();
+    states.insert("a".to_owned(), a);
+    states.insert("b".to_owned(), NodeState::Ready);
+    states
+}
+
+#[test]
+fn a_literal_false_condition_ungates_its_edge() {
+    // 04c gated b on a unconditionally; a literally-false condition is statically dead — the
+    // edge does not gate. A json!(true) condition gates exactly as before, and a non-literal
+    // condition (string, object) stays FAIL-CLOSED: gate as if unconditioned — execution
+    // evaluates only the simulator's deterministic literal subset, minus fixtures.
+    let dead = pair_spec(EdgeType::Control, Some(serde_json::json!(false)));
+    let ready = ready_set(&dead, &pair_states(NodeState::Running)).unwrap();
+    assert!(ready.contains("b"), "a dead edge must not gate");
+    assert!(!ready.contains("a"), "a is untouched");
+
+    for gating in [
+        Some(serde_json::json!(true)),
+        Some(serde_json::json!("false")),
+        Some(serde_json::json!({ "op": "eq" })),
+        None,
+    ] {
+        let spec = pair_spec(EdgeType::Control, gating.clone());
+        let held = ready_set(&spec, &pair_states(NodeState::Running)).unwrap();
+        assert!(!held.contains("b"), "{gating:?} must gate like 04c");
+        let released = ready_set(&spec, &pair_states(NodeState::Succeeded)).unwrap();
+        assert!(released.contains("b"), "{gating:?} must release like 04c");
+    }
+}
+
+#[test]
+fn a_failure_edge_releases_on_failed_and_blocks_otherwise() {
+    // Both deltas of the refinement are deliberate, and this test pins each: a failure route
+    // RELEASES on Failed (that is what a failure route is — new readiness 04c never granted),
+    // and it does NOT release on Succeeded/Waived/Skipped (04c's every-edge rule would have —
+    // spurious handler work removed). Nothing failed in the waive/skip cases.
+    let spec = pair_spec(EdgeType::Failure, None);
+    let released = ready_set(&spec, &pair_states(NodeState::Failed)).unwrap();
+    assert!(released.contains("b"), "a failure handler runs on Failed");
+    for not_failed in [
+        NodeState::Succeeded,
+        NodeState::Waived,
+        NodeState::Skipped,
+        NodeState::Running,
+        NodeState::Blocked,
+    ] {
+        let held = ready_set(&spec, &pair_states(not_failed)).unwrap();
+        assert!(
+            !held.contains("b"),
+            "{not_failed:?} must not release a failure edge"
+        );
+    }
+}
+
+proptest! {
+    /// For graphs whose edges are all non-Failure with no literal-false conditions, the new
+    /// ready_set equals the 04c rule's output across randomized states — the refinement is
+    /// additive on exactly the two named cases. The 04c oracle is re-stated inline: every
+    /// incoming edge's source must be Succeeded/Waived/Skipped.
+    #[test]
+    fn every_other_shape_is_exactly_the_04c_rule(
+        state_indices in proptest::collection::vec(0_usize..16, 8),
+        edge_kinds in proptest::collection::vec(0_usize..3, 7),
+    ) {
+        let mut spec = chain();
+        for (edge, kind) in spec.edges.iter_mut().zip(edge_kinds) {
+            edge.edge_type = match kind {
+                0 => EdgeType::Control,
+                1 => EdgeType::Data,
+                _ => EdgeType::Evidence,
+            };
+            // Conditions in the pool are gating shapes only (true / non-literal), never the
+            // literal false this property excludes by construction.
+            edge.condition = match kind {
+                0 => None,
+                1 => Some(serde_json::json!(true)),
+                _ => Some(serde_json::json!("dynamic")),
+            };
+        }
+        let states: BTreeMap<String, NodeState> = (0..8)
+            .map(|index| (format!("n{index}"), STATES[state_indices[index]]))
+            .collect();
+
+        let new_rule = ready_set(&spec, &states).unwrap();
+        let mut oracle = std::collections::BTreeSet::new();
+        for (index, node) in (0..8).map(|i| (i, format!("n{i}"))) {
+            if states[&node] != NodeState::Ready {
+                continue;
+            }
+            let satisfied = index == 0
+                || matches!(
+                    states[&format!("n{}", index - 1)],
+                    NodeState::Succeeded | NodeState::Waived | NodeState::Skipped
+                );
+            if satisfied {
+                oracle.insert(node);
+            }
+        }
+        prop_assert_eq!(new_rule, oracle);
+    }
+}

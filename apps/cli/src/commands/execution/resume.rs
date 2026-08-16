@@ -9,9 +9,9 @@ use graphhelm_protocols::{
 
 use super::driver::drive_to_quiescence;
 use super::{
-    Failure, append_event, execution_state, finish, idempotency_key, load_fixtures, owner_actor,
-    record_outcome, render, replay_failure, replay_projection, repository_failure, resolve_stream,
-    system_actor,
+    Failure, PreparedDrive, append_event, execution_state, finish, idempotency_key, load_fixtures,
+    owner_actor, record_outcome, render, replay_failure, replay_projection, repository_failure,
+    resolve_stream, system_actor,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -82,6 +82,32 @@ pub(crate) fn execute(
     actor: PersistedActor,
     key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
+    let prepared = execute_prepared(version, events, fixtures, execution, actor, key)?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let projection = drive_to_quiescence(
+        &store,
+        &prepared.scope,
+        prepared.stream.as_str(),
+        &prepared.spec,
+        &prepared.fixtures,
+        &system_actor(),
+    )?;
+    Ok(render(&projection))
+}
+
+/// The decision half of `execute` (Milestone 05d Task 9's `execute_prepared` split): the hash
+/// cross-check, crash-recovery appends, `resume_preconditions` gate, the `ExecutionResumed`
+/// append, and the paused-node `Started` redispatches — everything through the point 04e's
+/// actor split already separated from the drive. `execute` above is exactly `execute_prepared`
+/// plus the same sync drive and render as before this split: CLI behavior is byte-identical.
+pub(crate) fn execute_prepared(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
+) -> Result<PreparedDrive, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
     let (scope, stream, history) = resolve_stream(&store, execution)?;
@@ -89,6 +115,51 @@ pub(crate) fn execute(
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
     let initial = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
+
+    // The file-trust seam (the M04 ledger's own words: "an operator can resume against the
+    // wrong graph file and the driver will believe them" — closed here, 05d Task 7): the
+    // supplied file's derived content hash must match the published graph this execution
+    // started from, checked BEFORE any recovery append so a refused resume leaves the store
+    // untouched. An execution with no published graph cannot resume against any file.
+    let supplied_hash = graphhelm_protocols::WireHash::parse(version.content_hash().as_str())
+        .map_err(|_| {
+            execution_state(
+                "the supplied graph's hash is not wire-safe",
+                "/execution/graph",
+            )
+        })?;
+    // Discrepancy vs the plan, reported: `current_graph` is populated by the M03-era
+    // graph-publication event class, which the CLI's own `execution start` never appends —
+    // "refuse None" would refuse every CLI resume. The CLI path's published identity is the
+    // `graph_hash` the `execution_started`/`execution_resumed` payloads record, so the check
+    // honors `current_graph` when a publication event exists and otherwise falls back to the
+    // LAST recorded graph hash in the stream's own history. Only an execution with neither —
+    // no publication and no recorded start — refuses outright.
+    let recorded_hash = initial
+        .current_graph
+        .as_ref()
+        .map(|published| published.semantic_hash().clone())
+        .or_else(|| {
+            history.iter().rev().find_map(|event| match &event.kind {
+                EventKind::ExecutionStarted(payload) => Some(payload.graph_hash.clone()),
+                _ => None,
+            })
+        });
+    match recorded_hash {
+        None => {
+            return Err(execution_state(
+                "resume refused: the execution has no recorded graph to check against",
+                "/execution/graph",
+            ));
+        }
+        Some(recorded) if recorded != supplied_hash => {
+            return Err(execution_state(
+                "resume refused: the supplied graph file does not match the graph this execution started from",
+                "/execution/graph",
+            ));
+        }
+        Some(_) => {}
+    }
 
     // Crash triage on entry (the pause-recover-approve order 04e settled): every node still
     // `Running` when the execution stopped has unknown effects. `recovery_plan` names them, and
@@ -164,17 +235,15 @@ pub(crate) fn execute(
     }
 
     // The resume decision and its Started redispatches are the owner's acts; the drive that
-    // follows is the driver's own bookkeeping and stays under the system actor, so the log can
-    // tell sovereignty from machinery.
-    let projection = drive_to_quiescence(
-        &store,
-        &scope,
-        &stream,
-        &version.graph().spec,
-        &fixtures,
-        &system_actor(),
-    )?;
-    Ok(render(&projection))
+    // follows (sync, in `execute` above, or async over HTTP) is the driver's own bookkeeping and
+    // stays under the system actor, so the log can tell sovereignty from machinery.
+    Ok(PreparedDrive {
+        scope,
+        stream: stream_id,
+        execution_id,
+        spec: version.graph().spec.clone(),
+        fixtures,
+    })
 }
 
 /// `resume_preconditions`'s refusal, named in snake_case matching this module's own wire

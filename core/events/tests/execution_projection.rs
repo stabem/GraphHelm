@@ -631,3 +631,80 @@ fn accepted_mutations_are_counted_by_folding() {
     let projection = replay(&scope(), STREAM, &acceptance_events(2)).unwrap();
     assert_eq!(projection.accepted_mutations, 2);
 }
+
+/// Task 9b (05c): the `ReuseDecision` kind is ledger, not state — a stream carrying one must
+/// replay to a projection byte-identical to the same stream without it, and replay twice must
+/// stay byte-identical (replay stability for the new kind). The explicit no-op fold arm is
+/// what this pins: a wildcard would pass this test too, but the arm's absence (a state change
+/// smuggled in later) fails it loudly.
+#[test]
+fn a_reuse_decision_is_ledger_not_state_and_replays_stably() {
+    use graphhelm_protocols::{
+        ForcedFreshReason, FreshnessClass, ReuseDecision, ReuseKeyComponent, ReuseOutcome,
+        ReusePlane, WireHash,
+    };
+    let base = vec![event(
+        "start-1",
+        EventKind::ExecutionStarted(ExecutionStarted {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            graph_version: 1,
+            graph_hash: WireHash::parse(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            mode: ExecutionMode::Autopilot,
+        }),
+    )];
+    let with_ledger = {
+        let mut events = base.clone();
+        events.push(event(
+            "reuse-1",
+            EventKind::ReuseDecision(ReuseDecision {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                node_id: None,
+                plane: ReusePlane::ToolBroker,
+                decision: ReuseOutcome::ForcedFresh,
+                forced_reason: Some(ForcedFreshReason::DirtyTree),
+                freshness_class: Some(FreshnessClass::SnapshotClosed),
+                key_components: vec![
+                    ReuseKeyComponent::ToolVersion,
+                    ReuseKeyComponent::CanonicalInput,
+                    ReuseKeyComponent::LeaseScope,
+                    ReuseKeyComponent::SourceSnapshot,
+                ],
+                key_digest: WireHash::parse(
+                    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                )
+                .unwrap(),
+                evidence_ref: None,
+                provenance_erased: false,
+            }),
+        ));
+        events
+    };
+
+    let plain = append(base);
+    let ledgered = append(with_ledger);
+    let projection_plain = replay(&scope(), STREAM, &plain).unwrap();
+    let projection_ledgered = replay(&scope(), STREAM, &ledgered).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&projection_plain).unwrap(),
+        serde_json::to_vec(&projection_ledgered).unwrap(),
+        "a reuse decision must change no projection state"
+    );
+    let replayed_again = replay(&scope(), STREAM, &ledgered).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&projection_ledgered).unwrap(),
+        serde_json::to_vec(&replayed_again).unwrap(),
+        "replay of a ledgered stream must be byte-identical across runs"
+    );
+
+    // And the payload round-trips through the wire representation exactly.
+    let envelope = ledgered.last().unwrap();
+    let wire = serde_json::to_string(envelope).unwrap();
+    let back: EventEnvelope = serde_json::from_str(&wire).unwrap();
+    assert_eq!(
+        *envelope, back,
+        "ReuseDecision must round-trip byte-exactly"
+    );
+}

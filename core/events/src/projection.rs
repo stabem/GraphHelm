@@ -829,6 +829,11 @@ fn apply_projection_event(
             payload.hold_id.as_str(),
             payload.state,
         ),
+        // Ledger, not state (05c Task 9b): a reuse decision changes no node state and no
+        // counter — the savings accounting arrives with its producer (the 05d executor), and
+        // this arm is explicit rather than a wildcard so the closed set keeps forcing a
+        // deliberate decision per kind.
+        EventKind::ReuseDecision(_) => {}
         EventKind::GraphImported(_)
         | EventKind::GraphValidationFailed(_)
         | EventKind::PolicyObligationEvaluated(_)

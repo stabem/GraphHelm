@@ -203,7 +203,11 @@ fn run_quota_marker_crash() {
 /// `mode=hang`: never exits on its own. The adapter's deadline is what is under test, not this
 /// process — an hour comfortably exceeds any deadline a test configures.
 fn run_hang() {
-    std::thread::sleep(std::time::Duration::from_secs(3600));
+    // 120 s, not an hour: long enough that every deadline test (2 s) and the orphan
+    // grandchild scenario stay valid, short enough that a leftover process cannot
+    // lock this executable against rebuilds for the rest of the hour — a full-gate
+    // run went red on exactly that (Access is denied removing fake_runtime.exe).
+    std::thread::sleep(std::time::Duration::from_secs(120));
 }
 
 /// `mode=orphan`: spawns a second `fake_runtime` (`FAKE_RUNTIME_MODE=hang`) that inherits this

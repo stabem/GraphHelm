@@ -22,6 +22,9 @@ pub enum TopLevel {
     Events(EventsArgs),
     Execution(ExecutionArgs),
     Gateway(GatewayArgs),
+    /// Invokes one brokered tool call against a project (Tier 0 reads in place, Tier 1 in an
+    /// ephemeral worktree), producing a digest-only record and operator-side captured streams.
+    Tool(ToolArgs),
     Serve(ServeArgs),
 }
 
@@ -120,6 +123,47 @@ pub enum ExecutionCommand {
         events: PathBuf,
         #[arg(long)]
         execution: Option<String>,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct ToolArgs {
+    #[command(subcommand)]
+    pub command: ToolCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ToolCommand {
+    /// One authorized tool call, end to end: authorize -> route by tier -> execute -> record.
+    Invoke {
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        staging: PathBuf,
+        /// Repeatable; directories the workspace must never overlap (keyring, broker, events).
+        #[arg(long = "protected")]
+        protected: Vec<PathBuf>,
+        /// The ToolCall as JSON (checked deserialization: unknown fields refused).
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        actor: String,
+        /// Repeatable; builds the lease: repository.read, repository.write, shell.execute,
+        /// tests.execute.
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+        /// Repeatable; the lease's shell program allowlist (bare names).
+        #[arg(long = "allow-program")]
+        allow_programs: Vec<String>,
+        #[arg(long = "tests-runner", default_value = "cargo")]
+        tests_runner: String,
+        /// REQUIRED on every invoke (checked as GHCLI012, not by the parser, so the refusal
+        /// speaks the envelope): captured stream bytes are written here as files.
+        #[arg(long = "capture-out")]
+        capture_out: Option<PathBuf>,
+        /// Debug only: skip workspace cleanup and report what was kept.
+        #[arg(long = "keep-workspace")]
+        keep_workspace: bool,
     },
 }
 

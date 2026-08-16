@@ -1,5 +1,14 @@
 # Specification Changelog
 
+## Runtime, 05c — 2026-08-16
+
+- `core/tool-broker` (pure) and `adapters/tool-host` (impure) added: the closed repository/shell/tests call vocabulary with per-action effects and capabilities, the effect→tier rule with `SecretUse` structurally refused, lexical path/program rules, the deny-by-default capability lease, and the pure `authorize` pipeline in pinned order — decisions in the pure crate, enforcement in the host, purity pinned by a source-invariant scan over all six sources.
+- Tier 1 executions run inside an ephemeral detached `git worktree` provisioned with hooks disabled and removed under retry/backoff + prune; the process primitive is argv-only with `env_clear()` plus a six-name allowlist, redirected homes, a synthetic git identity, and an `extra_env` deny-list covering every host-defined name. Provision runs git under the SAME scrubbed config posture as execution — config consistency proved to be the correctness condition when a user-level `autocrlf` smudge made `git apply --index` refuse everything.
+- The register's hard constraint is one named green test: `credentials_are_demonstrably_absent_from_the_tier_1_workspace` — sentinels in the parent environment and a protected keyring, real invokes including a write, streams/workspace-scan/separation/record asserts, sabotage-proven in both directions.
+- The 05c amendment landed: `FreshnessClass` in `core/protocols`, a clean-tree-gated snapshot-keyed `ReadCache` (Tier 0 + `SnapshotClosed` only; erasure invalidation deletes bytes), and `ReuseDecision` as the 26th event kind through the full D-037 ritual — identity-only payload (`node_id`, `key_digest`, closed enums), an explicit ledger-not-state fold arm, and no producer until the 05d executor.
+- `graphhelm tool invoke` added (GHCLI012–014, mandatory `--capture-out`, digest-only record in the envelope) and `tool_cli` joined the gate as a named stage, proven able to go red.
+- Honest limits recorded: Tier 1 is worktree+scrub not a container; the Policy Engine step is fixed rules; redaction is caps + structural env emptiness; leases have no lifecycle; records are not yet Evidence; `apply_patch`/`commit` never compose across calls (the 05d `ToolPort` reconciliation names the composition decision); the read cache persists under staging by design.
+
 ## Runtime, 05b — 2026-08-14
 
 - `core/gateway` (pure) and `adapters/model-gateway` (impure) added: the Universal Model Gateway's route manifest, error taxonomy, capacity policy, credential broker, and BYOK/native-runtime adapters, with purity enforced by a source-invariant test pinning `core/gateway`'s dependency table to exactly `graphhelm-protocols`/`serde`/`serde_json` and forbidding it from ever naming the adapter crate.

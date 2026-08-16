@@ -1,8 +1,8 @@
 # Runtime
 
-Status: 05a and 05b implemented — the Public Runtime API and the Gateway slice. Four plans remain:
-the tool broker and tiers (05c), the real async executor (05d), the MCP chat surface (05e), and the
-monitor with the milestone close (05f). Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
+Status: 05a, 05b and 05c implemented — the Public Runtime API, the Gateway slice, and the Tool
+Broker with Tier 0/1 isolation. Three plans remain: the real async executor (05d), the MCP chat
+surface (05e), and the monitor with the milestone close (05f). Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
 decisions D-039 (chat-first via an official MCP server) and D-040 (the monitor precedes Studio).
 
 Milestone 04 proved governance and durability with an effect-free executor. Milestone 05 makes it
@@ -13,7 +13,11 @@ explicit, and every observation flowing through the shared event log. 05b shippe
 slice: the Universal Model Gateway's route manifest, error taxonomy and capacity policy as a pure
 crate, plus the impure adapters — a credential broker, BYOK HTTP adapters, and native-runtime CLI
 adapters — that let a node's model call actually reach a provider or an official CLI, with quota
-exhaustion parking the node rather than retrying blind or falling back to a paid route on its own.
+exhaustion parking the node rather than retrying blind or falling back to a paid route on its own. 05c shipped the third slice: tool calls as brokered local
+processes — every call passing a pure authorization pipeline, then executing either in place
+(Tier 0 reads) or inside an ephemeral, scrubbed git worktree (Tier 1) that is born and dies within
+one call, with credentials structurally absent from the workspace and the absence proven by a named
+test rather than asserted.
 
 ## What 05a shipped: `graphhelm serve`
 
@@ -455,3 +459,172 @@ suite list, alongside `cli_smoke`, `schema_cli`, `event_store_cli`, `execution_c
   controls, but `std::env::var`'s own copy inside the CRT/OS environment block, and any internal
   buffering `ureq`/its TLS stack perform while writing the `Authorization`/`x-api-key` header onto
   the wire, are outside this process's reach — PR review IMPORTANT 5's own honest limit.
+
+## What 05c shipped: the Tool Broker and Tier 0/1
+
+### The two crates, and where decisions live
+
+`core/tool-broker` is pure — no filesystem, no clock, no process, enforced by its own
+`source_invariants` scan over all six sources — and holds every *decision*: the closed three-tool
+call vocabulary (`call.rs`), the effect taxonomy and the effect→tier rule (`effect.rs`), the
+lexical path and program-name rules (`path.rs`), the capability lease and the `authorize` pipeline
+(`lease.rs`), and the digest-only `ToolCallRecord` (`record.rs`). `adapters/tool-host` is impure
+and holds only *enforcement*: the scrubbed process primitive (`process.rs`), the worktree workspace
+(`workspace.rs`), the three builtin tools (`tools.rs`), the snapshot-keyed read cache (`cache.rs`),
+and the composed host (`host.rs`). The host never re-decides policy; it executes the decided plan
+against the real machine, and re-refuses impossible shapes as defense in depth (`TierViolation` —
+which the end-to-end sabotage showed is TWO independent layers deep: disabling only one is
+invisible, and the sabotage had to disable both to prove the test could go red).
+
+### `authorize`: the §11.2 pipeline as one pure function
+
+Identity → capability → program allowlist → effect → tier, in a pinned order the tests hold: a
+malformed actor (`[a-z][a-z0-9-]{0,63}`) refuses before the mismatch comparison, a mismatch before
+capabilities, capabilities before the program allowlist. Deny-by-default is the lease's *shape*,
+not a setting — what is not granted does not exist. A malformed program name denies through the
+same door as an unlisted one (one refusal, no oracle for probing the allowlist), and `SecretUse`
+remains structurally unsupportable: `required_tier` refuses every effect beyond
+`ReadOnly`/`ReversibleWrite`, so no tool in this broker can even declare wanting a credential.
+Every refusal is content-free — `refusals_never_echo_call_arguments` pins that a denied patch or
+argument list never travels into diagnostics.
+
+Trust-boundary deserialization is `ToolCall::from_json`: serde's `deny_unknown_fields` cannot fire
+through internal tagging (observed in TDD red, exactly as the plan anticipated), so a per-action
+key table refuses unknown fields, and the commit-message bound (at most 512 printable bytes — the
+message rides argv) is checked there and re-checked at the spawn site.
+
+### The path rules, twice
+
+Form in the pure crate: `RelativePath` accepts exactly one spelling — forward slashes, no
+empty/`.`/`..` components, no absolute/drive/UNC form, no control bytes, a 4096-byte bound — with
+a proptest pinning canonical form across arbitrary inputs. Truth in the host: `resolve_within`
+walks every existing component with `symlink_metadata`, refuses any symlink or junction on the
+chain (junction-escape proven with a real `mklink /J`), and then — belt and braces — canonicalizes
+the deepest existing ancestor and requires it inside the canonical root. Both layers exist on
+purpose, and the walk is shared: the workspace's `resolve` and the Tier 0 project reads use one
+implementation over two roots.
+
+### The process primitive: `run_in_workspace`
+
+Every Tier 1 execution funnels through one function: argv only (never a shell), `env_clear()` plus
+a six-name inheritance allowlist, `HOME`/`USERPROFILE`/`TEMP`/`TMP` redirected *into* the
+workspace, a fixed git posture including a synthetic commit identity (an empty redirected HOME
+leaves git with no `user.name` anywhere), `path_prepend` as host-side PATH composition, and an
+`extra_env` deny-list covering every host-defined name — an extra `PATH` would swap program
+resolution out from under the lease. Readers always drain (a full pipe with no reader deadlocks
+the child) but stop *keeping* at the output cap; the deadline kills and reaps; stdin is piped for
+exactly one tool (`git apply`) and written from its own thread. The sentinel test observes the
+register's hard constraint from *inside* the child via a re-executed test binary, and its sabotage
+(`env_clear` removed) leaked a planted `GRAPHHELM_EVENTS_KEY` — the allowlist is load-bearing.
+
+Note the deliberate asymmetry with 05b: the gateway's allowlist keeps the host `HOME`/`APPDATA`
+because official CLIs own their own auth; Tier 1 keeps neither, because a tool workspace has no
+auth of its own to keep.
+
+### The Tier 1 workspace: ephemeral, detached, config-consistent
+
+`git worktree add --detach` with `core.hooksPath` pointed at an empty directory (threat model §13:
+a hostile repository's `post-checkout` hook must never gain execution from being provisioned —
+proven with a planted hook), a shape-checked call id, and removal under retry/backoff with a
+`remove_dir_all` fallback plus `worktree prune` — transient Windows lock friction absorbed, a tree
+that survives every attempt still an error, because a leaked workspace is a leaked write
+capability. The task's hard-won lesson: provision now runs git under the SAME scrubbed config
+posture as execution. The original asymmetry — user-level `autocrlf` smudging the checkout, then
+scrubbed tools judging it — made `git apply --index` see every text file as dirty ("does not match
+index"). Consistency of config is the correctness condition, and it is written on the provision
+call.
+
+### The three tools and the composed host
+
+`ToolHost::invoke` is authorize → route by tier → execute → digest → remove → record, and *every*
+path ends in a `ToolCallRecord` — denial, timeout and host error included — because 05d must
+externalize what happened without a side channel. Tier 0 reads run in-process under the shared
+containment walk and never provision (workspace-free by construction, not by cleanup); `Diff` at
+Tier 0 spawns `git -C <project>` with its CWD in an ephemeral scratch sibling so a read never
+writes a byte into the tree it reads. Tier 1 writes are born and die inside one call: apply lands
+in the worktree, the project stays byte-identical, staging returns to empty. `Commit` uses
+`--allow-empty` with its reason documented: the ephemeral contract hands every invoke a fresh
+workspace, so a commit-after-apply arrives in a tree with no changes of its own — the plan's own
+test comment assumed a cross-call persistence the contract forbids, and the test still proves what
+matters (the project HEAD never moves; the workspace commit dies with the worktree).
+
+The milestone's §8 criterion is one named test:
+`credentials_are_demonstrably_absent_from_the_tier_1_workspace` — sentinels planted in the parent
+environment AND in a protected keyring file, two real invokes (including a write, so absence is
+not vacuous), asserted across streams, a recursive scan of the still-alive workspaces, canonical
+keyring↔staging separation in both directions, and the serialized records. It passed on its first
+run — the external proof that the underlying tasks were honest — and its sabotages fail for the
+exact reasons the register predicts.
+
+### The read cache and the `ReuseDecision` kind (the 05c amendment)
+
+`FreshnessClass` lives in `core/protocols` (the `NodeOutcome` precedent: wire vocabulary in
+protocols, re-exported by the crate that interprets it); only repository reads declare
+`SnapshotClosed`, and nothing else is cache-eligible by construction. The host's `ReadCache` is
+directory-backed under staging, keyed on a declared subset of §7.2's dependency-hash components —
+including the project HEAD — and gated on a *clean working tree*: Tier 0 reads touch the working
+tree, which HEAD alone does not pin, so a dirty tree is a recorded `ForcedFresh(DirtyTree)`, never
+a stale hit. `invalidate_evidence` deletes the stored bytes, not just the index entry — a cache
+must never serve cryptographically erased evidence.
+
+`ReuseDecision` entered the closed event set (25→26) through the full D-037 ritual: envelope
+schema corrected in place, the frozen `1.0.0` mirror byte-identical, both catalogs recomputed with
+the CANONICAL digest (the release-integrity test itself refused a raw-bytes digest — the machinery
+teaching its own lesson), and a serde round-trip. The payload carries identity and nothing
+speculative: `execution_id`, optional `node_id`, the `plane` discriminator, a closed
+`ReuseOutcome` with a closed `ForcedFreshReason` validated by position, the declared
+`key_components` plus the `key_digest` that names the cache entry, an optional evidence ref, and
+`provenance_erased`. Cost fields were deliberately left out — additive-optional later, WITH a unit
+discriminator, is compatible evolution; unit-less numbers frozen now would be uninterpretable
+forever. The fold's arm is an explicit no-op ("ledger, not state"), and no producer exists in this
+milestone: the 05d executor appends the first one, the 04a seam-before-implementor precedent.
+
+### The CLI surface and codes
+
+`graphhelm tool invoke` speaks the four-key envelope with `GHCLI012_TOOL_INVALID` (malformed
+arguments or a request refused by checked deserialization — rules named, request bytes never),
+`GHCLI013_TOOL_DENIED` (the refusal's stable rule name), and `GHCLI014_TOOL_HOST` (the host's
+stable `GHTOOL...` internal code). `--capture-out` is mandatory on every invoke — every call
+captures; a Tier 0 read's file content IS its stdout — and the captured bytes land as operator
+files whose digests equal the record's (the `signal --evidence-out` precedent). A sentinel in the
+CLI process's own environment reaches neither stdout, stderr, nor the captured files. `tool_cli`
+is a named gate stage, proven able to go red.
+
+## Honest limits, stated (05c)
+
+- **Tier 1 is a git worktree plus process-level scrubbing, not a container.** No kernel network
+  deny, no restricted user, no seccomp: a Tier 1 child can still open sockets and read
+  world-readable paths outside the workspace. The threat model's own "worktree or snapshot"
+  control is what shipped; containers and Tiers 2/3 are deferred, and D-013's dynamic elevation
+  waits for the Governor loop.
+- **The Policy Engine step (§11.2 step 4) is fixed structural rules.** Effect→tier and the
+  program allowlist; nothing dynamic, nothing per-node yet.
+- **Redaction is output caps plus a structurally empty child environment, not a content
+  scanner.** A tool that *computes* a secret and prints it will be captured to the operator's
+  `--capture-out` files (never into the record, which is digest-only).
+- **The tests tool's contract is the exit code, nothing else.** The runner is host configuration
+  (`tests_runner`, a validated bare name), its declared env is the recorded concession for
+  toolchain homes (`CARGO_HOME` and friends must point at credential-free locations — the
+  operator's obligation), and the broker does not interpret runner output.
+- **Leases have no expiry, no `max_uses`, no revocation-on-pause.** A lease is an input value;
+  lifecycle needs the runtime clock and arrives with 05d.
+- **Records are not yet Evidence.** `ToolCallRecord` is the durable *shape*; sealing it beside an
+  outcome event is 05d's evidence-before-append generalization, and `ReuseDecision` likewise has
+  no producer until the 05d executor appends the first one.
+- **`apply_patch` and `commit` never compose across calls.** The ephemeral contract hands every
+  invoke a fresh workspace — correct for this slice, and the reason `commit` allows empty. The
+  real executor needs a composition decision (batched invokes, or a workspace session per node
+  attempt); recorded here and flagged for the 05d plan's `ToolPort` `[RECONCILE]` reconciliation.
+- **The cache serves exactly one shape: Tier 0, `SnapshotClosed`, clean tree.** Everything else
+  is uncached by construction, `Drifting`/`ImmutableByInput` have no members yet (the vocabulary
+  is the spec's, held for the registry era — spec-debt queue #35, entries 1–2), and the reuse
+  ledger's savings accounting waits for its producer.
+- **The read cache persists under staging by design.** The empty-staging contract the end-to-end
+  tests pin is about *workspaces* — leaked write capabilities — and their asserts name the one
+  cache directory as the deliberate exception rather than filtering broadly.
+- **`keep_workspace` reports kept trees as a staging delta.** The host deliberately does not
+  surface workspace roots through its API; the CLI's `keptWorkspaces` field is computed by
+  diffing staging listings around the call.
+- **Fixed CLI execution limits.** `tool invoke` runs with a 300-second deadline and an 8 MiB
+  output cap as documented constants; per-call limits are configuration surface that arrives with
+  05d's node contract, not before.

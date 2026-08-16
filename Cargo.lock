@@ -867,6 +867,8 @@ dependencies = [
  "graphhelm-schema-evolution",
  "graphhelm-sealed-key-provider",
  "graphhelm-simulation",
+ "graphhelm-tool-broker",
+ "graphhelm-tool-host",
  "libc",
  "predicates",
  "semver",
@@ -1082,6 +1084,33 @@ dependencies = [
  "graphhelm-schema",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "graphhelm-tool-broker"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-graph",
+ "graphhelm-protocols",
+ "hex",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror",
+]
+
+[[package]]
+name = "graphhelm-tool-host"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-tool-broker",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror",
 ]

@@ -3,8 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode, NodeOutcome,
-    NodeState, OpaqueId, PersistedActor, PersistedDiagnostic, PersistedGraphVersion,
+    ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode, FreshnessClass,
+    NodeOutcome, NodeState, OpaqueId, PersistedActor, PersistedDiagnostic, PersistedGraphVersion,
     PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
     SignalSeverity, SignalSourceKind, SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
@@ -146,7 +146,7 @@ impl EventEnvelope {
     }
 }
 
-/// The closed set of 25 replay-safe production events.
+/// The closed set of 26 replay-safe production events.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
@@ -175,6 +175,7 @@ pub enum EventKind {
     EvidenceErasureCompleted(EvidenceErasureCompleted),
     EvidenceCiphertextDeleted(EvidenceCiphertextDeleted),
     EvidenceLegalHoldChanged(EvidenceLegalHoldChanged),
+    ReuseDecision(ReuseDecision),
 }
 
 impl EventKind {
@@ -509,4 +510,71 @@ pub struct EvidenceLegalHoldChanged {
     pub reason_code: SafeCode,
     pub state: LegalHoldState,
     pub changed_at: PersistedTimestamp,
+}
+
+/// Which reuse layer decided. Closed; `ToolBroker` is the only variant this milestone — the
+/// discriminator exists because identity is the one thing a wire kind cannot cheaply retrofit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReusePlane {
+    ToolBroker,
+}
+
+/// What the reuse layer decided for one call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReuseOutcome {
+    Hit,
+    Miss,
+    ForcedFresh,
+    Excluded,
+}
+
+/// Why a cache-eligible call was forced fresh. Present iff the decision is `ForcedFresh`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForcedFreshReason {
+    DirtyTree,
+    OperatorForced,
+}
+
+/// One declared component of a persisted cache key — the `SYSTEM_ARCHITECTURE.md` section-7.2
+/// dependency-hash subset, typed, never free strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReuseKeyComponent {
+    ToolVersion,
+    CanonicalInput,
+    LeaseScope,
+    SourceSnapshot,
+}
+
+/// The reuse ledger: one record per reuse-layer decision (05c amendment, D-037 ritual). No
+/// producer appends it in Milestone 05c — the broker CLI appends nothing to any store; the 05d
+/// executor is the producer, exactly as the `NodeExecutor` seam shipped in 04a before its
+/// implementor. Cost fields are deliberately absent: a unit-less cost on the wire is the
+/// retrofit trap inverted, so they arrive additively WITH a unit discriminator once the
+/// gateway's graded unit exists (spec-debt queue, issue #35). Ledger, not state: the fold's arm
+/// for this kind changes no node state and no counter.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReuseDecision {
+    pub execution_id: OpaqueId,
+    /// `None` from a standalone broker call; `Some` under the 05d executor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<OpaqueId>,
+    pub plane: ReusePlane,
+    pub decision: ReuseOutcome,
+    /// Required iff `decision == ForcedFresh` (validated by the producer; the fold checks
+    /// coherence only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forced_reason: Option<ForcedFreshReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_class: Option<FreshnessClass>,
+    pub key_components: Vec<ReuseKeyComponent>,
+    /// Digest of the composed key: auditable and joinable, content-free.
+    pub key_digest: WireHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_ref: Option<EvidenceId>,
+    pub provenance_erased: bool,
 }

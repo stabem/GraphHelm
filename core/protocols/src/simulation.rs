@@ -79,6 +79,19 @@ pub enum ExecutionMode {
     Manual,
 }
 
+/// How a read-only tool call's result may be reused, per `AGENTS_SKILLS_PLUGINS.md` §11.3 as
+/// amended by the context-economy wave: `immutable_by_input` is a pure function of the input,
+/// `snapshot_closed` is exact within one source snapshot, `drifting` may change between
+/// identical calls and is not cached in this milestone. A wire vocabulary lives here in
+/// protocols (the `SignalSeverity` precedent); `graphhelm-tool-broker` re-exports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshnessClass {
+    ImmutableByInput,
+    SnapshotClosed,
+    Drifting,
+}
+
 /// Signal severity, from `schemas/graph-signal.schema.json`. A wire vocabulary because
 /// `signal_recorded` carries it; `core/execution` re-exports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

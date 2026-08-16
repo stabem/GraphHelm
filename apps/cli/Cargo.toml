@@ -26,6 +26,8 @@ graphhelm-protocols = { path = "../../core/protocols" }
 graphhelm-schema = { path = "../../core/schema" }
 graphhelm-schema-evolution = { path = "../../core/schema-evolution" }
 graphhelm-sealed-key-provider = { path = "../../adapters/sealed-key-provider" }
+graphhelm-tool-broker = { path = "../../core/tool-broker" }
+graphhelm-tool-host = { path = "../../adapters/tool-host" }
 graphhelm-simulation = { path = "../../core/simulation" }
 semver.workspace = true
 serde.workspace = true

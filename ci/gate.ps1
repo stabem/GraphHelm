@@ -103,7 +103,7 @@ try {
         cargo $toolchain test --workspace --all-features --locked
     } | Out-Null
 
-    foreach ($suite in @('cli_smoke', 'schema_cli', 'event_store_cli', 'execution_cli', 'api_http', 'gateway_cli')) {
+    foreach ($suite in @('cli_smoke', 'schema_cli', 'event_store_cli', 'execution_cli', 'api_http', 'gateway_cli', 'tool_cli')) {
         Invoke-Stage "cli: $suite" {
             cargo $toolchain test -p graphhelm-cli --test $suite --locked
         } | Out-Null

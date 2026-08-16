@@ -8,6 +8,7 @@ mod replay;
 mod schema;
 mod serve;
 mod simulate;
+mod tool;
 mod validate;
 
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CredentialCommand, DraftCommand, EventsCommand, ExecutionCommand, GatewayCommand, GraphCommand,
-    SchemaCommand, TopLevel,
+    SchemaCommand, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -166,6 +167,31 @@ pub fn run(command: TopLevel) -> Outcome {
             ExecutionCommand::Cancel { events, execution } => {
                 execution::cancel::run(&events, execution.as_deref())
             }
+        },
+        TopLevel::Tool(tool_args) => match tool_args.command {
+            ToolCommand::Invoke {
+                project,
+                staging,
+                protected,
+                request,
+                actor,
+                capabilities,
+                allow_programs,
+                tests_runner,
+                capture_out,
+                keep_workspace,
+            } => tool::invoke::run(&tool::invoke::InvokeArguments {
+                project,
+                staging,
+                protected,
+                request,
+                actor,
+                capabilities,
+                allow_programs,
+                tests_runner,
+                capture_out,
+                keep_workspace,
+            }),
         },
         TopLevel::Gateway(gateway_args) => match gateway_args.command {
             GatewayCommand::Routes { manifest } => gateway::routes::run(&manifest),

@@ -546,6 +546,28 @@
       },
       "additionalProperties": false
     },
+    "reusePlane": {"enum": ["tool_broker"]},
+    "reuseOutcome": {"enum": ["hit", "miss", "forced_fresh", "excluded"]},
+    "forcedFreshReason": {"enum": ["dirty_tree", "operator_forced"]},
+    "freshnessClass": {"enum": ["immutable_by_input", "snapshot_closed", "drifting"]},
+    "reuseKeyComponent": {"enum": ["tool_version", "canonical_input", "lease_scope", "source_snapshot"]},
+    "reuseDecision": {
+      "type": "object",
+      "required": ["executionId", "plane", "decision", "keyComponents", "keyDigest", "provenanceErased"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "plane": {"$ref": "#/$defs/reusePlane"},
+        "decision": {"$ref": "#/$defs/reuseOutcome"},
+        "forcedReason": {"$ref": "#/$defs/forcedFreshReason"},
+        "freshnessClass": {"$ref": "#/$defs/freshnessClass"},
+        "keyComponents": {"type": "array", "items": {"$ref": "#/$defs/reuseKeyComponent"}},
+        "keyDigest": {"$ref": "#/$defs/wireHash"},
+        "evidenceRef": {"$ref": "#/$defs/opaqueId"},
+        "provenanceErased": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
     "eventKind": {
       "oneOf": [
         {
@@ -772,6 +794,15 @@
             "data": {"$ref": "#/$defs/legalHoldChanged"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "reuse_decision"},
+            "data": {"$ref": "#/$defs/reuseDecision"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -801,7 +832,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_requested"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_completed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_ciphertext_deleted"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "evidence_legal_hold_changed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_legal_hold_changed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "reuse_decision"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

@@ -11,9 +11,11 @@ members = [
   "core/simulation",
   "core/execution",
   "core/gateway",
+  "core/tool-broker",
   "adapters/sealed-key-provider",
   "adapters/postgres-event-store",
   "adapters/model-gateway",
+  "adapters/tool-host",
   "apps/cli",
 ]
 

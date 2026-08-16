@@ -14,14 +14,14 @@
 
 ## Binding process rules (every task, no exceptions)
 
-1. **The code wins over the plan.** Written against main `ceefcdb` (05b merged). Everything that depends on unmerged 05c (#25) or 05d (#26) is tagged `[RECONCILE]` and burned down in Task 0. **Do not start implementation until 05c and 05d are on main.**
+1. **The code wins over the plan.** Written against main `ceefcdb` (05b merged). Everything that depended on unmerged 05c (#25) or 05d (#26) was tagged `[RECONCILE]` and burned down in Task 0. **Task 0 ran against main `a8d40ef` (05c+05d merged)**: every tag below is rewritten to the real form; the registry check confirmed GHCLI015 free (05d used GHCLI016 for the driver-failure code, respecting the reservation) and no #35 spec-debt trigger fires on 05e.
 2. **This plan adds NO event kinds and touches NO schema.** The MCP layer appends nothing itself — every mutation is an HTTP request to the API, which owns idempotency and attribution. If a task believes otherwise, STOP and report NEEDS_CONTEXT citing D-037.
 3. **Never a second path, in both directions** (D-039, CHAT_SURFACE_SPEC §2): every MCP tool maps to exactly one documented API request; and where the API lacks a surface the CLI has (`gateway routes`/`probe`), the API grows it (Task 4) rather than the MCP layer shelling out. Deleting the wrappers must lose nothing but convenience (§7 acceptance).
 4. **Statelessness (§6.4):** the MCP process holds no store handle and no driver — its state is the session nonce, the parsed config, and nothing else. A closed conversation loses nothing the API cannot reconstruct (§5).
 5. **No secret through chat (§6):** the server exposes NO credential-accepting tool (omission is the enforcement), refuses secret-shaped tool arguments by prefix without echoing them, and never prints the bearer token anywhere. Tests plant sentinels.
 6. **Workspace clippy is the bar:** `cargo +1.97.1 clippy --workspace --all-targets --all-features --locked -- -D warnings` clean at every commit.
 7. **Every new guard observed failing once** — sabotage or bad input, watch the named test fail, restore from `cp` backup, never `git checkout --`.
-8. **New CLI test binaries added to `ci/gate.ps1` by name** (`ci/gate.ps1:106`; after 05c/05d the list is expected as `('cli_smoke','schema_cli','event_store_cli','execution_cli','api_http','gateway_cli','tool_cli','runtime_http')` `[RECONCILE]`); this plan adds `mcp_stdio`.
+8. **New CLI test binaries added to `ci/gate.ps1` by name** (`ci/gate.ps1:106`; confirmed on merged main exactly as expected: `('cli_smoke','schema_cli','event_store_cli','execution_cli','api_http','gateway_cli','tool_cli','runtime_http')`); this plan adds `mcp_stdio`.
 9. **Run `cargo +1.97.1 fmt --all` before every commit.** Commit per task: `type(scope): description`, why in the body, trailer `Co-Authored-By: Claude Code <noreply@anthropic.com>`.
 
 ## Coordination note
@@ -33,8 +33,8 @@ Until 05c/05d implementation completes, this branch touches exactly one file: th
 - The Runtime API (05a, on main): loopback-only fail-closed serve, bearer token at the sibling path `<events-dir>.token`, `/health` unauthenticated, `ServeState` (`apps/cli/src/commands/serve/mod.rs:91`) holding config-not-handles, `require_token` middleware (`mod.rs:208`), `build_router` (`mod.rs:159`), `run_idempotent_mutation` in `serve/routes.rs` with the four-state content-aware retry (`{command-key}-{suffix}-{digest16}`), the three mutation headers (`Idempotency-Key` ≤64 chars, `X-GraphHelm-Actor`, `X-GraphHelm-Actor-Type: owner|agent`), optional `If-Match` with `currentHead` 409s, `headSequence` on mutation successes, the paged events tail (`after`/`limit`, max 1000). The CLI–API parity test with an empty exception list.
 - The 05b gateway surface: `gateway routes|probe|credential` CLI commands and the command-layer functions they call (`apps/cli/src/commands/gateway/{routes,probe}.rs`) — Task 4 lifts routes/probe to HTTP by calling the SAME command layer; `HttpTransport`/`UreqTransport` (`adapters/model-gateway/src/transport.rs`, redirects hard-off, per-call timeout); the loopback-authority rule with userinfo stripping (`core/gateway/src/manifest.rs`, post-#36 form) to mirror for the MCP client's `--url`.
 - The API test pattern: `apps/cli/tests/api_http.rs` — spawn the compiled binary, `TcpListener` fakes, token bootstrap, the storm/two-agent shapes. `assert_cmd::cargo::cargo_bin!("graphhelm")`.
-- Failure-code registry: GHCLI001–011 taken on main; 05c takes GHCLI012–014 `[RECONCILE]`. This plan takes **GHCLI015_MCP_INVALID** (CLI-level argument/config failures of `graphhelm mcp` only — protocol-level errors are JSON-RPC error objects, never GHCLI envelopes).
-- `[RECONCILE]` 05d: `POST /v1/executions/{id}/pause` gains `{"mode":"immediate"}` (05d Task 9); serve may gain manifest/keyring/staging flags for port wiring. The `pause` tool's `mode` parameter passes through to whatever shape merged.
+- Failure-code registry, confirmed on merged main: GHCLI001–011 (through 05b), GHCLI012–014 (05c tool CLI), GHCLI016_DRIVER_FAILURE (05d serve driver). GHCLI015 is free exactly as reserved. This plan takes **GHCLI015_MCP_INVALID** (CLI-level argument/config failures of `graphhelm mcp` only — protocol-level errors are JSON-RPC error objects, never GHCLI envelopes).
+- **Reconciled (Task 0, main `a8d40ef`)** 05d: `POST /v1/executions/{id}/pause` accepts `{"mode":"immediate"}` (graceful when absent) exactly as planned; serve DID gain the grouped runtime flags (`--manifest`/`--broker`/`--route`/`--staging` all-or-none; `--keyring`/`--key-id` all-or-none) plus `--tests-runner`/`--allow-program`/`--path-prepend`, and `ServeState` now carries `runtime`/`sealing`/`cancels`. The `pause` tool passes `mode` through to that merged shape.
 - Spec-debt queue #35: Task 0 re-verifies the five entries' triggers against implemented main. As of this writing none fires on 05e (no drifting-tool cache, no simulator, no Governor-milestone entry, no claim lifecycle); Task 0 confirms and records that in its commit message.
 
 ## Scope decisions from CHAT_SURFACE_SPEC §3–§4, stated
@@ -62,13 +62,13 @@ Until 05c/05d implementation completes, this branch touches exactly one file: th
 
 ---
 
-### Task 0: reconciliation — burn the `[RECONCILE]` tags, check the #35 queue
+### Task 0: reconciliation — burn the `[RECONCILE]` tags, check the #35 queue ✅ (ran 2026-08-16 against main a8d40ef)
 
 **Files:** this document only.
 
-- [ ] **Step 1:** With 05c and 05d on main, read the merged reality: the gate suite list in `ci/gate.ps1`, the GHCLI registry (05c's 012–014 as landed), 05d's pause-immediate request shape and any new serve flags, and `apps/cli/src/commands/gateway/{routes,probe}.rs` post-05d signatures. Rewrite every `[RECONCILE]` reference in this document to the real form; **check GHCLI015 nominally** (review finding): grep the merged tree for `GHCLI015` — 05d's resume cross-check may have taken it for its dedicated refusal code — and renumber this plan's code to the first free slot if so.
-- [ ] **Step 2:** Re-verify the five #35 spec-debt entries' triggers against implemented main; record in the commit message that none fires (or STOP and report if one now does — a drifting-tool cache arriving early would fire entries 1–2).
-- [ ] **Step 3: Commit** `docs(plan): reconcile the 05e plan against merged 05c and 05d`.
+- [x] **Step 1:** With 05c and 05d on main, read the merged reality: the gate suite list in `ci/gate.ps1`, the GHCLI registry (05c's 012–014 as landed), 05d's pause-immediate request shape and any new serve flags, and `apps/cli/src/commands/gateway/{routes,probe}.rs` post-05d signatures. Rewrite every `[RECONCILE]` reference in this document to the real form; **check GHCLI015 nominally** (review finding): grep the merged tree for `GHCLI015` — 05d's resume cross-check may have taken it for its dedicated refusal code — and renumber this plan's code to the first free slot if so.
+- [x] **Step 2:** Re-verify the five #35 spec-debt entries' triggers against implemented main; record in the commit message that none fires (or STOP and report if one now does — a drifting-tool cache arriving early would fire entries 1–2).
+- [x] **Step 3: Commit** `docs(plan): reconcile the 05e plan against merged 05c and 05d`.
 
 ---
 
@@ -214,7 +214,7 @@ fn gateway_probe_over_http_is_quota_free_and_reports_the_cli_shape() {
 ```
 
 - [ ] **Step 1b: The auth assert, explicit** (review finding): both new endpoints answer **401 without a valid bearer token** — one test hitting each with no token and a wrong token. The 05a auth tests pinned only the routes that existed then; a router refactor that left these two outside `require_token` would pass every existing test today. This test closes that hole for the new surface.
-- [ ] **Step 2: Implement.** Two GET routes behind `require_token`, calling the SAME command-layer functions the CLI subcommands call (extract the core of `gateway/routes.rs`/`probe.rs` into shared `pub(crate)` functions if they are currently command-shaped — report the extraction). Query-string inputs mirror the CLI flags; nothing mutates, so no idempotency headers. `[RECONCILE]`: if 05d gave serve a manifest flag, prefer the server-configured manifest with the query param as override — decide against merged reality and report.
+- [ ] **Step 2: Implement.** Two GET routes behind `require_token`, calling the SAME command-layer functions the CLI subcommands call (extract the core of `gateway/routes.rs`/`probe.rs` into shared `pub(crate)` functions if they are currently command-shaped — report the extraction). Query-string inputs mirror the CLI flags; nothing mutates, so no idempotency headers. Reconciled decision (Task 0): 05d DID give serve `--manifest` — the HTTP gateway read surface prefers the server-configured manifest and treats the `manifest` query param as an explicit override; a fixture-only server (no `--manifest`) requires the query param or answers 400 naming it.
 - [ ] **Step 3: green (both new tests + the whole api_http suite), fmt, clippy. Sabotage:** route the HTTP handler through a hand-rolled second listing instead of the shared function; the parity-with-CLI test fails when a field is renamed in one place; restore. **Commit** `feat(serve): gateway routes and probe over HTTP`.
 
 ---
@@ -250,7 +250,7 @@ fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
 #[test]
 fn pause_passes_mode_immediate_through() {
     // pause {executionId, mode:"immediate"} → the API receives the 05d body shape
-    // [RECONCILE]; graceful default when mode absent.
+    // (merged 05d shape, Task 0-confirmed); graceful default when mode absent.
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn two_chat_sessions_coordinate_through_events_alone_and_resolve_a_race() {
 **Files:**
 - Modify: `ci/gate.ps1` (suite list + `'mcp_stdio'`)
 
-- [ ] **Step 1:** Add `'mcp_stdio'` to the CLI suite list (post-05c/05d form `[RECONCILE]`). Prove the stage can go red: run the targeted cargo test with a misspelled suite name, observe the resolution failure, restore (the 05b pattern).
+- [ ] **Step 1:** Add `'mcp_stdio'` to the CLI suite list (the confirmed eight-suite form above). Prove the stage can go red: run the targeted cargo test with a misspelled suite name, observe the resolution failure, restore (the 05b pattern).
 - [ ] **Step 2:** Full CLI regression: `cargo +1.97.1 test -p graphhelm-cli --locked` green across all suites (the api_http additions from Task 4 included), plus workspace fmt/clippy. **Commit** `chore(ci): mcp_stdio gate stage`.
 
 ---
@@ -362,4 +362,4 @@ The six deferred skills and the two Living-Docs tools (each named with its missi
 - Spec coverage: CHAT_SURFACE_SPEC §2 layering ✔ (T5 tools / T7 wrappers), §3 vocabulary ✔ (T5, with the two Living-Docs tools deferred exactly as §3 conditions them), §4 catalog decision ✔ (4.3/4.4 in at T7; six deferred with named dependencies), §5 choreography ✔ (T6 test), §6 constraints ✔ (parity T6, statelessness rule 4/T2, no-secret T5+T7, D-016/D-019/D-020 live in skill text and the API they choreograph, D-036 untouched — the MCP layer appends nothing), §7 acceptance mapped: deletability (T7), two-session observation (T6), pasted-credential refusal (T5), skill-docs naming calls (T7 validation). Runtime-design §6.4 ✔ (rule 4). Onboarding-skill §7 rows are deferred WITH the catalog they belong to — recorded in honest limits, not silently dropped.
 - Rule 3's both-directions reading is the one scope addition (Task 4) and it cites its authority (D-039 + §2's table naming tools as "mapping 1:1 onto Runtime API requests").
 - Type consistency: `derive_key` defined once (T3), consumed by T5 dispatch and proven in T6; `SessionState` (T2) is the only state; the tool table (T5) is the single source the T7 validation greps against.
-- Placeholder scan: the protocol-revision constant and the rmcp footprint are verify-and-record steps with defined defaults, not TBDs; Task 4's manifest-flag question is a named `[RECONCILE]` decision.
+- Placeholder scan: the protocol-revision constant and the rmcp footprint are verify-and-record steps with defined defaults, not TBDs; Task 4's manifest-flag question was decided in Task 0 (server manifest preferred, query param overrides).

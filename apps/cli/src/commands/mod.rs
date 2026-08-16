@@ -4,6 +4,7 @@ mod execution;
 mod gateway;
 mod hash;
 mod lint;
+mod mcp;
 mod replay;
 mod schema;
 mod serve;
@@ -237,6 +238,7 @@ pub fn run(command: TopLevel) -> Outcome {
             },
         },
         TopLevel::Serve(args) => serve::run(&args),
+        TopLevel::Mcp(args) => mcp::run(&args),
     }
 }
 

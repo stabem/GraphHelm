@@ -1944,3 +1944,194 @@ fn the_cli_and_the_api_report_identical_status_for_the_same_story() {
          real finding, not something to paper over by widening the exception list"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// Milestone 05e Task 4: the gateway read surface over HTTP — routes/probe are the SAME
+// command-layer path the CLI runs, never a second listing.
+// -------------------------------------------------------------------------------------------
+
+/// A distinctive string planted in invalid manifest bytes: the redaction rule says it may
+/// never appear in any HTTP response, mirroring `gateway_cli.rs`'s guarantee for stdout.
+const GATEWAY_MARKER: &str = "MARKER-05E-GATEWAY-NEVER-LEAK";
+
+/// One `native_runtime` route probing the `graphhelm` binary itself (its real `--version`
+/// exits 0), so the probe exercises a genuine spawn without needing a broker or keyring —
+/// the `gateway_cli.rs` fixture pattern applied to this surface.
+fn gateway_manifest_value() -> Value {
+    let program = assert_cmd::cargo::cargo_bin!("graphhelm")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    serde_json::json!({
+        "manifestVersion": 1,
+        "routes": [
+            {
+                "id": "anthropic_byok",
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": "https://api.anthropic.com",
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_anthropic",
+                "profiles": ["critical_reasoning"],
+                "enabled": true
+            },
+            {
+                "id": "native_probe",
+                "provider": "anthropic",
+                "transport": "native_runtime",
+                "runtime": "claude_code",
+                "authentication": "account_subscription",
+                "billingMode": "subscription_quota",
+                "command": { "program": program, "args": [] },
+                "profiles": ["software_execution"],
+                "enabled": true
+            }
+        ]
+    })
+}
+
+/// Spawns the CLI subcommand and returns its whole printed envelope, for the parity
+/// comparisons below.
+fn cli_envelope(args: &[&str]) -> Value {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(args)
+        .output()
+        .unwrap();
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "the CLI envelope was not JSON ({error}): {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+#[test]
+fn gateway_routes_over_http_matches_the_cli_report_for_the_same_manifest() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+
+    let manifest = write_json(directory.path(), "manifest.json", &gateway_manifest_value());
+    let manifest_str = manifest.to_str().unwrap();
+
+    // The HTTP surface and the CLI must report the identical data for the same manifest —
+    // the parity rule applied to the new surface.
+    let http = get_json(
+        &format!("{base}/v1/gateway/routes?manifest={manifest_str}"),
+        Some(&token),
+    );
+    let cli = cli_envelope(&["gateway", "routes", "--manifest", manifest_str]);
+    assert_eq!(http["ok"], true, "{http}");
+    assert_eq!(
+        http["data"], cli["data"],
+        "the HTTP surface and the CLI must be the same listing"
+    );
+
+    // An invalid manifest is 400 and its bytes never leak — the redaction rule.
+    let poisoned = directory.path().join("poisoned.json");
+    std::fs::write(&poisoned, format!("{{not json {GATEWAY_MARKER}")).unwrap();
+    let url = format!(
+        "{base}/v1/gateway/routes?manifest={}",
+        poisoned.to_str().unwrap()
+    );
+    assert_eq!(get_status(&url, Some(&token)), 400);
+    let body = get_json(&url, Some(&token));
+    assert!(
+        !body.to_string().contains(GATEWAY_MARKER),
+        "manifest bytes must never leak: {body}"
+    );
+
+    // A fixture-only server (no --manifest) with no query param: 400 NAMING the parameter —
+    // the Task 0 reconciled decision's fail-closed half.
+    let bare = get_json(&format!("{base}/v1/gateway/routes"), Some(&token));
+    assert_eq!(
+        get_status(&format!("{base}/v1/gateway/routes"), Some(&token)),
+        400
+    );
+    assert!(
+        bare.to_string().contains("manifest"),
+        "the refusal names the missing parameter: {bare}"
+    );
+}
+
+#[test]
+fn gateway_probe_over_http_is_quota_free_and_reports_the_cli_shape() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+
+    let manifest = write_json(directory.path(), "manifest.json", &gateway_manifest_value());
+    let manifest_str = manifest.to_str().unwrap();
+
+    // A native_runtime probe spawns --version and reports available: no quota, no network,
+    // no credential — and the HTTP data equals the CLI data for the same inputs.
+    let http = get_json(
+        &format!("{base}/v1/gateway/probe?manifest={manifest_str}&route=native_probe"),
+        Some(&token),
+    );
+    let cli = cli_envelope(&[
+        "gateway",
+        "probe",
+        "--manifest",
+        manifest_str,
+        "--route",
+        "native_probe",
+    ]);
+    assert_eq!(http["ok"], true, "{http}");
+    assert_eq!(http["data"]["health"], "available", "{http}");
+    assert_eq!(
+        http["data"], cli["data"],
+        "the HTTP probe and the CLI probe must report the same shape"
+    );
+
+    // A route the manifest does not declare: 400, mirroring the CLI's own refusal.
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/gateway/probe?manifest={manifest_str}&route=no_such"),
+            Some(&token)
+        ),
+        400
+    );
+
+    // The route parameter is required: absent is 400 naming it.
+    let bare = get_json(
+        &format!("{base}/v1/gateway/probe?manifest={manifest_str}"),
+        Some(&token),
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/gateway/probe?manifest={manifest_str}"),
+            Some(&token)
+        ),
+        400
+    );
+    assert!(
+        bare.to_string().contains("route"),
+        "the refusal names the missing parameter: {bare}"
+    );
+}
+
+/// The explicit auth assert (plan Step 1b): the 05a auth tests pinned only the routes that
+/// existed then — a router refactor leaving these two outside `require_token` would pass
+/// every older test. Both new endpoints answer 401 with no token and with a wrong one.
+#[test]
+fn gateway_reads_refuse_a_missing_or_wrong_token_with_401() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, _token) = serve(&events);
+
+    for path in ["/v1/gateway/routes", "/v1/gateway/probe"] {
+        assert_eq!(
+            get_status(&format!("{base}{path}"), None),
+            401,
+            "{path} without a token"
+        );
+        assert_eq!(
+            get_status(&format!("{base}{path}"), Some("not-the-token")),
+            401,
+            "{path} with a wrong token"
+        );
+    }
+}

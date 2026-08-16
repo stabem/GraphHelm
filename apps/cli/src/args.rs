@@ -26,6 +26,28 @@ pub enum TopLevel {
     /// ephemeral worktree), producing a digest-only record and operator-side captured streams.
     Tool(ToolArgs),
     Serve(ServeArgs),
+    /// Serves the chat surface: a stateless MCP server over stdio whose tools map 1:1 onto
+    /// Public Runtime API requests. Speaks newline-delimited JSON-RPC 2.0 until stdin closes.
+    Mcp(McpArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct McpArgs {
+    /// The Public Runtime API's base URL. Loopback-only, fail-closed: userinfo is stripped
+    /// before host inspection (the post-#36 rule), so `[::1]@evil.com` shapes never pass.
+    #[arg(long)]
+    pub url: String,
+    /// File whose first line is the bearer token. Alternative: `GRAPHHELM_API_TOKEN`. The
+    /// flag wins; both absent is a refusal naming the two options. The token value itself
+    /// NEVER travels via argv.
+    #[arg(long = "token-file")]
+    pub token_file: Option<PathBuf>,
+    /// The actor every mutation is attributed to (the serve layer's actor id rules).
+    #[arg(long)]
+    pub actor: String,
+    /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
+    #[arg(long = "actor-type", default_value = "agent")]
+    pub actor_type: String,
 }
 
 #[derive(Debug, Args)]

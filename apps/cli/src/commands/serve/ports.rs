@@ -32,6 +32,10 @@ const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 /// workspace's fixed inputs, and the allow-list/PATH-prepend configuration every drive's
 /// `ToolLease` and `ToolHost` are built from.
 pub(super) struct RuntimeWiring {
+    /// The manifest file `--manifest` named, kept as the path (not the parsed value): the
+    /// gateway read surface (05e Task 4) re-reads it through the SAME `gateway::routes`/
+    /// `gateway::probe` command layer the CLI runs, so the two can never drift on parsing.
+    pub(super) manifest_path: PathBuf,
     pub(super) route: ModelRoute,
     pub(super) broker_dir: PathBuf,
     pub(super) keyring_dir: PathBuf,

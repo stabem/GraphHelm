@@ -1,5 +1,16 @@
 # Specification Changelog
 
+## Chat surface, 05e — 2026-08-16
+
+- `graphhelm mcp` added: a stateless stdio MCP server whose tools map 1:1 onto Public Runtime API requests (D-039). Hand-rolled minimal JSON-RPC 2.0 per ADR-026 — the declined rmcp footprint measured and recorded (328→342 packages, 14 crates) — with a bounded 1 MiB line reader, protocol revision pinned to 2025-06-18 (the handshake model the targeted hosts speak; the meta-versioned 2026-07-28 spec noted as a revisit candidate), and a conformance suite pinning id echo, notification silence, and oversized-line resync.
+- The ten tools: start, status, events, signal, approve, pause, resume, cancel, routes, probe — a closed list with closed schemas, guard-tested (no credential tool is representable; omission is the enforcement). Every mutation carries the optional `ifMatch` head pin; idempotency keys follow the logical act (`mcp-{nonce}-{s|n}{id}`, type-marked, digested past 32 chars) with retry-reuse and 409 divergence behaviorally proven; a notification-form tools/call never executes.
+- Config fail-closed before any protocol byte: loopback-only URL under the post-#36 userinfo rule, token via file or env never argv (sentinel-scanned across a real transport attempt), GHCLI015_MCP_INVALID as reserved.
+- The serve layer grew `GET /v1/gateway/routes|probe` calling the same command-layer functions as the CLI (parity test-pinned, explicit 401 asserts, server manifest preferred with query override) so the MCP tools never become a second path.
+- Parity and choreography as tests: the 05a story via MCP equals direct HTTP with an empty exception list; two chat sessions coordinate through events alone and resolve an If-Match race with one re-read retry.
+- Packaging thin and deletable: Claude Code plugin (.mcp.json with --token-file, skills operate-execution/observe-agents with `tool:`-marked choreography) and the Codex snippet, all validated in the suite; both READMEs carry §7's deletability sentence.
+- `mcp_stdio` joined the gate as the ninth CLI suite, red-proven.
+- Honest limits recorded: eight skills deferred each with its dependency named, pull-only notifications, tools-only MCP surface, the narrow secret-prefix heuristic, the aging protocol pin, probe's inherited spawn surface, verbatim gateway-read queries, and the shared stdout.
+
 ## Runtime, 05d — 2026-08-16
 
 - `core/runtime` added: the `AsyncNodeExecutor` seam, dependency-inverting `ModelPort`/`ToolPort` (adapter crates implement them in `apps/cli`'s wiring — the arrow is pinned from both sides by source invariants), deterministic prompt assembly from the node contract, and the closed cognitive/tool classification with typed refusals the driver never dispatches.

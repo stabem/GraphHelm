@@ -776,3 +776,135 @@ that the swap matters.
   compensation execution (recorded, not compensated); session management; SSE; the local store
   exposes evidence availability rather than a sealed read (the Postgres adapter owns
   `EvidenceRepository`).
+
+## What 05e shipped: the chat surface
+
+### ADR-026 and the layer it declined
+
+The chat surface is `graphhelm mcp`: a stateless stdio MCP server whose tools map 1:1 onto
+Public Runtime API requests (D-039; runtime-design §6.4; `CHAT_SURFACE_SPEC` §3). ADR-026
+decided the protocol stack by measuring what it declined: rmcp v3.1.2's default features
+would have grown the workspace from 328 to 342 packages — fourteen new crates including two
+proc-macro stacks — for five methods and a closed tool list. The hand-rolled layer
+(`apps/cli/src/commands/mcp/rpc.rs`) is newline-delimited JSON-RPC 2.0 with a bounded line
+reader (`MAX_LINE_BYTES` 1 MiB via `take()`-capped reads: an oversized line is refused
+naming the bound, never buffered whole, and the loop resyncs on the next line), the four
+standard error codes, and the invariant the conformance suite pins: an id-carrying request
+gets exactly one reply with its id echoed verbatim, a notification never gets any. The
+revisit trigger is named in the ADR: resources, push notifications, `structuredContent`
+results, or a non-stdio transport adopt the SDK instead of growing this layer.
+
+### The lifecycle and what the process actually holds
+
+`SUPPORTED_PROTOCOL_VERSION` is pinned to `2025-06-18`, verified against
+modelcontextprotocol.io at implementation time: the spec's current revision is `2026-07-28`,
+a meta-versioned model without the initialize handshake; handshake revisions remain
+interoperable per its backward-compatibility section and are what the targeted hosts speak.
+A client asking for a different revision gets ours back — a version mismatch is never an
+error (`initialize_negotiates_and_reports_tools_capability`). Statelessness as shipped: the
+process holds `SessionState { initialized, nonce, client }` — a lifecycle bit, eight bytes
+of OS randomness (the session's one impure input, consumed by the idempotency derivation),
+and the API client. Nothing else; every fact lives on the server side of the API.
+
+### The ten tools, and the calls they are
+
+`tools/list` names exactly `start`, `status`, `events`, `signal`, `approve`, `pause`,
+`resume`, `cancel`, `routes`, `probe` — and nothing else: no credential tool is
+representable, omission is the enforcement and the closed-list test its guard (the sabotage
+added an eleventh entry and the suite refused it). Every schema is closed
+(`additionalProperties: false`), every description names the API call it maps to (§6 parity
+in the tool's own metadata), and every mutation accepts the optional `ifMatch` head pin the
+§3 choreography rests on. A tool call is one API request; the result is the API envelope
+verbatim as text content with `isError` mirroring `ok` — codes like
+`GHE003_IDEMPOTENCY_CONFLICT` reach the chat exactly as the API said them, already
+redaction-safe by the API's own contract.
+
+### Config, auth, and the loopback wall
+
+`graphhelm mcp --url --token-file --actor [--actor-type]`: the URL is loopback-only
+fail-closed under the post-#36 rule (userinfo stripped before host inspection —
+`[::1]@evil.com` and `localhost:tok@attacker.example` shapes are pinned refused); the token
+arrives via file or `GRAPHHELM_API_TOKEN`, never argv, and a full session's stdout and
+stderr are scanned for the sentinel with the real transport attempting a real request;
+refusals are `GHCLI015_MCP_INVALID`, entering the registry exactly as reserved since 05c.
+
+### Idempotency per logical act, proven under retry
+
+`derive_key` emits `mcp-{nonce}-{s|n}{norm}`: the rpc id verbatim when already
+`[a-z0-9-]{1,32}`, its first 16 SHA-256 hex otherwise (digested, never truncated), with a
+fixed type marker so `7` and `"7"` are distinct logical acts — the bound holds by
+construction (4+16+1+1+32 = 54 and 4+16+1+1+16 = 38, both ≤ 64). The proof is behavioral:
+`a_retried_tool_call_reuses_the_key_and_a_divergent_reuse_travels_as_409` replays the same
+line twice (head advances by exactly one call's delta) and the same id with different
+arguments surfaces the API's 409 intact. A `tools/call` without an id — the notification
+form — is never executed: a mutation with no response channel cannot participate in the
+retry choreography, so the server refuses to run it and, per the notification rule, writes
+no reply (the head provably does not move).
+
+### The serve gateway read surface, and why it exists
+
+`GET /v1/gateway/routes` and `GET /v1/gateway/probe` (05e Task 4) exist so the MCP `routes`/
+`probe` tools never become a second path (rule 3, D-039 read bidirectionally): both handlers
+call the same command-layer functions the CLI subcommands call, the envelope is
+byte-identical, and parity is test-pinned. The Task 0-reconciled manifest rule: a server
+launched with `--manifest` serves it by default, the query parameter is an explicit
+override, and a fixture-only server answers 400 naming the parameter. Both endpoints answer
+401 to a missing or wrong token — asserted explicitly, so a future router refactor cannot
+silently unauthenticate them.
+
+### Parity, and the §5 choreography as tests
+
+`the_mcp_and_the_api_report_identical_status_for_the_same_story` drives the whole 05a story
+through MCP tools against one store and through direct HTTP against another, with
+`MCP_PARITY_EXCEPTIONS` empty by design — adding an exception is a visible diff. The §5
+choreography test runs two chat sessions against one serve coordinating through events
+alone: a scout signals, a builder discovers it only from the attributed tail and approves, a
+race on the same pinned head resolves with the loser re-reading and a single retry
+completing the execution — zero side channels.
+
+### Packaging: thin, deletable, validated
+
+`examples/chat-surface/` ships the Claude Code plugin (`plugin.json`, `.mcp.json`
+registering `graphhelm mcp` with `--token-file` and never an inline token) with the first
+two skills — `operate-execution` (§4.3: start→watch→triage→act→report, immediate-stop
+explicit and confirmed, cancel stating §13's partial-effects consequence before acting, the
+credential-refusal instruction verbatim) and `observe-agents` (§4.4: read-only actor
+timeline from event attribution, conflicts flagged, never acting as another actor) — plus
+the Codex `[mcp_servers.graphhelm]` snippet. Validation runs in the suite: the JSON parses,
+the TOML is line-shape-checked (adding a `toml` dependency for a two-line snippet is the
+wrong trade, stated in the test), every `tool:`-marked name a skill references exists in the
+tool table, and both READMEs carry §7's deletability sentence: deleting the wrappers loses
+convenience only.
+
+## Honest limits, stated (05e)
+
+- **Eight skills deferred, each with its dependency named:** `onboard-new-project` and
+  `onboard-existing-project` (§4.1/§4.2) await the Living Docs store and Draft flow over the
+  API; `invoke-agent` (§4.5) awaits multi-actor session identity beyond one `--actor` per
+  process; `share-context` (§4.6) awaits evidence externalization surfaces on the API (the
+  transcript-as-Evidence write path); `triage-and-approve` (§4.7) awaits a cross-execution
+  read surface (the API is per-execution today); `deploy-and-verify` (§4.8) awaits Deploy
+  node execution (05d refuses the node type); `rules` and `document-impact` await Living
+  Docs itself.
+- **Pull-only notifications.** No SSE and no MCP push: a chat discovers progress by polling
+  `events` from its last seen head. The first milestone needing push is a named ADR-026
+  revisit trigger.
+- **No resources, prompts, or sampling.** The MCP surface is tools-only, deliberately —
+  the same revisit trigger owns the expansion.
+- **The secret-prefix guard is a narrow, deliberate heuristic** (`sk-ant-`, `sk-proj-`,
+  `-----BEGIN `), not a scanner: it catches paste-shaped accidents, and the real enforcement
+  is structural — no credential tool exists to receive a secret, and the broker's stdin path
+  is the only entry.
+- **The protocol pin will age.** `2025-06-18` is the handshake-model revision the targeted
+  hosts speak; the spec's current line is the meta-versioned `2026-07-28`. Moving off the
+  handshake model is an ADR-026 revisit candidate recorded on the constant itself.
+- **`probe` over HTTP inherits the CLI probe's scope AND its spawn surface.** Reachability,
+  not model quota — and a probe of a native route spawns the configured program with
+  `--version` inside the serve process's context. The manifest is the trust boundary, and
+  the API now exercises it on request.
+- **Gateway read queries are verbatim.** The `manifest` query parameter is not
+  percent-decoded: a path containing `&`, `=`, or a space is inexpressible over HTTP and
+  uses the server-configured manifest (the preferred path) or the CLI.
+- **stdout is shared.** The protocol stream and the house CLI envelope share stdout; the
+  final `CommandOutput` line carries no `jsonrpc` member and hosts ignore it, but the
+  streams are interleaved by design rather than separated.

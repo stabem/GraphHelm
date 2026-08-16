@@ -1,0 +1,5 @@
+# GraphHelm MCP server registration for Codex (~/.codex/config.toml snippet).
+# The token travels via a file path, never inline and never via argv.
+[mcp_servers.graphhelm]
+command = "graphhelm"
+args = ["mcp", "--url", "http://127.0.0.1:8080", "--token-file", "/path/to/events.token", "--actor", "agent-chat"]

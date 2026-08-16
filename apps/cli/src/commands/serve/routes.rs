@@ -804,3 +804,140 @@ async fn drive(
         Err(error) => Err(MutationError::from(driver_failure(&error.to_string()))),
     }
 }
+
+// -------------------------------------------------------------------------------------------
+// Milestone 05e Task 4: the gateway read surface — `GET /v1/gateway/routes` and
+// `GET /v1/gateway/probe`, each delegating to the SAME `commands::gateway` functions the CLI
+// subcommands run (D-039's "never a second path" rule applied to the gateway): the handlers
+// below own only query parsing and the manifest default; listing and probing stay one code
+// path whether reached from a terminal or from HTTP.
+// -------------------------------------------------------------------------------------------
+
+const GATEWAY_ROUTES_COMMAND: &str = "gateway.routes";
+const GATEWAY_PROBE_COMMAND: &str = "gateway.probe";
+
+/// The Task 0 reconciled decision: a server launched with `--manifest` serves that manifest
+/// by default and treats the `manifest` query param as an explicit override; a fixture-only
+/// server (no `--manifest`) requires the query param or answers 400 naming it.
+fn effective_manifest(state: &ServeState, query_manifest: Option<PathBuf>) -> Option<PathBuf> {
+    query_manifest.or_else(|| {
+        state
+            .runtime
+            .as_ref()
+            .map(|wiring| wiring.manifest_path.clone())
+    })
+}
+
+/// Query values ride verbatim (no percent-decoding): every input here is a filesystem path or
+/// an identifier the operator chose, mirroring the CLI flags they stand in for. A value that
+/// genuinely needs `&`/`=` cannot be expressed — the CLI flag form remains for those.
+fn query_pairs(query: &str) -> impl Iterator<Item = (&str, &str)> {
+    query
+        .split('&')
+        .filter(|segment| !segment.is_empty())
+        .map(|pair| pair.split_once('=').unwrap_or((pair, "")))
+}
+
+/// Maps a command-layer `Outcome` onto the HTTP surface: the envelope rides unchanged (the
+/// parity rule — the body IS the CLI's own printed envelope), only the transport's status
+/// code is derived. Domain and application refusals are the caller's fault here (every input
+/// is a query param), internal failures are ours.
+fn respond_outcome(outcome: Outcome) -> Response {
+    let status = match outcome.exit_code {
+        0 => StatusCode::OK,
+        2 | 3 => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    respond(status, outcome.output)
+}
+
+/// `GET /v1/gateway/routes[?manifest=<path>]`: the CLI's `gateway routes` listing over HTTP.
+pub(super) async fn gateway_routes(
+    State(state): State<ServeState>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let query = query.unwrap_or_default();
+    let manifest = query_pairs(&query)
+        .find(|(key, _)| *key == "manifest")
+        .map(|(_, value)| PathBuf::from(value));
+    let Some(manifest) = effective_manifest(&state, manifest) else {
+        return bad_request(
+            GATEWAY_ROUTES_COMMAND,
+            "this server has no configured manifest: pass the manifest query parameter",
+            "/manifest",
+        );
+    };
+    // The command layer is synchronous file work; `spawn_blocking` keeps it off the
+    // reactor. A join error only happens on panic/cancellation — reported as internal.
+    match tokio::task::spawn_blocking(move || crate::commands::gateway::routes::run(&manifest))
+        .await
+    {
+        Ok(outcome) => respond_outcome(outcome),
+        Err(_) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(GATEWAY_ROUTES_COMMAND, "the listing task failed").output,
+        ),
+    }
+}
+
+/// `GET /v1/gateway/probe?route=<id>[&manifest=<path>&broker=<dir>&keyring=<dir>&keyId=<id>]`:
+/// the CLI's quota-free `gateway probe` over HTTP. The broker/keyring/keyId params default to
+/// the server's own wiring when present, mirroring the manifest rule; the passphrase STAYS an
+/// environment variable of the serve process (`GRAPHHELM_GATEWAY_KEY`), never a query param.
+pub(super) async fn gateway_probe(
+    State(state): State<ServeState>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let query = query.unwrap_or_default();
+    let mut manifest: Option<PathBuf> = None;
+    let mut route: Option<String> = None;
+    let mut broker: Option<PathBuf> = None;
+    let mut keyring: Option<PathBuf> = None;
+    let mut key_id: Option<String> = None;
+    for (key, value) in query_pairs(&query) {
+        match key {
+            "manifest" => manifest = Some(PathBuf::from(value)),
+            "route" => route = Some(value.to_owned()),
+            "broker" => broker = Some(PathBuf::from(value)),
+            "keyring" => keyring = Some(PathBuf::from(value)),
+            "keyId" => key_id = Some(value.to_owned()),
+            _ => {}
+        }
+    }
+    let Some(manifest) = effective_manifest(&state, manifest) else {
+        return bad_request(
+            GATEWAY_PROBE_COMMAND,
+            "this server has no configured manifest: pass the manifest query parameter",
+            "/manifest",
+        );
+    };
+    let Some(route) = route else {
+        return bad_request(
+            GATEWAY_PROBE_COMMAND,
+            "the route query parameter is required",
+            "/route",
+        );
+    };
+    if let Some(wiring) = state.runtime.as_ref() {
+        broker = broker.or_else(|| Some(wiring.broker_dir.clone()));
+        keyring = keyring.or_else(|| Some(wiring.keyring_dir.clone()));
+        key_id = key_id.or_else(|| Some(wiring.key_id.clone()));
+    }
+    match tokio::task::spawn_blocking(move || {
+        crate::commands::gateway::probe::run(
+            &manifest,
+            &route,
+            broker.as_deref(),
+            keyring.as_deref(),
+            key_id.as_deref(),
+        )
+    })
+    .await
+    {
+        Ok(outcome) => respond_outcome(outcome),
+        Err(_) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(GATEWAY_PROBE_COMMAND, "the probe task failed").output,
+        ),
+    }
+}

@@ -231,6 +231,7 @@ fn build_wiring(
             allow_programs = vec!["git".to_owned(), "cargo".to_owned()];
         }
         Some(RuntimeWiring {
+            manifest_path: manifest_path.clone(),
             route,
             broker_dir: args.broker.clone().expect("executor_all guarantees Some"),
             keyring_dir: args.keyring.clone().expect("executor_all guarantees Some"),
@@ -284,6 +285,8 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/pause", post(routes::pause))
         .route("/v1/executions/{id}/resume", post(routes::resume))
         .route("/v1/executions/{id}/cancel", post(routes::cancel))
+        .route("/v1/gateway/routes", get(routes::gateway_routes))
+        .route("/v1/gateway/probe", get(routes::gateway_probe))
         .fallback(not_found)
         // `.layer` (not `.route_layer`) wraps the fallback too: an unauthenticated request to a
         // path with no route must still be refused 401, not fall through to a 404 that would

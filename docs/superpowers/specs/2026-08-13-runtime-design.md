@@ -1,6 +1,6 @@
 # Milestone 05 - Runtime: design
 
-Status: implemented through 05d (05e chat surface and 05f monitor/close remaining). Derived by aggregating the existing normative documentation plus two new owner
+Status: implemented through 05e (05f monitor/close remaining). Derived by aggregating the existing normative documentation plus two new owner
 decisions recorded as D-039 and D-040; every requirement cites its source.
 
 ## 1. What this milestone is

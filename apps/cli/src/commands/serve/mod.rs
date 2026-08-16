@@ -1,6 +1,7 @@
 pub(super) mod monitor;
 pub(super) mod ports;
 mod routes;
+mod wake;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -286,6 +287,10 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/pause", post(routes::pause))
         .route("/v1/executions/{id}/resume", post(routes::resume))
         .route("/v1/executions/{id}/cancel", post(routes::cancel))
+        .route(
+            "/v1/executions/{id}/wake-lease",
+            post(routes::wake_lease).get(routes::wake_lease_status),
+        )
         .route("/v1/gateway/routes", get(routes::gateway_routes))
         .route("/v1/gateway/probe", get(routes::gateway_probe))
         .fallback(not_found)
@@ -778,6 +783,13 @@ async fn run_idempotent_mutation<'a>(
                     serde_json::json!(current_head(events, execution)),
                 );
             }
+            // 05g: the mutation's append is durable at this point — sweep the wake leases,
+            // fire-and-forget (a wake failure never fails the route that triggered it; the
+            // ring only ever happens AFTER durability, which is the sabotage-pinned order).
+            tokio::spawn(wake::sweep(
+                std::sync::Arc::from(events),
+                execution.to_owned(),
+            ));
             respond(StatusCode::OK, Outcome::success(command, value).output)
         }
         Err(MutationError::Prepared(response)) => response,

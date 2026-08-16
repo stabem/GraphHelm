@@ -35,7 +35,9 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 sqlx.workspace = true
-tokio.workspace = true
+# net/io-util are the serve wake sweep's own (serve/wake.rs rings over tokio::net):
+# declared here rather than inherited through axum's feature set (Task 2 review note).
+tokio = { workspace = true, features = ["net", "io-util"] }
 uuid.workspace = true
 zeroize.workspace = true
 
@@ -46,6 +48,7 @@ libc = "=0.2.189"
 windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt", "time", "io-util"] }
 hex.workspace = true
 sha2.workspace = true
 assert_cmd.workspace = true

@@ -551,6 +551,28 @@
     "forcedFreshReason": {"enum": ["dirty_tree", "operator_forced"]},
     "freshnessClass": {"enum": ["immutable_by_input", "snapshot_closed", "drifting"]},
     "reuseKeyComponent": {"enum": ["tool_version", "canonical_input", "lease_scope", "source_snapshot"]},
+    "wakeConsumeReason": {"enum": ["rung", "stale_rendezvous"]},
+    "wakeLease": {
+      "type": "object",
+      "required": ["executionId", "sessionId", "cursor", "rendezvousId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "sessionId": {"$ref": "#/$defs/opaqueId"},
+        "cursor": {"type": "integer", "minimum": 0},
+        "rendezvousId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "wakeLeaseConsumed": {
+      "type": "object",
+      "required": ["executionId", "sessionId", "reason"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "sessionId": {"$ref": "#/$defs/opaqueId"},
+        "reason": {"$ref": "#/$defs/wakeConsumeReason"}
+      },
+      "additionalProperties": false
+    },
     "reuseDecision": {
       "type": "object",
       "required": ["executionId", "plane", "decision", "keyComponents", "keyDigest", "provenanceErased"],
@@ -803,6 +825,24 @@
             "data": {"$ref": "#/$defs/reuseDecision"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "wake_lease"},
+            "data": {"$ref": "#/$defs/wakeLease"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "wake_lease_consumed"},
+            "data": {"$ref": "#/$defs/wakeLeaseConsumed"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -833,7 +873,9 @@
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_completed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_ciphertext_deleted"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_legal_hold_changed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "reuse_decision"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "reuse_decision"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "wake_lease"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "wake_lease_consumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

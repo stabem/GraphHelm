@@ -1014,3 +1014,78 @@ record). The runtime now does real work end to end — model calls through gatew
 subscription, tools in isolated worktrees, evidence sealed beside outcomes — and is
 operable, with identical observable state, from a terminal, an HTTP client, a chat, and a
 read-only page. What Studio inherits is an API that already tells one truth.
+
+## What 05g shipped: the wake doorbell
+
+### The primitive, end to end
+
+A session sleeps at zero cost and is woken by another actor's append — one bit, no payload,
+no polling anywhere. The sleeper arms its own wait: `wake_arm` (MCP) or
+`POST /v1/executions/{id}/wake-lease` deposits a `WakeLease` event carrying its session, its
+last-seen cursor and an OPAQUE rendezvous id — never a path: both sides derive the platform
+rendezvous under a fixed local prefix, so a hostile lease cannot point the serve anywhere
+(`\\.\pipe\graphhelm-wake-{id}` on Windows; the Unix socket arm is compile-shaped design
+until a Linux gate exists). The sleeper then blocks `graphhelm wake-wait` on that
+rendezvous: exit 0 rung, exit 3 timeout (routine, not failure — the dead-man design means
+timeouts happen), exit 2 (`GHCLI017_WAKE_INVALID`) for unusable arguments.
+
+### The kinds and their invariants
+
+`WakeLease`/`WakeLeaseConsumed` entered by the D-037 ritual with the invariants pinned in
+the fold: AT MOST ONE live lease per session (arming again replaces — the waker can never
+schedule the sleeper into a loop), consumption burns, consumption without a live lease is a
+replay integrity refusal, and **a replay never rings** — the fold crate speaks no transport
+vocabulary, pinned by source scan.
+
+### The ring, honest about physics
+
+The serve sweeps after the single success arm every mutation route shares, so the ring can
+only happen AFTER the trigger append is durable — and the test's detector is honest about
+it: the sleeper snapshots the store's kinds AT THE INSTANT the byte arrives, from inside
+its own read completion. (The first sabotage attempt came back green and exposed the
+original detector as blind to early rings; it was hardened before the guard was trusted —
+the thymus rule lived here before its milestone.) The consume reason is two-phase by
+physics: `rung` vs `stale_rendezvous` is only knowable after the ring attempt, so the
+consumption is its own follow-up append. Only NON-wake appends ring (arming would otherwise
+self-ring). A burned lease never rings twice; a missing rendezvous consumes as honest
+cleanup and never fails the route; a hostile ringer's bytes die in the sidecar's sink —
+content never crosses, and the sabotage that echoed them failed the sentinel assertion.
+
+### The sleeper-only surface
+
+The MCP tool list grew to exactly twelve: `wake_arm` and `wake_status`, and deliberately
+nothing else — **no tool exists to ring another session** (the thirteenth-tool sabotage
+failed the closed-list test), and the session can only arm ITSELF: the sessionId is the
+session's own nonce injected inside the dispatch, never a tool argument, so arming or
+reading a peer's doorbell is unrepresentable.
+
+### §5 measured, not promised
+
+The choreography test puts a counting TCP proxy in front of the serve and drives two real
+sessions: A arms through the proxy and blocks a real `wake-wait`; B appends; the serve
+rings; A wakes and re-reads its own log, finding B's event attributed. The proxy's count
+for the arm→ring window: **zero connections from A** — the token economy that motivated the
+milestone, as a number. Degradation is its own test: serve killed, timeout fires routinely,
+a plain read still tells the truth — slow, never wrong.
+
+## Honest limits, stated (05g)
+
+- **The Unix rendezvous arm is compile-shaped.** The Windows named pipe is runtime-proven
+  (spike and suite); the Unix socket design compiles and follows the same shapes
+  (`NotFound`/`AddrInUse`) but earns its runtime proof when a Linux gate exists.
+- **Only serve-made appends ring.** `append_atomic` is per-process; the sweep wraps the
+  serve's own mutation paths (API and MCP). A CLI-direct append in another process does not
+  ring — the sleeper's dead-man timer covers it (accelerator, never correction). The named
+  follow-on: a store-level notification file the serve tails, or the lease checker moving
+  into the driver era.
+- **Two-phase consumption can leave a spurious wake.** A crash between the durable trigger
+  and the consumption append leaves a live lease and a possibly-delivered byte: at worst
+  the sleeper wakes, re-reads, finds nothing new, and re-arms — content-free by
+  construction, so spurious means slow, never wrong.
+- **The driver does not sleep on leases yet.** `WaitingInput` nodes still wait on the
+  resume path; the driver-side doorbell is the named follow-on, deliberately not this slice.
+- **GHCLI017_WAKE_INVALID** entered the registry as reserved.
+- **The 05f run-evidence gitignore lesson is recorded**: the journal export survived every
+  machine that already had the file and even the fresh-checkout simulation (checkout only
+  restores tracked files); the recovery is in `b9b0aa7`, and the named hardening candidate
+  is a tracked-vs-named check inside the acceptance map's artifact verification.

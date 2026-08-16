@@ -29,6 +29,10 @@ pub enum TopLevel {
     /// Serves the chat surface: a stateless MCP server over stdio whose tools map 1:1 onto
     /// Public Runtime API requests. Speaks newline-delimited JSON-RPC 2.0 until stdin closes.
     Mcp(McpArgs),
+    /// The wake doorbell's sidecar (05g): creates the rendezvous for an opaque id, blocks
+    /// for free, exits 0 on ring / 3 on timeout / 2 on unusable arguments. Content never
+    /// crosses: the woken host learns only THAT it should re-read its log.
+    WakeWait(WakeWaitArgs),
 }
 
 #[derive(Debug, Args)]
@@ -48,6 +52,17 @@ pub struct McpArgs {
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
     #[arg(long = "actor-type", default_value = "agent")]
     pub actor_type: String,
+}
+
+#[derive(Debug, Args)]
+pub struct WakeWaitArgs {
+    /// The opaque rendezvous id (the same id the session armed via wake_arm). The platform
+    /// rendezvous derives from it under a fixed local prefix — never a path.
+    #[arg(long = "rendezvous-id")]
+    pub rendezvous_id: String,
+    /// Seconds to wait before exiting 3 (the dead-man fallback path).
+    #[arg(long)]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Args)]

@@ -176,6 +176,8 @@ pub enum EventKind {
     EvidenceCiphertextDeleted(EvidenceCiphertextDeleted),
     EvidenceLegalHoldChanged(EvidenceLegalHoldChanged),
     ReuseDecision(ReuseDecision),
+    WakeLease(WakeLease),
+    WakeLeaseConsumed(WakeLeaseConsumed),
 }
 
 impl EventKind {
@@ -577,4 +579,42 @@ pub struct ReuseDecision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ref: Option<EvidenceId>,
     pub provenance_erased: bool,
+}
+
+/// 05g Task 1 (the wake doorbell, D-037): a sleeper ARMS ITS OWN WAIT by depositing this
+/// lease — its session, its last-seen cursor, and an OPAQUE rendezvous identity. Never a
+/// filesystem path: both sides derive the platform rendezvous under a fixed local prefix
+/// from the id, so a hostile lease can never aim the serve process at an arbitrary path.
+/// The fold holds AT MOST ONE live lease per session (arming again replaces — the waker can
+/// never schedule the sleeper into a loop); the signal chooses WHEN, never WHAT.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WakeLease {
+    pub execution_id: OpaqueId,
+    /// The sleeper's identity — the key of the one-live-lease invariant.
+    pub session_id: OpaqueId,
+    /// The sleeper's last-seen sequence: only an append BEYOND it may ring.
+    pub cursor: u64,
+    /// Opaque rendezvous identity (never a path).
+    pub rendezvous_id: OpaqueId,
+}
+
+/// The lease's end — appended by the ringer as its own follow-up append AFTER the ring
+/// attempt (the true reason, `rung` vs `stale_rendezvous`, is only knowable once the byte
+/// was tried — the 05g Task 2 two-phase reality; a crash between trigger and consumption
+/// leaves at worst a spurious content-free wake the sleeper's own re-read absorbs). A consumption with no matching live lease is a replay integrity
+/// refusal: history cannot burn a lease that was never armed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WakeLeaseConsumed {
+    pub execution_id: OpaqueId,
+    pub session_id: OpaqueId,
+    pub reason: WakeConsumeReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeConsumeReason {
+    Rung,
+    StaleRendezvous,
 }

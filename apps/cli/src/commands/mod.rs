@@ -12,6 +12,7 @@ mod serve;
 mod simulate;
 mod tool;
 mod validate;
+mod wake_wait;
 
 use std::sync::Arc;
 
@@ -242,6 +243,7 @@ pub fn run(command: TopLevel) -> Outcome {
         },
         TopLevel::Serve(args) => serve::run(&args),
         TopLevel::Mcp(args) => mcp::run(&args),
+        TopLevel::WakeWait(args) => wake_wait::run(&args),
     }
 }
 

@@ -181,6 +181,21 @@ pub struct ExecutionProjection {
     /// Governor mutations accepted, per decision 5.1. Counted here, judged by the governor.
     #[serde(default)]
     pub accepted_mutations: u32,
+    /// Live wake leases by session (05g): AT MOST ONE per session — arming again replaces,
+    /// never stacks (the anti-fork-bomb rule as a fold invariant). Consumption removes;
+    /// consumption without a live lease is a replay integrity refusal.
+    #[serde(default)]
+    pub wake_leases: BTreeMap<String, WakeLeaseState>,
+}
+
+/// One live lease as the projection holds it (05g): the armed cursor and the opaque
+/// rendezvous identity — never a path; the ring side derives the platform rendezvous
+/// under its own fixed prefix.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeLeaseState {
+    pub cursor: u64,
+    pub rendezvous_id: String,
 }
 
 impl ExecutionProjection {
@@ -834,6 +849,28 @@ fn apply_projection_event(
         // this arm is explicit rather than a wildcard so the closed set keeps forcing a
         // deliberate decision per kind.
         EventKind::ReuseDecision(_) => {}
+        // 05g: the wake doorbell's ledger half. The fold is PURE — no ring, no pipe, no
+        // clock lives here; a replay rebuilds lease state and never touches a rendezvous
+        // (the ringer is the serve layer's post-append hook, outside this crate).
+        EventKind::WakeLease(payload) => {
+            projection.wake_leases.insert(
+                payload.session_id.as_str().to_owned(),
+                WakeLeaseState {
+                    cursor: payload.cursor,
+                    rendezvous_id: payload.rendezvous_id.as_str().to_owned(),
+                },
+            );
+        }
+        EventKind::WakeLeaseConsumed(payload) => {
+            if projection
+                .wake_leases
+                .remove(payload.session_id.as_str())
+                .is_none()
+            {
+                // History cannot burn a lease that was never armed.
+                return Err(ReplayError::Corrupt);
+            }
+        }
         EventKind::GraphImported(_)
         | EventKind::GraphValidationFailed(_)
         | EventKind::PolicyObligationEvaluated(_)

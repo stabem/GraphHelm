@@ -708,3 +708,136 @@ fn a_reuse_decision_is_ledger_not_state_and_replays_stably() {
         "ReuseDecision must round-trip byte-exactly"
     );
 }
+
+/// 05g Task 1: the one-live-lease invariant. Arming twice REPLACES (never stacks — the
+/// anti-fork-bomb rule as a fold fact), consumption removes, and the whole lease ledger
+/// round-trips the wire byte-exactly.
+#[test]
+fn arming_twice_replaces_the_lease_and_consumption_burns_it() {
+    use graphhelm_protocols::{WakeConsumeReason, WakeLease, WakeLeaseConsumed};
+
+    let mut events = vec![event(
+        "start-1",
+        EventKind::ExecutionStarted(ExecutionStarted {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            graph_version: 1,
+            graph_hash: WireHash::parse(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            mode: ExecutionMode::Autopilot,
+        }),
+    )];
+    let lease = |suffix: &str, cursor: u64, rendezvous: &str| {
+        event(
+            suffix,
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-a").unwrap(),
+                cursor,
+                rendezvous_id: OpaqueId::parse(rendezvous).unwrap(),
+            }),
+        )
+    };
+    events.push(lease("lease-1", 1, "rdv-first"));
+    events.push(lease("lease-2", 2, "rdv-second"));
+
+    let armed = append(events.clone());
+    let projection = replay(&scope(), STREAM, &armed).unwrap();
+    assert_eq!(
+        projection.wake_leases.len(),
+        1,
+        "one live lease per session, exactly — arming twice must replace, never stack"
+    );
+    let live = &projection.wake_leases["session-a"];
+    assert_eq!(live.cursor, 2, "the replacement wins");
+    assert_eq!(live.rendezvous_id, "rdv-second");
+
+    events.push(event(
+        "consume-1",
+        EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            session_id: OpaqueId::parse("session-a").unwrap(),
+            reason: WakeConsumeReason::Rung,
+        }),
+    ));
+    let burned = append(events);
+    let projection = replay(&scope(), STREAM, &burned).unwrap();
+    assert!(
+        projection.wake_leases.is_empty(),
+        "consumption burns the lease"
+    );
+
+    // The payloads round-trip the wire byte-exactly.
+    for envelope in burned.iter().rev().take(2) {
+        let wire = serde_json::to_string(envelope).unwrap();
+        let back: EventEnvelope = serde_json::from_str(&wire).unwrap();
+        assert_eq!(*envelope, back, "wake kinds must round-trip byte-exactly");
+    }
+}
+
+/// 05g Task 1: history cannot burn a lease that was never armed — a consumption with no
+/// matching live lease is a replay integrity refusal, not a silent no-op.
+#[test]
+fn consuming_an_unarmed_lease_is_a_replay_integrity_refusal() {
+    use graphhelm_protocols::{WakeConsumeReason, WakeLeaseConsumed};
+
+    let events = append(vec![
+        event(
+            "start-1",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                )
+                .unwrap(),
+                mode: ExecutionMode::Autopilot,
+            }),
+        ),
+        event(
+            "consume-ghost",
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-ghost").unwrap(),
+                reason: WakeConsumeReason::StaleRendezvous,
+            }),
+        ),
+    ]);
+    let refused = replay(&scope(), STREAM, &events);
+    assert!(
+        matches!(refused, Err(graphhelm_events::ReplayError::Corrupt)),
+        "an unmatched consumption must refuse the replay: {refused:?}"
+    );
+}
+
+/// 05g Task 1: a replay NEVER rings — pinned at the source: the fold crate speaks no pipe,
+/// socket or async-net vocabulary at all. The ringer is the serve layer's post-append hook,
+/// and the day this invariant breaks is the day a replay develops side effects.
+#[test]
+fn the_fold_crate_speaks_no_transport_vocabulary() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&source_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        for token in [
+            "named_pipe",
+            "UnixListener",
+            "UnixStream",
+            "tokio::net",
+            "TcpStream",
+        ] {
+            assert!(
+                !text.contains(token),
+                "{} must not mention {token}: the fold is pure and a replay never rings",
+                path.display()
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked > 3, "the invariant walked the real sources");
+}

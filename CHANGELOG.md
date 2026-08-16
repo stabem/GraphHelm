@@ -1,5 +1,14 @@
 # Specification Changelog
 
+## Wake doorbell, 05g — 2026-08-16
+
+- The wake primitive: a session sleeps at zero cost and is woken by another actor's append — one content-free byte, no payload, no polling anywhere (D-036/D-037; the 05f-era divergent pass's attacker traps are binding refused scope). `WakeLease`/`WakeLeaseConsumed` kinds with fold-pinned invariants: one live lease per session (arming replaces — anti fork-bomb), consumption burns, consuming unarmed corrupts replay, and a replay never rings (the fold speaks no transport, source-scanned).
+- The serve-side ring fires only AFTER the trigger append is durable — the test's sleeper snapshots the store at the instant the byte arrives (the first sabotage exposed a blind detector; it was hardened before the guard was trusted). Two-phase consumption records the TRUE reason (rung / stale_rendezvous); only non-wake appends ring; a burned lease never rings twice; ring failure never fails the route.
+- The sleeper-only surface: MCP tools `wake_arm`/`wake_status` (twelve exactly — no ring tool exists, the thirteenth-tool sabotage failed the closed list; the session can only arm ITSELF, its identity injected inside the dispatch, never an argument) over `POST/GET /v1/executions/{id}/wake-lease`, one path never two. The rendezvous derives from an OPAQUE id under a fixed local prefix — a hostile lease points nowhere.
+- `graphhelm wake-wait`: the sidecar blocks for free and exits by code (0 rung / 3 timeout-as-routine / 2 GHCLI017); hostile ring bytes die in its sink — content never crosses, sentinel-proven.
+- §5 measured, not promised: two real sessions through a counting TCP proxy — ZERO connections from the sleeper in the arm→ring window; degradation pinned (dead serve → routine timeout → a plain read still true: slow, never wrong).
+- `wake_http` joined the gate (eleventh CLI suite, red-proven). Honest limits recorded: the Unix arm compile-shaped, CLI-direct appends ring nothing (dead-man covers), spurious wakes possible across a crash (content-free, so slow never wrong), the driver does not sleep on leases yet, and the 05f gitignore'd-evidence lesson with its named hardening candidate.
+
 ## Monitor and Milestone 05 close, 05f — 2026-08-16
 
 - The read-only monitor (D-040): `GET /monitor[/{id}]` on serve, server-side-rendered ZERO-JavaScript HTML over the same `ExecutionProjection` the status command folds — the medium enforces the refusal (no script for a button to hook into), GET-only structurally (405 to every mutating verb, CSP on every 200), cookie bootstrap through the one shared constant-time verifier (token never in a Location or a page byte), meta-refresh with a `since` cursor making the delta strip stateless.

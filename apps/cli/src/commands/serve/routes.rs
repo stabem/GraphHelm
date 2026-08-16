@@ -941,3 +941,110 @@ pub(super) async fn gateway_probe(
         ),
     }
 }
+
+// -------------------------------------------------------------------------------------------
+// Milestone 05g Task 3: the wake lease's HTTP surface — the SLEEPER-ONLY half. POST arms the
+// caller's own lease (idempotent, the three headers); GET reads it. No route rings: the ring
+// is the Task 2 sweep's alone, and a lease's arming event never self-rings (the sweep skips
+// wake bookkeeping kinds by design).
+// -------------------------------------------------------------------------------------------
+
+const WAKE_LEASE_COMMAND: &str = "execution.wake_lease";
+
+pub(super) async fn wake_lease(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                WAKE_LEASE_COMMAND,
+                "the request body is not valid JSON",
+                "/",
+            );
+        }
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        WAKE_LEASE_COMMAND,
+        &execution_id,
+        &payload,
+        &["wake"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    let Some(session_id) = payload.get("sessionId").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            WAKE_LEASE_COMMAND,
+            "the request body must carry \"sessionId\"",
+            "/sessionId",
+        );
+    };
+    let Some(rendezvous_id) = payload
+        .get("rendezvousId")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return bad_request(
+            WAKE_LEASE_COMMAND,
+            "the request body must carry \"rendezvousId\" (an OPAQUE id, never a path)",
+            "/rendezvousId",
+        );
+    };
+    let cursor = payload.get("cursor").and_then(serde_json::Value::as_u64);
+    let session_id = session_id.to_owned();
+    let rendezvous_id = rendezvous_id.to_owned();
+    let events = state.events.clone();
+    let target = execution_id.clone();
+
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        WAKE_LEASE_COMMAND,
+        identity,
+        |actor, key| {
+            Box::pin(async move {
+                Ok(execution::wake::arm(
+                    &events,
+                    Some(target.as_str()),
+                    &session_id,
+                    &rendezvous_id,
+                    cursor,
+                    actor,
+                    key,
+                )?)
+            })
+        },
+    )
+    .await
+}
+
+/// `GET /v1/executions/{id}/wake-lease?sessionId=<id>`: the caller's own live lease, read
+/// from the same projection every surface folds.
+pub(super) async fn wake_lease_status(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let session_id = query.as_deref().unwrap_or("").split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "sessionId").then(|| value.to_owned())
+    });
+    let Some(session_id) = session_id else {
+        return bad_request(
+            WAKE_LEASE_COMMAND,
+            "the sessionId query parameter is required",
+            "/sessionId",
+        );
+    };
+    match execution::wake::status(&state.events, Some(&execution_id), &session_id) {
+        Ok(value) => respond(
+            StatusCode::OK,
+            Outcome::success(WAKE_LEASE_COMMAND, value).output,
+        ),
+        Err(failure) => respond_failure(WAKE_LEASE_COMMAND, failure),
+    }
+}

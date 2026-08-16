@@ -19,7 +19,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 10] = [
+const TOOLS: [ToolSpec; 12] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -69,6 +69,19 @@ const TOOLS: [ToolSpec; 10] = [
         description: "List the gateway's routes (GET /v1/gateway/routes, optional manifest \
                       override).",
         schema: routes_schema,
+    },
+    ToolSpec {
+        name: "wake_arm",
+        description: "Arm THIS session's wake lease (POST /v1/executions/{executionId}/\
+                      wake-lease): one content-free ring when the log moves past the cursor. \
+                      A session can only ever arm itself; no tool rings another session.",
+        schema: wake_arm_schema,
+    },
+    ToolSpec {
+        name: "wake_status",
+        description: "Read THIS session's live wake lease (GET /v1/executions/{executionId}/\
+                      wake-lease).",
+        schema: wake_status_schema,
     },
     ToolSpec {
         name: "probe",
@@ -179,6 +192,27 @@ fn resume_schema() -> serde_json::Value {
 
 fn routes_schema() -> serde_json::Value {
     object_schema(serde_json::json!({"manifest": {"type": "string"}}), &[])
+}
+
+fn wake_arm_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "rendezvousId": {"type": "string",
+                "description": "Opaque rendezvous identity — never a filesystem path; the \
+                                sidecar derives the platform rendezvous from it."},
+            "cursor": {"type": "integer",
+                "description": "Ring for appends AFTER this sequence; defaults to the head."},
+        }),
+        &["executionId", "rendezvousId"],
+    )
+}
+
+fn wake_status_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({"executionId": {"type": "string"}}),
+        &["executionId"],
+    )
 }
 
 fn probe_schema() -> serde_json::Value {
@@ -353,6 +387,33 @@ pub(crate) fn call(
                 Some(&serde_json::json!({})),
                 Some(&key),
                 if_match,
+            )
+        }),
+        "wake_arm" => require(arguments, "executionId").map(|id| {
+            // The session can only arm ITSELF: sessionId is the session's own nonce, never
+            // an argument — the sleeper-only rule in the dispatch itself.
+            let mut body = serde_json::json!({
+                "sessionId": nonce,
+                "rendezvousId": str_arg(arguments, "rendezvousId").unwrap_or_default(),
+            });
+            if let Some(cursor) = arguments.get("cursor").and_then(serde_json::Value::as_u64) {
+                body["cursor"] = serde_json::json!(cursor);
+            }
+            api.request(
+                "POST",
+                &format!("/v1/executions/{id}/wake-lease"),
+                Some(&body),
+                Some(&key),
+                if_match,
+            )
+        }),
+        "wake_status" => require(arguments, "executionId").map(|id| {
+            api.request(
+                "GET",
+                &format!("/v1/executions/{id}/wake-lease?sessionId={nonce}"),
+                None,
+                None,
+                None,
             )
         }),
         "routes" => Ok(match str_arg(arguments, "manifest") {

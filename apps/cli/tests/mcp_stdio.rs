@@ -513,7 +513,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 }
 
 #[test]
-fn tools_list_names_exactly_the_ten_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_twelve_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -530,10 +530,20 @@ fn tools_list_names_exactly_the_ten_tools_with_closed_schemas() {
     assert_eq!(
         names,
         vec![
-            "start", "status", "events", "signal", "approve", "pause", "resume", "cancel",
-            "routes", "probe"
+            "start",
+            "status",
+            "events",
+            "signal",
+            "approve",
+            "pause",
+            "resume",
+            "cancel",
+            "routes",
+            "wake_arm",
+            "wake_status",
+            "probe"
         ],
-        "exactly the ten tools, in order, and NOTHING else — no credential tool exists by \
+        "exactly the twelve tools, in order, and NOTHING else — no credential tool exists by \
          design (omission is the enforcement)"
     );
     for tool in &tools {
@@ -1312,4 +1322,78 @@ fn the_packaging_is_valid_and_names_only_real_tools() {
             "{readme} carries the deletability sentence"
         );
     }
+}
+
+/// 05g Task 3: the sleeper-only surface end to end — `wake_arm` arms THIS session's lease
+/// through the API (sessionId is the session's own nonce, never an argument), the armed
+/// lease is visible to `wake_status` AND on the events tail as a `wake_lease` kind, and
+/// re-arming replaces (the fold invariant read back through the tool).
+#[test]
+fn wake_arm_arms_this_session_and_wake_status_reads_it_back() {
+    let harness = wired("exec-mcp-wake");
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!("arm-1"),
+            "wake_arm",
+            serde_json::json!({"executionId": "exec-mcp-wake", "rendezvousId": "rdv-mcp-one"}),
+        ),
+        tool_call(
+            serde_json::json!("arm-2"),
+            "wake_arm",
+            serde_json::json!({"executionId": "exec-mcp-wake", "rendezvousId": "rdv-mcp-two",
+                "cursor": 3}),
+        ),
+        tool_call(
+            serde_json::json!("read-1"),
+            "wake_status",
+            serde_json::json!({"executionId": "exec-mcp-wake"}),
+        ),
+        tool_call(
+            serde_json::json!("tail-1"),
+            "events",
+            serde_json::json!({"executionId": "exec-mcp-wake", "limit": 1000}),
+        ),
+    ]);
+    assert_eq!(session.replies.len(), 5, "{:?}", session.replies);
+
+    let (is_error, armed) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "{armed}");
+    assert_eq!(armed["command"], "execution.wake_lease");
+    let session_id = armed["data"]["sessionId"].as_str().unwrap().to_owned();
+    assert!(
+        armed["data"]["armedCursor"].as_u64().unwrap() > 0,
+        "the default cursor is the current head: {armed}"
+    );
+
+    let (is_error, replaced) = tool_envelope(&session.replies[2]);
+    assert!(!is_error, "{replaced}");
+
+    let (is_error, live) = tool_envelope(&session.replies[3]);
+    assert!(!is_error, "{live}");
+    assert_eq!(live["data"]["live"], true, "{live}");
+    assert_eq!(
+        live["data"]["rendezvousId"], "rdv-mcp-two",
+        "re-arming replaces — the fold invariant read back through the tool: {live}"
+    );
+    assert_eq!(live["data"]["cursor"], 3, "{live}");
+    assert_eq!(
+        live["data"]["sessionId"].as_str().unwrap(),
+        session_id,
+        "one session, one identity"
+    );
+
+    let (is_error, tail) = tool_envelope(&session.replies[4]);
+    assert!(!is_error, "{tail}");
+    let wake_events = tail["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"]["type"] == "wake_lease")
+        .count();
+    assert_eq!(
+        wake_events, 2,
+        "both armings are ordinary durable events: {tail}"
+    );
 }

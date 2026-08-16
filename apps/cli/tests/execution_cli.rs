@@ -1305,3 +1305,74 @@ fn resume_refuses_a_graph_file_that_does_not_match_the_started_hash() {
     // The pristine file still resumes.
     resume(&events, &fixtures, "exec_resume_hash");
 }
+
+/// Milestone 05f Task 5: `status --html` writes the monitor page as a frozen incident
+/// snapshot — no refresh tag, no script, node table present — while the JSON envelope
+/// still prints to stdout unchanged. The snapshot IS the live renderer (the byte-equality
+/// with the live page is pinned at the unit level in `serve/monitor.rs`); this test pins
+/// the CLI surface: flag, file, and the untouched stdout contract.
+#[test]
+fn status_html_writes_a_frozen_snapshot_and_keeps_the_envelope() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+
+    command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "autopilot",
+        ])
+        .assert()
+        .success();
+
+    let html = directory.path().join("incident.html");
+    let output = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--html",
+            html.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let envelope = json(&output.stdout);
+    assert_eq!(envelope["ok"], true, "{envelope}");
+    assert_eq!(envelope["command"], "execution.status");
+    assert!(
+        envelope["data"]["headSequence"].as_u64().unwrap() > 0,
+        "the stdout contract is untouched: {envelope}"
+    );
+
+    let page = std::fs::read_to_string(&html).unwrap();
+    assert!(!page.contains("http-equiv=\"refresh\""), "frozen: {page}");
+    assert!(!page.to_ascii_lowercase().contains("<script"), "{page}");
+    assert!(page.contains("<h2>nodes</h2>"), "{page}");
+
+    // A directory as --html target is a refusal, not a panic and not a silent skip.
+    let refused = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--html",
+            directory.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let refusal = json(&refused.stdout);
+    assert_eq!(refusal["ok"], false, "{refusal}");
+}

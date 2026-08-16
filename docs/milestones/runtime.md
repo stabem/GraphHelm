@@ -1,8 +1,9 @@
 # Runtime
 
-Status: 05a through 05d implemented — the Public Runtime API, the Gateway slice, the Tool Broker
-with Tier 0/1 isolation, and the real async executor. Two plans remain: the MCP chat surface
-(05e) and the monitor with the milestone close (05f). Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
+Status: Milestone 05 COMPLETE — 05a through 05f: the Public Runtime API, the Gateway slice, the
+Tool Broker with Tier 0/1 isolation, the real async executor, the chat surface, and the read-only
+monitor with the acceptance close. The acceptance map (`docs/acceptance/M05_ACCEPTANCE_MAP.md`)
+binds every §8 clause to running proof and is itself gate-verified. Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
 decisions D-039 (chat-first via an official MCP server) and D-040 (the monitor precedes Studio).
 
 Milestone 04 proved governance and durability with an effect-free executor. Milestone 05 makes it
@@ -908,3 +909,108 @@ convenience only.
 - **stdout is shared.** The protocol stream and the house CLI envelope share stdout; the
   final `CommandOutput` line carries no `jsonrpc` member and hosts ignore it, but the
   streams are interleaved by design rather than separated.
+
+## What 05f shipped: the monitor, and the Milestone 05 close
+
+### The page that cannot grow a button
+
+The monitor (D-040) is `GET /monitor` and `GET /monitor/{id}` on the serve process:
+server-side-rendered, **zero-JavaScript** HTML — a page with no script has nothing for
+"just one button" to hook into, so the read-only rule is the medium, not review vigilance —
+refreshed by `<meta http-equiv="refresh">` whose URL carries the `since` cursor, which makes
+the "changed since #N" delta strip stateless: the browser tells the server what the operator
+last saw. The renderer (`render_monitor`) is a pure function over the SAME
+`ExecutionProjection` the `status` command folds — HTML as a third formatter over one truth
+— with every dynamic string passed through a local five-character escape (a hostile
+execution id renders escaped, pinned; a header-hostile id in the bootstrap path answers 400,
+never a panic — found live in review, fixed in-milestone). The router registers only GET:
+POST/PUT/DELETE/PATCH answer 405 structurally, even with a valid cookie, and every 200
+carries `default-src 'none'; style-src 'unsafe-inline'`.
+
+### Auth: one authority, one hop
+
+A browser cannot set a bearer header, so the page bootstraps: `?token=` verified against the
+serve token through the SAME constant-time comparison `require_token` uses, an
+`HttpOnly; SameSite=Strict; Path=/monitor` cookie whose value IS the token (re-verified per
+request against the file-loaded bytes — no session store), and a 303 to the clean URL. The
+token never rides the redirect Location and never reaches a page byte, both pinned.
+Loopback-without-auth was rejected on purpose: loopback is not a trust boundary on a
+multi-user machine, and the tail renders operator-grade detail.
+
+### Silence as signal, and remediation as text
+
+Every node row carries a staleness clock folded from the tail's own `nodeId` payloads — a
+hung worker's loudest output is nothing, and a RUNNING node silent past its bound renders
+red. Where the stream carries a graph publication, bounds are per node kind (tool 30s, agent
+120s, default 90s) and failed/blocked nodes show their blast radius (downstream blocked
+count; terminal still reachable — pure O(V+E) reachability, `remediation::blast_radius`);
+where it does not, the column says "unknown — the stream carries no graph publication" and
+never guesses. Triage rows answer scope gravity positively: instead of a button, the EXACT
+`graphhelm execution approve ...` command, rendered by `remediation::render_invocation` and
+parse-round-tripped through the real clap `Cli` in a test, so the page and the CLI compile
+from one source and cannot drift.
+
+### The negative proof, and the snapshot
+
+`hammering_the_monitor_never_changes_a_byte_of_the_store` fingerprints every file under the
+events directory, fires six verbs times with/without cookie times malicious bodies at both
+paths plus a probe list proving approve/pause/retry/cancel do not exist as surfaces, and
+asserts the store bit-identical and the status JSON unmoved. `execution status --html`
+writes the same page frozen (no refresh tag) — the incident artifact IS the live renderer,
+pinned byte-equal minus exactly the refresh line.
+
+### The Milestone 05 close: a map that cannot rust, and a run that really happened
+
+`docs/acceptance/m05-clauses.toml` binds each §8 clause to named prover tests with assert
+fingerprints; `acceptance_map_is_grounded` (in the gate) verifies each fn exists exactly
+once, its suite is on the gate surface, the fingerprint appears in the test body, every
+D-citation still matches the register, the committed `M05_ACCEPTANCE_MAP.md` is
+byte-identical to the generator's output — and, for the one clause no test can prove, that
+the committed run evidence still hashes to its `SHA256SUMS` in both directions. That run
+(`docs/acceptance/m05-run-2026-08-16/`) happened once, on 2026-08-16: an agent node answered
+by the LIVE model over the owner-subscription route (`native_runtime` spawning the claude
+CLI, prompt over stdin), a tool node running real git in an ephemeral Tier 1 worktree,
+completion over HTTP, double replay byte-identical, and the SAME completed state read back
+through CLI, HTTP and MCP. No gate re-runs the call; every gate re-hashes the evidence.
+
+## Honest limits, stated (05f)
+
+- **The staleness clock is only as honest as event granularity.** An agent node streaming
+  silently emits nothing and can look stale; per-kind bounds soften this, heartbeat events
+  are the named follow-on (a harness contract change, not a monitor feature).
+- **Kinds and edges exist only on streams with a graph publication.** The CLI/serve start
+  paths do not publish the graph onto the stream (the 05d Task 7 discovery, now a rendering
+  reality): without it, per-kind bounds fall back to the default and blast radius states its
+  ignorance. Terminals approximate as sink nodes — the completion control's typed expression
+  is not evaluated by this slice.
+- **The cookie is a second door wearing the same lock.** Its value is the bearer token
+  through the one shared verifier — but the monitor is a second authentication path and is
+  named as such; the GET-only router assert and the CSP are the fences around it.
+- **The 2-second meta refresh is the whole update contract.** No SSE, no push — the wake
+  doorbell plan (05g) owns the push story.
+- **Remediation strings carry no If-Match.** The CLI has no head-pin flag; the command the
+  page hands out can race a concurrent mutation and lose honestly (the API's own refusal).
+- **CSP rides every 200, not every response** (401/303 carry none — rendered content is
+  what the header defends).
+- **The native adapter spawns the CLI in the serve process's cwd.** A cwd inside a
+  Claude-configured repository stalls the spawned CLI on that project's own MCP config —
+  the acceptance run serves from a neutral cwd, measured both ways. A route-owned working
+  directory is a plausible 06-era knob.
+- **An invalid direct_api key surfaces as `needs_capacity`.** 05b's `outcome_for_error`
+  folds 401 into the capacity class; auth-invalid is not capacity-exhausted, and the
+  distinction is deferred to the gateway's own next slice, not patched here.
+- **The double-duty serve keyring (05d limit) bit during the run:** one key must serve both
+  `GRAPHHELM_GATEWAY_KEY` and `GRAPHHELM_EVENTS_KEY` against a keyring credential-set
+  created. Still open, still named.
+- **The monitor lists only what one store knows.** No cross-store index; `/monitor` is the
+  streams of one events directory.
+
+## Milestone 05, closed
+
+Every §8 clause is bound to running proof in `M05_ACCEPTANCE_MAP.md`; the refused-scope
+table names the four banned buttons with D-040's own sentence; the run evidence is
+checksummed against the bytes git stores (a fresh-clone simulation is part of the review
+record). The runtime now does real work end to end — model calls through gateway or
+subscription, tools in isolated worktrees, evidence sealed beside outcomes — and is
+operable, with identical observable state, from a terminal, an HTTP client, a chat, and a
+read-only page. What Studio inherits is an API that already tells one truth.

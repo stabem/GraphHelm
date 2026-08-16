@@ -115,6 +115,11 @@ pub enum ExecutionCommand {
         events: PathBuf,
         #[arg(long)]
         execution: Option<String>,
+        /// Also writes the monitor page as a frozen, self-contained HTML snapshot (no
+        /// refresh tag) to this path — the incident artifact and the live page are the same
+        /// renderer. The JSON envelope still prints to stdout.
+        #[arg(long)]
+        html: Option<PathBuf>,
     },
     /// Admits a Graph Signal envelope, externalizes its evidence, and reports the governance
     /// verdict for the mode in force. Evidence externalizes to an operator-supplied file, not the

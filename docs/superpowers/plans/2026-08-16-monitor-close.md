@@ -28,11 +28,13 @@
 
 ---
 
-### Task 0: reconciliation
+### Task 0: reconciliation ✅ (ran 2026-08-16 against merged main b602434)
 
-- [ ] **Step 1:** Read merged main: the gate suite list (nine suites expected), the serve router shape post-05e (`/v1/gateway/*` present), the GHCLI registry (016 last), `ServeState` fields, and the status projection structs the renderer will consume. Rewrite any stale reference in this document; confirm rule 6 (no new code needed) against the real refusal paths.
-- [ ] **Step 2:** Re-check the #35 spec-debt triggers against 05f's scope (expected: none fire — the monitor adds no cache, simulator, governor, or claims surface).
-- [ ] **Step 3: Commit** `docs(plans): reconcile 05f plan against merged main (Task 0)`.
+- [x] **Step 1:** Read merged main: the gate suite list (nine suites expected), the serve router shape post-05e (`/v1/gateway/*` present), the GHCLI registry (016 last), `ServeState` fields, and the status projection structs the renderer will consume. Rewrite any stale reference in this document; confirm rule 6 (no new code needed) against the real refusal paths.
+- [x] **Step 2:** Re-check the #35 spec-debt triggers against 05f's scope (expected: none fire — the monitor adds no cache, simulator, governor, or claims surface).
+- [x] **Step 3: Commit** `docs(plans): reconcile 05f plan against merged main (Task 0)`.
+
+**Task 0 findings (main `b602434`):** gate list is exactly the nine expected suites (`ci/gate.ps1:106`); GHCLI registry ends at 016 (015 mcp `mcp/mod.rs:22`, 016 driver `serve/routes.rs:692`) — rule 6 holds and the refusal paths are real: `serve.not_found` 404 via the router fallback (`serve/mod.rs:290,308`) wrapped by the auth layer (401 precedes 404, the 05a shape), axum's own 405 for method mismatch; `/v1/gateway/routes|probe` present (`serve/mod.rs:288-289`); `ServeState { token, events, runtime, sealing, cancels }` confirmed (`serve/mod.rs:100-124`). ONE stale reference rewritten: the plan named a `StatusView` struct that does not exist — the renderer's input is `ExecutionProjection` (+ `execution::render` as the shared JSON truth), corrected in Task 1's signature and test comment. #35: no trigger fires (no cache, simulator, governor, or claims surface in 05f).
 
 ### Task 1: the pure renderer — HTML as a third formatter over one truth
 
@@ -51,13 +53,13 @@ fn the_monitor_page_contains_no_script_and_escapes_every_dynamic_string() {
 
 #[test]
 fn the_monitor_renders_states_triage_and_tail_from_the_same_projection_fixture() {
-    // The SAME StatusView fixture the status command tests use: every node state appears
+    // The SAME ExecutionProjection fixture the status command tests fold: every node state appears
     // exactly once, the triage list renders untriaged interruptions, the tail renders the
     // last N events with actor attribution ("ACTOR verb TARGET" line grammar).
 }
 ```
 
-- [ ] **Step 2: Implement** `fn render_monitor(view: &StatusView, events: &[EventEnvelope], since: u64, now: DateTime<Utc>) -> String`: inline `<style>`, no template engine, a local `fn escape(text: &str) -> String` for every dynamic string. Sections: header (execution id, aggregate status, head sequence), **delta strip** (transitions with sequence > `since` — computed from the tail, stateless because the refresh URL carries the cursor: `<meta http-equiv="refresh" content="2;url=/monitor/{id}?since={head}">`), node table, triage list, event tail.
+- [ ] **Step 2: Implement** `fn render_monitor(projection: &ExecutionProjection, events: &[EventEnvelope], since: u64, now: DateTime<Utc>) -> String` (**Task 0 reconciled**: there is no `StatusView` struct on main — the status truth is `ExecutionProjection` plus `execution::render(&projection) -> serde_json::Value` at `apps/cli/src/commands/execution/mod.rs:453`; the renderer consumes the projection directly, and "same truth as status" means the same projection the same replay produces): inline `<style>`, no template engine, a local `fn escape(text: &str) -> String` for every dynamic string. Sections: header (execution id, aggregate status, head sequence), **delta strip** (transitions with sequence > `since` — computed from the tail, stateless because the refresh URL carries the cursor: `<meta http-equiv="refresh" content="2;url=/monitor/{id}?since={head}">`), node table, triage list, event tail.
 - [ ] **Step 3:** green, fmt, clippy. **Sabotage:** drop the escape on node names; the no-script/escape test fails; restore. **Commit** `feat(monitor): pure zero-JS renderer over the status projection`.
 
 ### Task 2: the routes and the cookie bootstrap — read-only structurally

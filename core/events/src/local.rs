@@ -484,6 +484,26 @@ impl LocalEventRepository {
         })
     }
 
+    /// Every distinct (scope, stream) the repository holds, sorted — the read-only
+    /// enumeration the 05f monitor's index renders as links. A read under the same
+    /// exclusive lock every other read takes; nothing here can write.
+    pub fn list_streams(&self) -> Result<Vec<crate::RepositoryStream>, EventRepositoryError> {
+        self.with_exclusive_lock(|| {
+            let state = self.load_state()?;
+            let mut streams = BTreeMap::new();
+            for batch in &state.batches {
+                streams.insert(
+                    stream_key(&batch.scope, &batch.stream_id)?,
+                    (batch.scope.clone(), batch.stream_id.clone()),
+                );
+            }
+            Ok(streams
+                .into_values()
+                .map(|(scope, stream_id)| crate::RepositoryStream { scope, stream_id })
+                .collect())
+        })
+    }
+
     fn with_exclusive_lock<T>(
         &self,
         operation: impl FnOnce() -> Result<T, EventRepositoryError>,

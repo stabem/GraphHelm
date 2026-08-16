@@ -36,6 +36,29 @@ pub(crate) fn execute(
     Ok(value)
 }
 
-pub fn run(events: &Path, execution: Option<&str>) -> Outcome {
+pub fn run(events: &Path, execution: Option<&str>, html: Option<&Path>) -> Outcome {
+    if let Some(html) = html
+        && let Err(failure) = write_snapshot(events, execution, html)
+    {
+        return finish::<serde_json::Value>(COMMAND, Err(failure), |value| value);
+    }
     finish(COMMAND, execute(events, execution), |value| value)
+}
+
+/// `--html`: the monitor page as a frozen incident snapshot — the SAME `render_snapshot`
+/// the serve layer's live page is built from (05f Task 5), written before the envelope so
+/// a write failure is the command's failure, not a silent skip.
+fn write_snapshot(events: &Path, execution: Option<&str>, html: &Path) -> Result<(), Failure> {
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let (scope, stream, history) = resolve_stream(&store, execution)?;
+    let projection = graphhelm_events::replay(&scope, &stream, &history)
+        .map_err(|error| replay_failure(&error))?;
+    let page = crate::commands::serve::monitor::render_snapshot(
+        &projection,
+        &history,
+        chrono::Utc::now(),
+        events,
+    );
+    std::fs::write(html, page)
+        .map_err(|_| super::argument("--html does not name a writable file path", "/html"))
 }

@@ -5,6 +5,7 @@ mod gateway;
 mod hash;
 mod lint;
 mod mcp;
+pub(crate) mod remediation;
 mod replay;
 mod schema;
 mod serve;
@@ -142,9 +143,11 @@ pub fn run(command: TopLevel) -> Outcome {
                 &mode,
                 execution.as_deref(),
             ),
-            ExecutionCommand::Status { events, execution } => {
-                execution::status::run(&events, execution.as_deref())
-            }
+            ExecutionCommand::Status {
+                events,
+                execution,
+                html,
+            } => execution::status::run(&events, execution.as_deref(), html.as_deref()),
             ExecutionCommand::Signal {
                 events,
                 execution,

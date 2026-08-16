@@ -1,3 +1,4 @@
+pub(super) mod monitor;
 pub(super) mod ports;
 mod routes;
 
@@ -292,6 +293,15 @@ fn build_router(state: ServeState) -> Router {
         // path with no route must still be refused 401, not fall through to a 404 that would
         // leak whether the path exists to an unauthenticated caller.
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
+        // The monitor sub-router merges AFTER the auth layer: its cookie bootstrap replaces
+        // the Bearer scheme (same token bytes, same constant-time verifier — one authority),
+        // and it is GET-only by construction — a mutating verb never has a handler to reach,
+        // so 405 is the router's answer, not a handler's choice (D-040 as structure).
+        .merge(
+            Router::new()
+                .route("/monitor", get(monitor::monitor_index))
+                .route("/monitor/{id}", get(monitor::monitor_page)),
+        )
         // Closes out the router's pending `ServeState` (needed by `routes::status`/`routes::events`
         // above, which extract it via `State<ServeState>`) into a plain `Router` axum::serve can
         // run directly.

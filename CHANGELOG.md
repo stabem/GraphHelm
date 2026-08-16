@@ -1,5 +1,13 @@
 # Specification Changelog
 
+## Monitor and Milestone 05 close, 05f — 2026-08-16
+
+- The read-only monitor (D-040): `GET /monitor[/{id}]` on serve, server-side-rendered ZERO-JavaScript HTML over the same `ExecutionProjection` the status command folds — the medium enforces the refusal (no script for a button to hook into), GET-only structurally (405 to every mutating verb, CSP on every 200), cookie bootstrap through the one shared constant-time verifier (token never in a Location or a page byte), meta-refresh with a `since` cursor making the delta strip stateless.
+- Silence as signal and remediation as text: per-node staleness clocks from event gaps (per-kind bounds when the stream carries a graph, honest "unknown" when it does not), blast radius via pure reachability, and the EXACT approve command beside each triaged node — rendered from the clap definition itself and parse-round-trip-tested so page and CLI cannot drift.
+- The negative proof: every monitor route hammered with every verb, store bytes fingerprinted bit-identical; `execution status --html` writes the same renderer frozen (byte-equal minus exactly the refresh line) as the incident artifact.
+- The Milestone 05 close: `m05-clauses.toml` binds each §8 clause to named provers with assert fingerprints; `acceptance_map_is_grounded` (gate-listed) verifies fn existence, gate membership, fingerprints, D-citations, the generated map's bytes, and the committed run evidence's checksums in both directions. The real-work run happened once on the owner-subscription route (native_runtime, claude CLI) — completed, replayed byte-identically, identical state via CLI/HTTP/MCP — and is never re-run, only re-hashed.
+- `monitor_http` joined the gate (tenth CLI suite, red-proven). Honest limits recorded: staleness vs event granularity, graph-publication absence on CLI/serve streams, the cookie as a named second door, the 2s refresh as the whole update contract, remediation without If-Match, the native adapter's cwd sensitivity, 401-as-needs_capacity inherited from 05b, the double-duty keyring biting once, and the single-store monitor index.
+
 ## Chat surface, 05e — 2026-08-16
 
 - `graphhelm mcp` added: a stateless stdio MCP server whose tools map 1:1 onto Public Runtime API requests (D-039). Hand-rolled minimal JSON-RPC 2.0 per ADR-026 — the declined rmcp footprint measured and recorded (328→342 packages, 14 crates) — with a bounded 1 MiB line reader, protocol revision pinned to 2025-06-18 (the handshake model the targeted hosts speak; the meta-versioned 2026-07-28 spec noted as a revisit candidate), and a conformance suite pinning id echo, notification silence, and oversized-line resync.

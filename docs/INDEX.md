@@ -5,6 +5,7 @@
 - [Master PRD](../MASTER_PRD.md)
 - [Product requirements](product/PRODUCT_REQUIREMENTS.md)
 - [Roadmap and acceptance](product/ROADMAP_AND_ACCEPTANCE.md)
+- [Future directions](product/FUTURE_DIRECTIONS.md)
 - [GraphHelm — naming decision](product/NAMING_DECISION.md)
 - [Decision register](DECISION_REGISTER.md)
 - [Glossary](GLOSSARY.md)

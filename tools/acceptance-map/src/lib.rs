@@ -191,6 +191,16 @@ pub fn replay_demonstration_store(
             format!("{prefix}-verify-{next}")
         }
     }
+    // A committed store loses its EMPTY child directories on checkout (git tracks no
+    // empty dirs), and the repository's anchor validation requires them (#58, found on
+    // the first post-merge gate of main — the branch was green only because the
+    // recording worktree still carried them untracked). They are content-empty by
+    // construction for a fixture journey — any real blob is a tracked FILE and survives
+    // checkout — so the replayer restores the shape before opening.
+    for child in ["blobs", ".tmp", "active"] {
+        std::fs::create_dir_all(events.join(child))
+            .map_err(|error| format!("the demonstration store shape: {error}"))?;
+    }
     let store = graphhelm_events::LocalEventRepository::open(
         events,
         std::sync::Arc::new(WallClock),

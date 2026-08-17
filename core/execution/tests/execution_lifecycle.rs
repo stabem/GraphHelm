@@ -218,6 +218,7 @@ fn record_outcome(
             node_id: OpaqueId::parse(node).unwrap(),
             outcome,
             next_state,
+            reason: None,
         }),
     )]);
     next_state

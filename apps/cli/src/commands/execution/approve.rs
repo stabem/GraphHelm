@@ -3,8 +3,9 @@ use std::path::Path;
 use graphhelm_protocols::{NodeOutcome, NodeState, OpaqueId, PersistedActor};
 
 use super::{
-    Failure, execution_state, finish, idempotency_key, load_projection, node_state_label,
-    owner_actor, record_outcome_with_key, render, replay_projection, repository_failure,
+    Failure, RecordedOutcome, execution_state, finish, idempotency_key, load_projection,
+    node_state_label, owner_actor, record_outcome_with_key, render, replay_projection,
+    repository_failure,
 };
 use crate::commands::event_store;
 use crate::output::Outcome;
@@ -79,7 +80,7 @@ pub(crate) fn execute(
         &execution_id,
         &actor,
         node,
-        NodeOutcome::Approved,
+        RecordedOutcome::uncaused(NodeOutcome::Approved),
         key,
     )?;
 

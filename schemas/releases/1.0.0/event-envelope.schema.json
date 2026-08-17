@@ -344,9 +344,37 @@
         "executionId": {"$ref": "#/$defs/opaqueId"},
         "nodeId": {"$ref": "#/$defs/opaqueId"},
         "outcome": {"$ref": "#/$defs/nodeOutcome"},
-        "nextState": {"$ref": "#/$defs/nodeState"}
+        "nextState": {"$ref": "#/$defs/nodeState"},
+        "reason": {"$ref": "#/$defs/nodeOutcomeReason"}
       },
       "additionalProperties": false
+    },
+    "nodeOutcomeReason": {
+      "type": "string",
+      "enum": [
+        "auth_required",
+        "auth_revoked",
+        "quota_exhausted",
+        "rate_limited",
+        "provider_unavailable",
+        "model_removed",
+        "context_too_large",
+        "malformed_output",
+        "runtime_crashed",
+        "unsupported_capability",
+        "policy_denied",
+        "cancelled",
+        "timeout",
+        "empty_reply",
+        "malformed_judgment",
+        "judge_refused",
+        "gate_refused",
+        "tool_exited_non_zero",
+        "tool_timed_out",
+        "tool_denied",
+        "tool_host_error",
+        "fixture_scripted"
+      ]
     },
     "executionCompleted": {
       "type": "object",

@@ -1,5 +1,15 @@
 # Specification Changelog
 
+## The one-glance answer, M07 — 2026-08-17
+
+- Scope was the blind judge's four M06 findings and nothing else; the closing rule was that the same judge, on the same story, had to stop making them. Three real subscription runs were needed (`docs/acceptance/m07-run-2026-08-17/`): 8 findings with one critical, then 7 with two criticals, then 7 with none — the last crediting a fix in its own words ("wake_status does correctly separate contentHead (12) from head (14)").
+- F1: the sleep question is decided ONCE. `graphhelm_execution::attention` is the single pure predicate; `render` and the monitor both call it, and the monitor's private copy (the third in the codebase) is gone. `attentionRequired` is derived from its reasons, never declared beside them. The monitor states the verdict in words.
+- F2: all sixteen lifecycle states are emitted as zero-filled buckets, reversing a documented guarantee — the assert that pinned the omission was inverted with its reasoning rewritten, not deleted.
+- F3: `NodeOutcomeRecorded` carries an optional `reason` from a closed vocabulary (the fourteen route classes plus empty reply, malformed judgment, judge/gate refusals, four tool dispositions, fixture-scripted). Closed by design: the class rides the event, the text seals to Evidence (D-036). The gateway-error arm — which knew the most and sealed the least — now seals too. `reason` is OMITTED when absent because replay re-serializes each envelope and recomputes its hash: an always-emitted null breaks the chain of every pre-M07 event, proven by sabotage (a committed store stopped opening).
+- F4: the fold keeps the last consumption per session, recorded from the consumption event; `wake_status` returns live/cursor/head/contentHead/lastConsumed. `contentHead` exists because the doorbell rings on content only, and publishing the raw head alone made a lost ring look plausible to the judge.
+- The closing rule caught two defects both agents had shipped: the wedge arm was dead code in production (a real execution never emits `simulation_started`, so its status is null throughout and the arm demanded `Some(Running)`), and `status` itself was null on every read of a live run. A started execution with no recorded status now reports `running` on every surface.
+- Honest limits recorded in `docs/milestones/one-glance.md`, including the four M08 seeds the judge raised: no liveness/time data in the glance, retry flapping invisible, no blocking wait on the MCP surface, and `wake_last_consumed` growing without bound.
+
 ## Quality gates, M06 — 2026-08-17
 
 - The verdict vocabulary (kinds 29/30): `GateVerdict` is refusal-with-findings by construction (the envelope schema refuses a bare fail on the wire; the judge parser refuses it in-process); `GateCertified` is the thymus receipt as replayable state — `gate_certifications[gate_id] = suite_digest` in the fold, compared against the CURRENT suite digest so growing the pathogen suite voids old immunity by comparison.

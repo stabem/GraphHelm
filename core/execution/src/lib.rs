@@ -4,6 +4,7 @@
 //! no adapter dependency. Every rule is a function over values so that replaying the same inputs
 //! reproduces the same decision exactly.
 
+pub mod attention;
 mod bounds;
 mod dispatch;
 mod progress;
@@ -12,6 +13,7 @@ mod recovery;
 mod signal;
 mod transition;
 
+pub use attention::{Attention, AttentionReason, attention};
 pub use bounds::{
     MAX_ACCEPTED_MUTATIONS, MAX_IDENTICAL_OUTCOMES, MAX_NODE_ATTEMPTS, MAX_READY_SET,
     MAX_SIGNALS_PER_EXECUTION,

@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use graphhelm_protocols::NodeOutcome;
+use graphhelm_protocols::{NodeOutcome, NodeOutcomeReason};
 
 /// One dispatched unit of node work.
 #[derive(Clone, Debug)]
@@ -64,6 +64,10 @@ pub struct WorkOutcome {
     /// beside the outcome in the same batch — the auditable WHY the graph routed as it
     /// did. Always `None` for cognitive and tool work.
     pub gate_verdict: Option<GateVerdictSummary>,
+    /// WHY this outcome happened (M07 F3), in the closed wire vocabulary the
+    /// `NodeOutcomeRecorded` kind carries. `None` on success and NEVER on a failure: an
+    /// outcome the operator cannot act on is the defect the blind judge named.
+    pub reason: Option<NodeOutcomeReason>,
 }
 
 /// What a gate evaluation decided, in the wire vocabulary the `GateVerdict` kind carries.
@@ -139,6 +143,32 @@ pub struct PortExecutor {
     pub actor: String,
 }
 
+/// Names a gateway class as a cause. This is NOT a second outcome mapping —
+/// `outcome_for_error` remains the one authority on what parks, retries or is terminal
+/// (M06's sabotage still proves that). This maps the same error value to its NAME, and the
+/// match is exhaustive so a future class must be named rather than silently unexplained.
+const fn reason_for_gateway_error(
+    error: graphhelm_gateway::taxonomy::GatewayError,
+) -> NodeOutcomeReason {
+    use graphhelm_gateway::taxonomy::GatewayError as E;
+    match error {
+        E::AuthRequired => NodeOutcomeReason::AuthRequired,
+        E::AuthRevoked => NodeOutcomeReason::AuthRevoked,
+        E::QuotaExhausted => NodeOutcomeReason::QuotaExhausted,
+        E::RateLimited => NodeOutcomeReason::RateLimited,
+        E::ProviderUnavailable => NodeOutcomeReason::ProviderUnavailable,
+        E::ModelRemoved => NodeOutcomeReason::ModelRemoved,
+        E::ContextTooLarge => NodeOutcomeReason::ContextTooLarge,
+        E::MalformedOutput => NodeOutcomeReason::MalformedOutput,
+        E::ToolDenied => NodeOutcomeReason::ToolDenied,
+        E::RuntimeCrashed => NodeOutcomeReason::RuntimeCrashed,
+        E::UnsupportedCapability => NodeOutcomeReason::UnsupportedCapability,
+        E::PolicyDenied => NodeOutcomeReason::PolicyDenied,
+        E::Cancelled => NodeOutcomeReason::Cancelled,
+        E::Timeout => NodeOutcomeReason::Timeout,
+    }
+}
+
 impl PortExecutor {
     fn cognitive_outcome(
         &self,
@@ -174,13 +204,24 @@ impl PortExecutor {
                     summary,
                     reuse: None,
                     gate_verdict: None,
+                    reason: (outcome != NodeOutcome::Succeeded)
+                        .then_some(NodeOutcomeReason::EmptyReply),
                 }
             }
             // Delegation, not a second mapping: 05b's outcome_for_error is the one authority
             // on what parks, what retries and what is terminal (the sabotage proves it).
+            //
+            // M07 F3: this arm knew the most and recorded the least — no cause on the event
+            // and, uniquely among the failure paths, nothing sealed beside it. Both halves
+            // land here now. The sealed text is the taxonomy's own static words, so the
+            // evidence cannot carry provider prose the class was chosen to keep out.
             Err(error) => WorkOutcome {
                 outcome: graphhelm_gateway::taxonomy::outcome_for_error(error),
-                sealables: Vec::new(),
+                sealables: vec![Sealable {
+                    local_ref_suffix: "gateway-error",
+                    media_type: "text/plain",
+                    bytes: error.to_string().into_bytes(),
+                }],
                 summary: WorkSummary {
                     input_tokens: None,
                     output_tokens: None,
@@ -188,6 +229,7 @@ impl PortExecutor {
                 },
                 reuse: None,
                 gate_verdict: None,
+                reason: Some(reason_for_gateway_error(error)),
             },
         }
     }
@@ -206,6 +248,15 @@ impl PortExecutor {
         let exit_code = match &result.record.disposition {
             ToolDisposition::Completed { exit_code } => Some(*exit_code),
             _ => None,
+        };
+        // The disposition's own name, so "it failed" becomes "the deadline killed it" or
+        // "the lease refused it" without the operator opening Evidence first.
+        let reason = match &result.record.disposition {
+            ToolDisposition::Completed { exit_code: 0 } => None,
+            ToolDisposition::Completed { .. } => Some(NodeOutcomeReason::ToolExitedNonZero),
+            ToolDisposition::TimedOut => Some(NodeOutcomeReason::ToolTimedOut),
+            ToolDisposition::Denied { .. } => Some(NodeOutcomeReason::ToolDenied),
+            ToolDisposition::HostError { .. } => Some(NodeOutcomeReason::ToolHostError),
         };
         let record_json = serde_json::to_vec(&result.record).expect("a record serializes");
         WorkOutcome {
@@ -234,6 +285,7 @@ impl PortExecutor {
             },
             reuse: result.reuse,
             gate_verdict: None,
+            reason,
         }
     }
 }
@@ -305,7 +357,11 @@ fn judge_outcome(
         Err(error) => {
             return WorkOutcome {
                 outcome: graphhelm_gateway::taxonomy::outcome_for_error(error),
-                sealables: Vec::new(),
+                sealables: vec![Sealable {
+                    local_ref_suffix: "gateway-error",
+                    media_type: "text/plain",
+                    bytes: error.to_string().into_bytes(),
+                }],
                 summary: WorkSummary {
                     input_tokens: None,
                     output_tokens: None,
@@ -313,6 +369,7 @@ fn judge_outcome(
                 },
                 reuse: None,
                 gate_verdict: None,
+                reason: Some(reason_for_gateway_error(error)),
             };
         }
     };
@@ -336,8 +393,9 @@ fn judge_outcome(
                 "stepsOverPar": verdict.steps_over_par,
                 "stallPoints": verdict.stall_points,
             });
+            let passed = verdict.passed;
             WorkOutcome {
-                outcome: if verdict.passed {
+                outcome: if passed {
                     NodeOutcome::Succeeded
                 } else {
                     NodeOutcome::TerminalFailure
@@ -354,6 +412,7 @@ fn judge_outcome(
                     passed: verdict.passed,
                     findings: verdict.findings,
                 }),
+                reason: (!passed).then_some(NodeOutcomeReason::JudgeRefused),
             }
         }
         // The model flaked, the deliverable was never judged: retryable, bounded by the
@@ -368,6 +427,7 @@ fn judge_outcome(
             summary,
             reuse: None,
             gate_verdict: None,
+            reason: Some(NodeOutcomeReason::MalformedJudgment),
         },
     }
 }
@@ -399,5 +459,6 @@ fn gate_check_outcome(gate: &crate::executor::GateCheckWork) -> WorkOutcome {
             passed,
             findings,
         }),
+        reason: (!passed).then_some(NodeOutcomeReason::GateRefused),
     }
 }

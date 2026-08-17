@@ -93,6 +93,7 @@ pub async fn record_outcome_with_evidence(
             node_id: node_id.clone(),
             outcome: work.outcome,
             next_state,
+            reason: work.reason,
         }),
         sealed_work.references.clone(),
         vec![],
@@ -247,6 +248,11 @@ fn bare(outcome: NodeOutcome) -> WorkOutcome {
         },
         reuse: None,
         gate_verdict: None,
+        // Lifecycle hops (`Approved`, `Started`) have nothing to explain, and `Interrupted`
+        // IS its own cause — the triage rule reads that outcome directly
+        // (`last_outcome == Interrupted`), so a restated reason here would be noise, which
+        // is the other half of what M07 F3 is about.
+        reason: None,
     }
 }
 

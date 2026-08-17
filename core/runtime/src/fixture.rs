@@ -37,8 +37,9 @@ impl AsyncNodeExecutor for FixtureAsyncExecutor {
             .execute(&work.node_id, work.attempt)
             .map_err(|_| ExecutorRefusal::Unsupported);
         Box::pin(async move {
+            let outcome = outcome?;
             Ok(WorkOutcome {
-                outcome: outcome?,
+                outcome,
                 // A fixture produces no free-form material and spends no tokens: nothing to
                 // seal, nothing to count.
                 sealables: Vec::new(),
@@ -49,6 +50,10 @@ impl AsyncNodeExecutor for FixtureAsyncExecutor {
                 },
                 reuse: None,
                 gate_verdict: None,
+                // A fixture failure is scripted, not observed. Naming it as such keeps a
+                // simulated red from being triaged as a provider defect (M07 F3).
+                reason: (outcome != graphhelm_protocols::NodeOutcome::Succeeded)
+                    .then_some(graphhelm_protocols::NodeOutcomeReason::FixtureScripted),
             })
         })
     }

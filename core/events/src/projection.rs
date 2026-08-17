@@ -191,6 +191,25 @@ pub struct ExecutionProjection {
     /// consumption without a live lease is a replay integrity refusal.
     #[serde(default)]
     pub wake_leases: BTreeMap<String, WakeLeaseState>,
+    /// The LAST consumption per session (M07 F4): why the lease burned and at which
+    /// sequence. A burned lease used to vanish without a trace, so `wake_status` could
+    /// only say "not live" — indistinguishable from "never armed". The receipt is what
+    /// lets the alarm answer its own question: "rang at #N" vs "burned as stale at #N".
+    ///
+    /// Additive with `serde(default)`: unlike an event payload, a projection is DERIVED,
+    /// never hashed per event, so a new field costs an artifact digest re-record and never
+    /// a broken hash chain (the M07 Task 2 distinction, stated where both live).
+    #[serde(default)]
+    pub wake_last_consumed: BTreeMap<String, WakeConsumptionReceipt>,
+}
+
+/// Why and where a lease burned (M07 F4).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeConsumptionReceipt {
+    pub reason: graphhelm_protocols::WakeConsumeReason,
+    /// The sequence of the consumption event itself — the "#N" an operator quotes.
+    pub sequence: u64,
 }
 
 /// One live lease as the projection holds it (05g): the armed cursor and the opaque
@@ -885,6 +904,16 @@ fn apply_projection_event(
                 // History cannot burn a lease that was never armed.
                 return Err(ReplayError::Corrupt);
             }
+            // F4: the burn leaves a receipt. Recorded from the CONSUMPTION event (its own
+            // reason and its own sequence), never reconstructed from the lease that was
+            // just removed — the lease knows when it was armed, not why or when it died.
+            projection.wake_last_consumed.insert(
+                payload.session_id.as_str().to_owned(),
+                WakeConsumptionReceipt {
+                    reason: payload.reason,
+                    sequence: event.sequence,
+                },
+            );
         }
         EventKind::GraphImported(_)
         | EventKind::GraphValidationFailed(_)

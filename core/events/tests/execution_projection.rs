@@ -158,6 +158,7 @@ fn execution_events(outcomes: &[Outcome]) -> Vec<EventEnvelope> {
                 node_id: node_id.clone(),
                 outcome,
                 next_state,
+                reason: None,
             }),
         ));
     }
@@ -523,6 +524,7 @@ fn ghost_proposal_over_existing_node() -> Vec<EventEnvelope> {
                 node_id: node_id.clone(),
                 outcome,
                 next_state,
+                reason: None,
             }),
         ),
         event(
@@ -975,4 +977,85 @@ fn a_bare_failing_verdict_is_schema_invalid_by_construction() {
             .is_empty(),
         "a pass may carry no findings — the rule binds refusals"
     );
+}
+
+/// M07 F4: the alarm answers its OWN question. A burned lease used to vanish without a
+/// trace, so `wake_status` could say "not live" but never "it rang at #N" — the judge's
+/// exact complaint (an operator cannot tell a fired alarm from one that never armed). The
+/// fold now keeps the LAST consumption per session, additively.
+#[test]
+fn a_burned_lease_leaves_its_receipt_behind() {
+    use graphhelm_protocols::{WakeConsumeReason, WakeLease, WakeLeaseConsumed};
+
+    let mut events = vec![event(
+        "start-1",
+        EventKind::ExecutionStarted(ExecutionStarted {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            graph_version: 1,
+            graph_hash: WireHash::parse(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            mode: ExecutionMode::Autopilot,
+        }),
+    )];
+    let lease = |suffix: &str, cursor: u64| {
+        event(
+            suffix,
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-a").unwrap(),
+                cursor,
+                rendezvous_id: OpaqueId::parse("rdv-one").unwrap(),
+            }),
+        )
+    };
+    let consume = |suffix: &str, reason: WakeConsumeReason| {
+        event(
+            suffix,
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-a").unwrap(),
+                reason,
+            }),
+        )
+    };
+
+    // Nothing consumed yet: no receipt to show.
+    events.push(lease("lease-1", 1));
+    let armed = replay(&scope(), STREAM, &append(events.clone())).unwrap();
+    assert!(
+        armed.wake_last_consumed.is_empty(),
+        "an armed-but-never-burned lease has no receipt"
+    );
+
+    // Rung: the receipt names the reason AND the sequence the burn landed at, which is
+    // what lets a woken sleeper say "my alarm rang at #N".
+    events.push(consume("consume-1", WakeConsumeReason::Rung));
+    let rung = replay(&scope(), STREAM, &append(events.clone())).unwrap();
+    assert!(
+        rung.wake_leases.is_empty(),
+        "consumption still burns the lease"
+    );
+    let receipt = rung
+        .wake_last_consumed
+        .get("session-a")
+        .expect("the burn leaves a receipt");
+    assert_eq!(receipt.reason, WakeConsumeReason::Rung);
+    assert_eq!(
+        receipt.sequence, 3,
+        "the receipt carries the sequence of the consumption event itself"
+    );
+
+    // Re-armed and burned as stale: the LAST consumption wins, so the answer is never a
+    // stale one from an older cycle.
+    events.push(lease("lease-2", 3));
+    events.push(consume("consume-2", WakeConsumeReason::StaleRendezvous));
+    let stale = replay(&scope(), STREAM, &append(events)).unwrap();
+    let receipt = stale
+        .wake_last_consumed
+        .get("session-a")
+        .expect("the second burn replaces the first");
+    assert_eq!(receipt.reason, WakeConsumeReason::StaleRendezvous);
+    assert_eq!(receipt.sequence, 5);
 }

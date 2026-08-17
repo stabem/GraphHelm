@@ -332,6 +332,64 @@ pub struct NodeOutcomeRecorded {
     pub node_id: OpaqueId,
     pub outcome: NodeOutcome,
     pub next_state: NodeState,
+    /// WHY the outcome was what it was (M07 F3), from the closed vocabulary below.
+    ///
+    /// `skip_serializing_if` is REQUIRED here and is not a style choice: replay
+    /// re-serializes each deserialized envelope and recomputes its hash against the stored
+    /// one (`core/events/src/projection.rs`). An always-emitted `"reason": null` would
+    /// change the bytes of every event written before this milestone and break the hash
+    /// chain of every existing stream — the committed acceptance evidence included. Absent
+    /// therefore keeps meaning "written before causes existed", and the schema leaves the
+    /// key out of `required` for exactly the same reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<NodeOutcomeReason>,
+}
+
+/// The closed cause vocabulary for a node outcome (M07 F3).
+///
+/// Deliberately an enum and never free text. The durable stream must not carry provider
+/// prose, paths or anything a secret could ride in on; `GatewayError` is itself a
+/// field-free enum of static classes, so naming the class is lossless for triage while the
+/// human-readable material goes to Evidence under D-036. Successes carry no reason at all:
+/// a cause on a success is noise, and noise is what the judge's finding is ultimately about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeOutcomeReason {
+    // The §17 route classes, named one-for-one with `graphhelm_gateway::taxonomy`.
+    AuthRequired,
+    AuthRevoked,
+    QuotaExhausted,
+    RateLimited,
+    ProviderUnavailable,
+    ModelRemoved,
+    ContextTooLarge,
+    MalformedOutput,
+    RuntimeCrashed,
+    UnsupportedCapability,
+    PolicyDenied,
+    Cancelled,
+    Timeout,
+    /// The provider answered with nothing — distinct from answering unusably.
+    EmptyReply,
+    /// A judge replied outside the verdict contract: the deliverable was never judged.
+    MalformedJudgment,
+    /// A judge returned a well-formed refusal: the deliverable failed judgment.
+    JudgeRefused,
+    /// A deterministic gate refused the delivery.
+    GateRefused,
+    /// The tool ran to completion with a non-zero exit code.
+    ToolExitedNonZero,
+    /// The deadline killed the tool's child process.
+    ToolTimedOut,
+    /// The lease refused the call (`GatewayError::ToolDenied` and the broker's own refusal
+    /// share this name because they are the same fact to an operator).
+    ToolDenied,
+    /// The host failed around the tool rather than the tool itself.
+    ToolHostError,
+    /// The outcome came from a simulation fixture, not from real work. Recorded rather
+    /// than left blank so a scripted failure can never be misread as a provider defect
+    /// during triage — the fixture IS the cause, and saying so costs one word.
+    FixtureScripted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

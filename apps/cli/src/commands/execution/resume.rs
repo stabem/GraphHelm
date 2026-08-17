@@ -9,9 +9,9 @@ use graphhelm_protocols::{
 
 use super::driver::drive_to_quiescence;
 use super::{
-    Failure, PreparedDrive, append_event, execution_state, finish, idempotency_key, load_fixtures,
-    owner_actor, record_outcome, render, replay_failure, replay_projection, repository_failure,
-    resolve_stream, system_actor,
+    Failure, PreparedDrive, RecordedOutcome, append_event, execution_state, finish,
+    idempotency_key, load_fixtures, owner_actor, record_outcome, render, replay_failure,
+    replay_projection, repository_failure, resolve_stream, system_actor,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -177,7 +177,9 @@ pub(crate) fn execute_prepared(
                 &execution_id,
                 &actor,
                 &node,
-                NodeOutcome::Interrupted,
+                // `Interrupted` is its own cause — the triage rule reads that outcome
+                // directly, so restating it here would be noise (M07 F3).
+                RecordedOutcome::uncaused(NodeOutcome::Interrupted),
             )?;
         }
     }
@@ -230,7 +232,7 @@ pub(crate) fn execute_prepared(
             &execution_id,
             &actor,
             node,
-            NodeOutcome::Started,
+            RecordedOutcome::uncaused(NodeOutcome::Started),
         )?;
     }
 

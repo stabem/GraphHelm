@@ -523,6 +523,7 @@ fn running_node_repository(directory: &std::path::Path) -> (LocalEventRepository
                 node_id: OpaqueId::parse(NODE).unwrap(),
                 outcome,
                 next_state,
+                reason: None,
             }),
         )]);
     }
@@ -532,6 +533,7 @@ fn running_node_repository(directory: &std::path::Path) -> (LocalEventRepository
 fn succeeded_work(reuse: Option<ReuseSummary>) -> WorkOutcome {
     WorkOutcome {
         outcome: NodeOutcome::Succeeded,
+        reason: None,
         sealables: vec![
             Sealable {
                 local_ref_suffix: "reply",

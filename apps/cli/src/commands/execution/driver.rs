@@ -19,12 +19,12 @@ use graphhelm_execution::{
 };
 use graphhelm_protocols::{
     EventKind, ExecutionCompleted, GraphSpec, IdGenerator, NewEvent, NodeOutcome,
-    NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, RepositoryScope, Sensitivity,
-    SimulationStatus,
+    NodeOutcomeReason, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, RepositoryScope,
+    Sensitivity, SimulationStatus,
 };
 use graphhelm_simulation::{FixtureExecutor, SimulationFixtures};
 
-use super::{Failure, execution_state, replay_failure, repository_failure};
+use super::{Failure, RecordedOutcome, execution_state, replay_failure, repository_failure};
 use crate::commands::UuidIds;
 
 /// Drives a started execution to quiescence: completion, blocked, waiting, or paused. Used by
@@ -134,7 +134,13 @@ pub(super) fn drive_to_quiescence(
                 &execution_id,
                 actor,
                 node,
-                outcome,
+                // The outcome came from a fixture, so the fixture IS the cause (M07 F3):
+                // recording it keeps a simulated red from being triaged as a real one.
+                if outcome == NodeOutcome::Succeeded {
+                    RecordedOutcome::uncaused(outcome)
+                } else {
+                    RecordedOutcome::caused(outcome, NodeOutcomeReason::FixtureScripted)
+                },
             )?;
         }
     }
@@ -188,8 +194,9 @@ fn record_outcome(
     execution_id: &OpaqueId,
     actor: &PersistedActor,
     node: &str,
-    outcome: NodeOutcome,
+    recorded: RecordedOutcome,
 ) -> Result<NodeState, Failure> {
+    let RecordedOutcome { outcome, reason } = recorded;
     let projection = reread(store, scope, stream.as_str())?;
     let current = projection
         .node_states
@@ -225,6 +232,7 @@ fn record_outcome(
                 node_id,
                 outcome,
                 next_state,
+                reason,
             }),
             vec![],
             vec![],
@@ -253,7 +261,7 @@ fn dispatch_hops(
             execution_id,
             actor,
             node,
-            NodeOutcome::Started,
+            RecordedOutcome::uncaused(NodeOutcome::Started),
         )?;
     }
     record_outcome(
@@ -263,7 +271,7 @@ fn dispatch_hops(
         execution_id,
         actor,
         node,
-        NodeOutcome::Started,
+        RecordedOutcome::uncaused(NodeOutcome::Started),
     )?;
     Ok(())
 }
@@ -293,7 +301,7 @@ fn approve_untouched(
                 execution_id,
                 actor,
                 node,
-                NodeOutcome::Approved,
+                RecordedOutcome::uncaused(NodeOutcome::Approved),
             )?;
         }
     }

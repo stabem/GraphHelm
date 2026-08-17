@@ -6,7 +6,7 @@ use std::path::Path;
 
 use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, WakeLease};
 
-use super::{Failure, append_event, execution_state, load_projection, resolve_stream};
+use super::{Failure, append_event, execution_state, resolve_stream};
 use crate::commands::event_store;
 
 /// Arms (or re-arms — the fold replaces, never stacks) the caller's OWN lease. `cursor`
@@ -81,14 +81,62 @@ pub(crate) fn status(
     session_id: &str,
 ) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| super::repository_failure(&error))?;
-    let (_, _, projection) = load_projection(&store, execution)?;
+    // One read serves both answers: the head comes from the same history the projection
+    // folds, so the cursor is readable ("armed at #N, the stream is at #M") without a
+    // second pass over the store.
+    let (scope, stream, history) = resolve_stream(&store, execution)?;
+    let projection = graphhelm_events::replay(&scope, &stream, &history)
+        .map_err(|error| super::replay_failure(&error))?;
+    let head = history.last().map_or(0, |event| event.sequence);
+    // The head the DOORBELL compares against, which is not the stream's head: the sweep
+    // rings on content only and skips wake bookkeeping (`serve/wake.rs`), so a lease armed
+    // at #13 does not fire because its own `wake_lease` landed at #14. The M07 judge read
+    // `cursor:13, head:14, lastConsumed:null` and concluded a ring had been lost — a fair
+    // reading of a surface that published one notion of head while the doorbell used
+    // another. Both are reported now, because the operator's question is "will I be woken",
+    // and only this number answers it.
+    let content_head = history
+        .iter()
+        .filter(|event| {
+            !matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::WakeLease(_)
+                    | graphhelm_protocols::EventKind::WakeLeaseConsumed(_)
+            )
+        })
+        .map(|event| event.sequence)
+        .max()
+        .unwrap_or(0);
+
+    // F4: the alarm answers its OWN question. `live:false` alone is indistinguishable
+    // between "never armed" and "already rang", which is exactly what the judge could not
+    // tell. The receipt comes from the CONSUMPTION record in the fold — never from the
+    // lease map, which by definition no longer holds a burned lease.
+    let last_consumed = projection
+        .wake_last_consumed
+        .get(session_id)
+        .map(|receipt| {
+            serde_json::json!({
+                "reason": receipt.reason,
+                "atSequence": receipt.sequence,
+            })
+        });
     Ok(match projection.wake_leases.get(session_id) {
         Some(lease) => serde_json::json!({
             "sessionId": session_id,
             "live": true,
             "cursor": lease.cursor,
             "rendezvousId": lease.rendezvous_id,
+            "head": head,
+            "contentHead": content_head,
+            "lastConsumed": last_consumed,
         }),
-        None => serde_json::json!({ "sessionId": session_id, "live": false }),
+        None => serde_json::json!({
+            "sessionId": session_id,
+            "live": false,
+            "head": head,
+            "contentHead": content_head,
+            "lastConsumed": last_consumed,
+        }),
     })
 }

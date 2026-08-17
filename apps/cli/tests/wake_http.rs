@@ -56,6 +56,24 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
     (ServerGuard { child }, address, token)
 }
 
+/// A bearer-authenticated GET, parsed — the read half of the same raw-socket client the
+/// mutations use.
+fn get_json(address: &str, token: &str, path: &str) -> serde_json::Value {
+    use std::io::{Read, Write};
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\n\r\n"
+    );
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut reply = Vec::new();
+    let _ = stream.read_to_end(&mut reply);
+    let text = String::from_utf8_lossy(&reply);
+    text.split("\r\n\r\n")
+        .nth(1)
+        .and_then(|body| serde_json::from_str(body.trim()).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
 fn post_json(
     address: &str,
     token: &str,
@@ -640,11 +658,17 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     );
     let armed = &replies[1]["result"];
     assert_eq!(armed["isError"], false, "{replies:?}");
-    let armed_cursor: u64 =
-        serde_json::from_str::<serde_json::Value>(armed["content"][0]["text"].as_str().unwrap())
-            .unwrap()["data"]["armedCursor"]
-            .as_u64()
-            .unwrap();
+    let armed_reply: serde_json::Value =
+        serde_json::from_str(armed["content"][0]["text"].as_str().unwrap()).unwrap();
+    let armed_cursor: u64 = armed_reply["data"]["armedCursor"].as_u64().unwrap();
+    // The MCP session id is a per-PROCESS nonce (sleeper-only by design, 05g): a later MCP
+    // session is a different identity, so a woken sleeper reads its OWN alarm through the
+    // API with the id its arm reply handed back — which is exactly what the factory's own
+    // agents do.
+    let armed_session = armed_reply["data"]["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
     // The window opens: whatever the proxy has seen so far was the arming.
     let at_sleep = proxy.connections.load(std::sync::atomic::Ordering::SeqCst);
@@ -702,6 +726,92 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     assert!(
         signal_from_waker,
         "the woken sleeper reads the waker's event from its own cursor: {envelope}"
+    );
+
+    // M07 F4: and the sleeper can now ask its OWN alarm what happened. Before this, a
+    // woken session saw only `live: false` — indistinguishable from "I never armed" — so
+    // it could not tell a ring from a stale burn without reading raw history. The receipt
+    // answers in the sleeper's own words: "it rang, at #N".
+    let answer = get_json(
+        &base,
+        &token,
+        &format!("/v1/executions/{execution}/wake-lease?sessionId={armed_session}"),
+    );
+    assert!(
+        !answer.is_null(),
+        "the wake-lease read must parse: session {armed_session}"
+    );
+    let data = &answer["data"];
+    assert_eq!(
+        data["live"], false,
+        "the lease burned on the ring: {answer}"
+    );
+    assert_eq!(
+        data["lastConsumed"]["reason"], "rung",
+        "the alarm says it RANG — not merely that it is no longer armed: {answer}"
+    );
+    let rang_at = data["lastConsumed"]["atSequence"]
+        .as_u64()
+        .expect("the receipt carries the sequence it burned at");
+    assert!(
+        rang_at > armed_cursor,
+        "the ring landed after the arm ({rang_at} > {armed_cursor}): {answer}"
+    );
+    assert!(
+        data["head"].as_u64().expect("head") >= rang_at,
+        "the head makes the cursor readable: armed at #{armed_cursor}, rang at #{rang_at}:          {answer}"
+    );
+    // M07 Task 6, from the blind judge's re-judgement: the doorbell rings on CONTENT only
+    // (`serve/wake.rs` skips wake bookkeeping), so publishing the raw head alone let the
+    // judge read `cursor:13, head:14, lastConsumed:null` and conclude a ring had been lost.
+    // It had not — the #14 was the arm's own `wake_lease` event. `contentHead` is the number
+    // that actually answers "will I be woken", so both are reported and the arm's own
+    // bookkeeping can never masquerade as progress.
+    let content_head = data["contentHead"]
+        .as_u64()
+        .expect("the doorbell's own head is reported");
+    assert!(
+        content_head <= data["head"].as_u64().expect("head"),
+        "content head never exceeds the stream head: {answer}"
+    );
+}
+
+/// The same distinction with nothing but bookkeeping in flight: arming appends a
+/// `wake_lease` event, so the raw head moves while the doorbell's head does not. An
+/// operator comparing cursor to head would predict a ring that will never come.
+#[test]
+fn arming_moves_the_stream_head_but_never_the_doorbells_head() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-content-head");
+    let armed_at = head(&events);
+    arm_lease(&events, "exec-content-head", "rvz-content-head", armed_at);
+    let (_guard, address, token) = serve(&events);
+
+    let answer = get_json(
+        &address,
+        &token,
+        "/v1/executions/exec-content-head/wake-lease?sessionId=session-sleeper-1",
+    );
+    let data = &answer["data"];
+    assert_eq!(
+        data["live"], true,
+        "this guard is about the LIVE reply — a not-live answer would prove nothing: {answer}"
+    );
+    let head_now = data["head"].as_u64().expect("head");
+    let content_head = data["contentHead"].as_u64().expect("content head");
+    assert!(
+        head_now > armed_at,
+        "the arm's own event moved the stream head: {answer}"
+    );
+    assert!(
+        content_head <= armed_at,
+        "but the doorbell's head did not move, so no ring is pending: {answer}"
+    );
+    assert_eq!(
+        data["lastConsumed"],
+        serde_json::Value::Null,
+        "nothing was consumed, and the surface must not imply otherwise: {answer}"
     );
 }
 

@@ -6,8 +6,9 @@ use graphhelm_protocols::{
 };
 
 use super::{
-    Failure, append_event, execution_state, finish, idempotency_key, load_projection, owner_actor,
-    record_outcome, render, replay_projection, repository_failure, simulation_status_label,
+    Failure, RecordedOutcome, append_event, execution_state, finish, idempotency_key,
+    load_projection, owner_actor, record_outcome, render, replay_projection, repository_failure,
+    simulation_status_label,
 };
 use crate::commands::event_store;
 use crate::output::Outcome;
@@ -117,7 +118,7 @@ pub(crate) fn execute(
             &execution_id,
             &actor,
             node,
-            NodeOutcome::Paused,
+            RecordedOutcome::uncaused(NodeOutcome::Paused),
         )?;
     }
 

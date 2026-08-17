@@ -220,3 +220,50 @@ fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
         );
     }
 }
+
+/// M07 F3, the guard that protects every stream ever written: an outcome event recorded
+/// before causes existed must re-serialize BYTE-IDENTICALLY, because replay re-serializes
+/// each deserialized envelope and recomputes its hash against the stored one
+/// (`core/events/src/projection.rs`). If `reason` were emitted as an explicit `null`, every
+/// pre-M07 event's hash would change and every existing stream — the committed acceptance
+/// evidence included — would fail replay with an integrity error. `skip_serializing_if` is
+/// therefore load-bearing, not cosmetic, and this test is why it can never be removed.
+#[test]
+fn an_outcome_written_before_causes_existed_round_trips_byte_identically() {
+    let stored = serde_json::json!({
+        "executionId": "exec-1",
+        "nodeId": "implement",
+        "outcome": "retryable_failure",
+        "nextState": "queued",
+    });
+    let parsed: graphhelm_protocols::NodeOutcomeRecorded =
+        serde_json::from_value(stored.clone()).expect("an old outcome still deserializes");
+    assert_eq!(
+        parsed.reason, None,
+        "absence reads as 'written before causes'"
+    );
+    assert_eq!(
+        serde_json::to_value(&parsed).unwrap(),
+        stored,
+        "re-serializing must not add a key: the event hash is computed over these bytes"
+    );
+}
+
+/// The other half: a cause, when present, rides the wire under its snake_case name.
+#[test]
+fn a_recorded_cause_uses_its_stable_wire_name() {
+    let value = serde_json::json!({
+        "executionId": "exec-1",
+        "nodeId": "implement",
+        "outcome": "retryable_failure",
+        "nextState": "queued",
+        "reason": "provider_unavailable",
+    });
+    let parsed: graphhelm_protocols::NodeOutcomeRecorded =
+        serde_json::from_value(value.clone()).expect("a caused outcome deserializes");
+    assert_eq!(
+        parsed.reason,
+        Some(graphhelm_protocols::NodeOutcomeReason::ProviderUnavailable)
+    );
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
+}

@@ -9,7 +9,8 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use graphhelm_events::ExecutionProjection;
-use graphhelm_protocols::{EventEnvelope, NodeOutcome, NodeState, NodeType};
+use graphhelm_execution::{Attention, AttentionReason, attention};
+use graphhelm_protocols::{EventEnvelope, NodeState, NodeType};
 
 use crate::commands::remediation::{self, RemediationAction};
 
@@ -62,19 +63,44 @@ fn tail_line(event: &EventEnvelope) -> String {
     )
 }
 
-/// The untriaged-interruption triage list — the SAME rule `execution::render` reports
-/// (`Blocked` + last outcome `Interrupted`), restated here over the same projection so the
-/// two surfaces cannot disagree.
-fn untriaged(projection: &ExecutionProjection) -> Vec<String> {
-    projection
-        .node_states
+/// The untriaged-interruption triage list, FILTERED out of the one shared answer (M07 F1).
+///
+/// This used to be a second copy of the predicate, honest but independent — and two copies
+/// that agree today are exactly what lets a surface drift tomorrow. `core/execution`'s
+/// `attention` owns the rule now; this page consumes it and can no longer disagree.
+fn untriaged(answer: &Attention) -> Vec<String> {
+    answer
+        .reasons
         .iter()
-        .filter(|(node, state)| {
-            **state == NodeState::Blocked
-                && projection.last_outcome.get(*node) == Some(&NodeOutcome::Interrupted)
+        .filter_map(|reason| match reason {
+            AttentionReason::UntriagedInterruption { node } => Some(node.clone()),
+            _ => None,
         })
-        .map(|(node, _)| node.clone())
         .collect()
+}
+
+/// The sleep question in the words an operator needs at 3am, from the same value the API
+/// answers with. Each reason names its node, so the header is actionable rather than a mood.
+fn attention_line(answer: &Attention) -> String {
+    if !answer.required {
+        return "can sleep — nothing is waiting on you".to_owned();
+    }
+    let reasons: Vec<String> = answer
+        .reasons
+        .iter()
+        .map(|reason| match reason {
+            AttentionReason::UntriagedInterruption { node } => {
+                format!("{node} was interrupted and never triaged")
+            }
+            AttentionReason::BlockedNode { node } => format!("{node} is blocked"),
+            AttentionReason::FailedNode { node } => format!("{node} failed"),
+            AttentionReason::WaitingInputNode { node } => format!("{node} is waiting for you"),
+            AttentionReason::WedgedQuiescence => {
+                "wedged — the run says running while nothing can advance".to_owned()
+            }
+        })
+        .collect();
+    format!("needs you: {}", reasons.join("; "))
 }
 
 /// The newest event timestamp per node, folded from the tail's own `nodeId` payloads —
@@ -183,10 +209,10 @@ fn render_page(
     let extras = graph_extras(projection);
     let head = events.last().map_or(0, |event| event.sequence);
     let execution = projection.execution_id.as_deref().unwrap_or("(none)");
-    let status = projection
-        .simulation_status
-        .as_ref()
-        .map_or_else(|| "unset".to_owned(), |status| format!("{status:?}"));
+    // The SAME derived verdict the API publishes (M07 Task 6): the page used to print
+    // "unset" for every live run, which is the null-status defect wearing HTML. One truth,
+    // both surfaces — the milestone's whole rule.
+    let status = crate::commands::execution::reported_status(projection).unwrap_or("unset");
 
     let mut page = String::new();
     page.push_str("<!doctype html>\n<html><head><meta charset=\"utf-8\">\n");
@@ -205,11 +231,17 @@ fn render_page(
          td,th{border:1px solid #999;padding:.2rem .6rem;text-align:left}\
          .t{color:#777}.delta{background:#ffd}.stale{color:#b00}</style>\n</head><body>\n",
     );
+    // F1: the one-glance answer, decided by the shared seam and stated in words. The
+    // aggregate status alone is what reported green on a wedged run; this line is the
+    // sentence the judge asked for, and it cannot disagree with the API because both read
+    // the same value.
+    let answer = attention(projection);
     page.push_str(&format!(
-        "<h1>{id}</h1><p>status: <b>{status}</b> · head: {head} · rendered: {now} · \
-         read-only (D-040): this page mutates nothing and offers nothing that does</p>\n",
+        "<h1>{id}</h1><p>status: <b>{status}</b> · <b>{verdict}</b> · head: {head} · rendered: {now} · read-only (D-040): this page mutates nothing and offers nothing that does</p>
+",
         id = escape(execution),
-        status = escape(&status),
+        status = escape(status),
+        verdict = escape(&attention_line(&answer)),
         now = escape(&now.to_rfc3339()),
     ));
 
@@ -286,7 +318,7 @@ fn render_page(
 
     // The triage list — same rule as execution::render's untriagedInterruptions.
     page.push_str("<h2>triage</h2><ul>\n");
-    let triage = untriaged(projection);
+    let triage = untriaged(&answer);
     if triage.is_empty() {
         page.push_str("<li>nothing untriaged</li>\n");
     }
@@ -504,9 +536,9 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use graphhelm_protocols::{
-        ActorId, EventHash, EventKind, ExecutionId, NewEvent, NodeOutcomeRecorded, OpaqueId,
-        PersistedActor, PersistedActorType, PersistedTimestamp, ProjectId, RepositoryScope,
-        Sensitivity, WorkspaceId,
+        ActorId, EventHash, EventKind, ExecutionId, NewEvent, NodeOutcome, NodeOutcomeRecorded,
+        OpaqueId, PersistedActor, PersistedActorType, PersistedTimestamp, ProjectId,
+        RepositoryScope, Sensitivity, WorkspaceId,
     };
 
     const GENESIS: &str = "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3";
@@ -556,6 +588,7 @@ mod tests {
                     node_id: OpaqueId::parse(node.to_owned()).unwrap(),
                     outcome: NodeOutcome::Succeeded,
                     next_state: NodeState::Succeeded,
+                    reason: None,
                 }),
                 vec![],
                 vec![],
@@ -706,5 +739,72 @@ mod tests {
             .unwrap();
         assert!(delta.contains("#2"), "{delta}");
         assert!(!delta.contains("#1 <b>"), "{delta}");
+    }
+
+    /// M07 F1: the monitor must not decide the sleep question for itself. It renders the
+    /// SAME `attention` value `execution::render` publishes, so the two surfaces cannot
+    /// disagree by construction — a page that computes its own verdict can be honest today
+    /// and drift tomorrow, and drift is what the judge caught.
+    #[test]
+    fn the_header_answers_the_sleep_question_from_the_shared_seam() {
+        let projection = projection_fixture("build");
+        let page = render_snapshot(
+            &projection,
+            &[outcome_event(1, "review", "agent-builder")],
+            Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap(),
+            Path::new("events"),
+        );
+        let answer = graphhelm_execution::attention(&projection);
+        assert!(
+            answer.required,
+            "the fixture has an untriaged interruption, so it must need the operator"
+        );
+        assert!(
+            page.contains("needs you"),
+            "the header must say it in words: {page}"
+        );
+        // Every reason the seam names appears in the header — the page cannot report a
+        // subset and still claim to be the one-glance answer.
+        for reason in &answer.reasons {
+            let node = match reason {
+                graphhelm_execution::AttentionReason::UntriagedInterruption { node }
+                | graphhelm_execution::AttentionReason::BlockedNode { node }
+                | graphhelm_execution::AttentionReason::FailedNode { node }
+                | graphhelm_execution::AttentionReason::WaitingInputNode { node } => node.clone(),
+                graphhelm_execution::AttentionReason::WedgedQuiescence => "wedged".to_owned(),
+            };
+            assert!(
+                page.contains(&node),
+                "the header omits the reason naming {node}: {page}"
+            );
+        }
+    }
+
+    /// The other half of the same rule: a story with nothing wrong says so, in the words an
+    /// operator at 3am actually needs.
+    #[test]
+    fn a_healthy_story_tells_the_operator_to_go_back_to_sleep() {
+        let mut projection = ExecutionProjection {
+            execution_id: Some("exec-monitor".to_owned()),
+            ..ExecutionProjection::default()
+        };
+        projection
+            .node_states
+            .insert("build".to_owned(), NodeState::Running);
+        let page = render_snapshot(
+            &projection,
+            &[],
+            Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap(),
+            Path::new("events"),
+        );
+        assert!(
+            !graphhelm_execution::attention(&projection).required,
+            "a running node with nothing blocked needs nobody"
+        );
+        assert!(page.contains("can sleep"), "{page}");
+        assert!(
+            !page.contains("needs you"),
+            "a healthy story must not cry wolf: {page}"
+        );
     }
 }

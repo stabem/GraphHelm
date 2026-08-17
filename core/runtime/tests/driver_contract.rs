@@ -103,6 +103,8 @@ fn cognitive_work() -> NodeWork {
         prompt: prompt(),
         kind: NodeWorkKind::Cognitive,
         tool_call: None,
+        gate_check: None,
+        judge: None,
     }
 }
 
@@ -117,6 +119,8 @@ fn tool_work() -> NodeWork {
             program: "git".to_owned(),
             arguments: vec!["status".to_owned()],
         })),
+        gate_check: None,
+        judge: None,
     }
 }
 
@@ -181,10 +185,12 @@ fn node_types_classify_cognitive_or_tool_and_nothing_else_dispatches() {
         assert_eq!(work_kind(&cognitive), Ok(NodeWorkKind::Cognitive));
     }
     assert_eq!(work_kind(&NodeType::Tool), Ok(NodeWorkKind::Tool));
+    // M06: Gate left this list — it classifies as deterministic GateCheck work now; the
+    // whole-table pin lives in gate_nodes.rs.
+    assert_eq!(work_kind(&NodeType::Gate), Ok(NodeWorkKind::GateCheck));
     // A refusal is a refusal — never laundered into an outcome the fold would record: the
     // driver simply does not dispatch what the executor refuses.
     for unsupported in [
-        NodeType::Gate,
         NodeType::Fork,
         NodeType::Join,
         NodeType::HumanDecision,
@@ -544,6 +550,7 @@ fn succeeded_work(reuse: Option<ReuseSummary>) -> WorkOutcome {
             exit_code: None,
         },
         reuse,
+        gate_verdict: None,
     }
 }
 
@@ -1089,6 +1096,7 @@ fn the_async_driver_reproduces_the_04f_sequencing_on_a_happy_chain() {
             executor,
             driver_actor(),
             cancel_rx,
+            None,
         ))
         .unwrap();
     assert_eq!(
@@ -1183,6 +1191,7 @@ fn max_parallel_dispatches_concurrently_and_respects_the_bound() {
             executor,
             driver_actor(),
             cancel_rx,
+            None,
         ));
         // Gate on the port's own counters, never on sleeps: the root runs alone, then the
         // three children contend for the bound of 2.
@@ -1240,6 +1249,7 @@ fn immediate_stop_interrupts_in_flight_work_and_blocks_it() {
             executor,
             driver_actor(),
             cancel_rx,
+            None,
         ));
         while model.called.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -1325,6 +1335,7 @@ fn a_cancelled_tool_child_is_actually_dead() {
             executor,
             driver_actor(),
             cancel_rx,
+            None,
         ));
         while tools.child.lock().unwrap().is_none() {
             tokio::task::yield_now().await;

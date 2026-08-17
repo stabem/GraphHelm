@@ -4,7 +4,10 @@
 //! citation still appears in the decision register, and the committed document is
 //! byte-identical to what the generator emits.
 
-use acceptance_map::{fn_body, generate, load_clauses, repo_root, rust_sources, verify_artifacts};
+use acceptance_map::{
+    fn_body, generate, load_clauses, repo_root, rust_sources, verify_artifacts,
+    verify_demonstration, verify_tracked,
+};
 
 #[test]
 fn acceptance_map_is_grounded() {
@@ -22,7 +25,9 @@ fn acceptance_map_is_grounded() {
     assert_eq!(clauses.clause.len(), 6, "the six §8 clauses, exactly");
 
     // The manual run's committed evidence still exists and still hashes to what the run
-    // recorded — in both directions (nothing named missing, nothing on disk unnamed).
+    // recorded — in both directions (nothing named missing, nothing on disk unnamed) —
+    // and every artifact file is TRACKED (a named but gitignored artifact vanishes from
+    // fresh clones: the 05f journal lesson, paid as a check).
     for clause in &clauses.clause {
         for artifact in &clause.artifact {
             let problems = verify_artifacts(&root, &artifact.directory);
@@ -31,8 +36,43 @@ fn acceptance_map_is_grounded() {
                 "{}: the run evidence has rusted: {problems:?}",
                 clause.id
             );
+            let untracked = verify_tracked(&root, &artifact.directory);
+            assert!(
+                untracked.is_empty(),
+                "{}: run evidence must be tracked: {untracked:?}",
+                clause.id
+            );
+        }
+        // The third binding: every demonstration replays against the CURRENT build —
+        // frozen seed, seed-derived traversal, and the recorded projection digest.
+        for demonstration in &clause.demonstration {
+            let problems = verify_artifacts(&root, &demonstration.directory);
+            assert!(
+                problems.is_empty(),
+                "{}: the demonstration evidence has rusted: {problems:?}",
+                clause.id
+            );
+            let untracked = verify_tracked(&root, &demonstration.directory);
+            assert!(
+                untracked.is_empty(),
+                "{}: a demonstration named but untracked is a grounding failure: {untracked:?}",
+                clause.id
+            );
+            let problems = verify_demonstration(&root, &demonstration.directory);
+            assert!(
+                problems.is_empty(),
+                "{}: the demonstration no longer replays: {problems:?}",
+                clause.id
+            );
         }
     }
+    assert!(
+        clauses
+            .clause
+            .iter()
+            .any(|clause| !clause.demonstration.is_empty()),
+        "at least one clause carries the third binding"
+    );
 
     for clause in &clauses.clause {
         assert!(

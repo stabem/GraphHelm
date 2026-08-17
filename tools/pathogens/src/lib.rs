@@ -1,0 +1,667 @@
+//! The pathogen suite and the thymus harness (M06 Task 2).
+//!
+//! A gate earns the right to gate by REJECTING every specimen in a bred suite of
+//! useless-but-green deliverables. A gate that passes even one pathogen is itself fake
+//! and certification is refused. The suite digest travels in `GateCertified`, so growing
+//! the suite voids old certifications by comparison, never by cleanup.
+//!
+//! Certification is NECESSARY, never sufficient: it proves a gate knows how to reject
+//! uselessness, not that it accepts good work — that half lives in each gate's own
+//! positive tests (Task 3).
+
+use std::collections::BTreeSet;
+
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+/// One claimed feature of a deliverable, as a spec would state it. `feature` doubles as
+/// the user-visible label the rendered element should carry.
+#[derive(Clone, Debug, Serialize)]
+pub struct Claim {
+    /// What the spec says exists — also the label the element renders.
+    pub feature: String,
+    /// The element id that renders the feature, when the spec names one.
+    pub element_id: Option<String>,
+    /// The artifact backing the claim, when one exists.
+    pub artifact: Option<String>,
+}
+
+/// One step of a recorded user journey.
+#[derive(Clone, Debug, Serialize)]
+pub struct JourneyStep {
+    /// The action taken.
+    pub action: String,
+    /// The assertion text recorded after the action, if any.
+    pub assertion: Option<String>,
+    /// Whether the step exercises an error path.
+    pub exercises_error_path: bool,
+}
+
+/// One test case as a correctness measure would see it.
+#[derive(Clone, Debug, Serialize)]
+pub struct TestCase {
+    /// The test name.
+    pub name: String,
+    /// Whether the test passed.
+    pub passed: bool,
+    /// How many assertions the test body actually makes.
+    pub assertions: u32,
+}
+
+/// A summary of the change that produced the deliverable.
+#[derive(Clone, Debug, Serialize)]
+pub struct DiffSummary {
+    /// Files the change touched.
+    pub files_touched: u32,
+    /// Lines that change behavior (not comments, not formatting).
+    pub behavior_lines: u32,
+}
+
+/// Everything a gate may inspect about a delivered feature.
+#[derive(Clone, Debug, Serialize)]
+pub struct Deliverable {
+    /// The spec claims.
+    pub claims: Vec<Claim>,
+    /// The rendered surface.
+    pub html: String,
+    /// Element ids reachable by navigation from the root.
+    pub reachable_ids: BTreeSet<String>,
+    /// The recorded journey.
+    pub journey: Vec<JourneyStep>,
+    /// The test suite as run.
+    pub tests: Vec<TestCase>,
+    /// The change summary.
+    pub diff: DiffSummary,
+}
+
+/// The ten ways a deliverable can be green by correctness measures and useless by
+/// construction. One specimen per mode; the mode names the axis the specimen defeats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub enum UselessnessMode {
+    /// Claimed and backed by an artifact — the element never renders anywhere.
+    DeadFeature,
+    /// The element is in the HTML but outside the reachable set.
+    UnreachableUi,
+    /// Every journey step asserts something that references nothing delivered.
+    TautologicalJourney,
+    /// Tests green, claims present — the screen renders nothing.
+    BlankScreen,
+    /// The view renders but nothing links to it.
+    OrphanView,
+    /// Tests pass because their assertions were removed.
+    GuttedAssertion,
+    /// The journey never leaves the happy path.
+    HappyPathOnly,
+    /// The spec claims a feature no artifact backs.
+    SpecClaimWithoutArtifact,
+    /// The diff touches files without changing behavior.
+    MinimalDiffNoBehavior,
+    /// Both labels render — swapped, so each element names the other's feature.
+    LabelSwappedUi,
+}
+
+/// One pathogen: a deliverable that is green by correctness measures and useless by
+/// construction, bred to fool a specific plausible gate.
+#[derive(Clone, Debug, Serialize)]
+pub struct Specimen {
+    /// Stable id, part of the canonical digest.
+    pub id: String,
+    /// The axis this specimen defeats.
+    pub mode: UselessnessMode,
+    /// The deliverable a candidate gate is shown.
+    pub deliverable: Deliverable,
+}
+
+/// A candidate gate's verdict over one deliverable — the same refusal-with-findings
+/// shape the `GateVerdict` kind carries on the wire: a refusal always carries findings.
+#[derive(Clone, Debug)]
+pub struct Verdict {
+    /// Whether the gate passes the deliverable.
+    pub passed: bool,
+    /// The findings behind a refusal.
+    pub findings: Vec<String>,
+}
+
+impl Verdict {
+    fn pass() -> Self {
+        Self {
+            passed: true,
+            findings: Vec::new(),
+        }
+    }
+
+    fn refuse(finding: &str) -> Self {
+        Self {
+            passed: false,
+            findings: vec![finding.to_owned()],
+        }
+    }
+}
+
+/// Anything that wants to gate deliverables and must first survive the thymus.
+pub trait CandidateGate {
+    /// The gate's stable id — what `GateCertified` names.
+    fn id(&self) -> &str;
+    /// Evaluate one deliverable.
+    fn evaluate(&self, deliverable: &Deliverable) -> Verdict;
+}
+
+/// The thymus receipt: this gate rejected every specimen of the digested suite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Certification {
+    /// The certified gate.
+    pub gate_id: String,
+    /// The canonical digest of the suite the gate rejected, `sha256:<64 hex>`.
+    pub suite_digest: String,
+    /// How many specimens the suite held.
+    pub specimens: u32,
+}
+
+/// Certification refused: the gate passed at least one pathogen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertificationRefusal {
+    /// The refused gate.
+    pub gate_id: String,
+    /// The specimens that fooled it.
+    pub fooled_by: Vec<String>,
+}
+
+/// The bred suite: exactly ten specimens, one per uselessness mode, deterministic.
+#[must_use]
+pub fn suite() -> Vec<Specimen> {
+    vec![
+        dead_feature(),
+        unreachable_ui(),
+        tautological_journey(),
+        blank_screen(),
+        orphan_view(),
+        gutted_assertion(),
+        happy_path_only(),
+        spec_claim_without_artifact(),
+        minimal_diff_no_behavior(),
+        label_swapped_ui(),
+    ]
+}
+
+/// Canonical digest of a suite: sha256 over the canonical JSON of the specimen list,
+/// rendered in the `WireHash` wire shape (`sha256:<64 hex>`).
+#[must_use]
+pub fn suite_digest(suite: &[Specimen]) -> String {
+    let canonical =
+        serde_json::to_string(suite).expect("specimens are plain data and always serialize");
+    format!("sha256:{}", hex::encode(Sha256::digest(canonical)))
+}
+
+/// Run a candidate gate against every specimen; refuse certification on ANY pass.
+///
+/// # Errors
+/// [`CertificationRefusal`] naming every specimen the gate passed.
+pub fn certify(
+    gate: &dyn CandidateGate,
+    suite: &[Specimen],
+) -> Result<Certification, CertificationRefusal> {
+    let fooled_by: Vec<String> = suite
+        .iter()
+        .filter(|specimen| gate.evaluate(&specimen.deliverable).passed)
+        .map(|specimen| specimen.id.clone())
+        .collect();
+    if fooled_by.is_empty() {
+        Ok(Certification {
+            gate_id: gate.id().to_owned(),
+            suite_digest: suite_digest(suite),
+            specimens: u32::try_from(suite.len()).expect("suites are small"),
+        })
+    } else {
+        Err(CertificationRefusal {
+            gate_id: gate.id().to_owned(),
+            fooled_by,
+        })
+    }
+}
+
+/// Whether a recorded certification still binds against the current suite. Growing the
+/// suite changes the digest, so old immunity dies by comparison, never by cleanup.
+#[must_use]
+pub fn certification_is_current(recorded_digest: &str, current_suite: &[Specimen]) -> bool {
+    recorded_digest == suite_digest(current_suite)
+}
+
+/// The correctness battery: what a naive CI would check — tests exist and pass, the
+/// diff touched something, the spec lists claims. Every specimen passes it, which is
+/// exactly why the battery itself can never be certified as a gate.
+#[must_use]
+pub fn correctness_battery() -> Box<dyn CandidateGate> {
+    Box::new(FnGate {
+        id: "correctness-battery",
+        check: |d: &Deliverable| {
+            !d.tests.is_empty()
+                && d.tests.iter().all(|test| test.passed)
+                && d.diff.files_touched >= 1
+                && !d.claims.is_empty()
+        },
+        finding: "a correctness measure failed",
+    })
+}
+
+/// The plausible-but-blind gate each specimen was bred to fool: it checks everything a
+/// hurried reviewer would, except the one axis its pathogen is useless on.
+#[must_use]
+pub fn paired_trivial_gate(mode: UselessnessMode) -> Box<dyn CandidateGate> {
+    match mode {
+        UselessnessMode::DeadFeature => Box::new(FnGate {
+            id: "claims-have-artifacts",
+            check: |d| !d.claims.is_empty() && d.claims.iter().all(|c| c.artifact.is_some()),
+            finding: "a claim has no backing artifact",
+        }),
+        UselessnessMode::UnreachableUi => Box::new(FnGate {
+            id: "elements-present-in-html",
+            check: |d| {
+                !d.claims.is_empty()
+                    && d.claims.iter().all(|c| {
+                        c.element_id
+                            .as_ref()
+                            .is_none_or(|id| d.html.contains(&format!("id=\"{id}\"")))
+                    })
+            },
+            finding: "a claimed element is missing from the page",
+        }),
+        UselessnessMode::TautologicalJourney => Box::new(FnGate {
+            id: "journey-has-assertions",
+            check: |d| {
+                !d.journey.is_empty() && d.journey.iter().all(|step| step.assertion.is_some())
+            },
+            finding: "a journey step asserts nothing",
+        }),
+        UselessnessMode::BlankScreen => Box::new(FnGate {
+            id: "tests-all-green",
+            check: |d| !d.tests.is_empty() && d.tests.iter().all(|test| test.passed),
+            finding: "a test failed",
+        }),
+        UselessnessMode::OrphanView => Box::new(FnGate {
+            id: "view-renders-content",
+            check: |d| d.html.contains("<section") && d.html.contains("</section>"),
+            finding: "no view renders",
+        }),
+        UselessnessMode::GuttedAssertion => Box::new(FnGate {
+            id: "tests-exist-and-pass",
+            check: |d| !d.tests.is_empty() && d.tests.iter().all(|test| test.passed),
+            finding: "tests missing or failing",
+        }),
+        UselessnessMode::HappyPathOnly => Box::new(FnGate {
+            id: "journey-completes-with-assertions",
+            check: |d| {
+                !d.journey.is_empty() && d.journey.iter().all(|step| step.assertion.is_some())
+            },
+            finding: "the journey does not complete",
+        }),
+        UselessnessMode::SpecClaimWithoutArtifact => Box::new(FnGate {
+            id: "spec-lists-claims",
+            check: |d| !d.claims.is_empty(),
+            finding: "the spec claims nothing",
+        }),
+        UselessnessMode::MinimalDiffNoBehavior => Box::new(FnGate {
+            id: "diff-touches-files",
+            check: |d| d.diff.files_touched >= 1,
+            finding: "the diff touches nothing",
+        }),
+        UselessnessMode::LabelSwappedUi => Box::new(FnGate {
+            id: "all-labels-present",
+            check: |d| !d.claims.is_empty() && d.claims.iter().all(|c| d.html.contains(&c.feature)),
+            finding: "a claimed label is missing from the page",
+        }),
+    }
+}
+
+/// A gate that rejects everything — the minimal certifiable subject, and the proof that
+/// certification is necessary, never sufficient.
+#[must_use]
+pub fn reject_everything_gate() -> Box<dyn CandidateGate> {
+    Box::new(FnGate {
+        id: "reject-everything",
+        check: |_| false,
+        finding: "rejected by construction",
+    })
+}
+
+struct FnGate {
+    id: &'static str,
+    check: fn(&Deliverable) -> bool,
+    finding: &'static str,
+}
+
+impl CandidateGate for FnGate {
+    fn id(&self) -> &str {
+        self.id
+    }
+
+    fn evaluate(&self, deliverable: &Deliverable) -> Verdict {
+        if (self.check)(deliverable) {
+            Verdict::pass()
+        } else {
+            Verdict::refuse(self.finding)
+        }
+    }
+}
+
+/// Structural uselessness check per mode — the fixture-integrity half of the thymus:
+/// a specimen that stops being useless on its axis is a weakened pathogen.
+#[must_use]
+pub fn is_useless_on_its_axis(specimen: &Specimen) -> bool {
+    let d = &specimen.deliverable;
+    match specimen.mode {
+        UselessnessMode::DeadFeature => d.claims.iter().any(|c| {
+            c.artifact.is_some()
+                && c.element_id
+                    .as_ref()
+                    .is_some_and(|id| !d.html.contains(&format!("id=\"{id}\"")))
+        }),
+        UselessnessMode::UnreachableUi => d.claims.iter().any(|c| {
+            c.element_id.as_ref().is_some_and(|id| {
+                d.html.contains(&format!("id=\"{id}\"")) && !d.reachable_ids.contains(id)
+            })
+        }),
+        UselessnessMode::TautologicalJourney => {
+            !d.journey.is_empty()
+                && d.journey.iter().all(|step| {
+                    step.assertion.as_ref().is_some_and(|assertion| {
+                        !d.claims.iter().any(|c| assertion.contains(&c.feature))
+                    })
+                })
+        }
+        UselessnessMode::BlankScreen => d.html.is_empty(),
+        UselessnessMode::OrphanView => d
+            .html
+            .split("<section id=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .any(|view_id| {
+                !d.reachable_ids.contains(view_id)
+                    && !d.html.contains(&format!("href=\"#{view_id}\""))
+            }),
+        UselessnessMode::GuttedAssertion => d
+            .tests
+            .iter()
+            .any(|test| test.passed && test.assertions == 0),
+        UselessnessMode::HappyPathOnly => {
+            !d.journey.is_empty() && d.journey.iter().all(|step| !step.exercises_error_path)
+        }
+        UselessnessMode::SpecClaimWithoutArtifact => d.claims.iter().any(|c| c.artifact.is_none()),
+        UselessnessMode::MinimalDiffNoBehavior => {
+            d.diff.files_touched >= 1 && d.diff.behavior_lines == 0
+        }
+        UselessnessMode::LabelSwappedUi => d.claims.iter().any(|a| {
+            d.claims.iter().any(|b| {
+                a.feature != b.feature
+                    && a.element_id
+                        .as_ref()
+                        .is_some_and(|id| d.html.contains(&format!("id=\"{id}\">{}", b.feature)))
+            })
+        }),
+    }
+}
+
+fn green_tests() -> Vec<TestCase> {
+    vec![TestCase {
+        name: "feature_works".to_owned(),
+        passed: true,
+        assertions: 3,
+    }]
+}
+
+fn behavior_diff() -> DiffSummary {
+    DiffSummary {
+        files_touched: 4,
+        behavior_lines: 120,
+    }
+}
+
+fn asserted_journey(feature: &str) -> Vec<JourneyStep> {
+    vec![
+        JourneyStep {
+            action: format!("open {feature}"),
+            assertion: Some(format!("{feature} panel is visible")),
+            exercises_error_path: false,
+        },
+        JourneyStep {
+            action: format!("submit {feature} with a bad input"),
+            assertion: Some(format!("{feature} refuses with a message")),
+            exercises_error_path: true,
+        },
+    ]
+}
+
+fn dead_feature() -> Specimen {
+    Specimen {
+        id: "dead-feature".to_owned(),
+        mode: UselessnessMode::DeadFeature,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Export".to_owned(),
+                element_id: Some("btn-export".to_owned()),
+                artifact: Some("src/export.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><p>Welcome</p></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned()]),
+            journey: asserted_journey("Export"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn unreachable_ui() -> Specimen {
+    Specimen {
+        id: "unreachable-ui".to_owned(),
+        mode: UselessnessMode::UnreachableUi,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Export".to_owned(),
+                element_id: Some("btn-export".to_owned()),
+                artifact: Some("src/export.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><button id=\"btn-export\">Export</button></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned()]),
+            journey: asserted_journey("Export"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn tautological_journey() -> Specimen {
+    Specimen {
+        id: "tautological-journey".to_owned(),
+        mode: UselessnessMode::TautologicalJourney,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Export".to_owned(),
+                element_id: Some("btn-export".to_owned()),
+                artifact: Some("src/export.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><button id=\"btn-export\">Export</button></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "btn-export".to_owned()]),
+            journey: vec![
+                JourneyStep {
+                    action: "load the page".to_owned(),
+                    assertion: Some("the page is the page".to_owned()),
+                    exercises_error_path: false,
+                },
+                JourneyStep {
+                    action: "wait".to_owned(),
+                    assertion: Some("time passed".to_owned()),
+                    exercises_error_path: true,
+                },
+            ],
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn blank_screen() -> Specimen {
+    Specimen {
+        id: "blank-screen".to_owned(),
+        mode: UselessnessMode::BlankScreen,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Dashboard".to_owned(),
+                element_id: Some("view-dashboard".to_owned()),
+                artifact: Some("src/dashboard.rs".to_owned()),
+            }],
+            html: String::new(),
+            reachable_ids: BTreeSet::new(),
+            journey: asserted_journey("Dashboard"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn orphan_view() -> Specimen {
+    Specimen {
+        id: "orphan-view".to_owned(),
+        mode: UselessnessMode::OrphanView,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Report".to_owned(),
+                element_id: Some("view-report".to_owned()),
+                artifact: Some("src/report.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><p>Welcome</p></main>\
+                   <section id=\"view-report\"><h2>Report</h2></section>"
+                .to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned()]),
+            journey: asserted_journey("Report"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn gutted_assertion() -> Specimen {
+    Specimen {
+        id: "gutted-assertion".to_owned(),
+        mode: UselessnessMode::GuttedAssertion,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Export".to_owned(),
+                element_id: Some("btn-export".to_owned()),
+                artifact: Some("src/export.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><button id=\"btn-export\">Export</button></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "btn-export".to_owned()]),
+            journey: asserted_journey("Export"),
+            tests: vec![TestCase {
+                name: "exports_csv".to_owned(),
+                passed: true,
+                assertions: 0,
+            }],
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn happy_path_only() -> Specimen {
+    Specimen {
+        id: "happy-path-only".to_owned(),
+        mode: UselessnessMode::HappyPathOnly,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Export".to_owned(),
+                element_id: Some("btn-export".to_owned()),
+                artifact: Some("src/export.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><button id=\"btn-export\">Export</button></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "btn-export".to_owned()]),
+            journey: vec![JourneyStep {
+                action: "click Export".to_owned(),
+                assertion: Some("Export downloads a file".to_owned()),
+                exercises_error_path: false,
+            }],
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn spec_claim_without_artifact() -> Specimen {
+    Specimen {
+        id: "spec-claim-without-artifact".to_owned(),
+        mode: UselessnessMode::SpecClaimWithoutArtifact,
+        deliverable: Deliverable {
+            claims: vec![
+                Claim {
+                    feature: "Export".to_owned(),
+                    element_id: Some("btn-export".to_owned()),
+                    artifact: Some("src/export.rs".to_owned()),
+                },
+                Claim {
+                    feature: "Import".to_owned(),
+                    element_id: None,
+                    artifact: None,
+                },
+            ],
+            html: "<main id=\"home\"><button id=\"btn-export\">Export</button></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "btn-export".to_owned()]),
+            journey: asserted_journey("Export"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}
+
+fn minimal_diff_no_behavior() -> Specimen {
+    Specimen {
+        id: "minimal-diff-no-behavior".to_owned(),
+        mode: UselessnessMode::MinimalDiffNoBehavior,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Export".to_owned(),
+                element_id: Some("btn-export".to_owned()),
+                artifact: Some("src/export.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><button id=\"btn-export\">Export</button></main>".to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "btn-export".to_owned()]),
+            journey: asserted_journey("Export"),
+            tests: green_tests(),
+            diff: DiffSummary {
+                files_touched: 3,
+                behavior_lines: 0,
+            },
+        },
+    }
+}
+
+fn label_swapped_ui() -> Specimen {
+    Specimen {
+        id: "label-swapped-ui".to_owned(),
+        mode: UselessnessMode::LabelSwappedUi,
+        deliverable: Deliverable {
+            claims: vec![
+                Claim {
+                    feature: "Export".to_owned(),
+                    element_id: Some("btn-export".to_owned()),
+                    artifact: Some("src/export.rs".to_owned()),
+                },
+                Claim {
+                    feature: "Delete".to_owned(),
+                    element_id: Some("btn-delete".to_owned()),
+                    artifact: Some("src/delete.rs".to_owned()),
+                },
+            ],
+            html: "<main id=\"home\">\
+                   <button id=\"btn-export\">Delete</button>\
+                   <button id=\"btn-delete\">Export</button>\
+                   </main>"
+                .to_owned(),
+            reachable_ids: BTreeSet::from([
+                "home".to_owned(),
+                "btn-export".to_owned(),
+                "btn-delete".to_owned(),
+            ]),
+            journey: asserted_journey("Export"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+        },
+    }
+}

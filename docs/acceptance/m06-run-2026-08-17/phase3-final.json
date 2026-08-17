@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "command": "execution.resume",
+  "data": {
+    "acceptedMutations": 0,
+    "executionId": "exec-m06-dogfood",
+    "headSequence": 69,
+    "mode": "autopilot",
+    "nodeStateCounts": {
+      "failed": 1,
+      "succeeded": 2
+    },
+    "signalsRecorded": 0,
+    "status": "failed",
+    "untriagedInterruptions": []
+  },
+  "diagnostics": []
+}

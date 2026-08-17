@@ -28,6 +28,8 @@ graphhelm-schema = { path = "../../core/schema" }
 graphhelm-schema-evolution = { path = "../../core/schema-evolution" }
 graphhelm-sealed-key-provider = { path = "../../adapters/sealed-key-provider" }
 graphhelm-tool-broker = { path = "../../core/tool-broker" }
+graphhelm-quality = { path = "../../core/quality" }
+pathogens = { path = "../../tools/pathogens" }
 graphhelm-tool-host = { path = "../../adapters/tool-host" }
 graphhelm-simulation = { path = "../../core/simulation" }
 semver.workspace = true

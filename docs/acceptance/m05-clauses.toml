@@ -25,6 +25,15 @@ assert_fingerprint = "replay must be byte-identical"
 directory = "docs/acceptance/m05-run-2026-08-16"
 description = "one real story on the owner-subscription route (claude CLI), completed and replayed byte-identically"
 
+# M06 Task 6: the third binding — a recorded journey that replays deterministically
+# against the CURRENT build. The traversal seed was sampled AT RECORDING from injected
+# entropy and is frozen inside demo.json; replay re-derives the node-check traversal from
+# the frozen seed and refuses a demonstration whose recorded order was not seed-derived.
+# What a build cannot precompute is the NEXT recording, never this replay.
+[[clause.demonstration]]
+directory = "docs/acceptance/demos/m06-fixture-journey"
+description = "a fixture journey (manual-override-deploy, autopilot) recorded whole: committed store, frozen seed, seed-derived node-check traversal, and the projection digest the current build must reproduce"
+
 [[clause]]
 id = "one-state-from-every-surface"
 text = "The same execution can be started, observed, signalled, approved, paused, resumed and cancelled from the CLI, the HTTP API, and a Claude Code or Codex chat via the MCP server — with identical observable state at every point."

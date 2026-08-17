@@ -841,3 +841,138 @@ fn the_fold_crate_speaks_no_transport_vocabulary() {
     }
     assert!(checked > 3, "the invariant walked the real sources");
 }
+
+/// M06 Task 1: the verdict is ledger, not state; the certification is state the Task 4
+/// precondition reads; both kinds round-trip byte-exactly through the REAL repository —
+/// which also proves both envelope oneOf lists (the 05g lesson: a kind absent from the
+/// root kind↔scope pairing dies at append with "exactly one required schema").
+#[test]
+fn gate_verdict_is_ledger_and_certification_is_replayable_state() {
+    use graphhelm_protocols::{GateCertified, GateFinding, GateVerdict, SignalSeverity, WireHash};
+    let started = event(
+        "start-1",
+        EventKind::ExecutionStarted(ExecutionStarted {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            graph_version: 1,
+            graph_hash: WireHash::parse(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            mode: ExecutionMode::Autopilot,
+        }),
+    );
+    let base = vec![started];
+    let with_gates = {
+        let mut events = base.clone();
+        events.push(event(
+            "certified-1",
+            EventKind::GateCertified(GateCertified {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                gate_id: OpaqueId::parse("gate-layout").unwrap(),
+                suite_digest: WireHash::parse(
+                    "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                )
+                .unwrap(),
+                specimens: 10,
+            }),
+        ));
+        events.push(event(
+            "verdict-1",
+            EventKind::GateVerdict(GateVerdict {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                node_id: OpaqueId::parse("check-ui").unwrap(),
+                gate_id: OpaqueId::parse("gate-layout").unwrap(),
+                passed: false,
+                findings: vec![GateFinding {
+                    severity: SignalSeverity::High,
+                    claim: "the triage section rendered empty on a populated projection".to_owned(),
+                    evidence: vec![OpaqueId::parse("evidence-1").unwrap()],
+                    remediation: "wire the untriaged list into the section renderer".to_owned(),
+                }],
+            }),
+        ));
+        events
+    };
+
+    let plain = append(base);
+    let gated = append(with_gates);
+    let projection_plain = replay(&scope(), STREAM, &plain).unwrap();
+    let projection_gated = replay(&scope(), STREAM, &gated).unwrap();
+
+    // The certification IS state, read by Task 4's precondition.
+    assert_eq!(
+        projection_gated.gate_certifications.get("gate-layout"),
+        Some(&"sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned()),
+        "the fold records the certification per gate"
+    );
+
+    // The verdict is ledger, not state: strip the certification difference and the node
+    // world is untouched.
+    assert_eq!(
+        projection_plain.node_states, projection_gated.node_states,
+        "a verdict changes no node state"
+    );
+    assert_eq!(
+        projection_plain.signals_recorded,
+        projection_gated.signals_recorded
+    );
+
+    // Replay-stable, byte-identical across runs.
+    let again = replay(&scope(), STREAM, &gated).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&projection_gated).unwrap(),
+        serde_json::to_vec(&again).unwrap()
+    );
+
+    // Both payloads round-trip the wire exactly.
+    for envelope in gated.iter().rev().take(2) {
+        let wire = serde_json::to_string(envelope).unwrap();
+        let back: EventEnvelope = serde_json::from_str(&wire).unwrap();
+        assert_eq!(*envelope, back, "gate kinds must round-trip byte-exactly");
+    }
+}
+
+/// M06 Task 1, binding decision 2 IN THE SCHEMA: a failing verdict with an empty findings
+/// list is invalid ON THE WIRE — a bare fail cannot exist. A passing verdict with empty
+/// findings stays valid (refusal-with-findings binds refusals).
+#[test]
+fn a_bare_failing_verdict_is_schema_invalid_by_construction() {
+    let set = graphhelm_schema::repository_schema_set().expect("schema set loads");
+    let envelope = |passed: bool, findings: serde_json::Value| {
+        serde_json::json!({
+            "schemaVersion": "1.0.0",
+            "eventId": "event-x",
+            "scope": {"workspaceId": "workspace-test", "projectId": "project-test",
+                       "executionId": "execution-test"},
+            "streamId": "execution-test", "sequence": 1,
+            "occurredAt": "2026-08-16T12:00:00Z", "idempotencyKey": "verdict-schema-probe",
+            "actor": {"type": "system", "id": "system-test"}, "sensitivity": "internal",
+            "kind": {"type": "gate_verdict", "data": {
+                "executionId": "execution-test", "nodeId": "check-ui",
+                "gateId": "gate-layout", "passed": passed, "findings": findings}},
+            "evidenceRefs": [], "artifactRefs": [],
+            "previousHash":
+                "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3",
+            "eventHash":
+                "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3"
+        })
+    };
+    let finding = serde_json::json!([{ "severity": "high",
+        "claim": "c", "evidence": [], "remediation": "r" }]);
+
+    assert!(
+        !set.validate_event(&envelope(false, serde_json::json!([])))
+            .is_empty(),
+        "a failing verdict with no findings must be refused by the schema itself"
+    );
+    assert!(
+        set.validate_event(&envelope(false, finding.clone()))
+            .is_empty(),
+        "a failing verdict WITH findings is the valid shape"
+    );
+    assert!(
+        set.validate_event(&envelope(true, serde_json::json!([])))
+            .is_empty(),
+        "a pass may carry no findings — the rule binds refusals"
+    );
+}

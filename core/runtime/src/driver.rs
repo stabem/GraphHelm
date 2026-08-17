@@ -129,6 +129,28 @@ pub async fn record_outcome_with_evidence(
         ));
     }
 
+    // The M06 Task 4 writer obligation: a gate outcome appends its verdict in the SAME
+    // batch — the graph can never route on a verdict the ledger does not carry, and the
+    // ledger can never carry a verdict whose outcome vanished.
+    if let Some(verdict) = &work.gate_verdict {
+        let gate_id = OpaqueId::parse(&verdict.gate_id).map_err(|_| DriverError::Identity)?;
+        let verdict_node = OpaqueId::parse(node).map_err(|_| DriverError::Identity)?;
+        events.push(NewEvent::new(
+            mint_key(ids, "gate-verdict")?,
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::GateVerdict(graphhelm_protocols::GateVerdict {
+                execution_id: execution_id.clone(),
+                node_id: verdict_node,
+                gate_id,
+                passed: verdict.passed,
+                findings: verdict.findings.clone(),
+            }),
+            vec![],
+            vec![],
+        ));
+    }
+
     let next_sequence = store.next_sequence(scope, stream.as_str())?;
     let request = PreparedAppend::new(
         scope.clone(),
@@ -224,6 +246,7 @@ fn bare(outcome: NodeOutcome) -> WorkOutcome {
             exit_code: None,
         },
         reuse: None,
+        gate_verdict: None,
     }
 }
 
@@ -292,14 +315,31 @@ fn build_work(
     execution_id: &OpaqueId,
     node: &str,
     attempt: u32,
+    gate_context: &GateContext<'_>,
 ) -> Result<NodeWork, crate::executor::ExecutorRefusal> {
     let graph_node = spec
         .nodes
         .get(node)
         .ok_or(crate::executor::ExecutorRefusal::Unsupported)?;
     let kind = crate::classify::work_kind(&graph_node.node_type)?;
-    let (prompt, tool_call) = match kind {
-        crate::classify::NodeWorkKind::Cognitive => (crate::prompt::assemble(graph_node)?, None),
+    let (prompt, tool_call, gate_check, judge) = match kind {
+        crate::classify::NodeWorkKind::Cognitive => {
+            // The blind-judge specialization (M06 Task 5): an Evaluator whose contract
+            // carries a `judge` block assembles from the judge's OWN diet — story and
+            // surface, nothing else. A malformed judge block (unknown fields INCLUDED —
+            // deny_unknown_fields is the blindness rule at this boundary) is
+            // unassemblable, never silently degraded to a plain prompt. Every other
+            // cognitive node assembles byte-identically to 05d.
+            if graph_node.node_type == graphhelm_protocols::NodeType::Evaluator
+                && let Some(block) = graph_node.properties.get("judge")
+            {
+                let judge: crate::judge::JudgeWork = serde_json::from_value(block.clone())
+                    .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)?;
+                (crate::judge::assemble(&judge), None, None, Some(judge))
+            } else {
+                (crate::prompt::assemble(graph_node)?, None, None, None)
+            }
+        }
         crate::classify::NodeWorkKind::Tool => {
             // The decided call comes from the node's own contract; the executor must not
             // invent one, and neither may the driver.
@@ -310,7 +350,30 @@ fn build_work(
                 .cloned()
                 .and_then(|value| serde_json::from_value(value).ok())
                 .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
-            (crate::prompt::tool_placeholder(), Some(call))
+            (crate::prompt::tool_placeholder(), Some(call), None, None)
+        }
+        crate::classify::NodeWorkKind::GateCheck => {
+            let check: crate::executor::GateCheckWork = graph_node
+                .properties
+                .get("gate")
+                .and_then(|gate| gate.get("check"))
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
+            // Certified or not at all: the fold's receipt for THIS gate must match the
+            // CURRENT suite digest. No digest configured means no way to verify — refuse,
+            // never gate on unverifiable immunity. A stale receipt refuses identically.
+            let current = gate_context
+                .current_suite_digest
+                .ok_or(crate::executor::ExecutorRefusal::Uncertified)?;
+            let certified = gate_context
+                .certifications
+                .get(&check.gate_id)
+                .is_some_and(|receipt| receipt == current);
+            if !certified {
+                return Err(crate::executor::ExecutorRefusal::Uncertified);
+            }
+            (crate::prompt::tool_placeholder(), None, Some(check), None)
         }
     };
     Ok(NodeWork {
@@ -320,7 +383,17 @@ fn build_work(
         prompt,
         kind,
         tool_call,
+        gate_check,
+        judge,
     })
+}
+
+/// What the certified-or-not-at-all precondition reads: the fold's receipts and the
+/// digest of the pathogen suite THIS build carries (computed by the binary that runs
+/// gates — `core` never depends on `tools`, so the digest arrives as configuration).
+struct GateContext<'a> {
+    certifications: &'a std::collections::BTreeMap<String, String>,
+    current_suite_digest: Option<&'a str>,
 }
 
 /// Drives a started execution to quiescence — the 04f loop, async: concurrent executor
@@ -348,6 +421,7 @@ pub async fn drive_to_quiescence_async(
     executor: Arc<dyn AsyncNodeExecutor>,
     actor: PersistedActor,
     mut cancel: tokio::sync::watch::Receiver<bool>,
+    current_suite_digest: Option<String>,
 ) -> Result<ExecutionProjection, DriverError> {
     let mut in_flight: tokio::task::JoinSet<(String, Option<WorkOutcome>)> =
         tokio::task::JoinSet::new();
@@ -414,7 +488,11 @@ pub async fn drive_to_quiescence_async(
 
         for node in &plan {
             let attempt = projection.node_attempts.get(node).copied().unwrap_or(0);
-            let work = match build_work(&spec, &execution_id, node, attempt) {
+            let gate_context = GateContext {
+                certifications: &projection.gate_certifications,
+                current_suite_digest: current_suite_digest.as_deref(),
+            };
+            let work = match build_work(&spec, &execution_id, node, attempt, &gate_context) {
                 Ok(work) => work,
                 Err(_) => {
                     // A refusal is a refusal: the node is simply never dispatched. It stays

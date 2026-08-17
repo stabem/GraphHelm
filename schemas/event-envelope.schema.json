@@ -573,6 +573,42 @@
       },
       "additionalProperties": false
     },
+    "gateFinding": {
+      "type": "object",
+      "required": ["severity", "claim", "evidence", "remediation"],
+      "properties": {
+        "severity": {"$ref": "#/$defs/signalSeverity"},
+        "claim": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/opaqueId"}},
+        "remediation": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "additionalProperties": false
+    },
+    "gateVerdict": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "gateId", "passed", "findings"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "gateId": {"$ref": "#/$defs/opaqueId"},
+        "passed": {"type": "boolean"},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/gateFinding"}}
+      },
+      "if": {"properties": {"passed": {"const": false}}},
+      "then": {"properties": {"findings": {"type": "array", "minItems": 1}}},
+      "additionalProperties": false
+    },
+    "gateCertified": {
+      "type": "object",
+      "required": ["executionId", "gateId", "suiteDigest", "specimens"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "gateId": {"$ref": "#/$defs/opaqueId"},
+        "suiteDigest": {"$ref": "#/$defs/wireHash"},
+        "specimens": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
     "reuseDecision": {
       "type": "object",
       "required": ["executionId", "plane", "decision", "keyComponents", "keyDigest", "provenanceErased"],
@@ -843,6 +879,24 @@
             "data": {"$ref": "#/$defs/wakeLeaseConsumed"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "gate_verdict"},
+            "data": {"$ref": "#/$defs/gateVerdict"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "gate_certified"},
+            "data": {"$ref": "#/$defs/gateCertified"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -875,7 +929,9 @@
     {"properties": {"kind": {"properties": {"type": {"const": "evidence_legal_hold_changed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "reuse_decision"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "wake_lease"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "wake_lease_consumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "wake_lease_consumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "gate_verdict"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "gate_certified"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

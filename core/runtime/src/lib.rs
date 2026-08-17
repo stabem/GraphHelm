@@ -14,5 +14,6 @@ pub mod driver;
 pub mod evidence;
 pub mod executor;
 pub mod fixture;
+pub mod judge;
 pub mod ports;
 pub mod prompt;

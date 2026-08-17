@@ -37,6 +37,7 @@ fn the_runtime_crate_depends_on_exactly_the_declared_crates() {
         "graphhelm-tool-broker",
         "hex",
         "serde",
+        "graphhelm-quality",
         "serde_json",
         "sha2",
         "thiserror",
@@ -48,7 +49,10 @@ fn the_runtime_crate_depends_on_exactly_the_declared_crates() {
         );
     }
     let count = table.lines().filter(|line| line.contains('=')).count();
-    assert_eq!(count, 12, "the dependency table grew or shrank: {table}");
+    // 13 since M06 Task 4: graphhelm-quality entered deliberately (the gate check IS
+    // core/quality's evaluators running under the runtime); recorded here consciously —
+    // this count exists precisely to force this sentence to be written.
+    assert_eq!(count, 13, "the dependency table grew or shrank: {table}");
 }
 
 #[test]

@@ -12,6 +12,7 @@ The 05d/05e acceptance sentence as one named test: a replying model fake, a real
 
 - `an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence` (suite: runtime_http) — fingerprint: `replay must be byte-identical`
 - **committed run evidence** `docs/acceptance/m05-run-2026-08-16` — one real story on the owner-subscription route (claude CLI), completed and replayed byte-identically (every file checksummed in its `SHA256SUMS`; the grounding test re-hashes it)
+- **recorded demonstration** `docs/acceptance/demos/m06-fixture-journey` — a fixture journey (manual-override-deploy, autopilot) recorded whole: committed store, frozen seed, seed-derived node-check traversal, and the projection digest the current build must reproduce (frozen seed, seed-derived traversal, and a projection digest the current build must reproduce on replay; every file tracked and checksummed)
 
 ### one-state-from-every-surface
 

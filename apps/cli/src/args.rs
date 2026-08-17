@@ -33,6 +33,8 @@ pub enum TopLevel {
     /// for free, exits 0 on ring / 3 on timeout / 2 on unusable arguments. Content never
     /// crosses: the woken host learns only THAT it should re-read its log.
     WakeWait(WakeWaitArgs),
+    /// Quality-gate operations (M06): the thymus ritual and the certification stamp.
+    Quality(QualityArgs),
 }
 
 #[derive(Debug, Args)]
@@ -52,6 +54,27 @@ pub struct McpArgs {
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
     #[arg(long = "actor-type", default_value = "agent")]
     pub actor_type: String,
+}
+
+#[derive(Debug, Args)]
+pub struct QualityArgs {
+    #[command(subcommand)]
+    pub command: QualityCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum QualityCommand {
+    /// Runs a registered gate against the pathogen suite; on FULL rejection, stamps
+    /// GateCertified onto the stream (what the certified-or-not-at-all precondition reads).
+    Certify {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        /// The registered gate id (closed registry: gate-geometry).
+        #[arg(long)]
+        gate: String,
+    },
 }
 
 #[derive(Debug, Args)]

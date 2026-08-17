@@ -5,6 +5,7 @@ mod gateway;
 mod hash;
 mod lint;
 mod mcp;
+mod quality;
 pub(crate) mod remediation;
 mod replay;
 mod schema;
@@ -23,7 +24,7 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CredentialCommand, DraftCommand, EventsCommand, ExecutionCommand, GatewayCommand, GraphCommand,
-    SchemaCommand, ToolCommand, TopLevel,
+    QualityCommand, SchemaCommand, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -244,6 +245,13 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Serve(args) => serve::run(&args),
         TopLevel::Mcp(args) => mcp::run(&args),
         TopLevel::WakeWait(args) => wake_wait::run(&args),
+        TopLevel::Quality(args) => match args.command {
+            QualityCommand::Certify {
+                events,
+                execution,
+                gate,
+            } => quality::run(&events, execution.as_deref(), &gate),
+        },
     }
 }
 

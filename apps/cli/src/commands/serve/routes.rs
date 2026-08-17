@@ -794,6 +794,10 @@ async fn drive(
         executor,
         runtime_actor(),
         cancel_rx,
+        // The certified-or-not-at-all precondition compares fold receipts against the
+        // suite THIS binary carries: the digest is computed here because core never
+        // depends on tools.
+        Some(pathogens::suite_digest(&pathogens::suite())),
     )
     .await;
 

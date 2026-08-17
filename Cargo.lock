@@ -6,8 +6,12 @@ version = 4
 name = "acceptance-map"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "graphhelm-events",
+ "graphhelm-protocols",
  "hex",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "toml",
 ]
@@ -873,6 +877,7 @@ dependencies = [
  "graphhelm-policy",
  "graphhelm-postgres-event-store",
  "graphhelm-protocols",
+ "graphhelm-quality",
  "graphhelm-runtime",
  "graphhelm-schema",
  "graphhelm-schema-evolution",
@@ -882,6 +887,7 @@ dependencies = [
  "graphhelm-tool-host",
  "hex",
  "libc",
+ "pathogens",
  "predicates",
  "semver",
  "serde",
@@ -1038,6 +1044,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-quality"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-protocols",
+ "pathogens",
+ "serde",
+]
+
+[[package]]
 name = "graphhelm-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1046,6 +1061,7 @@ dependencies = [
  "graphhelm-execution",
  "graphhelm-gateway",
  "graphhelm-protocols",
+ "graphhelm-quality",
  "graphhelm-simulation",
  "graphhelm-tool-broker",
  "hex",
@@ -1758,6 +1774,16 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "pathogens"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

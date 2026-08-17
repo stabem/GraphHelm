@@ -1,5 +1,16 @@
 # Specification Changelog
 
+## Quality gates, M06 — 2026-08-17
+
+- The verdict vocabulary (kinds 29/30): `GateVerdict` is refusal-with-findings by construction (the envelope schema refuses a bare fail on the wire; the judge parser refuses it in-process); `GateCertified` is the thymus receipt as replayable state — `gate_certifications[gate_id] = suite_digest` in the fold, compared against the CURRENT suite digest so growing the pathogen suite voids old immunity by comparison.
+- The thymus: ten bred pathogens (one per uselessness mode, paired per specimen with the plausible gate each fools); `certify()` refuses on any pass naming who was fooled; the correctness battery itself fails all ten (correctness alone certifies nothing) and `reject_everything` certifies (necessary, not sufficient).
+- The deterministic evaluators (`core/quality`, pure): spec-derived content manifest + layout grammar over stripped HTML (style bodies survive — geometry declaration, not prose), praise-stuffing sentinel pinning identical findings; the COMPOSED evaluator certified, the layout grammar alone REFUSED — geometry never gates by itself, as a test.
+- Gate nodes execute certified-or-not-at-all: `NodeWorkKind::GateCheck` (no model port, panicking-port-proven), one refusal arm died, fifteen node types byte-identical to 05d; failing verdicts are `TerminalFailure` with findings sealed beside the verdict event.
+- The blind judge: no new work kind — cognitive transport with blindness as input discipline (type diet + assembler signature + source fence, each test-pinned); refusal-with-findings with stepsOverPar/stallPoints; fence/prose-tolerant parsing learned from the live run without loosening the contract.
+- Demonstrations as the acceptance map's third binding: recorded journeys replayed against the current build, seed frozen at recording from injected entropy; the artifact verifier gained tracked-vs-named (the 05f journal lesson as machinery).
+- The dogfood run (2026-08-17, committed with checksums): uncertified refusal live → `graphhelm quality certify` (GHCLI018 debut, closed registry) → certified geometry pass → the blind judge on the owner subscription probed the live system via MCP and REFUSED the one-glance story with four findings — the recorded M07 backlog seed. The gate-freeze rule ships as a pure check (gate machinery and gated code never move in one PR).
+- `gate_http` is the twelfth gate suite (22 stages). Hotfix #55/#56 (wake sweep double-consume) landed mid-milestone from the pair loop's own dogfooding.
+
 ## Wake doorbell, 05g — 2026-08-16
 
 - The wake primitive: a session sleeps at zero cost and is woken by another actor's append — one content-free byte, no payload, no polling anywhere (D-036/D-037; the 05f-era divergent pass's attacker traps are binding refused scope). `WakeLease`/`WakeLeaseConsumed` kinds with fold-pinned invariants: one live lease per session (arming replaces — anti fork-bomb), consumption burns, consuming unarmed corrupts replay, and a replay never rings (the fold speaks no transport, source-scanned).

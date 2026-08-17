@@ -10,6 +10,7 @@ graphhelm-events = { path = "../events" }
 graphhelm-execution = { path = "../execution" }
 graphhelm-gateway = { path = "../gateway" }
 graphhelm-protocols = { path = "../protocols" }
+graphhelm-quality = { path = "../quality" }
 graphhelm-simulation = { path = "../simulation" }
 graphhelm-tool-broker = { path = "../tool-broker" }
 hex.workspace = true

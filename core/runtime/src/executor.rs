@@ -20,6 +20,32 @@ pub struct NodeWork {
     /// no call is unassemblable — the executor must not invent one. (Task 5 extension to the
     /// Task 1 shape, declared: the plan's sketch carried no channel for the call itself.)
     pub tool_call: Option<graphhelm_tool_broker::call::ToolCall>,
+    /// The decided gate check for `GateCheck`-kind work (M06 Task 4), from the node's
+    /// contract by the same rule as `tool_call`: the executor must not invent one.
+    pub gate_check: Option<GateCheckWork>,
+    /// The blind-judge specialization (M06 Task 5): present when an Evaluator node's
+    /// contract carries a `judge` block. Same cognitive transport; the prompt was
+    /// assembled from the judge's OWN diet and the reply parses under the verdict
+    /// contract instead of the plain-reply rule.
+    pub judge: Option<crate::judge::JudgeWork>,
+}
+
+/// One decided gate evaluation: which event-sourced gate definition runs, and the whole
+/// delivered surface it scores — carried by the node's contract, deserialized by the
+/// driver, never invented downstream.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GateCheckWork {
+    /// The gate definition this check runs — what the certification precondition looks up
+    /// and what the appended `GateVerdict` names.
+    pub gate_id: String,
+    /// The delivered surface under evaluation.
+    pub delivered: graphhelm_quality::Delivered,
+    /// The spec-derived content manifest.
+    pub manifest: graphhelm_quality::ContentManifest,
+    /// The layout grammar's budgets; the crate default when the contract is silent.
+    #[serde(default)]
+    pub budget: graphhelm_quality::LayoutBudget,
 }
 
 /// What real work produced: the outcome for `apply_transition`, plus the free-form material to
@@ -34,6 +60,20 @@ pub struct WorkOutcome {
     /// can append the `ReuseDecision` ledger entry beside the outcome. Always `None` for
     /// cognitive work.
     pub reuse: Option<crate::ports::ReuseSummary>,
+    /// The gate verdict produced by `GateCheck` work (M06 Task 4), appended by the writer
+    /// beside the outcome in the same batch — the auditable WHY the graph routed as it
+    /// did. Always `None` for cognitive and tool work.
+    pub gate_verdict: Option<GateVerdictSummary>,
+}
+
+/// What a gate evaluation decided, in the wire vocabulary the `GateVerdict` kind carries.
+/// A failing verdict ALWAYS has findings (the evaluators emit one per defect; an empty
+/// findings list means pass) — the same rule the envelope schema enforces on the wire.
+#[derive(Clone, Debug)]
+pub struct GateVerdictSummary {
+    pub gate_id: String,
+    pub passed: bool,
+    pub findings: Vec<graphhelm_protocols::GateFinding>,
 }
 
 /// One item of free-form material bound for Evidence, named by a deterministic suffix so
@@ -62,6 +102,11 @@ pub enum ExecutorRefusal {
     Unsupported,
     #[error("the node's contract cannot be assembled into a prompt")]
     Unassemblable,
+    /// M06 Task 4: the gate holds no certification against the CURRENT pathogen suite —
+    /// certified or not at all. A refusal, never an outcome: an uncertified gate does not
+    /// run, does not verdict, and leaves no gate ledger entry.
+    #[error("the gate is not certified against the current pathogen suite")]
+    Uncertified,
 }
 
 /// The async seam. Boxed-future form rather than `async fn` in the trait: the driver holds
@@ -128,6 +173,7 @@ impl PortExecutor {
                     }],
                     summary,
                     reuse: None,
+                    gate_verdict: None,
                 }
             }
             // Delegation, not a second mapping: 05b's outcome_for_error is the one authority
@@ -141,6 +187,7 @@ impl PortExecutor {
                     exit_code: None,
                 },
                 reuse: None,
+                gate_verdict: None,
             },
         }
     }
@@ -186,6 +233,7 @@ impl PortExecutor {
                 exit_code,
             },
             reuse: result.reuse,
+            gate_verdict: None,
         }
     }
 }
@@ -212,7 +260,10 @@ impl AsyncNodeExecutor for PortExecutor {
                         max_tokens: DEFAULT_MAX_TOKENS,
                     };
                     let reply = self.model.call(&self.route_id, &call).await;
-                    Ok(self.cognitive_outcome(reply))
+                    match work.judge.as_ref() {
+                        Some(judge) => Ok(judge_outcome(judge, reply)),
+                        None => Ok(self.cognitive_outcome(reply)),
+                    }
                 }
                 crate::classify::NodeWorkKind::Tool => {
                     let Some(call) = work.tool_call.as_ref() else {
@@ -223,7 +274,130 @@ impl AsyncNodeExecutor for PortExecutor {
                     let result = self.tools.invoke(call, &self.lease, &self.actor).await;
                     Ok(self.tool_outcome(result))
                 }
+                crate::classify::NodeWorkKind::GateCheck => {
+                    let Some(gate) = work.gate_check.as_ref() else {
+                        return Err(ExecutorRefusal::Unassemblable);
+                    };
+                    Ok(gate_check_outcome(gate))
+                }
             }
         })
+    }
+}
+
+/// Deterministic gate evaluation: no model port, no IO — `core/quality` scores the
+/// delivered surface and ANY finding refuses. A failing verdict maps to
+/// `TerminalFailure`: the evaluation is deterministic, so a retry of the same deliverable
+/// can never change the answer — routing on it is the graph's decision, not the
+/// machinery's. The full findings are sealed as evidence; the event-safe summary carries
+/// only counts.
+/// The judge's outcome mapping (M06 Task 5): a well-formed verdict seals its findings and
+/// maps `passed:false` to `TerminalFailure` — the DELIVERABLE failed judgment, and
+/// re-asking the same judge about the same deliverable is routing's decision, not the
+/// machinery's. A malformed reply is `RetryableFailure`: the MODEL flaked, the deliverable
+/// was never judged. Gateway errors ride 05b's one authority unchanged.
+fn judge_outcome(
+    judge: &crate::judge::JudgeWork,
+    reply: Result<graphhelm_gateway::call::ModelReply, graphhelm_gateway::taxonomy::GatewayError>,
+) -> WorkOutcome {
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(error) => {
+            return WorkOutcome {
+                outcome: graphhelm_gateway::taxonomy::outcome_for_error(error),
+                sealables: Vec::new(),
+                summary: WorkSummary {
+                    input_tokens: None,
+                    output_tokens: None,
+                    exit_code: None,
+                },
+                reuse: None,
+                gate_verdict: None,
+            };
+        }
+    };
+    let summary = WorkSummary {
+        input_tokens: reply.usage.input_tokens,
+        output_tokens: reply.usage.output_tokens,
+        exit_code: None,
+    };
+    match crate::judge::parse_reply(&reply.text) {
+        Ok(verdict) => {
+            let sealed = serde_json::json!({
+                "findings": verdict
+                    .findings
+                    .iter()
+                    .map(|finding| serde_json::json!({
+                        "severity": finding.severity,
+                        "claim": finding.claim,
+                        "remediation": finding.remediation,
+                    }))
+                    .collect::<Vec<_>>(),
+                "stepsOverPar": verdict.steps_over_par,
+                "stallPoints": verdict.stall_points,
+            });
+            WorkOutcome {
+                outcome: if verdict.passed {
+                    NodeOutcome::Succeeded
+                } else {
+                    NodeOutcome::TerminalFailure
+                },
+                sealables: vec![Sealable {
+                    local_ref_suffix: "judgment",
+                    media_type: "application/json",
+                    bytes: serde_json::to_vec(&sealed).expect("a judgment serializes"),
+                }],
+                summary,
+                reuse: None,
+                gate_verdict: Some(GateVerdictSummary {
+                    gate_id: judge.judge_id.clone(),
+                    passed: verdict.passed,
+                    findings: verdict.findings,
+                }),
+            }
+        }
+        // The model flaked, the deliverable was never judged: retryable, bounded by the
+        // attempt machinery like every provider defect.
+        Err(_) => WorkOutcome {
+            outcome: NodeOutcome::RetryableFailure,
+            sealables: vec![Sealable {
+                local_ref_suffix: "judgment-malformed",
+                media_type: "text/plain",
+                bytes: reply.text.into_bytes(),
+            }],
+            summary,
+            reuse: None,
+            gate_verdict: None,
+        },
+    }
+}
+
+fn gate_check_outcome(gate: &crate::executor::GateCheckWork) -> WorkOutcome {
+    let findings =
+        graphhelm_quality::evaluate_geometry(&gate.delivered, &gate.manifest, &gate.budget);
+    let passed = findings.is_empty();
+    let sealed = serde_json::to_vec(&findings).expect("findings serialize");
+    WorkOutcome {
+        outcome: if passed {
+            NodeOutcome::Succeeded
+        } else {
+            NodeOutcome::TerminalFailure
+        },
+        sealables: vec![Sealable {
+            local_ref_suffix: "verdict",
+            media_type: "application/json",
+            bytes: sealed,
+        }],
+        summary: WorkSummary {
+            input_tokens: None,
+            output_tokens: None,
+            exit_code: None,
+        },
+        reuse: None,
+        gate_verdict: Some(GateVerdictSummary {
+            gate_id: gate.gate_id.clone(),
+            passed,
+            findings,
+        }),
     }
 }

@@ -1,5 +1,7 @@
 # Milestone 06 — Quality Gates: Implementation Plan
 
+> Status: IMPLEMENTED in full — see `docs/milestones/quality.md` for the as-built record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: the two-agent pair loop (05e/05f/05g protocol
 > verbatim, PLUS the factory doorbell: waiting between handoffs is `wake_arm` +
 > `graphhelm wake-wait` against the standing pair serve, never timed polling). Task 0
@@ -8,8 +10,9 @@
 **Goal:** GraphHelm's correctness story (TDD, sabotage, the acceptance map) gains a
 USEFULNESS story: gates that prove a delivered feature works as a journey, a screen is
 right, a UX is efficient — and that CANNOT be gamed, because every gate must first prove it
-knows how to reject. The `Gate` and `Evaluator` node types, refusing execution since 05d,
-finally RUN — and the dev factory is their first production user.
+knows how to reject. The `Gate` node type, refusing execution since 05d, finally RUNS,
+and `Evaluator` (cognitive since 05d) gains its judge specialization — the dev factory is
+their first production user.
 
 **The five load-bearing decisions (fixed by the 2026-08-16 divergent pass — binding):**
 1. **The thymus rule**: a gate earns the right to gate by REJECTING a bred suite of
@@ -41,18 +44,17 @@ finally RUN — and the dev factory is their first production user.
   `tools/pathogens/` (specimens + the certification harness),
   `apps/cli/tests/gate_http.rs`
 - Modify: `core/protocols` + schemas (D-037: `GateVerdict`, `GateCertified`), `core/events`
-  fold, `core/runtime/src/classify.rs` (Gate/Evaluator stop refusing), `serve` routes,
+  fold, `core/runtime/src/classify.rs` (the Gate refusal arm dies; Evaluator already runs), `serve` routes,
   `tools/acceptance-map` (demonstration binding + tracked-vs-named), `ci/gate.ps1`
 - Hotspots: `classify.rs`, `mcp/tools.rs`, `acceptance-map/src/lib.rs`, `gate.ps1`
 
-### Task 0: reconciliation
-- [ ] Read post-05g main: GHCLI018 free; gate list (eleven suites); kind registry tail;
-  `classify.rs`'s refusal arms for Gate/Evaluator; what the monitor renderer exposes that
-  the layout grammar can consume; the acceptance map's current clause schema. Rewrite stale
-  references; re-check #35 triggers. **Commit** `docs(plans): reconcile M06 plan (Task 0)`.
+### Task 0: reconciliation ✅ (ran 2026-08-16 against main a7a7495)
 
+- [x] Verified on post-05g main: **GHCLI018 free** (zero hits; registry ends at 017); gate list at eleven suites with `wake_http` present; kind registry ends at `WakeLeaseConsumed` (`event.rs:180`) with 26 explicit fold arms; **CORRECTED by A's Task 0 review (FIX-1):** only `Gate` refuses in `core/runtime/src/classify.rs` — `Evaluator` has routed through `NodeWorkKind::Cognitive` since 05d (classify.rs:25-27), so exactly ONE refusal arm dies in Task 4; the acceptance map has no demonstration binding yet (Task 6 adds it); the monitor renderer exposes `render_monitor`/`render_snapshot` over `ExecutionProjection` — the layout grammar consumes the rendered HTML, not a new surface. #35 re-checked: the demonstration artifacts fire NO cache trigger (they are replay inputs, not a cache).
+- [x] **The plan-review findings folded (A's three notes, binding):** (1) Task 1's kinds enter BOTH oneOf lists in the envelope schema — `$defs/eventKind` AND the root kind↔scope pairing — or they die with `exactly one required schema` on a real append (the 05g Task 1 discovery, now in Task 1's body); (2) Task 6's seed semantics fixed: the seed is sampled AT RECORDING, frozen INSIDE the demonstration artifact, and replay uses the frozen seed — what a build cannot precompute is the NEXT recording, never the replay; (3) `core/quality` receives entropy INJECTED via the house Clock/IdGenerator pattern — no `rand` inside a pure crate (the 04-era purity rule extends to the new crate, source-invariant pinned).
+- [x] **Commit** `docs(plans): reconcile M06 plan (Task 0)`.
 ### Task 1: the verdict vocabulary — refusal-with-findings (D-037)
-- [ ] **Failing tests:** `GateVerdict` round-trips with findings only (severity, claim,
+- [ ] **Failing tests:** BOTH envelope oneOf lists updated (`$defs/eventKind` AND the root kind↔scope pairing — the 05g discovery; missing either dies with `exactly one required schema` on a real append); `GateVerdict` round-trips with findings only (severity, claim,
   evidence refs, remediation) — a bare pass/fail without findings is schema-invalid by
   construction; `GateCertified` (the thymus receipt) requires the pathogen-suite digest it
   certified against; fold arms explicit; replay-stable.
@@ -82,16 +84,32 @@ finally RUN — and the dev factory is their first production user.
   **Commit** `feat(quality): geometry evaluators — manifest and layout grammar`.
 - [ ] These two are the FIRST gates through the thymus: certified in this task's tests.
 
-### Task 4: Gate/Evaluator nodes execute
-- [ ] **Failing tests:** `classify.rs` routes Gate → deterministic-evaluator work and
-  Evaluator → judge work (refusal arms die for these two, EXPLICITLY, everything else
-  still refuses); a Gate node run appends `GateVerdict` with findings; an UNCERTIFIED gate
-  refuses to run (the thymus receipt is a precondition, checked against the current suite
-  digest); the driver treats a failing verdict as the node outcome the graph routes on.
+### Task 4: Gate nodes execute (FIX-1: Evaluator ALREADY runs)
+> **Reality (A's Task 0 review, verified in code):** `classify.rs` routes `Evaluator`
+> through `NodeWorkKind::Cognitive` since 05d — only `Gate` refuses. Exactly ONE refusal
+> arm dies here. **Declared decision (binding): NO new work kind for the judge.**
+> Classification stays a function of `NodeType` alone (`work_kind(node_type)` keeps its
+> signature); the blind judge is a SPECIALIZATION of the existing cognitive path,
+> selected inside the cognitive executor by a `judge` block on the Evaluator node's
+> contract — work kinds describe execution TRANSPORT (model call vs tool call vs
+> deterministic check), and the judge is still one model-call shape; its blindness is an
+> input discipline, enforced where inputs are assembled, not a new transport. `Gate`
+> DOES take a new kind — `NodeWorkKind::GateCheck` — deterministic evaluation with no
+> model port is a genuinely different transport.
+- [ ] **Failing tests:** `classify.rs` routes Gate -> `GateCheck` (ONLY the Gate refusal
+  arm dies; a regression test pins the full classification table so the other thirteen
+  node types keep their 05d behavior byte-identical); a Gate node run appends
+  `GateVerdict` with findings; an UNCERTIFIED gate refuses to run (the thymus receipt is
+  a precondition, checked against the current suite digest); the driver treats a failing
+  verdict as the node outcome the graph routes on.
 - [ ] **Sabotage:** run an uncertified gate; the precondition test fails.
   **Commit** `feat(runtime): gate nodes run — certified or not at all`.
 
 ### Task 5: the blind judge
+> **FIX-1 alignment:** NOT a new work kind (Task 4's declared decision). An Evaluator
+> node whose contract carries a `judge` block gets the judge prompt assembler inside the
+> existing cognitive path; a plain Evaluator keeps the 05d single-call assembly
+> byte-identical (regression test pins it).
 - [ ] **Failing tests** (fake model port first, one real run in Task 7): the judge
   executor assembles ONLY the user story + the live system's MCP surface — a source scan
   pins that no code path feeds it repository contents, tests, or rubric text; its verdict
@@ -104,8 +122,7 @@ finally RUN — and the dev factory is their first production user.
 - [ ] **Failing tests:** `m05-clauses.toml`-style clauses accept
   `[[clause.demonstration]]` (a recorded journey artifact: transcript + expected
   projection digest); the grounding test replays each demonstration against the current
-  build and fails on divergence; traversal seeds sampled at run time from the gate's own
-  entropy, so a build cannot precompute the exact path; the artifact verifier gains
+  build and fails on divergence; the traversal seed is sampled AT RECORDING (from injected entropy) and frozen inside the artifact — replay uses the frozen seed; what a build cannot precompute is the NEXT recording, never the replay; the artifact verifier gains
   tracked-vs-named (a demonstration named but gitignored is a grounding failure — the 05f
   lesson paid).
 - [ ] **Sabotage:** gitignore a named demonstration; the tracked-vs-named check fails.

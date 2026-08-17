@@ -3,12 +3,17 @@
 //! simply does not dispatch what the executor refuses (`core/protocols/src/graph.rs:82` is
 //! the closed authoring vocabulary this classification covers exhaustively).
 
-/// The two kinds of real work this milestone executes. Cognitive work is a model call and
-/// carries no workspace (Tier 0); Tool work goes through the 05c broker.
+/// The three kinds of real work the runtime executes. Cognitive work is a model call and
+/// carries no workspace (Tier 0); Tool work goes through the 05c broker; GateCheck work
+/// (M06) is a deterministic evaluation with NO model port at all — a genuinely different
+/// transport, which is why it earns a kind while the blind judge does not (the judge is a
+/// model call whose blindness is an input discipline, enforced where inputs are
+/// assembled — the M06 FIX-1 decision).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NodeWorkKind {
     Cognitive,
     Tool,
+    GateCheck,
 }
 
 use graphhelm_protocols::NodeType;
@@ -26,8 +31,8 @@ pub fn work_kind(node_type: &NodeType) -> Result<NodeWorkKind, ExecutorRefusal> 
             Ok(NodeWorkKind::Cognitive)
         }
         NodeType::Tool => Ok(NodeWorkKind::Tool),
-        NodeType::Gate
-        | NodeType::Fork
+        NodeType::Gate => Ok(NodeWorkKind::GateCheck),
+        NodeType::Fork
         | NodeType::Join
         | NodeType::HumanDecision
         | NodeType::Timer

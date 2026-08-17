@@ -181,6 +181,11 @@ pub struct ExecutionProjection {
     /// Governor mutations accepted, per decision 5.1. Counted here, judged by the governor.
     #[serde(default)]
     pub accepted_mutations: u32,
+    /// Certified gates (M06): gate id -> the pathogen-suite digest the certification is
+    /// valid against. Task 4's precondition reads this and refuses a gate whose receipt
+    /// does not match the CURRENT suite digest — growing the suite voids old immunity.
+    #[serde(default)]
+    pub gate_certifications: BTreeMap<String, String>,
     /// Live wake leases by session (05g): AT MOST ONE per session — arming again replaces,
     /// never stacks (the anti-fork-bomb rule as a fold invariant). Consumption removes;
     /// consumption without a live lease is a replay integrity refusal.
@@ -859,6 +864,16 @@ fn apply_projection_event(
                     cursor: payload.cursor,
                     rendezvous_id: payload.rendezvous_id.as_str().to_owned(),
                 },
+            );
+        }
+        // M06: the verdict is ledger, not state — the WHY beside the outcome the driver
+        // records separately; an explicit no-op arm, never a wildcard (the ReuseDecision
+        // precedent).
+        EventKind::GateVerdict(_) => {}
+        EventKind::GateCertified(payload) => {
+            projection.gate_certifications.insert(
+                payload.gate_id.as_str().to_owned(),
+                payload.suite_digest.as_str().to_owned(),
             );
         }
         EventKind::WakeLeaseConsumed(payload) => {

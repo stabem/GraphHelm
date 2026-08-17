@@ -178,6 +178,8 @@ pub enum EventKind {
     ReuseDecision(ReuseDecision),
     WakeLease(WakeLease),
     WakeLeaseConsumed(WakeLeaseConsumed),
+    GateVerdict(GateVerdict),
+    GateCertified(GateCertified),
 }
 
 impl EventKind {
@@ -617,4 +619,53 @@ pub struct WakeLeaseConsumed {
 pub enum WakeConsumeReason {
     Rung,
     StaleRendezvous,
+}
+
+/// One finding inside a gate verdict (M06 Task 1): severity, the claim, the evidence that
+/// grounds it, and the remediation the operator can act on. The verdict vocabulary is
+/// refusal-with-findings by CONSTRUCTION — the envelope schema refuses a failing verdict
+/// whose findings list is empty, so a bare fail cannot exist on the wire (binding
+/// decision 2: never pass/fail alone).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GateFinding {
+    pub severity: SignalSeverity,
+    /// What is wrong, cited — bounded free text under the same append-time wire-safety
+    /// scan every payload string passes.
+    pub claim: String,
+    /// Evidence references grounding the claim (may be empty for a purely structural
+    /// finding; the CLAIM is mandatory, the grounding is graded).
+    pub evidence: Vec<OpaqueId>,
+    /// What would resolve it — the operator-facing half of a refusal.
+    pub remediation: String,
+}
+
+/// A gate node's verdict (M06 Task 1). Ledger, not state: the fold's arm changes no node
+/// state and no counter — the driver maps a failing verdict onto the node outcome the
+/// graph routes on (Task 4), and this event is the auditable WHY beside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GateVerdict {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    /// The event-sourced gate definition this verdict was produced by.
+    pub gate_id: OpaqueId,
+    pub passed: bool,
+    pub findings: Vec<GateFinding>,
+}
+
+/// The thymus receipt (M06 Task 1, binding decision 1): a gate earned the right to gate by
+/// rejecting the ENTIRE pathogen suite whose digest rides here. The fold records the
+/// certification per gate; growing the suite changes the digest and VOIDS old
+/// certifications — Task 4's precondition compares against the CURRENT suite, so a stale
+/// receipt refuses execution rather than gating on old immunity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GateCertified {
+    pub execution_id: OpaqueId,
+    pub gate_id: OpaqueId,
+    /// The pathogen suite digest this certification is valid against.
+    pub suite_digest: WireHash,
+    /// How many specimens the gate rejected to earn this — auditable breadth.
+    pub specimens: u32,
 }

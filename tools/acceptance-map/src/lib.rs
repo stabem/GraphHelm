@@ -28,6 +28,21 @@ pub struct Clause {
     /// Artifact provers (the manual acceptance run's committed evidence).
     #[serde(default)]
     pub artifact: Vec<ArtifactProver>,
+    /// Demonstration provers (M06 Task 6): recorded journeys replayed against the
+    /// current build.
+    #[serde(default)]
+    pub demonstration: Vec<Demonstration>,
+}
+
+/// The third binding: a recorded journey artifact — a committed event store, a frozen
+/// traversal seed sampled at recording, and the projection digest the current build must
+/// reproduce on replay.
+#[derive(Debug, Deserialize)]
+pub struct Demonstration {
+    /// Repo-relative directory holding `demo.json`, the `events/` store and `SHA256SUMS`.
+    pub directory: String,
+    /// What the journey demonstrates — rendered into the map beside the directory.
+    pub description: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +113,192 @@ fn walk_all(dir: &Path, base: &Path, out: &mut Vec<String>) {
             out.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
+}
+
+/// What `demo.json` freezes at recording time: the seed sampled from injected entropy,
+/// the seed-derived node-check traversal, and the projection digest the current build
+/// must reproduce.
+#[derive(Debug, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DemoManifest {
+    /// The traversal seed — sampled AT RECORDING from entropy the recorder was HANDED
+    /// (never generated here: this crate stays deterministic), frozen forever after.
+    pub seed: u64,
+    /// The stream the committed store holds.
+    pub stream_id: String,
+    /// Node terminal states, in the SEED-DERIVED traversal order.
+    pub node_checks: Vec<DemoNodeCheck>,
+    /// `sha256:<hex>` over the canonical JSON of the replayed projection.
+    pub expected_projection_digest: String,
+}
+
+#[derive(Debug, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DemoNodeCheck {
+    pub node: String,
+    /// The node's terminal state as its wire string (e.g. `succeeded`).
+    pub state: String,
+}
+
+/// The seed-derived traversal: a deterministic xorshift walk over the SORTED name list.
+/// The same derivation runs at recording and at replay — a recorded order that does not
+/// derive from the frozen seed is refused, so the seed can never be decorative.
+#[must_use]
+pub fn seed_traversal(seed: u64, names: &[String]) -> Vec<String> {
+    let mut pool: Vec<String> = names.to_vec();
+    pool.sort();
+    let mut state = seed | 1;
+    let mut order = Vec::with_capacity(pool.len());
+    while !pool.is_empty() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let index = usize::try_from(state % pool.len() as u64).expect("bounded index");
+        order.push(pool.remove(index));
+    }
+    order
+}
+
+/// Digest of a replayed projection: sha256 over its canonical JSON, `sha256:`-prefixed —
+/// one derivation shared by the recorder and the verifier, so drift is impossible.
+#[must_use]
+pub fn projection_digest(projection: &graphhelm_events::ExecutionProjection) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = serde_json::to_vec(projection).expect("a projection serializes");
+    format!("sha256:{}", hex::encode(Sha256::digest(canonical)))
+}
+
+/// Opens a committed demonstration store and replays its stream with the CURRENT build.
+///
+/// # Errors
+/// A human-readable problem string when the store cannot be opened or the stream refuses
+/// to replay.
+pub fn replay_demonstration_store(
+    events: &Path,
+    stream_id: &str,
+) -> Result<graphhelm_events::ExecutionProjection, String> {
+    struct WallClock;
+    impl graphhelm_protocols::Clock for WallClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
+    #[derive(Default)]
+    struct CountingIds(std::sync::atomic::AtomicU64);
+    impl graphhelm_protocols::IdGenerator for CountingIds {
+        fn next_id(&self, prefix: &'static str) -> String {
+            let next = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            format!("{prefix}-verify-{next}")
+        }
+    }
+    let store = graphhelm_events::LocalEventRepository::open(
+        events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(CountingIds::default()),
+    )
+    .map_err(|error| format!("the demonstration store does not open: {error:?}"))?;
+    let streams = store
+        .list_streams()
+        .map_err(|error| format!("the store lists no streams: {error:?}"))?;
+    let stream = streams
+        .into_iter()
+        .find(|stream| stream.stream_id == stream_id)
+        .ok_or_else(|| format!("stream {stream_id:?} is not in the store"))?;
+    let history = store
+        .read_replay_stream(&stream.scope, &stream.stream_id)
+        .map_err(|error| format!("the stream does not read: {error:?}"))?;
+    graphhelm_events::replay(&stream.scope, &stream.stream_id, &history)
+        .map_err(|error| format!("the current build refuses the recorded history: {error:?}"))
+}
+
+/// Replays a demonstration against the CURRENT build: the recorded traversal must derive
+/// from the frozen seed, every node check must hold, and the replayed projection must
+/// digest to exactly what the recording froze.
+pub fn verify_demonstration(root: &Path, directory: &str) -> Vec<String> {
+    let base = root.join(directory);
+    let mut problems = Vec::new();
+    let manifest: DemoManifest = match std::fs::read_to_string(base.join("demo.json"))
+        .map_err(|error| format!("{directory}/demo.json is missing: {error}"))
+        .and_then(|text| {
+            serde_json::from_str(&text)
+                .map_err(|error| format!("{directory}/demo.json does not parse: {error}"))
+        }) {
+        Ok(manifest) => manifest,
+        Err(problem) => return vec![problem],
+    };
+
+    // The frozen seed must actually derive the recorded traversal — the seed chose the
+    // path at recording, and a hand-ordered (or tampered) record is refused.
+    let names: Vec<String> = manifest
+        .node_checks
+        .iter()
+        .map(|check| check.node.clone())
+        .collect();
+    let derived = seed_traversal(manifest.seed, &names);
+    if derived != names {
+        problems.push(format!(
+            "the recorded traversal does not derive from the frozen seed (derived {derived:?})"
+        ));
+    }
+
+    let projection = match replay_demonstration_store(&base.join("events"), &manifest.stream_id) {
+        Ok(projection) => projection,
+        Err(problem) => {
+            problems.push(problem);
+            return problems;
+        }
+    };
+    for check in &manifest.node_checks {
+        let actual = projection
+            .node_states
+            .get(&check.node)
+            .and_then(|state| serde_json::to_value(state).ok())
+            .and_then(|value| value.as_str().map(str::to_owned));
+        if actual.as_deref() != Some(check.state.as_str()) {
+            problems.push(format!(
+                "node {:?} replays as {actual:?}, the recording froze {:?}",
+                check.node, check.state
+            ));
+        }
+    }
+    let digest = projection_digest(&projection);
+    if digest != manifest.expected_projection_digest {
+        problems.push(format!(
+            "the replayed projection digests to {digest}, the recording froze {}",
+            manifest.expected_projection_digest
+        ));
+    }
+    problems
+}
+
+/// Every file a committed artifact directory holds must be TRACKED by git — a named but
+/// gitignored artifact silently vanishes from fresh clones (the 05f journal lesson).
+pub fn verify_tracked(root: &Path, directory: &str) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", &root.to_string_lossy(), "ls-files", "--", directory])
+        .output();
+    let Ok(output) = output else {
+        return vec![format!("git ls-files failed for {directory}")];
+    };
+    let tracked: std::collections::BTreeSet<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().replace('\\', "/"))
+        .filter(|line| !line.is_empty())
+        .collect();
+    let base = root.join(directory);
+    let mut on_disk = Vec::new();
+    walk_all(&base, &base, &mut on_disk);
+    let mut problems = Vec::new();
+    for relative in on_disk {
+        let repo_relative = format!("{}/{relative}", directory.trim_end_matches('/'));
+        if !tracked.contains(&repo_relative) {
+            problems.push(format!(
+                "{repo_relative}: on disk but not tracked by git (gitignored?) — it will \
+                 vanish from a fresh clone"
+            ));
+        }
+    }
+    problems
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,7 +404,18 @@ pub fn generate(clauses: &Clauses) -> String {
                 artifact.directory, artifact.description
             ));
         }
-        if !clause.prover.is_empty() || !clause.artifact.is_empty() {
+        for demonstration in &clause.demonstration {
+            out.push_str(&format!(
+                "- **recorded demonstration** `{}` — {} (frozen seed, seed-derived \
+                 traversal, and a projection digest the current build must reproduce on \
+                 replay; every file tracked and checksummed)\n",
+                demonstration.directory, demonstration.description
+            ));
+        }
+        if !clause.prover.is_empty()
+            || !clause.artifact.is_empty()
+            || !clause.demonstration.is_empty()
+        {
             out.push('\n');
         }
     }

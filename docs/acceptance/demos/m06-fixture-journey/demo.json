@@ -1,0 +1,15 @@
+{
+  "seed": 20260817042,
+  "streamId": "demo-journey",
+  "nodeChecks": [
+    {
+      "node": "deploy",
+      "state": "succeeded"
+    },
+    {
+      "node": "implementation",
+      "state": "succeeded"
+    }
+  ],
+  "expectedProjectionDigest": "sha256:9874c48e6c8fd0e69aa8f80965e6e7e381654a33b37b5531a2431771c53b1890"
+}

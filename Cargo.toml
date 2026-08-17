@@ -19,6 +19,8 @@ members = [
   "adapters/tool-host",
   "apps/cli",
   "tools/acceptance-map",
+  "core/quality",
+  "tools/pathogens",
 ]
 
 [workspace.package]

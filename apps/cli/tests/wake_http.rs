@@ -744,3 +744,97 @@ fn a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["data"]["executionId"], execution, "{value}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Hotfix #55: concurrent sweeps must never double-consume a lease. Found live on the
+// factory pair store (two sweeps raced read->append; the second consumption had no live
+// lease and the fold refused the WHOLE stream on every later replay — the archived
+// evidence lives in .factory/archive/pair-events-corrupted-2026-08-16, preserved intact).
+// ---------------------------------------------------------------------------------------------
+
+/// Two mutations fired at the same instant (a real barrier, not luck) while ONE lease is
+/// live with a dead rendezvous: both sweeps race the read->consume window. Repeated
+/// rounds; after every round the stream must still REPLAY (the fold's integrity guard is
+/// the oracle) and the armed lease must have been consumed exactly once.
+#[test]
+fn concurrent_sweeps_never_double_consume_a_lease() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-wake-race";
+    start_execution(&events, directory.path(), execution);
+    let (_guard, base, token) = serve(&events);
+
+    for round in 0..15 {
+        // Arm with NO pipe: the stale path makes the ring instantaneous, which is the
+        // tightest race window. Pipe-first ordering is irrelevant here on purpose.
+        arm_lease(&events, execution, &format!("rdv-race-{round}"), 1);
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let posts: Vec<_> = (0..2)
+            .map(|lane| {
+                let barrier = barrier.clone();
+                let base = base.clone();
+                let token = token.clone();
+                let evidence = directory
+                    .path()
+                    .join(format!("race-evidence-{round}-{lane}.json"));
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    post_json(
+                        &base,
+                        &token,
+                        &format!("/v1/executions/{execution}/signal"),
+                        &format!("race-{round}-{lane}"),
+                        &signal_body(&format!("signal-race-{round}-{lane}"), &evidence),
+                    )
+                })
+            })
+            .collect();
+        for post in posts {
+            let (status, reply) = post.join().unwrap();
+            assert_eq!(status, 200, "the mutation itself always lands: {reply}");
+        }
+
+        // Give the fire-and-forget sweeps a moment to finish their follow-up appends.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        // The oracle: the stream still replays, and this round's lease was consumed
+        // exactly once. A double-consume poisons every future replay — the live failure.
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args([
+                "execution",
+                "status",
+                "--events",
+                events.to_str().unwrap(),
+                "--execution",
+                execution,
+            ])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value["ok"], true,
+            "round {round}: the stream must still replay — a refused replay means a \
+             double-consume landed: {value}"
+        );
+    }
+
+    // Belt over the whole run: count consumptions per arming in the raw journal.
+    let journal = std::fs::read_to_string(events.join("journal.jsonl")).expect("journal readable");
+    let mut armed = 0_usize;
+    let mut consumed = 0_usize;
+    for line in journal.lines().filter(|line| !line.trim().is_empty()) {
+        let batch: serde_json::Value = serde_json::from_str(line).unwrap();
+        for event in batch["events"].as_array().into_iter().flatten() {
+            match event["kind"]["type"].as_str() {
+                Some("wake_lease") => armed += 1,
+                Some("wake_lease_consumed") => consumed += 1,
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        consumed <= armed,
+        "never more consumptions than armings ({consumed} > {armed})"
+    );
+}

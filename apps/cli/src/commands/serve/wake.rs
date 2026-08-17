@@ -38,10 +38,11 @@ fn rendezvous_path(rendezvous_id: &str) -> String {
 }
 
 /// One live lease due to ring, as the sweep's read phase reports it.
-struct DueLease {
-    execution_id: String,
-    session_id: String,
-    rendezvous_id: String,
+#[derive(Clone)]
+pub(crate) struct DueLease {
+    pub(crate) execution_id: String,
+    pub(crate) session_id: String,
+    pub(crate) rendezvous_id: String,
 }
 
 /// Writes the one content-free byte. `Rung` when it crossed; `StaleRendezvous` for every
@@ -131,45 +132,256 @@ pub(super) async fn sweep(events: Arc<Path>, execution: String) {
         consumptions.push((lease, reason));
     }
 
-    // Phase 3 (blocking): record every consumption in one follow-up append.
-    let _ = tokio::task::spawn_blocking(move || -> Option<()> {
-        let store = crate::commands::event_store(&events).ok()?;
-        let streams = store.list_streams().ok()?;
-        let stream = streams
-            .into_iter()
-            .find(|stream| stream.stream_id == execution)?;
-        let next = store.next_sequence(&stream.scope, &stream.stream_id).ok()?;
-        let actor = PersistedActor::new(
-            PersistedActorType::System,
-            ActorId::parse("system-wake").ok()?,
-        );
-        let mut batch = Vec::with_capacity(consumptions.len());
-        for (index, (lease, reason)) in consumptions.iter().enumerate() {
-            batch.push(NewEvent::new(
-                OpaqueId::parse(format!("wake-consume-{next}-{index}-{}", lease.session_id))
-                    .ok()?,
-                actor.clone(),
-                Sensitivity::Internal,
-                EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
-                    execution_id: OpaqueId::parse(lease.execution_id.clone()).ok()?,
-                    session_id: OpaqueId::parse(lease.session_id.clone()).ok()?,
-                    reason: *reason,
-                }),
-                vec![],
-                vec![],
-            ));
-        }
-        let request = graphhelm_events::PreparedAppend::new(
-            stream.scope.clone(),
-            OpaqueId::parse(stream.stream_id.clone()).ok()?,
-            next,
-            batch,
-            vec![],
-            vec![],
-        )
-        .ok()?;
-        store.append_atomic(&request).ok()?;
-        Some(())
+    // Phase 3 (blocking): record every consumption in one follow-up append — through the
+    // guarded recorder (hotfix #55): the consumption is validated against a FRESH replay
+    // under the SAME open store handle that appends. The handle's exclusive lock spans
+    // read and write, so the read-then-append window two racing sweeps used to slip
+    // through (the double-consume that poisoned the factory pair store) no longer exists.
+    let _ = tokio::task::spawn_blocking(move || {
+        record_consumptions(&events, &execution, &consumptions);
     })
     .await;
+}
+
+/// Records consumptions for leases that are STILL LIVE at append time, silently dropping
+/// the rest — under one store handle, whose exclusive lock makes the re-validation and the
+/// append atomic against every other writer (hotfix #55; the archived corrupted pair store
+/// is the incident this guard exists for). Returns how many consumptions were recorded.
+pub(crate) fn record_consumptions(
+    events: &Path,
+    execution: &str,
+    consumptions: &[(DueLease, WakeConsumeReason)],
+) -> usize {
+    let Ok(store) = crate::commands::event_store(events) else {
+        return 0;
+    };
+    let Ok(streams) = store.list_streams() else {
+        return 0;
+    };
+    let Some(stream) = streams
+        .into_iter()
+        .find(|stream| stream.stream_id == execution)
+    else {
+        return 0;
+    };
+    // The guard: re-replay under THIS handle's lock; only a consumption whose lease is
+    // still live, with the SAME rendezvous, may be recorded. A rival sweep that got here
+    // first burned the lease — ours drops silently (its ring was at worst a spurious
+    // content-free byte the sleeper's own re-read absorbs).
+    let Ok(history) = store.read_replay_stream(&stream.scope, &stream.stream_id) else {
+        return 0;
+    };
+    let Ok(projection) = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history)
+    else {
+        return 0;
+    };
+    let still_live: Vec<&(DueLease, WakeConsumeReason)> = consumptions
+        .iter()
+        .filter(|(lease, _)| {
+            projection
+                .wake_leases
+                .get(&lease.session_id)
+                .is_some_and(|live| live.rendezvous_id == lease.rendezvous_id)
+        })
+        .collect();
+    if still_live.is_empty() {
+        return 0;
+    }
+    let Ok(next) = store.next_sequence(&stream.scope, &stream.stream_id) else {
+        return 0;
+    };
+    let Ok(actor_id) = ActorId::parse("system-wake") else {
+        return 0;
+    };
+    let actor = PersistedActor::new(PersistedActorType::System, actor_id);
+    let mut batch = Vec::with_capacity(still_live.len());
+    for (index, (lease, reason)) in still_live.iter().enumerate() {
+        let Ok(idempotency) =
+            OpaqueId::parse(format!("wake-consume-{next}-{index}-{}", lease.session_id))
+        else {
+            return 0;
+        };
+        let (Ok(execution_id), Ok(session_id)) = (
+            OpaqueId::parse(lease.execution_id.clone()),
+            OpaqueId::parse(lease.session_id.clone()),
+        ) else {
+            return 0;
+        };
+        batch.push(NewEvent::new(
+            idempotency,
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id,
+                session_id,
+                reason: *reason,
+            }),
+            vec![],
+            vec![],
+        ));
+    }
+    let recorded = batch.len();
+    let Ok(request) = graphhelm_events::PreparedAppend::new(
+        stream.scope.clone(),
+        OpaqueId::parse(stream.stream_id.to_owned()).expect("stream ids are wire-safe"),
+        next,
+        batch,
+        vec![],
+        vec![],
+    ) else {
+        return 0;
+    };
+    if store.append_atomic(&request).is_err() {
+        return 0;
+    }
+    recorded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, Sensitivity, WakeLease};
+
+    /// The #55 interleaving, DETERMINISTIC: a sweep captured its due list, then a rival
+    /// consumed the lease first (simulated by a direct consume append), then our sweep
+    /// reaches the recorder. Unguarded, the second consumption lands and the fold refuses
+    /// every later replay — the exact live failure that poisoned the factory pair store.
+    /// Guarded, the recorder re-validates under its own append lock and records NOTHING.
+    #[test]
+    fn a_rival_consume_between_read_and_record_appends_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        let store = crate::commands::event_store(events).unwrap();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("exec-race").unwrap()),
+        );
+        let stream = OpaqueId::parse("exec-race").unwrap();
+        let actor = PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-test").unwrap(),
+        );
+        let append = |kind: EventKind, key: &str, next: u64| {
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                stream.clone(),
+                next,
+                vec![NewEvent::new(
+                    OpaqueId::parse(key).unwrap(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    kind,
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        };
+
+        // The armed lease this sweep read.
+        append(
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("exec-race").unwrap(),
+                session_id: OpaqueId::parse("session-r").unwrap(),
+                cursor: 0,
+                rendezvous_id: OpaqueId::parse("rdv-r").unwrap(),
+            }),
+            "arm-r",
+            1,
+        );
+        let captured = vec![(
+            DueLease {
+                execution_id: "exec-race".to_owned(),
+                session_id: "session-r".to_owned(),
+                rendezvous_id: "rdv-r".to_owned(),
+            },
+            WakeConsumeReason::StaleRendezvous,
+        )];
+
+        // The rival got there first.
+        append(
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id: OpaqueId::parse("exec-race").unwrap(),
+                session_id: OpaqueId::parse("session-r").unwrap(),
+                reason: WakeConsumeReason::Rung,
+            }),
+            "rival-consume",
+            2,
+        );
+        drop(store); // release the handle so the recorder can take its own lock
+
+        // Our sweep now reaches the recorder with its STALE capture.
+        let recorded = record_consumptions(events, "exec-race", &captured);
+        assert_eq!(
+            recorded, 0,
+            "a consumption whose lease a rival already burned must be dropped"
+        );
+
+        // The oracle the live incident failed: the stream still replays.
+        let store = crate::commands::event_store(events).unwrap();
+        let history = store.read_replay_stream(&scope, "exec-race").unwrap();
+        let replayed = graphhelm_events::replay(&scope, "exec-race", &history);
+        assert!(
+            replayed.is_ok(),
+            "the stream must remain replayable: {replayed:?}"
+        );
+    }
+
+    /// The recorder still records when the lease IS live — the guard filters rivals'
+    /// leftovers, never legitimate consumptions.
+    #[test]
+    fn a_live_lease_consumption_still_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        {
+            let store = crate::commands::event_store(events).unwrap();
+            let scope = graphhelm_protocols::RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
+                Some(graphhelm_protocols::ExecutionId::parse("exec-live").unwrap()),
+            );
+            let request = graphhelm_events::PreparedAppend::new(
+                scope,
+                OpaqueId::parse("exec-live").unwrap(),
+                1,
+                vec![NewEvent::new(
+                    OpaqueId::parse("arm-l").unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::System,
+                        ActorId::parse("system-test").unwrap(),
+                    ),
+                    Sensitivity::Internal,
+                    EventKind::WakeLease(WakeLease {
+                        execution_id: OpaqueId::parse("exec-live").unwrap(),
+                        session_id: OpaqueId::parse("session-l").unwrap(),
+                        cursor: 0,
+                        rendezvous_id: OpaqueId::parse("rdv-l").unwrap(),
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        }
+        let recorded = record_consumptions(
+            events,
+            "exec-live",
+            &[(
+                DueLease {
+                    execution_id: "exec-live".to_owned(),
+                    session_id: "session-l".to_owned(),
+                    rendezvous_id: "rdv-l".to_owned(),
+                },
+                WakeConsumeReason::Rung,
+            )],
+        );
+        assert_eq!(recorded, 1, "a live lease's consumption records normally");
+    }
 }

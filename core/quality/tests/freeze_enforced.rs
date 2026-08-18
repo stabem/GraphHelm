@@ -22,20 +22,47 @@ use graphhelm_quality::freeze_violation;
 /// Paths this branch changes relative to where it left `main`, or `None` when git cannot
 /// answer (a tarball checkout, a shallow clone, no `main` ref). An unanswerable question is
 /// reported as unanswerable — never as a clean bill of health.
+/// The merge base against one ref, or `None` when git cannot answer for it.
+fn merge_base(root: &std::path::Path, reference: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["merge-base", "HEAD", reference])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).ok())
+        .flatten()
+        .map(|text| text.trim().to_owned())
+}
+
+/// Which ref answered, so an accusation can be audited rather than believed. A reader who
+/// sees this check name files deserves to know WHICH `main` it measured against.
+fn base_provenance(root: &std::path::Path) -> String {
+    match (merge_base(root, "origin/main"), merge_base(root, "main")) {
+        (Some(remote), Some(local)) if remote != local => format!(
+            "origin/main (base {remote}); the LOCAL main disagrees (base {local}) and was              ignored — a stale local ref is a cache, never the authority"
+        ),
+        (Some(remote), _) => format!("origin/main (base {remote})"),
+        (None, Some(local)) => format!("main (base {local}); origin/main did not resolve"),
+        (None, None) => "no ref resolved".to_owned(),
+    }
+}
+
 fn changed_paths() -> Option<Vec<String>> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()?
         .parent()?
         .to_path_buf();
-    let base = Command::new("git")
-        .args(["merge-base", "HEAD", "main"])
-        .current_dir(&root)
-        .output()
-        .ok()?;
-    if !base.status.success() {
-        return None;
-    }
-    let base = String::from_utf8(base.stdout).ok()?.trim().to_owned();
+    // `origin/main` FIRST, and this is Agent B's finding paid for in a false accusation:
+    // the local `main` ref lags by construction in a worktree setup that fetches without
+    // checking out. Resolving against a stale `main` widens the merge base backwards, so
+    // the "changed paths" list swells with files the branch never touched — and the check
+    // ACCUSED a clean branch, naming two of them. A confident false positive erodes a rule
+    // faster than a silent false negative, because it teaches the reader to ignore the
+    // alarm. The remote ref is what `main` MEANS; the local one is a cache of it.
+    let base = merge_base(&root, "origin/main").or_else(|| merge_base(&root, "main"))?;
     let diff = Command::new("git")
         .args(["diff", "--name-only", &base, "HEAD"])
         .current_dir(&root)
@@ -72,12 +99,16 @@ fn this_branch_does_not_move_the_judge_and_the_judged_together() {
             "cannot ask whether this branch mixes the judge and the judged: git could not              answer `merge-base HEAD main`. Refusing rather than passing — an unanswerable              question is not evidence of a clean diff."
         )
     };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the quality crate sits two levels below the workspace root");
     let borrowed: Vec<&str> = paths.iter().map(String::as_str).collect();
     assert!(
         freeze_violation(&borrowed).is_none(),
-        "this branch moves gate machinery and gated code together, which M06's binding \
-         decision 5 forbids: {:?}. Split it into two pull requests — the judge and the \
-         judged never travel in one.",
-        freeze_violation(&borrowed)
+        "this branch moves gate machinery and gated code together, which M06's binding          decision 5 forbids: {:?}. Measured against {}, over {} changed path(s). Split it          into two pull requests — the judge and the judged never travel in one.",
+        freeze_violation(&borrowed),
+        base_provenance(root),
+        paths.len()
     );
 }

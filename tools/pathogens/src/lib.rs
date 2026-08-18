@@ -9,6 +9,8 @@
 //! uselessness, not that it accepts good work — that half lives in each gate's own
 //! positive tests (Task 3).
 
+pub mod subject;
+
 use std::collections::BTreeSet;
 
 use serde::Serialize;
@@ -72,6 +74,45 @@ pub struct Deliverable {
     pub tests: Vec<TestCase>,
     /// The change summary.
     pub diff: DiffSummary,
+    /// What answering one declared operator question cost, when this specimen makes a
+    /// claim about interaction at all.
+    ///
+    /// `None` means this specimen makes NO CLAIM about interaction — never "zero calls".
+    /// The distinction is asserted, not merely documented: prose and check diverge and
+    /// review reads the prose (paid for twice on 2026-08-18, by both agents).
+    ///
+    /// `skip_serializing_if` is REQUIRED, not stylistic (Agent B's condition): the suite
+    /// digest is sha256 over the canonical JSON of the WHOLE specimen list, so without it
+    /// the ten existing specimens would start serializing `"interaction":null` and their
+    /// bytes would move. The digest would then shift because the MOLD changed rather than
+    /// because the suite grew — and since adding specimens voids certification anyway, that
+    /// error would be invisible inside a green.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction: Option<InteractionTrace>,
+}
+
+/// One call an operator made while trying to answer a declared question.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct InteractionCall {
+    /// The surface called, in the vocabulary the operator sees.
+    pub tool: String,
+    /// Bytes the reply carried — the cost that does not show up as a round trip.
+    pub payload_bytes: u64,
+    /// Whether the ANSWER to the declared question was in this reply. A call can be
+    /// correct, large and still not answer.
+    pub answered: bool,
+}
+
+/// What one operator question cost: the budget it declared and the calls it actually took.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct InteractionTrace {
+    /// The operator question, declared with its budget — a budget nobody wrote down is a
+    /// budget nobody can miss.
+    pub question: String,
+    /// Calls the question is allowed to cost.
+    pub budget_calls: u64,
+    /// Calls it actually took, in order.
+    pub calls: Vec<InteractionCall>,
 }
 
 /// The ten ways a deliverable can be green by correctness measures and useless by
@@ -98,6 +139,13 @@ pub enum UselessnessMode {
     MinimalDiffNoBehavior,
     /// Both labels render — swapped, so each element names the other's feature.
     LabelSwappedUi,
+    /// Right, in six calls, where one would do. Green by every correctness measure we own:
+    /// the answer IS there and the operator paid six round trips to assemble it.
+    ExpensiveButCorrect,
+    /// The mirror, and the one this architecture produces under cost pressure: one call,
+    /// everything inside, nothing answered. A lone call-counter TEACHES this shape, which
+    /// is why the pair enters together or not at all.
+    DumpedButUnanswered,
 }
 
 /// One pathogen: a deliverable that is green by correctness measures and useless by
@@ -180,7 +228,80 @@ pub fn suite() -> Vec<Specimen> {
         spec_claim_without_artifact(),
         minimal_diff_no_behavior(),
         label_swapped_ui(),
+        expensive_but_correct(),
+        dumped_but_unanswered(),
     ]
+}
+
+/// Right, in six calls, where one would do — the shape the blind judge complained about
+/// while calling the surface correct. Every correctness measure we own passes it.
+fn expensive_but_correct() -> Specimen {
+    Specimen {
+        id: "expensive-but-correct".to_owned(),
+        mode: UselessnessMode::ExpensiveButCorrect,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Sleep answer".to_owned(),
+                element_id: Some("status".to_owned()),
+                artifact: Some("apps/cli/src/commands/execution/mod.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><a href=\"#status\">status</a>                   <section id=\"status\">running</section></main>"
+                .to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "status".to_owned()]),
+            journey: asserted_journey("Sleep answer"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+            interaction: Some(InteractionTrace {
+                question: "can I go back to sleep?".to_owned(),
+                budget_calls: 1,
+                calls: vec![
+                    call("status", 900, false),
+                    call("events", 4_200, false),
+                    call("events", 4_200, false),
+                    call("wake_status", 300, false),
+                    call("probe", 250, false),
+                    // The sixth carries it: correct, and paid for six times over.
+                    call("status", 900, true),
+                ],
+            }),
+        },
+    }
+}
+
+/// The mirror: one call, everything inside, nothing answered. This is what a lone call
+/// counter teaches a system to build, which is why the two enter together.
+fn dumped_but_unanswered() -> Specimen {
+    Specimen {
+        id: "dumped-but-unanswered".to_owned(),
+        mode: UselessnessMode::DumpedButUnanswered,
+        deliverable: Deliverable {
+            claims: vec![Claim {
+                feature: "Sleep answer".to_owned(),
+                element_id: Some("status".to_owned()),
+                artifact: Some("apps/cli/src/commands/execution/mod.rs".to_owned()),
+            }],
+            html: "<main id=\"home\"><a href=\"#status\">status</a>                   <section id=\"status\">running</section></main>"
+                .to_owned(),
+            reachable_ids: BTreeSet::from(["home".to_owned(), "status".to_owned()]),
+            journey: asserted_journey("Sleep answer"),
+            tests: green_tests(),
+            diff: behavior_diff(),
+            interaction: Some(InteractionTrace {
+                question: "can I go back to sleep?".to_owned(),
+                budget_calls: 1,
+                // Within budget by a mile, and the answer is nowhere in the 6 KB.
+                calls: vec![call("events", 6_400, false)],
+            }),
+        },
+    }
+}
+
+fn call(tool: &str, payload_bytes: u64, answered: bool) -> InteractionCall {
+    InteractionCall {
+        tool: tool.to_owned(),
+        payload_bytes,
+        answered,
+    }
 }
 
 /// Canonical digest of a suite: sha256 over the canonical JSON of the specimen list,
@@ -248,6 +369,27 @@ pub fn correctness_battery() -> Box<dyn CandidateGate> {
 #[must_use]
 pub fn paired_trivial_gate(mode: UselessnessMode) -> Box<dyn CandidateGate> {
     match mode {
+        // The plausible gate for an expensive answer is a call COUNTER — and it is fooled
+        // by the mirror, which spends one call and answers nothing. The plausible gate for
+        // the mirror is "did one call answer it" — fooled by six calls that do answer.
+        UselessnessMode::ExpensiveButCorrect => Box::new(FnGate {
+            id: "the-answer-is-present",
+            check: |d| {
+                d.interaction
+                    .as_ref()
+                    .is_none_or(|trace| trace.calls.iter().any(|call| call.answered))
+            },
+            finding: "no call carried the answer",
+        }),
+        UselessnessMode::DumpedButUnanswered => Box::new(FnGate {
+            id: "calls-within-budget",
+            check: |d| {
+                d.interaction
+                    .as_ref()
+                    .is_none_or(|trace| trace.calls.len() as u64 <= trace.budget_calls)
+            },
+            finding: "the question cost more calls than its budget",
+        }),
         UselessnessMode::DeadFeature => Box::new(FnGate {
             id: "claims-have-artifacts",
             check: |d| !d.claims.is_empty() && d.claims.iter().all(|c| c.artifact.is_some()),
@@ -349,6 +491,16 @@ impl CandidateGate for FnGate {
 pub fn is_useless_on_its_axis(specimen: &Specimen) -> bool {
     let d = &specimen.deliverable;
     match specimen.mode {
+        // Useless on the interaction axis: the answer arrives, but the asking is the cost.
+        UselessnessMode::ExpensiveButCorrect => d.interaction.as_ref().is_some_and(|trace| {
+            trace.calls.len() as u64 > trace.budget_calls
+                && trace.calls.iter().any(|call| call.answered)
+        }),
+        // Useless the mirrored way: within budget, and the answer is nowhere in it.
+        UselessnessMode::DumpedButUnanswered => d.interaction.as_ref().is_some_and(|trace| {
+            trace.calls.len() as u64 <= trace.budget_calls
+                && !trace.calls.iter().any(|call| call.answered)
+        }),
         UselessnessMode::DeadFeature => d.claims.iter().any(|c| {
             c.artifact.is_some()
                 && c.element_id
@@ -445,6 +597,8 @@ fn dead_feature() -> Specimen {
             journey: asserted_journey("Export"),
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -464,6 +618,8 @@ fn unreachable_ui() -> Specimen {
             journey: asserted_journey("Export"),
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -494,6 +650,8 @@ fn tautological_journey() -> Specimen {
             ],
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -513,6 +671,8 @@ fn blank_screen() -> Specimen {
             journey: asserted_journey("Dashboard"),
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -534,6 +694,8 @@ fn orphan_view() -> Specimen {
             journey: asserted_journey("Report"),
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -557,6 +719,8 @@ fn gutted_assertion() -> Specimen {
                 assertions: 0,
             }],
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -580,6 +744,8 @@ fn happy_path_only() -> Specimen {
             }],
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -606,6 +772,8 @@ fn spec_claim_without_artifact() -> Specimen {
             journey: asserted_journey("Export"),
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -628,6 +796,8 @@ fn minimal_diff_no_behavior() -> Specimen {
                 files_touched: 3,
                 behavior_lines: 0,
             },
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }
@@ -662,6 +832,8 @@ fn label_swapped_ui() -> Specimen {
             journey: asserted_journey("Export"),
             tests: green_tests(),
             diff: behavior_diff(),
+            // No claim about interaction: these ten are about what a screen shows.
+            interaction: None,
         },
     }
 }

@@ -92,7 +92,11 @@ fn the_composed_geometry_evaluator_earns_its_certification() {
     let certification =
         certify(&GeometryGate, &suite).expect("the composed evaluator must reject every pathogen");
     assert_eq!(certification.gate_id, "gate-geometry");
-    assert_eq!(certification.specimens, 10);
+    // DELIBERATE (M08): the suite grew to twelve with the interaction-cost pair. The
+    // composed geometry evaluator still rejects EVERY specimen — certification succeeded,
+    // only this pinned count moved — so growing the suite did not weaken what this test
+    // proves; it widened what the gate had to refuse to keep saying it.
+    assert_eq!(certification.specimens, 12);
     assert!(certification.suite_digest.starts_with("sha256:"));
 }
 

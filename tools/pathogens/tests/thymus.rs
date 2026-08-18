@@ -1,4 +1,5 @@
-//! The thymus harness proofs: ten green-but-useless specimens, certification refused on
+//! The thymus harness proofs: twelve green-but-useless specimens (the original ten plus
+//! the M08 interaction-cost pair), certification refused on
 //! any pass, digest-voiding on suite growth, and the per-specimen fooling power that
 //! makes each pathogen load-bearing.
 
@@ -26,13 +27,17 @@ fn all_modes() -> Vec<UselessnessMode> {
 }
 
 #[test]
-fn the_suite_holds_ten_specimens_one_per_mode() {
+fn the_suite_holds_twelve_specimens_one_per_mode() {
     let bred = suite();
-    assert_eq!(bred.len(), 10, "the suite is ten specimens, not fewer");
+    assert_eq!(
+        bred.len(),
+        12,
+        "the suite is TWELVE specimens: the original ten plus the interaction-cost pair \n         (M08). The count is pinned so growing the suite is a deliberate edit, never a drift"
+    );
     let modes: BTreeSet<_> = bred.iter().map(|specimen| specimen.mode).collect();
-    assert_eq!(modes.len(), 10, "one specimen per uselessness mode");
+    assert_eq!(modes.len(), 12, "one specimen per uselessness mode");
     let ids: BTreeSet<_> = bred.iter().map(|specimen| specimen.id.clone()).collect();
-    assert_eq!(ids.len(), 10, "specimen ids are distinct");
+    assert_eq!(ids.len(), 12, "specimen ids are distinct");
 }
 
 #[test]
@@ -96,13 +101,13 @@ fn every_paired_trivial_gate_fails_certification_citing_its_specimen() {
 }
 
 #[test]
-fn the_correctness_battery_itself_fails_certification_on_all_ten() {
+fn the_correctness_battery_itself_fails_certification_on_all_twelve() {
     let refusal = certify(correctness_battery().as_ref(), &suite())
         .expect_err("correctness alone certifies nothing");
     assert_eq!(
         refusal.fooled_by.len(),
-        10,
-        "every specimen is green by correctness measures, so all ten fool the battery"
+        12,
+        "every specimen is green by correctness measures, so all TWELVE fool the battery — \n         the two interaction-cost specimens included: one answers in six calls, the other \n         answers nothing in one, and correctness cannot see either"
     );
 }
 
@@ -110,9 +115,9 @@ fn the_correctness_battery_itself_fails_certification_on_all_ten() {
 fn a_gate_that_rejects_every_specimen_is_certified_with_the_suite_digest() {
     let bred = suite();
     let certification = certify(reject_everything_gate().as_ref(), &bred)
-        .expect("rejecting all ten earns the receipt");
+        .expect("rejecting all twelve earns the receipt");
     assert_eq!(certification.gate_id, "reject-everything");
-    assert_eq!(certification.specimens, 10);
+    assert_eq!(certification.specimens, 12);
     assert_eq!(certification.suite_digest, suite_digest(&bred));
 }
 
@@ -135,7 +140,7 @@ fn the_suite_digest_is_stable_and_wire_hash_shaped() {
 fn growing_the_suite_voids_old_certifications() {
     let bred = suite();
     let certification =
-        certify(reject_everything_gate().as_ref(), &bred).expect("certified against ten");
+        certify(reject_everything_gate().as_ref(), &bred).expect("certified against twelve");
     assert!(
         certification_is_current(&certification.suite_digest, &bred),
         "the receipt binds while the suite stands still"
@@ -155,6 +160,8 @@ fn growing_the_suite_voids_old_certifications() {
                 files_touched: 1,
                 behavior_lines: 0,
             },
+            // Makes no claim about interaction — this fixture is about growing the suite.
+            interaction: None,
         },
     };
     grown.push(eleventh);

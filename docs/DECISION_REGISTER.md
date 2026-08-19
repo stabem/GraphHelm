@@ -33,8 +33,8 @@ This document consolidates the product decisions already made. They are normativ
 | D-027 | Hierarchy | Workspace → Project → Subproject, with selective inheritance of context and policies. |
 | D-028 | Collaboration | Single-user first, but identity, authorization, and audit ready for teams. |
 | D-029 | Open source | Framework, Runtime, and Studio fully open source; no essential function closed. |
-| D-030 | Licensing | Dual license: community AGPLv3 and an alternative commercial license. |
-| D-031 | Contributions | Non-exclusive CLA, with ICLA and CCLA, allowing commercial relicensing. |
+| D-030 | Licensing | MIT, single license. Supersedes the earlier AGPLv3-plus-commercial plan: that design existed to hold a commercial lever, and the owner chose adoption over the lever. |
+| D-031 | Contributions | No CLA. Inbound equals outbound under MIT, so there is nothing left for a contributor agreement to grant. Supersedes the ICLA/CCLA plan, which existed only to enable commercial relicensing. |
 | D-032 | First slice | Complete developer-first vertical slice, without limiting the generalist architecture. |
 | D-033 | Current state | Produce full documentation before any implementation. |
 | D-034 | Name | GraphHelm is the product name selected for development, subject to legal clearance and namespace reservation before public launch. |

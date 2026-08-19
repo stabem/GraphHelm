@@ -14,7 +14,7 @@ The system uses an immutable Event Store, a Project Knowledge Graph, and Living 
 
 Models are accessed through the Universal Model Gateway: BYOK, direct APIs, aggregators, official subscription runtimes, and local models. Reaching a subscription limit pauses execution; there is no automatic paid fallback.
 
-The project will be fully open source, AGPLv3 plus an alternate commercial license, with a non-exclusive CLA.
+The project will be fully open source under the MIT license, with no second tier and no CLA. (This line was written on 2026-08-08 as AGPLv3 plus a commercial license; the decision was later changed — see ADR-018.)
 
 ## Complete decisions
 

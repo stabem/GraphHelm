@@ -136,7 +136,7 @@ Criterion: the core does not receive a code branch per domain; only extensions a
 - multi-VPS workers;
 - HA stores;
 - compliance controls;
-- commercial license operations.
+- managed hosting operations.
 
 ## 7. Phase 5 — distributed agent operating system
 
@@ -230,8 +230,7 @@ Criterion: the core does not receive a code branch per domain; only extensions a
 - self-host;
 - opt-in telemetry;
 - schemas/docs;
-- AGPL/commercial strategy;
-- CLA process;
+- MIT license and open governance;
 - reproducible export.
 
 ## 9. North star metrics

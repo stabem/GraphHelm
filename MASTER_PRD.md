@@ -15,7 +15,7 @@ The graph can combine investigation, planning, execution, testing, critique, sec
 
 The local Studio displays the execution as an operational diagram. The user observes agents in real time, opens linked documents and artifacts, edits nodes and edges, pauses branches, approves proposed nodes, swaps models, and, whenever desired, forces a different path — including skipping checks and going straight to deployment. The harness explains the impact, but does not take sovereignty away from the owner.
 
-All execution happens on the user's VPS. Code, documents, events, credentials, indexes, memory, artifacts, and sandboxes remain under their control. The project is fully open source, with a community edition under AGPLv3 and an alternative commercial license over the same codebase.
+All execution happens on the user's VPS. Code, documents, events, credentials, indexes, memory, artifacts, and sandboxes remain under their control. The project is fully open source under the MIT license, with one license for everyone and no second tier.
 
 ---
 
@@ -615,11 +615,10 @@ Inheritance is selective, with explicit visibility and provenance. Sibling conte
 
 ### 20.2 License
 
-- community edition: AGPLv3;
-- commercial license: alternative contract;
-- same codebase;
-- non-exclusive ICLA/CCLA;
-- legal texts validated before launch.
+- MIT, for the whole codebase;
+- no second tier and no community/enterprise split;
+- no CLA: a contribution is offered under the same terms the project ships under;
+- anything sold is a service beside the software, never a capability withheld from it.
 
 ### 20.3 Process
 

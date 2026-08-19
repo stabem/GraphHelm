@@ -166,5 +166,5 @@
 - Universal Model Gateway with BYOK, official subscriptions, and local models.
 - Threat model and isolation tiers.
 - Observability, checkpoints, replay, and recovery.
-- AGPLv3 governance + commercial license + CLA.
+- MIT license and open governance.
 - Graph and manifest examples.

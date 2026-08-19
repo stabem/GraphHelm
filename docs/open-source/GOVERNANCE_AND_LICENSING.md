@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-Build GraphHelm as an open, trustworthy, and adoptable framework, while preserving the possibility of an alternative commercial license over the same codebase.
+Build GraphHelm as an open, trustworthy, and adoptable framework under a single permissive license.
 
-This document is a product and governance strategy, not legal advice. The final texts of the commercial license, ICLA, CCLA, trademark, and terms require a specialized attorney.
+This document is a product and governance strategy, not legal advice. The final texts of the trademark policy and of the terms for any optional hosted service require a specialized attorney.
 
 ## 2. Open source constitution
 
@@ -19,81 +19,43 @@ This document is a product and governance strategy, not legal advice. The final 
 9. Commercial services are convenience, support, or management, not core unlocking.
 10. Roadmap, RFCs, ADRs, and security policy are public.
 
-## 3. Dual license strategy
+## 3. License
 
-### 3.1 Community edition
+**MIT.** One license for the whole codebase, for every user, with no second tier.
 
-**GNU Affero General Public License v3 (AGPLv3).**
+What that means, said plainly rather than left for a reader to infer:
 
-Motivation:
+- anyone may use, modify, embed, redistribute and sell the software;
+- anyone may run a modified version as a network service and owes nothing back — no source,
+  no notice, no fee;
+- the only obligation is to keep the copyright and permission notice.
 
-- the product is naturally run over a network;
-- modifications used to offer a network service must make the corresponding source available to users, per the terms of the license;
-- protects the reciprocity of the core.
+This supersedes an earlier plan for AGPLv3 plus an alternative commercial license. That plan
+existed to hold a commercial lever over network use, and it was traded for adoption. The trade
+is one-directional: code already published under MIT stays available under MIT to everyone who
+received it, so a later change of mind cannot reach what has already been distributed.
 
-### 3.2 Commercial license
+## 4. Contributions
 
-Alternative agreement for organizations that want to embed, modify, or offer the software without the obligations of the AGPLv3.
+Inbound equals outbound: a contribution is offered under the same MIT terms the project is
+distributed under, and that is the whole agreement. There is no CLA, no ICLA and no CCLA.
 
-Possible offerings:
+Those documents existed to let one party relicense contributed code commercially. Under a
+single permissive license nobody needs that power, so asking contributors to sign anything
+would cost goodwill and buy nothing.
 
-- self-hosted commercial license;
-- support and SLA;
-- managed deployment;
-- hosted observability;
-- managed collaboration/SSO/compliance;
-- marketplace and billing;
-- consulting and implementation;
-- contractual indemnification;
-- long-term support.
-
-The commercial license must not depend on keeping essential features out of the community repository.
-
-### 3.3 Same codebase
-
-Goal: avoid an "open core" model in which the real product stays closed. Service add-ons may exist, but the full agentic framework remains open.
-
-## 4. Contributor License Agreement
-
-### 4.1 Model
-
-Non-exclusive CLA:
-
-- contributor retains copyright;
-- grants broad, permanent, and irrevocable rights necessary to use, modify, distribute, sublicense, and relicense the contribution;
-- includes a related patent grant;
-- allows both AGPL and commercial distribution;
-- preserves attribution/authorship;
-- declares the right to contribute;
-- separates ICLA and CCLA.
-
-### 4.2 ICLA
-
-For individuals. Must cover the contributor's own contributions and employer declarations when applicable.
-
-### 4.3 CCLA
-
-For companies covering contributions from their employees. Does not automatically replace an individual declaration; the final legal workflow decides the combination.
-
-### 4.4 CLA UX
-
-- short and readable text;
-- public page explaining why it exists;
-- electronic signature on the first relevant PR;
-- automated status check in CI;
-- signer data privacy;
-- process for corrections;
-- CLA version tracked.
-
-### 4.5 Small contributions
-
-Legal policy must define whether small typo/docs fixes require a CLA. For relicensing simplicity, the recommendation is to require a CLA for every merged PR, with low-friction automation.
+Contributors are asked to have the right to contribute what they submit. That is a statement
+of fact about the code, not a transfer of rights.
 
 ## 5. Copyright and ownership
 
-For sustainable dual licensing, the maintainer/entity needs to control sufficient rights over all commercially distributed code. Code without a compatible CLA does not enter the dual-license base or requires separate consent.
+Each contributor keeps the copyright in what they wrote. Nothing is assigned and nothing needs
+to be, because MIT already grants everyone — including this project — the rights required to
+distribute the result.
 
-Third-party code must undergo license compatibility review. AGPL/GPL dependencies can affect commercial distribution and require specific analysis.
+Third-party code still undergoes license compatibility review. A copyleft dependency does not
+threaten a commercial tier any more, but it can still impose obligations on everyone who
+redistributes GraphHelm, which is now everyone.
 
 ## 6. Trademark
 
@@ -311,31 +273,31 @@ The official registry may moderate malware, trademark abuse, and broken packages
 - SSO/RBAC service;
 - hosted observability;
 - curated verified registry;
-- commercial license;
 - compliance packs;
 - training/certification;
 - consulting;
 - custom adapters.
 
-The community edition remains fully functional self-hosted.
+Every one of these is a service sold beside the software, never a capability withheld from it.
+There is no community edition and no other edition: MIT means the published code is the whole
+product, and anything sold has to be worth buying next to it.
 
 ## 20. Risks
-
-### CLA reduces contributions
-
-Mitigation: short text, honest explanation, simple signature, transparent governance.
-
-### AGPL deters companies
-
-Mitigation: clear commercial license and simple evaluation.
 
 ### Hostile fork
 
 Mitigation: quality, community, brand, release velocity, and open governance; not closing the core.
 
+### A competitor runs it as a service and returns nothing
+
+Accepted, not mitigated. MIT permits exactly this, and it is the price paid for adoption. The
+defences left are the ones that were always the real ones: quality, release velocity, brand,
+and knowing the problem better than anyone who forked it.
+
 ### Contributor rights ambiguity
 
-Mitigation: ICLA/CCLA, provenance, and license scans.
+Mitigation: provenance and license scans. There is no CLA to lean on, so a contribution whose
+origin is unclear must be resolved at review time rather than papered over by a signature.
 
 ### Incompatible dependency
 
@@ -343,11 +305,7 @@ Mitigation: automated license policy and legal review of critical dependencies.
 
 ## 21. Legal documents needed before launch
 
-- AGPLv3 LICENSE;
-- commercial license agreement;
-- ICLA;
-- CCLA;
-- CLA privacy notice;
+- MIT LICENSE (in the repository root);
 - trademark policy;
 - terms/privacy for optional services;
 - DPA for enterprise hosting;
@@ -357,7 +315,6 @@ Mitigation: automated license policy and legal review of critical dependencies.
 
 ## 22. Reference sources
 
-- GNU AGPLv3 and explanation of the network clause: Free Software Foundation.
-- ICLA/CCLA model and explanation: Apache Software Foundation.
+- MIT license text: Open Source Initiative.
 
 Links and verification date are in `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md`.

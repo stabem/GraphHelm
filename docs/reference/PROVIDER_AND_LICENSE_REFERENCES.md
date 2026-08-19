@@ -62,39 +62,22 @@ The official documentation describes Bearer API keys for the main endpoints and 
 - each model's capabilities need to be discovered/registered;
 - do not use web cookies for the API.
 
-## GNU AGPLv3
+## MIT License
 
-The Free Software Foundation publishes the official text of the GNU Affero General Public License v3 and explains the additional requirement related to modified versions used by users over a network.
+GraphHelm is distributed under the MIT license: use, modification, redistribution and sale are
+permitted, including running a modified version as a network service, with no obligation to
+return anything. The only condition is that the copyright and permission notice travel with
+the software.
 
-- License text  
-  https://www.gnu.org/licenses/agpl-3.0.html.en
+- License text (OSI)  
+  https://opensource.org/license/mit
 
-- "Why the GNU Affero GPL" explanation  
-  https://www.gnu.org/licenses/why-affero-gpl.en.html
+## Contributor agreements
 
-### Implication for the project
-
-- include the correct, full license text;
-- implement an adequate mechanism for offering the source when applicable;
-- validate the interaction between AGPL, dependencies, and the commercial license with a lawyer.
-
-## Contributor License Agreements
-
-The Apache Software Foundation documents the ICLA and CCLA as agreements under which contributors retain rights over their contributions and grant the foundation rights to distribute and develop the work.
-
-- ASF Contributor Agreements  
-  https://www.apache.org/licenses/contributor-agreements.html
-
-- ASF CLA FAQ  
-  https://www.apache.org/licenses/cla-faq.html
-
-### Implication for the project
-
-- use these materials only as a structural reference;
-- draft our own ICLA/CCLA appropriate to the dual licensing model;
-- validate patent grant, relicensing, and privacy;
-- do not copy/adapt without legal review.
+Not used. A contribution is offered under the same MIT terms the project ships under, so there
+is nothing left for an ICLA or CCLA to grant. Those instruments exist to let one party
+relicense contributed code commercially, and that need disappeared with the commercial tier.
 
 ## Legal note
 
-This specification does not claim that any CLA text or commercial license is already finalized. The product decision is to use AGPLv3 + an alternative commercial license + a non-exclusive CLA. Legal execution depends on our own documents, reviewed by a qualified professional.
+The product decision is MIT, single license, no CLA. The license text itself is standard and needs no drafting; the trademark policy and any terms for optional hosted services still require a qualified professional.

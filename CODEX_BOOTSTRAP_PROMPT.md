@@ -13,7 +13,7 @@ The product design is already approved. Do not restart product brainstorming and
 - Product name: **GraphHelm**
 - Primary tagline: **The open-source control plane for governed AI agents.**
 - Product line: **Compose agents. Govern every run.**
-- License strategy: AGPLv3 community edition plus an alternative commercial license, with non-exclusive ICLA/CCLA.
+- License: MIT, single license for the whole codebase. Contributions are inbound=outbound under the same terms, so there is no CLA.
 - Deployment topology: local Studio as control plane; Runtime and project data on a user-controlled VPS.
 
 Treat `docs/product/NAMING_DECISION.md` as the naming authority. Existing `p50.dev` wire identifiers are provisional legacy identifiers. Do not rename them during this milestone unless you first write and approve an ADR that defines the complete compatibility and migration strategy.

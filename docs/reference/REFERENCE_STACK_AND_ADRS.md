@@ -189,11 +189,14 @@ The normative architecture is language-independent. This section recommends a re
 
 **Decision:** cognitive changes are tested in a snapshot and committed atomically. Code changes become a normal task.
 
-## 20. ADR-018 — AGPLv3 + commercial license
+## 20. ADR-018 — MIT, single license
 
-**Status:** accepted subject to legal review.
+**Status:** accepted. Supersedes the earlier AGPLv3-plus-commercial-license decision.
 
-**Decision:** dual licensing with a non-exclusive CLA.
+**Decision:** MIT for the whole codebase, with no second tier and no CLA. The superseded design
+existed to hold a commercial lever over network use; it was traded for adoption. The trade only
+runs one way — code already published under MIT stays available under MIT to everyone who
+received it.
 
 ## 21. ADR-019 — Single-user first with actor identity
 

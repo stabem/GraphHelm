@@ -611,7 +611,8 @@
         "executionId": {"$ref": "#/$defs/opaqueId"},
         "sessionId": {"$ref": "#/$defs/opaqueId"},
         "cursor": {"type": "integer", "minimum": 0},
-        "rendezvousId": {"$ref": "#/$defs/opaqueId"}
+        "rendezvousId": {"$ref": "#/$defs/opaqueId"},
+        "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
       },
       "additionalProperties": false
     },
@@ -621,7 +622,8 @@
       "properties": {
         "executionId": {"$ref": "#/$defs/opaqueId"},
         "sessionId": {"$ref": "#/$defs/opaqueId"},
-        "reason": {"$ref": "#/$defs/wakeConsumeReason"}
+        "reason": {"$ref": "#/$defs/wakeConsumeReason"},
+        "capturedArming": {"type": "integer", "minimum": 1}
       },
       "additionalProperties": false
     },

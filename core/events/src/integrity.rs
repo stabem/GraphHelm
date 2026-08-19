@@ -270,6 +270,16 @@ pub fn request_digest(request: &PreparedAppend) -> Result<String, EventRepositor
     let input = RequestDigest {
         scope: request.scope(),
         stream_id: request.stream_id(),
+        // `expected_next_sequence` is in this digest ON PURPOSE, and something two crates away
+        // depends on it. The wake recorder keys each consumption with the sequence it appends
+        // at and reports how many it recorded; that count is honest only because a second
+        // attempt at a LATER sequence is refused rather than resolved as a retry against the
+        // first attempt's events. Remove this field and that refusal becomes a replay: the
+        // recorder reports a count for events it never wrote, and nothing in its own crate
+        // notices. The executable statement is
+        // `the_same_key_at_a_later_sequence_conflicts_rather_than_replaying`
+        // (core/events/tests/local_atomicity.rs). Several other guards fall too, none of them
+        // about this field — that is the diagnosability problem this note exists to prevent.
         expected_next_sequence: request.expected_next_sequence(),
         events: request.events(),
         evidence,

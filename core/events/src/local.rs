@@ -247,6 +247,13 @@ impl LocalFailpoint {
     }
 }
 
+/// Whether an operation needs the store to itself, or only needs no WRITER in the middle.
+#[derive(Clone, Copy)]
+enum Exclusivity {
+    Exclusive,
+    Shared,
+}
+
 /// Crash-consistent repository-v1 directory for offline/local execution.
 #[derive(Clone)]
 pub struct LocalEventRepository {
@@ -455,7 +462,7 @@ impl LocalEventRepository {
     pub fn read_unique_replay_stream(
         &self,
     ) -> Result<(crate::RepositoryStream, Vec<EventEnvelope>), EventRepositoryError> {
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             let mut streams = BTreeMap::new();
             for batch in &state.batches {
@@ -488,7 +495,7 @@ impl LocalEventRepository {
     /// enumeration the 05f monitor's index renders as links. A read under the same
     /// exclusive lock every other read takes; nothing here can write.
     pub fn list_streams(&self) -> Result<Vec<crate::RepositoryStream>, EventRepositoryError> {
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             let mut streams = BTreeMap::new();
             for batch in &state.batches {
@@ -504,10 +511,46 @@ impl LocalEventRepository {
         })
     }
 
+    /// Runs `operation` with the store held against WRITERS -- the append path.
     fn with_exclusive_lock<T>(
         &self,
         operation: impl FnOnce() -> Result<T, EventRepositoryError>,
     ) -> Result<T, EventRepositoryError> {
+        self.with_lock(Exclusivity::Exclusive, operation)
+    }
+
+    /// Runs `operation` with the store held against WRITERS ONLY -- the read path.
+    ///
+    /// Every operation used to take the exclusive lock, reads included, so the API built to
+    /// serve several agents at once served them one at a time. Measured before the change:
+    /// eight concurrent reads of one store cost the same wall time as eight sequential ones.
+    /// And reads are not a niche path -- in a mutation-heavy HTTP storm they were 89% of the
+    /// store operations, because even a mutation reads the sequence, the stream, the active
+    /// version and the idempotency record before appending once.
+    ///
+    /// Appends keep the exclusive lock. One writer at a time is the store's correctness model,
+    /// not a defect to be optimised away; what was wrong was readers waiting on readers.
+    fn with_shared_lock<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, EventRepositoryError>,
+    ) -> Result<T, EventRepositoryError> {
+        self.with_lock(Exclusivity::Shared, operation)
+    }
+
+    fn with_lock<T>(
+        &self,
+        exclusivity: Exclusivity,
+        operation: impl FnOnce() -> Result<T, EventRepositoryError>,
+    ) -> Result<T, EventRepositoryError> {
+        // The in-process gate is per-INSTANCE, and every serve request opens its own instance,
+        // so it never was the thing serialising concurrent requests -- the file lock was. It
+        // still guards one instance shared across threads, and readers may share it.
+        // The in-process gate stays a plain mutex, deliberately. It is per-INSTANCE, and serve
+        // opens an instance per request, so it never was what serialised concurrent requests --
+        // measured: making it an `RwLock` moved the cross-handle guard by nothing at all. What
+        // DOES still serialise two threads sharing ONE handle is the journal mutex inside
+        // `validate_anchors`, and no surface shares a handle today. Left as a seed rather than
+        // changed without a guard that can fail.
         let _gate = self
             .operation_gate
             .lock()
@@ -520,7 +563,11 @@ impl LocalEventRepository {
             .inspect_err(|_| {
                 let _ = unlock_root(&self.root_handle);
             })?;
-        if file.lock_exclusive().is_err() {
+        let taken = match exclusivity {
+            Exclusivity::Exclusive => file.lock_exclusive(),
+            Exclusivity::Shared => FileExt::lock_shared(&*file),
+        };
+        if taken.is_err() {
             let _ = unlock_root(&self.root_handle);
             return Err(EventRepositoryError::Storage);
         }
@@ -1588,7 +1635,7 @@ impl EventRepository for LocalEventRepository {
     ) -> Result<EventPage, EventRepositoryError> {
         validate_page_limit(limit)?;
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             let key = stream_key(scope, stream_id)?;
             let head = state
@@ -1641,7 +1688,7 @@ impl EventRepository for LocalEventRepository {
         stream_id: &str,
     ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             let events = state
                 .batches
@@ -1662,7 +1709,7 @@ impl EventRepository for LocalEventRepository {
         stream_id: &str,
     ) -> Result<u64, EventRepositoryError> {
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             Ok(state
                 .next_sequence
@@ -1677,7 +1724,7 @@ impl EventRepository for LocalEventRepository {
         scope: &RepositoryScope,
         evidence_id: &EvidenceId,
     ) -> Result<bool, EventRepositoryError> {
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             let path = self.blob_path(scope, evidence_id)?;
             Ok(state.reachable_evidence.contains(&path))
@@ -1689,7 +1736,7 @@ impl EventRepository for LocalEventRepository {
         scope: &RepositoryScope,
         artifact_id: &ArtifactId,
     ) -> Result<bool, EventRepositoryError> {
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             Ok(state
                 .artifacts
@@ -1702,7 +1749,7 @@ impl EventRepository for LocalEventRepository {
         scope: &RepositoryScope,
         stream_id: &str,
     ) -> Result<Option<ActiveVersion>, EventRepositoryError> {
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             Ok(state
                 .active_versions
@@ -1717,7 +1764,7 @@ impl EventRepository for LocalEventRepository {
         stream_id: &str,
         idempotency_key: &OpaqueId,
     ) -> Result<Option<Vec<EventEnvelope>>, EventRepositoryError> {
-        self.with_exclusive_lock(|| {
+        self.with_shared_lock(|| {
             let state = self.load_state()?;
             self.sync_loaded_journal(&state)?;
             Ok(state

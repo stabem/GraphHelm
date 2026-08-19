@@ -1090,6 +1090,29 @@ pub(super) async fn wake_lease(
         );
     };
     let cursor = payload.get("cursor").and_then(serde_json::Value::as_u64);
+    // M09 decision B: how long the sleeper's quiet may last. Absent means absent — no horizon
+    // is invented for a lease that declared none.
+    let matures_in_seconds = payload
+        .get("maturesInSeconds")
+        .and_then(serde_json::Value::as_u64);
+    // Bounded at BOTH ends, and the loose end is the dangerous one. Zero is not a bound; but a
+    // bound of a trillion seconds is a horizon in the year 33715, and the surface would answer
+    // with a DATE, which reads as a promise while meaning never. That is absence laundered into
+    // calm through arithmetic. Ten years is the ceiling its neighbours already use for a
+    // declared duration (`nodeTimeoutSeconds`, `observedSilenceSeconds`), so the refusal is the
+    // house's existing answer rather than a number invented here.
+    const TEN_YEARS_SECONDS: u64 = 315_576_000;
+    if payload.get("maturesInSeconds").is_some()
+        && matures_in_seconds.is_none_or(|seconds| seconds == 0 || seconds > TEN_YEARS_SECONDS)
+    {
+        return bad_request(
+            WAKE_LEASE_COMMAND,
+            &format!(
+                "\"maturesInSeconds\" must be between 1 and {TEN_YEARS_SECONDS} (ten years): a                  bound of zero is not a bound, and a bound nobody will live to see is a promise                  of never wearing the shape of a date"
+            ),
+            "/maturesInSeconds",
+        );
+    }
     let session_id = session_id.to_owned();
     let rendezvous_id = rendezvous_id.to_owned();
     let events = state.events.clone();
@@ -1105,9 +1128,12 @@ pub(super) async fn wake_lease(
                 Ok(execution::wake::arm(
                     &events,
                     Some(target.as_str()),
-                    &session_id,
-                    &rendezvous_id,
-                    cursor,
+                    &execution::wake::Arming {
+                        session_id: &session_id,
+                        rendezvous_id: &rendezvous_id,
+                        cursor,
+                        matures_in_seconds,
+                    },
                     actor,
                     key,
                 )?)

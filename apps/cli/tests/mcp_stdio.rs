@@ -1462,15 +1462,19 @@ fn wake_arm_arms_this_session_and_wake_status_reads_it_back() {
     );
 }
 
-/// M08 Task 4: the blocking wait as an MCP primitive, and the rule that keeps it safe --
-/// **a session may block only on a lease it holds itself** (the 05g sleeper-only rule,
-/// which the CLI sidecar got for free by being started by the sleeper and which an MCP
-/// tool must earn, since any client can name any rendezvous).
+/// M08 Task 4 and M09 decision B: the blocking wait as an MCP primitive, and the rule that
+/// keeps it safe -- **a session may block only on a lease it holds itself** (the 05g
+/// sleeper-only rule, which the CLI sidecar got for free by being started by the sleeper).
 ///
-/// The fixture ARMS a real lease first, deliberately. A session that holds nothing would
-/// be refused too, and such a test would pass with the rule deleted -- it would only prove
-/// that an absent lease is not a present one. What has to be refused is the interesting
-/// case: a session that IS armed, reaching for a rendezvous that belongs to someone else.
+/// The rule used to be ENFORCED: the caller named a rendezvous and the tool compared it with
+/// the one the session held. It is now STRUCTURAL: the caller names no rendezvous at all, and
+/// no duration either -- both come from the lease this session armed. So the old test's
+/// interesting case, an armed session reaching for a peer's rendezvous, is no longer a thing
+/// that can be said, and a guard on the refusal message would be a guard on dead code.
+///
+/// What is asserted instead is the shape that makes it unsayable, plus the refusal that
+/// remains reachable: a lease with no declared bound promises nothing, so waiting on it is
+/// refused rather than becoming a wait with no end.
 #[test]
 fn a_session_may_block_only_on_the_lease_it_holds() {
     let harness = wired("exec-mcp-wait");
@@ -1483,27 +1487,58 @@ fn a_session_may_block_only_on_the_lease_it_holds() {
             serde_json::json!({"executionId": "exec-mcp-wait", "rendezvousId": "rdv-mine"}),
         ),
         tool_call(
-            serde_json::json!("wait-peer"),
+            serde_json::json!("wait-unbounded"),
             "wake_wait",
-            serde_json::json!({"executionId": "exec-mcp-wait", "rendezvousId": "rdv-a-peers",
-                "timeoutSeconds": 1}),
+            serde_json::json!({"executionId": "exec-mcp-wait"}),
         ),
     ]);
-    assert_eq!(session.replies.len(), 3, "{:?}", session.replies);
 
     let (is_error, armed) = tool_envelope(&session.replies[1]);
     assert!(!is_error, "the fixture must really hold a lease: {armed}");
     assert_eq!(armed["data"]["rendezvousId"], "rdv-mine", "{armed}");
 
+    // The lease was armed with no bound, so the wait is refused rather than endless. This is
+    // the reachable refusal, and it is the one that matters: an endless wait is the silent
+    // failure the whole decision exists to remove.
     let refused = &session.replies[2]["result"];
     assert_eq!(
         refused["isError"],
         serde_json::json!(true),
-        "waiting on a peer's rendezvous must be refused, not served: {refused}"
+        "a lease that declared no bound promises nothing: {refused}"
     );
     let text = refused["content"][0]["text"].as_str().unwrap_or_default();
     assert!(
-        text.contains("rdv-mine") && text.contains("rdv-a-peers"),
-        "the refusal names both leases so the operator can see the mistake: {text}"
+        text.contains("maturesInSeconds"),
+        "the refusal names the declaration that is missing: {text}"
+    );
+}
+
+/// The structural half of the rule above: naming someone else's rendezvous, or a deadline of
+/// one's own, is not something the tool's surface allows to be said.
+///
+/// Sabotage: put `rendezvousId` or `timeoutSeconds` back on the schema. This falls, and it is
+/// the guard that keeps the CLI and the MCP halves from drifting into two definitions of one
+/// tool -- which is exactly what they were between two commits of this milestone.
+#[test]
+fn the_wait_tool_accepts_an_identity_and_never_a_rendezvous_or_a_deadline() {
+    let harness = wired("exec-mcp-wait-shape");
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    ]);
+    let tools = session.replies[1]["result"]["tools"].as_array().unwrap();
+    let wait = tools
+        .iter()
+        .find(|tool| tool["name"] == "wake_wait")
+        .expect("wake_wait is in the closed table");
+    let properties = &wait["inputSchema"]["properties"];
+    assert!(
+        properties["rendezvousId"].is_null() && properties["timeoutSeconds"].is_null(),
+        "the caller supplies an identity, never a rendezvous and never a duration: {wait}"
+    );
+    assert!(
+        !properties["executionId"].is_null(),
+        "the identity it does supply is the execution: {wait}"
     );
 }

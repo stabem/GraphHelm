@@ -255,6 +255,68 @@ fn exact_retry_is_resolved_before_sequence_and_divergent_reuse_fails_closed() {
     );
 }
 
+/// The same key and the SAME events at a LATER sequence is a conflict, not a replay.
+///
+/// The guard above covers divergence by event CONTENT while the expected sequence stays put.
+/// This covers the other axis, and nothing pinned it: identical events, identical key, only the
+/// expected sequence moved. The two axes reach different arms of the same branch — the replay
+/// arm returns the original batch and writes nothing, the conflict arm refuses — and a caller
+/// cannot tell them apart from the journal afterwards, because neither one appends.
+///
+/// A caller does lean on the difference. The wake recorder keys each consumption with the
+/// sequence it is appending at and reports how many it recorded; that count is honest only
+/// because a second attempt at a later sequence is REFUSED rather than answered with the first
+/// attempt's events. If this branch ever resolved by replay instead, the recorder would report
+/// a count for events it never wrote, and nothing in its own crate would notice. The invariant
+/// lives here; the code that depends on it lives two crates away and says so nowhere.
+#[test]
+fn the_same_key_at_a_later_sequence_conflicts_rather_than_replaying() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = repository(directory.path());
+    let first = repo.append_atomic(&prepared(None, vec![])).unwrap();
+
+    // POSITIVE CONTROL, and it must come before the question it makes answerable.
+    //
+    // The assertion below says a colliding key at a LATER sequence takes the conflict exit. That
+    // says nothing unless the OTHER exit exists: a store that resolved nothing as a retry — a
+    // digest salted per call, say — would satisfy it while the replay path was dead, and the
+    // test would report a property it never measured. So the retry is exercised here, in this
+    // fixture, rather than left to the neighbouring guard: an assertion whose control lives in
+    // another test is one refactor of that test away from measuring nothing.
+    let retry = repo.append_atomic(&prepared(None, vec![])).unwrap();
+    assert_eq!(
+        retry, first,
+        "control: the exact retry must resolve as a replay, returning the first attempt's \
+         events — without this the conflict assertion below cannot tell a working refusal \
+         from a store that never replays at all"
+    );
+
+    // Identical events, identical idempotency key. Only the expected sequence differs.
+    let later = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse("stream-1").unwrap(),
+        2,
+        vec![event(None, Sensitivity::Internal)],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+
+    let error = repo.append_atomic(&later).unwrap_err();
+    assert_eq!(
+        error.code(),
+        "GHE003_IDEMPOTENCY_CONFLICT",
+        "a key already spent must be refused at a later sequence, not resolved as a retry"
+    );
+    assert_eq!(
+        repo.read_stream(&scope(), "stream-1", 100, None)
+            .unwrap()
+            .events,
+        first,
+        "and the stream is untouched by the refusal"
+    );
+}
+
 #[test]
 fn direct_append_rejects_secret_shaped_persistent_surfaces_without_mutation() {
     const CANARY: &str = "sk-abcdefghijklmnopqrst";

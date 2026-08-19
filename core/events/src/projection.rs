@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
     EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared, ExecutionId,
-    ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion, PolicyWaiver,
-    ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
+    ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion, PersistedTimestamp,
+    PolicyWaiver, ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -220,6 +220,40 @@ pub struct ExecutionProjection {
     /// a broken hash chain (the M07 Task 2 distinction, stated where both live).
     #[serde(default)]
     pub wake_last_consumed: BTreeMap<String, WakeConsumptionReceipt>,
+    /// Consumptions that named an arming other than the one that was live — a sweep burning a
+    /// lease it did not mean to burn.
+    ///
+    /// Keyed by session because the session is who is stranded: the burned lease is gone, so it
+    /// has no live lease and no later append can ring it. Last-wins, matching its neighbours.
+    ///
+    /// AN ENTRY HERE NEVER IMPLIES REPLAY REFUSED. The fold records this and refuses nothing —
+    /// burning a live lease is legal, the log stays readable, and that is precisely what makes
+    /// this failure silent. Refusal is the fold's answer to a log it CANNOT INTERPRET; this one
+    /// is fully interpretable and merely records something bad. A reader finding an entry must
+    /// not infer the stream was ever unreadable.
+    ///
+    /// It lives in the projection rather than only in the events because the attention verdict
+    /// is computed from the projection through one predicate. A discrepancy visible only in raw
+    /// events is one that surface structurally cannot see — which would reproduce this defect
+    /// inside its own detector.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub wake_mis_burns: BTreeMap<String, WakeMisBurn>,
+}
+
+/// A consumption that burned an arming other than the one it captured.
+///
+/// Both armings are kept rather than a bare flag: "something was wrong here" is not actionable,
+/// and the PAIR is the diagnosis. Recovering it from raw events is exactly the derivation the
+/// single predicate must not perform.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeMisBurn {
+    /// Sequence of the consumption that did it.
+    pub at_sequence: u64,
+    /// The arming the sweep captured.
+    pub captured_arming: u64,
+    /// The arming that was actually live, and got burned.
+    pub live_arming: u64,
 }
 
 /// Why and where a lease burned (M07 F4).
@@ -239,6 +273,52 @@ pub struct WakeConsumptionReceipt {
 pub struct WakeLeaseState {
     pub cursor: u64,
     pub rendezvous_id: String,
+    /// Which arming this lease IS: the sequence of the `wake_lease` event that produced it.
+    ///
+    /// DERIVED from the envelope, never carried in the payload, and that is the whole reason it
+    /// works for history written before the field existed — every event has always had a
+    /// sequence, so a lease armed a year ago gets one on the next replay like any other.
+    ///
+    /// It exists because a session's identity is not enough to tell two of its own armings
+    /// apart, and neither is the rendezvous: our agents re-arm on FIXED rendezvous ids, so the
+    /// old arming and its replacement match on both. The cursor cannot separate them either —
+    /// re-arming at the head the surface reported is a documented fixed point, so it can repeat.
+    /// The sequence is strictly monotone per stream and is the only thing that cannot.
+    ///
+    /// THIS DEPENDS ON RE-ARM BEING AN OVERWRITE. The fold replaces the lease on a new arming,
+    /// so this moves to the new event's sequence while a capture held from before still carries
+    /// the old one — they differ by construction rather than by luck. If re-arm ever becomes a
+    /// merge in place, a merged lease keeps the old sequence, stale captures match again, and
+    /// the discriminator fails SILENTLY. This sentence is the canary for that change.
+    ///
+    /// Two guards, named so that breaking either one leads to both: the overwrite premise is
+    /// pinned by `arming_twice_replaces_the_lease_and_consumption_burns_it`, and this field's
+    /// derivation by `a_leases_armed_at_sequence_is_its_envelopes_and_a_re_arm_moves_it` — both
+    /// in `core/events/tests/execution_projection.rs`.
+    ///
+    /// AND IT IS ONLY VALID ON A REPLAYED PROJECTION. Being derived, it is reconstructed from
+    /// the log every time — but a projection REHYDRATED from any stored or serialized form
+    /// carries `0` for every lease written before this field existed. Feed that to the sweep's
+    /// filter and no capture ever matches, so every consumption is dropped and every sleeper
+    /// stops being rung, in silence. Callers must REPLAY, never rehydrate, and the failure mode
+    /// for getting that wrong is quiet enough that nothing will tell them.
+    #[serde(default)]
+    pub armed_at_sequence: u64,
+    /// M09 decision B: the instant the sleeper's quiet stops being acceptable, exactly as it
+    /// was armed. STORED, never compared here — whether it has passed is a question the
+    /// surface asks with an instant it injects, and a fold that answered it would make replay
+    /// a function of the wall clock.
+    ///
+    /// A TIMESTAMP, not the wire string it renders to. The first draft held a `String` on the
+    /// reasoning that the projection speaks wire vocabulary, and the reviewer measured what
+    /// that costs: the canonical rendering emits 0, 3, 6 or 9 fractional digits depending on
+    /// the value, so `...:00.500Z` sorts BEFORE `...:00Z` — `.` is 0x2E and `Z` is 0x5A.
+    /// Comparing the stored strings would give the REVERSE of chronological order for the
+    /// commonest pair there is: one instant with a fraction and one without. The type carries
+    /// the correct `Ord`, so that mistake cannot be made rather than merely being one nobody
+    /// ought to make.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matures_at: Option<PersistedTimestamp>,
 }
 
 impl ExecutionProjection {
@@ -947,6 +1027,21 @@ fn apply_projection_event(
                 WakeLeaseState {
                     cursor: payload.cursor,
                     rendezvous_id: payload.rendezvous_id.as_str().to_owned(),
+                    // The envelope's own sequence — see the field's own note for why it is
+                    // derived here rather than carried in the payload.
+                    armed_at_sequence: event.sequence,
+                    // The horizon, computed HERE from the event's own recorded instant plus
+                    // the duration the sleeper declared. Pure arithmetic over the log: no
+                    // clock is read, so replay stays byte-identical, and the reader is handed
+                    // an instant rather than a sum it has to work out against a clock of its
+                    // own.
+                    matures_at: payload.matures_in_seconds.and_then(|seconds| {
+                        let base = *event.occurred_at.as_datetime();
+                        let seconds = i64::try_from(seconds).ok()?;
+                        let horizon =
+                            base.checked_add_signed(chrono::Duration::seconds(seconds))?;
+                        PersistedTimestamp::from_datetime(horizon).ok()
+                    }),
                 },
             );
         }
@@ -961,13 +1056,32 @@ fn apply_projection_event(
             );
         }
         EventKind::WakeLeaseConsumed(payload) => {
-            if projection
-                .wake_leases
-                .remove(payload.session_id.as_str())
-                .is_none()
-            {
+            let Some(burned) = projection.wake_leases.remove(payload.session_id.as_str()) else {
                 // History cannot burn a lease that was never armed.
                 return Err(ReplayError::Corrupt);
+            };
+            // Did it burn the arming it named? RECORDED, NEVER REFUSED.
+            //
+            // A consumption naming a different arming than the one it burned is a wrong action
+            // faithfully recorded — the log is consistent and replay reconstructs it exactly.
+            // That is a different thing from the refusal above, which fires on a log that
+            // CANNOT be interpreted at all, and conflating them would make history unreadable
+            // because it recorded something bad. The wake subsystem's own rule points the same
+            // way: a wake failure never fails the route that triggered it.
+            //
+            // Absent means a consumption written before the field existed, and absence stays
+            // absence — no comparison, no invention.
+            if let Some(captured) = payload.captured_arming
+                && captured != burned.armed_at_sequence
+            {
+                projection.wake_mis_burns.insert(
+                    payload.session_id.as_str().to_owned(),
+                    WakeMisBurn {
+                        at_sequence: event.sequence,
+                        captured_arming: captured,
+                        live_arming: burned.armed_at_sequence,
+                    },
+                );
             }
             // F4: the burn leaves a receipt. Recorded from the CONSUMPTION event (its own
             // reason and its own sequence), never reconstructed from the lease that was

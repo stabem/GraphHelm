@@ -30,31 +30,122 @@ fn refuse(message: &str, pointer: &str) -> Outcome {
 }
 
 pub fn run(args: &WakeWaitArgs) -> Outcome {
-    // The id is OPAQUE and wire-safe or nothing: the rendezvous derives from it under the
-    // fixed local prefix, so a hostile id cannot become a hostile path.
-    if OpaqueId::parse(args.rendezvous_id.clone()).is_err() {
-        return refuse(
-            "--rendezvous-id must be a wire-safe opaque id",
-            "/rendezvousId",
-        );
-    }
-    if args.timeout == 0 {
-        return refuse("--timeout must be at least 1 second", "/timeout");
+    // ONE read of the store, and exactly one thing read from it: the lease belonging to THIS
+    // session. The rendezvous and the deadline both come from there, so the two numbers that
+    // used to answer "how long before I give up" -- the declared bound and a `--timeout` the
+    // caller typed -- collapse into one that cannot disagree with itself.
+    //
+    // The handle is dropped BEFORE the wait begins, and that is not tidiness. The repository
+    // holds an OS-level exclusive lock for the handle's lifetime (the reason `serve` refuses to
+    // cache one), so a waiter that held it across an eight-hour sleep would lock every
+    // concurrent process out of the store for the whole night -- the window in which the work
+    // is supposed to carry on without the operator.
+    let lease = match read_own_lease(&args.events, args.execution.as_deref(), &args.session_id) {
+        Ok(lease) => lease,
+        Err(outcome) => return outcome,
+    };
+
+    let now = chrono::Utc::now();
+    let remaining = lease.matures_at.signed_duration_since(now);
+    if remaining <= chrono::Duration::zero() {
+        // B10: the deadline is already behind us. Answering at once matters because this is
+        // the case where something has ALREADY gone wrong, and blocking would make it the one
+        // case the tool sits quiet through.
+        return matured(&lease, true);
     }
 
-    match wait(&args.rendezvous_id, args.timeout) {
-        WaitEnd::Rung => Outcome::success(COMMAND, serde_json::json!({"rung": true})),
-        WaitEnd::TimedOut => Outcome {
-            output: CommandOutput {
-                ok: true,
-                command: COMMAND,
-                data: Some(serde_json::json!({"rung": false, "timedOut": true})),
-                diagnostics: vec![],
-            },
-            exit_code: EXIT_TIMEOUT,
-        },
-        WaitEnd::Unusable(message) => refuse(&message, "/rendezvousId"),
+    match wait(
+        &lease.rendezvous_id,
+        u64::try_from(remaining.num_seconds()).unwrap_or(0).max(1),
+    ) {
+        WaitEnd::Rung => Outcome::success(
+            COMMAND,
+            serde_json::json!({"rung": true, "maturesAt": lease.matures_at.to_rfc3339()}),
+        ),
+        // The only bound there is now is the DECLARED one, so this exit stopped being
+        // ambiguous by construction: it cannot mean "the number I happened to type ran out".
+        WaitEnd::TimedOut => matured(&lease, false),
+        WaitEnd::Unusable(message) => refuse(&message, "/sessionId"),
     }
+}
+
+/// The lease this session armed, and nothing else from the store.
+struct OwnLease {
+    rendezvous_id: String,
+    matures_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The end of a wait that ended by the clock rather than by a ring.
+///
+/// `alreadyPast` is not decoration. It separates "the deadline you declared had ALREADY gone
+/// by when you asked" from "it went by while you waited", and those are different situations
+/// for the operator: the first means something went wrong before anyone looked. It is also
+/// what makes the immediate answer testable — an assertion on elapsed time cannot tell a
+/// zero-second wait from a one-second one, because process start-up costs more than either.
+fn matured(lease: &OwnLease, already_past: bool) -> Outcome {
+    Outcome {
+        output: CommandOutput {
+            ok: true,
+            command: COMMAND,
+            data: Some(serde_json::json!({
+                "rung": false,
+                "timedOut": true,
+                "matured": true,
+                "alreadyPast": already_past,
+                "maturesAt": lease.matures_at.to_rfc3339(),
+            })),
+            diagnostics: vec![],
+        },
+        exit_code: EXIT_TIMEOUT,
+    }
+}
+
+fn read_own_lease(
+    events: &std::path::Path,
+    execution: Option<&str>,
+    session_id: &str,
+) -> Result<OwnLease, Outcome> {
+    let lease = {
+        let store = crate::commands::event_store(events)
+            .map_err(|error| refuse(&error.to_string(), "/events"))?;
+        let (scope, stream, history) =
+            crate::commands::execution::resolve_stream(&store, execution)
+                .map_err(|failure| refuse(&failure.message, "/execution"))?;
+        let projection = graphhelm_events::replay(&scope, &stream, &history)
+            .map_err(|error| refuse(&error.to_string(), "/execution"))?;
+        projection.wake_leases.get(session_id).cloned()
+        // The handle goes out of scope HERE, before anything blocks.
+    };
+
+    let Some(lease) = lease else {
+        return Err(refuse(
+            &format!(
+                "{session_id} has no live lease on this execution: a waiter waits on its OWN                  lease, never on whichever one it finds"
+            ),
+            "/sessionId",
+        ));
+    };
+    let Some(matures_at) = lease.matures_at else {
+        return Err(refuse(
+            &format!(
+                "{session_id} armed no bound, so nothing here promises to end the wait: arm                  again with maturesInSeconds"
+            ),
+            "/sessionId",
+        ));
+    };
+    // The rendezvous now comes from the STORE, where `arm` parsed it as an opaque id before
+    // writing. Checked again anyway: this is the value a platform rendezvous name is derived
+    // from, and provenance is an argument while a parse is a guarantee.
+    if OpaqueId::parse(lease.rendezvous_id.clone()).is_err() {
+        return Err(refuse(
+            "the lease carries a rendezvous id that is not wire-safe",
+            "/rendezvousId",
+        ));
+    }
+    Ok(OwnLease {
+        rendezvous_id: lease.rendezvous_id,
+        matures_at: *matures_at.as_datetime(),
+    })
 }
 
 pub(crate) enum WaitEnd {

@@ -1,5 +1,119 @@
 # Specification Changelog
 
+## Arming the alarm, M09 — 2026-08-19
+
+- Seed 3 from `m09-seeds.md` closed on `main` (#70, `efd85d0`): silence is keyed on whether a
+  node has been REACHED, not on `state == Running` — a node retried into `Queued` after a
+  declared bound now counts. `Invalidated` (a completed node returned to the queue with no
+  failure anywhere in its history) was the case a failure-keyed rule would have left mute
+  forever; found by reading the outcome vocabulary, not by the failing run alone.
+- Seed 4 ("the doorbell cannot ring for silence"): arming declares how long quiet may last; a
+  bound nobody could live to see is refused rather than answered with a date (a trillion-second
+  horizon overflowed into a year-33715 date before this fix); `wake-wait` reads its own lease's
+  deadline instead of a caller-supplied `--timeout`, closing the two-numbers-one-question gap on
+  the sleep surface; the MCP half of `wake_wait` now matches the CLI half (one definition, not
+  two); shortening a re-armed horizon is accepted and named, never silently late; reads take a
+  shared lock instead of the same exclusive lock as writes (measured: eight concurrent reads
+  cost the same wall time as eight sequential ones, before the change).
+- Three flakes named at milestone open; two fixed and landed on `main`, one still open at
+  close. `concurrent_sweeps_never_double_consume_a_lease`'s window (a validate/`next_sequence`
+  gap) closed by pinning the consume's sequence from the read that judged the lease, not a
+  second store read — the seam survives the fix and stays sabotage-testable, unlike the
+  alternative design considered and rejected. The belt test sharing this guard's name was
+  separately measured hollow: green with 14 of 15 consumptions missing, by construction — its
+  own oracle upgrade is tracked as #74. `a_sleeper_wakes_on_a_peer_append_with_zero_requests_
+  in_the_window` fixed by a condition-wait replacing a timing-dependent immediate read (#73);
+  base rate 9/10 isolated, 3/3 in-suite before the fix. `the_storm_holds_under_eight_
+  concurrent_agents` stays OPEN: a same-disk paired re-baseline (ten runs at the pre-M09
+  commit, ten at the current tip, three minutes apart, identical free disk on every row) found
+  ZERO failures at both — the same code produced 4/10 failures and 0/10 failures on the SAME
+  machine at two different disk states, which is this lane's central finding, not a caveat:
+  code is EXONERATED, but any before/after comparison that is not a fresh paired baseline in
+  the same session and disk state reproduces today's confound while looking clean (conditions
+  recorded with the numbers so a later pairing is checkable: free disk ~19G, fsync 1.5-2.0ms/op,
+  commit `ef51193`, 2026-08-19, n=1521 store opens). An instrumented headroom measurement, on
+  today's disk, found ≈8x headroom on the storm's 8-request convoy at the median (29.1-32.6ms
+  per store-open x 2.40-2.56 opens per request x 8 requests = 0.56-0.64s against the 5s budget)
+  but only ≈1.8x at the p99 (the SAME 8-deep convoy at p99 per-open latency totals 2.81s) and
+  CROSSES the budget by 4% at the observed maximum — a non-firing median with a
+  tail this close to the budget is a live finding, not a clearance. The composition bound
+  narrows it further: reaching the budget needs a burst-average around 250ms, which requires
+  broad degradation (roughly 20% of opens slowed to ~1.1s) — a few slow outliers cannot get
+  there. Verdict: CONSISTENT WITH A GENUINELY SICK VOLUME, INCONSISTENT WITH MILD PRESSURE.
+  Quantified for M10: each store open costs ~30ms of structural work serializing on an
+  exclusive lock regardless of handler threading, at ~2.5 opens per request — removing ONE open
+  saves ~30ms per request and ~244ms off the 8-deep convoy (an 8x amplification, because the
+  convoy is where an open's cost is spent). Fewer opens, not more threads. No fix lands with
+  M09; all instrumentation used to measure this was reverted before commit.
+- A consumption now names the arming it burns (#74, merged with one Postgres-adapter stage RED
+  under an explicit owner decision to land on the evidence rather than re-roll — see the
+  milestone record): the rendezvous-equal-burn discriminator closes the #55 family's remaining
+  silent-loss window going forward. The fold-side check stays forward-only by design (inventing
+  a mismatch from a field absent in pre-fix history would make all committed history look
+  defective); whether the defect ever fired in already-committed history is permanently
+  unanswerable, because only the live side of that comparison was ever written down.
+- The second judge story (M08's own coverage gap: seven of fourteen MCP tools never touched
+  across nine M08 runs) ran paid and FAILED (`passed: false`, 8 findings, 2 critical). The
+  coverage goal was MET — all seven tools fired, verified against the audit middleware's own
+  route-registration order, which records a refused request too. The redesign's own forcing
+  mechanism (`MAX_IDENTICAL_OUTCOMES`) fired correctly in the real run and the judge triaged the
+  resulting incident correctly; the release did not ship, on real MCP-surface defects the
+  story's own design surfaced rather than a story-design flaw — a `resume` that refuses on a
+  workspace/staging collision with no MCP parameter able to satisfy it (#82), and that SAME
+  refused `resume` still committing state and dropping the operator's pause hold before
+  reporting failure (#83). Archived as `docs/acceptance/m09-judge-run-2026-08-19/`. Method
+  lesson: rehearse on the EXACT surface the real actor uses — the free rehearsal supplied a
+  `project` parameter on every `resume` call that the real MCP tool schema never exposes at
+  all, so the rehearsal proved the state machine's mechanics thoroughly and could not have
+  caught #82/#83 by construction — a gap in which LAYER was rehearsed, not in how carefully.
+- A second method lesson, from the storm lane's own falsifier discipline grading its own
+  author: a pre-registered no-referral prediction held 10 out of 10, but it was derived from a
+  headroom model wrong by roughly an order of magnitude (40-100x predicted, ≈8x measured at the
+  median) — right only because both values landed on the same side of the trigger, a
+  near-boundary result would have flipped it. Recorded as RIGHT-FOR-WRONG-REASON, not a
+  successful forecast, on the predictor's own principle: a number that is right for a reason its
+  author does not have is not a measurement. The weight-bearing findings of that lane are the
+  measurements themselves, not the prediction that happened to survive them.
+- Three more fixes landed on `main` this milestone, main-based rather than part of the M09
+  branch itself: cited evidence must open, not just hash (#75/#77) — two committed acceptance
+  stores had answered `GHE005_INTEGRITY_FAILURE` on open for their entire committed life while
+  every checksum stayed green (`SHA256SUMS` hashes files; two EMPTY DIRECTORIES have no file to
+  hash), closed by a test that opens and replays every committed store by directory rather than
+  by binding. Store-layout recovery (#76/#84) — `.tmp/`/`active/` are recoverable on open
+  (transient workspace, nothing the journal does not already carry), `blobs/` stays strict (a
+  blob is a tracked file; its absence means evidence is actually gone). A CLI that can print a
+  schema digest (#78/#85) — a ritual that previously needed a throwaway test and a manual run to
+  get the number a schema change requires now has one canonical command for it.
+- PENDING, not a close blocker: a status-code question on `resume`'s failure surface (D) and
+  the prediction ledger's final scoring pass (M) remain open rows, owners named, carried into
+  M10 rather than resolved here.
+
+## Ask Once and Sleep, M08 — 2026-08-18 (backfilled 2026-08-19, during M09's close — this
+section was omitted at M08's own ship time; written now, dated then)
+
+- `node_silence_seconds` is the single place elapsed time is computed; the monitor's private
+  `last_event_per_node` and its three staleness thresholds are deleted, not deprecated. Silence
+  is judged from an INSTANT the surface injects, never a duration a surface computes.
+- §8 clause seven: the product now promises no surface recalculates the attention verdict — an
+  owner decision, taken after the measurement that would otherwise have made recalculation the
+  honest description of the state.
+- `wake_wait`, the thirteenth MCP tool: bounded in the schema, content-free by construction,
+  refusing any rendezvous the calling session does not hold.
+- Task 3 ("the serve cannot serve while it drives") was going to be a fix; measurement refuted
+  the premise instead — with a drive parked in a 90-second model call, `/health` answered in
+  0.00s, `GET status` in 0.03s, and `POST wake-lease` was ACCEPTED in 0.08s with a live lease.
+  Four of five causes proposed for the M07 alarm failure died to measurement; the fifth stands
+  recorded as an unadopted hypothesis. The task became a correction of the record and was
+  deleted rather than reworded, in both the milestone record and this milestone's own plan.
+- One defect shape — an assertion reading one level above what it actually measures — appeared
+  eleven times in one milestone, including once inside the very guard written to close a
+  previous instance of it. The rule it produced, binding since: assert at the finest grain the
+  question has.
+- Closed after nine blind-judge runs, on the rule that findings close when NAMED and WITHDRAWN
+  — never when the judge simply approves, which the M07 record established he does not. The
+  finding carrying F1's number survived and changed KIND, from a claim that the mechanism fails
+  to an argument about a default; it opened M09 rather than closing here.
+
 ## The one-glance answer, M07 — 2026-08-17
 
 - Scope was the blind judge's four M06 findings and nothing else; the closing rule was that the same judge, on the same story, had to stop making them. Three real subscription runs were needed (`docs/acceptance/m07-run-2026-08-17/` — transcripts, not stores: the committed `journal.jsonl` has no `format.json` and no `blobs/`, so it cannot be opened or replayed, and the evidence its batches reference was never committed): 8 findings with one critical, then 7 with two criticals, then 7 with none — the last crediting a fix in its own words ("wake_status does correctly separate contentHead (12) from head (14)").

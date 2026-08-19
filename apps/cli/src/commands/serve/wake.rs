@@ -43,6 +43,12 @@ pub(crate) struct DueLease {
     pub(crate) execution_id: String,
     pub(crate) session_id: String,
     pub(crate) rendezvous_id: String,
+    /// WHICH ARMING this capture is for, copied from the projection phase 1 already holds.
+    ///
+    /// The rendezvous is kept for phase 2 — it is what the ring is addressed to — but it is no
+    /// longer a blade in the filter, because a session that re-arms on the same fixed id
+    /// produces two leases the rendezvous cannot tell apart. This can.
+    pub(crate) armed_at_sequence: u64,
 }
 
 /// Writes the one content-free byte. `Rung` when it crossed; `StaleRendezvous` for every
@@ -112,6 +118,7 @@ pub(super) async fn sweep(events: Arc<Path>, execution: String) {
                 execution_id: execution_read.clone(),
                 session_id: session.clone(),
                 rendezvous_id: lease.rendezvous_id.clone(),
+                armed_at_sequence: lease.armed_at_sequence,
             })
             .collect();
         Some(due)
@@ -138,19 +145,62 @@ pub(super) async fn sweep(events: Arc<Path>, execution: String) {
     // read and write, so the read-then-append window two racing sweeps used to slip
     // through (the double-consume that poisoned the factory pair store) no longer exists.
     let _ = tokio::task::spawn_blocking(move || {
+        test_only_phase3_delay();
         record_consumptions(&events, &execution, &consumptions);
     })
     .await;
 }
 
-/// Records consumptions for leases that are STILL LIVE at append time, silently dropping
-/// the rest — under one store handle, whose exclusive lock makes the re-validation and the
-/// append atomic against every other writer (hotfix #55; the archived corrupted pair store
-/// is the incident this guard exists for). Returns how many consumptions were recorded.
+/// Test-only seam (#72): stretches the gap between the ring (phase 2) and the consume
+/// append becoming durable (phase 3) by the number of milliseconds named in
+/// `GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS`. The receipt is eventually-visible BY DESIGN;
+/// this seam makes "eventually" a chosen number so a guard can prove it waits for the
+/// CONDITION instead of winning a schedule. Production cost when the variable is absent:
+/// one getenv, no delay. Setting it in production would only slow receipts down — it can
+/// never reorder the phases or drop a consumption.
+fn test_only_phase3_delay() {
+    if let Some(delay) = std::env::var("GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
+}
+
+/// Records consumptions for leases that were STILL LIVE when this decision was taken,
+/// silently dropping the rest (hotfix #55; the archived corrupted pair store is the incident
+/// this guard exists for). Returns how many consumptions were recorded.
+///
+/// This used to claim that one store handle's exclusive lock made the re-validation and the
+/// append atomic. It never did: the lock is taken and released per operation, and an open
+/// handle holds none in between — at the parent of the read-concurrency change as much as
+/// after it. Nothing was made worse by widening reads, and reverting that would restore
+/// nothing here; what was missing was a guard, and the sentence describing one was standing
+/// in for it.
 pub(crate) fn record_consumptions(
     events: &Path,
     execution: &str,
     consumptions: &[(DueLease, WakeConsumeReason)],
+) -> usize {
+    record_consumptions_inner(events, execution, consumptions, &|| {})
+}
+
+/// The recorder proper, with a seam between DECIDING a lease is still live and PINNING the
+/// sequence the consumption will append at.
+///
+/// `after_validation` runs once, exactly there, and production passes a no-op closure — so
+/// the path a test exercises IS the production path, not a `cfg(test)` copy of it. A test
+/// against a duplicated path proves something about the duplicate.
+///
+/// The seam is placed there because that is where the race lives: no lock is held at that
+/// point (`with_lock` takes and releases per call, and an open handle holds none between
+/// operations), so a rival writer can land there. Making the window executable is what turns
+/// an argued interleaving into an observed one.
+fn record_consumptions_inner(
+    events: &Path,
+    execution: &str,
+    consumptions: &[(DueLease, WakeConsumeReason)],
+    after_validation: &dyn Fn(),
 ) -> usize {
     let Ok(store) = crate::commands::event_store(events) else {
         return 0;
@@ -164,13 +214,47 @@ pub(crate) fn record_consumptions(
     else {
         return 0;
     };
-    // The guard: re-replay under THIS handle's lock; only a consumption whose lease is
-    // still live, with the SAME rendezvous, may be recorded. A rival sweep that got here
-    // first burned the lease — ours drops silently (its ring was at worst a spurious
-    // content-free byte the sleeper's own re-read absorbs).
+    // The guard, in TWO blades that cover opposite sides of the same instant.
+    //
+    // Blade one, below: only a consumption whose lease is still live, AND IS STILL THE SAME
+    // ARMING, may be recorded. That covers a rival who burned the lease BEFORE this read —
+    // ours drops silently (its ring was at worst a spurious content-free byte the sleeper's
+    // own re-read absorbs) — and it covers the case that has nothing to do with rivals: the
+    // sleeper we just rang woke up and re-armed, and this capture is for the lease it replaced.
+    //
+    // The rendezvous is NOT compared and its absence is not a weakening — it is IMPLIED. A
+    // lease is a pure function of its arming event, so the same session at the same arming
+    // sequence is the same event, which has one rendezvous. Comparing it as well could never
+    // decide anything, and keeping it would be worse than useless: with the rendezvous still
+    // in the filter, a fold that wrote a constant into `armed_at_sequence` would leave the
+    // rendezvous-swap guard GREEN, hiding the discriminator's own failure in the one test
+    // built to see it. A redundant blade blinds the sabotage of the blade that matters.
+    //
+    // Blade two: the sequence this batch will append at is PINNED FROM THIS READ, not asked
+    // for separately afterwards. That covers a rival who lands AFTER it: the pin goes stale
+    // and the store's own sequence check refuses us.
+    //
+    // Both blades are needed and neither is redundant. Asking the store for the next
+    // sequence in a second call was the defect: this read said the lease was live, that call
+    // returned a number taken after a rival had already burned it, and the number was
+    // genuinely current — so nothing downstream had anything to object to, and a second
+    // consumption landed on a lease that no longer existed. The fold then refused every
+    // later replay of the stream.
     let Ok(history) = store.read_replay_stream(&stream.scope, &stream.stream_id) else {
         return 0;
     };
+    // Pinned here, from the history this decision is made against.
+    //
+    // `max`, not `last`: the ordering of a replay read is journal order, and this must not
+    // quietly depend on that being sequence order. Equal to what `next_sequence` would
+    // answer, because sequences are contiguous per stream — local.rs assigns the next as
+    // expected + batch length and refuses on load any batch whose first event does not carry
+    // exactly the expected sequence. If that ever changes, this line is where it breaks.
+    let next = history
+        .iter()
+        .map(|event| event.sequence)
+        .max()
+        .map_or(1, |sequence| sequence + 1);
     let Ok(projection) = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history)
     else {
         return 0;
@@ -181,15 +265,14 @@ pub(crate) fn record_consumptions(
             projection
                 .wake_leases
                 .get(&lease.session_id)
-                .is_some_and(|live| live.rendezvous_id == lease.rendezvous_id)
+                .is_some_and(|live| live.armed_at_sequence == lease.armed_at_sequence)
         })
         .collect();
     if still_live.is_empty() {
         return 0;
     }
-    let Ok(next) = store.next_sequence(&stream.scope, &stream.stream_id) else {
-        return 0;
-    };
+    // The seam: the decision above is made, the append below has not happened yet.
+    after_validation();
     let Ok(actor_id) = ActorId::parse("system-wake") else {
         return 0;
     };
@@ -215,6 +298,10 @@ pub(crate) fn record_consumptions(
                 execution_id,
                 session_id,
                 reason: *reason,
+                // The arming THIS CAPTURE named, not whatever is live now. The filter above has
+                // already established they agree; recording the captured one is what lets a
+                // later replay notice if they ever do not.
+                captured_arming: Some(lease.armed_at_sequence),
             }),
             vec![],
             vec![],
@@ -241,6 +328,37 @@ pub(crate) fn record_consumptions(
 mod tests {
     use super::*;
     use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, Sensitivity, WakeLease};
+
+    /// Builds a capture THE WAY THE SWEEP DOES — replay the stream, read the live lease out of
+    /// the projection, copy its fields — instead of hand-writing them.
+    ///
+    /// The distinction is not stylistic and it was found the expensive way. Hand-written
+    /// captures proved things about the fixture rather than about the production data flow:
+    /// with `armed_at_sequence` typed in as a literal, a sabotage that corrupts the FOLD moves
+    /// the live lease's value while the capture's stays put, so the two disagree and a stale
+    /// capture is dropped — the guard passes, for a reason production would never reproduce.
+    /// Built this way both sides move together, exactly as they do in the sweep, and the guard
+    /// measures the path it claims to.
+    fn capture_like_the_sweep(
+        events: &std::path::Path,
+        scope: &graphhelm_protocols::RepositoryScope,
+        stream: &str,
+        session: &str,
+    ) -> DueLease {
+        let store = crate::commands::event_store(events).unwrap();
+        let history = store.read_replay_stream(scope, stream).unwrap();
+        let projection = graphhelm_events::replay(scope, stream, &history).unwrap();
+        let lease = projection
+            .wake_leases
+            .get(session)
+            .expect("the fixture must have a live lease to capture");
+        DueLease {
+            execution_id: stream.to_owned(),
+            session_id: session.to_owned(),
+            rendezvous_id: lease.rendezvous_id.clone(),
+            armed_at_sequence: lease.armed_at_sequence,
+        }
+    }
 
     /// The #55 interleaving, DETERMINISTIC: a sweep captured its due list, then a rival
     /// consumed the lease first (simulated by a direct consume append), then our sweep
@@ -289,16 +407,13 @@ mod tests {
                 session_id: OpaqueId::parse("session-r").unwrap(),
                 cursor: 0,
                 rendezvous_id: OpaqueId::parse("rdv-r").unwrap(),
+                matures_in_seconds: None,
             }),
             "arm-r",
             1,
         );
         let captured = vec![(
-            DueLease {
-                execution_id: "exec-race".to_owned(),
-                session_id: "session-r".to_owned(),
-                rendezvous_id: "rdv-r".to_owned(),
-            },
+            capture_like_the_sweep(events, &scope, "exec-race", "session-r"),
             WakeConsumeReason::StaleRendezvous,
         )];
 
@@ -308,6 +423,8 @@ mod tests {
                 execution_id: OpaqueId::parse("exec-race").unwrap(),
                 session_id: OpaqueId::parse("session-r").unwrap(),
                 reason: WakeConsumeReason::Rung,
+                // A rival written the way history already contains them: no captured arming.
+                captured_arming: None,
             }),
             "rival-consume",
             2,
@@ -331,21 +448,400 @@ mod tests {
         );
     }
 
+    /// The sub-window #55's fix left conflict-UNDETECTED, made deterministic.
+    ///
+    /// The existing red above covers a rival that got there BEFORE our validation read: the
+    /// still-live filter drops us. The CAS covers a rival that lands AFTER our sequence pin:
+    /// our expected sequence is stale and the append is refused. Between those two sits a
+    /// third window, and nothing guards it — our validation passed against a replay that
+    /// predates the rival, and our pin is then taken AFTER it, so the sequence we ask for is
+    /// genuinely current and the CAS has nothing to refuse. Both consumptions land, and the
+    /// fold then refuses every later replay: #55's own corruption, reached through the door
+    /// its fix left open.
+    ///
+    /// This also settles a claim both surviving commit messages make — that the handle's
+    /// exclusive lock spans the validation and the write. It does not; the lock is taken and
+    /// released per call, which is why a rival can be injected at the seam at all. If this
+    /// test passes before the fix, that reading is wrong and the fix has no premise.
+    #[test]
+    fn a_rival_consume_between_validation_and_the_sequence_pin_appends_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("exec-pin").unwrap()),
+        );
+        let stream = OpaqueId::parse("exec-pin").unwrap();
+        let actor = PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-test").unwrap(),
+        );
+
+        // The armed lease — live, and still live when our sweep validates it.
+        {
+            let store = crate::commands::event_store(events).unwrap();
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                stream.clone(),
+                1,
+                vec![NewEvent::new(
+                    OpaqueId::parse("arm-p").unwrap(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    EventKind::WakeLease(WakeLease {
+                        execution_id: OpaqueId::parse("exec-pin").unwrap(),
+                        session_id: OpaqueId::parse("session-p").unwrap(),
+                        cursor: 0,
+                        rendezvous_id: OpaqueId::parse("rdv-p").unwrap(),
+                        matures_in_seconds: None,
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        }
+
+        let captured = vec![(
+            capture_like_the_sweep(events, &scope, "exec-pin", "session-p"),
+            WakeConsumeReason::StaleRendezvous,
+        )];
+
+        // The rival: another sweep that won the race, burning the same lease in the window
+        // between our validation and our pin. It is a LEGITIMATE consumption at the instant
+        // it lands — the lease is live and its rendezvous matches — so the test corrupts
+        // nothing by hand. Whatever damage appears is the product's own.
+        //
+        // It opens its OWN handle while the recorder's is still alive, which is safe because
+        // a live handle holds no lock between operations: `core/events/tests/read_concurrency`
+        // has eight threads doing exactly this at once. The sibling guard above drops its
+        // store before calling the recorder, and that drop reads as a requirement — it is not
+        // one. Checked rather than inherited, because an unwritten coupling nobody could see
+        // is what this whole area cost us.
+        let rival = || {
+            let store = crate::commands::event_store(events).unwrap();
+            let next = store.next_sequence(&scope, "exec-pin").unwrap();
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                stream.clone(),
+                next,
+                vec![NewEvent::new(
+                    OpaqueId::parse("rival-pin").unwrap(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                        execution_id: OpaqueId::parse("exec-pin").unwrap(),
+                        session_id: OpaqueId::parse("session-p").unwrap(),
+                        reason: WakeConsumeReason::Rung,
+                        captured_arming: None,
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        };
+
+        let recorded = record_consumptions_inner(events, "exec-pin", &captured, &rival);
+        assert_eq!(
+            recorded, 0,
+            "a lease a rival burned after our validation and before our pin must not be \
+             consumed a second time"
+        );
+
+        // The oracle the live incident failed: one arming, at most one consumption, and the
+        // stream still replays.
+        let store = crate::commands::event_store(events).unwrap();
+        let history = store.read_replay_stream(&scope, "exec-pin").unwrap();
+        let replayed = graphhelm_events::replay(&scope, "exec-pin", &history);
+        assert!(
+            replayed.is_ok(),
+            "the stream must remain replayable: {replayed:?}"
+        );
+
+        // And the RIVAL's burn is the last word on this session.
+        //
+        // Without this, the guard rests on `recorded == 0` — which this recorder can return
+        // from a dozen places, all but one of them for reasons that have nothing to do with
+        // the property. That is fine for a red, which fails today for the stated reason, but
+        // the moment the fix lands this becomes a REGRESSION guard, and there it would stay
+        // green while the recorder was broken anywhere else at all. The rival's own append is
+        // something a recorder that did nothing cannot produce, so asking for it separates
+        // "our consumption was correctly refused" from "nothing got that far".
+        let receipt = replayed
+            .expect("replayable")
+            .wake_last_consumed
+            .get("session-p")
+            .expect("the rival's consumption is on record")
+            .sequence;
+        assert_eq!(
+            receipt, 2,
+            "the rival's burn at #2 must be the last consumption on this session — if ours \
+             had also landed it would be #3, and if the recorder had bailed early for an \
+             unrelated reason there would be no receipt here at all"
+        );
+    }
+
+    /// The rendezvous half of the filter, which nothing pinned until now.
+    ///
+    /// A session re-arms: the fold REPLACES its lease, so `session-p` is live again under a
+    /// new rendezvous while a sweep still holds a capture naming the old one. Matching on the
+    /// session alone would burn the replacement — a lease whose sleeper is waiting, consumed
+    /// on the strength of a ring that went to a rendezvous nobody is listening to any more.
+    ///
+    /// The reason this guard is worth its lines: the fold cannot catch the mistake. A
+    /// `wake_lease_consumed` event carries execution, session and reason — no rendezvous — so
+    /// a replay sees a consumption of a live lease and accepts it. The recorder's own
+    /// comparison is the ONLY thing standing here, and an only-defense with no test is one
+    /// refactor away from silently not existing. Sabotage: compare sessions and drop the
+    /// rendezvous check; this must fall, and nothing else does.
+    ///
+    /// The second assertion is the one that measures. `recorded == 0` alone would also hold
+    /// if the recorder had refused for some unrelated reason, so it asks the finer question:
+    /// is the REPLACEMENT still live afterwards.
+    #[test]
+    fn a_stale_capture_never_burns_the_lease_that_replaced_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("exec-swap").unwrap()),
+        );
+        let stream = OpaqueId::parse("exec-swap").unwrap();
+        let actor = PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-test").unwrap(),
+        );
+
+        {
+            let store = crate::commands::event_store(events).unwrap();
+            let arm = |key: &str, rendezvous: &str, next: u64| {
+                let request = graphhelm_events::PreparedAppend::new(
+                    scope.clone(),
+                    stream.clone(),
+                    next,
+                    vec![NewEvent::new(
+                        OpaqueId::parse(key).unwrap(),
+                        actor.clone(),
+                        Sensitivity::Internal,
+                        EventKind::WakeLease(WakeLease {
+                            execution_id: OpaqueId::parse("exec-swap").unwrap(),
+                            session_id: OpaqueId::parse("session-p").unwrap(),
+                            cursor: 0,
+                            rendezvous_id: OpaqueId::parse(rendezvous).unwrap(),
+                            matures_in_seconds: None,
+                        }),
+                        vec![],
+                        vec![],
+                    )],
+                    vec![],
+                    vec![],
+                )
+                .unwrap();
+                store.append_atomic(&request).unwrap();
+            };
+            // The lease a sweep captured.
+            arm("arm-old", "rdv-old", 1);
+        }
+
+        // The sweep's capture, taken off the projection the way phase 1 does — naming the
+        // rendezvous it rang and the arming it saw, both from the same read.
+        let stale = vec![(
+            capture_like_the_sweep(events, &scope, "exec-swap", "session-p"),
+            WakeConsumeReason::Rung,
+        )];
+
+        // THEN the re-arm that replaced it.
+        {
+            let store = crate::commands::event_store(events).unwrap();
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                stream.clone(),
+                2,
+                vec![NewEvent::new(
+                    OpaqueId::parse("arm-new").unwrap(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    EventKind::WakeLease(WakeLease {
+                        execution_id: OpaqueId::parse("exec-swap").unwrap(),
+                        session_id: OpaqueId::parse("session-p").unwrap(),
+                        cursor: 0,
+                        rendezvous_id: OpaqueId::parse("rdv-new").unwrap(),
+                        matures_in_seconds: None,
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        }
+
+        let recorded = record_consumptions(events, "exec-swap", &stale);
+        assert_eq!(
+            recorded, 0,
+            "a capture naming a rendezvous the session has since replaced must record nothing"
+        );
+
+        let store = crate::commands::event_store(events).unwrap();
+        let history = store.read_replay_stream(&scope, "exec-swap").unwrap();
+        let projection = graphhelm_events::replay(&scope, "exec-swap", &history).unwrap();
+        let live = projection
+            .wake_leases
+            .get("session-p")
+            .expect("the re-armed lease is still live — the stale capture must not burn it");
+        assert_eq!(
+            live.rendezvous_id, "rdv-new",
+            "and it is the REPLACEMENT that survived, under its own rendezvous"
+        );
+    }
+
+    /// A capture from BEFORE the sleeper woke must not burn the lease it armed AFTER it.
+    ///
+    /// The sequence, and it is the factory's own: a lease is armed on rendezvous X; a sweep
+    /// captures it and rings it; the sleeper wakes, works, and re-arms — on the SAME rendezvous,
+    /// because our agents use fixed rendezvous ids; then the first sweep's delayed phase 3
+    /// finally runs. Session matches. Rendezvous matches. Nothing else is compared, so the stale
+    /// consumption burns a lease whose sleeper is asleep on it at that moment.
+    ///
+    /// Not hypothetical: the archived pair store has session `agente-a` arming `factory-a-1` at
+    /// sequences 26, 30, 33 and 39 — four arms, one rendezvous. Precondition present there;
+    /// incident not observed, because those arm/consume pairs happen to be ordered.
+    ///
+    /// Nothing downstream catches it. Consuming a LIVE lease is legal, so the fold accepts it
+    /// and every replay succeeds — none of the noise the #55 family makes. The sleeper is simply
+    /// never rung again: it blocks to its horizon and `wake-wait` exits 3, which reads as "my
+    /// deadline passed and nothing happened", while the store's receipt for that session says
+    /// `rung`. Two surfaces, one question, and the operator acts on the calm one.
+    ///
+    /// ASSERTION ORDER IS DELIBERATE. The legality check comes first because it holds in BOTH
+    /// states and is what separates this defect from window 3: that one corrupts the stream and
+    /// is loud, this one leaves the log perfectly legal and is silent. Asserted after the count,
+    /// it would be masked by the count's own failure on every red run, and the clause that
+    /// identifies WHICH defect we have would never be observed.
+    ///
+    /// That ordering is safe only because nothing in the moved region writes: the replay is a
+    /// pure fold over a read, the count is captured before it, and the store open that travels
+    /// with them republishes active markers only from `GraphVersionPublished` events — of which
+    /// this fixture appends none. IF THIS FIXTURE EVER GAINS A PUBLISHED GRAPH VERSION, that
+    /// open becomes a write and the ordering has to be re-checked before it can be trusted.
+    #[test]
+    fn a_capture_from_before_the_wake_never_burns_the_lease_armed_after_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("exec-rearm").unwrap()),
+        );
+        let stream = OpaqueId::parse("exec-rearm").unwrap();
+        let actor = PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-test").unwrap(),
+        );
+
+        let arm = |key: &str, cursor: u64, next: u64| {
+            let store = crate::commands::event_store(events).unwrap();
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                stream.clone(),
+                next,
+                vec![NewEvent::new(
+                    OpaqueId::parse(key).unwrap(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    EventKind::WakeLease(WakeLease {
+                        execution_id: OpaqueId::parse("exec-rearm").unwrap(),
+                        session_id: OpaqueId::parse("session-p").unwrap(),
+                        cursor,
+                        // THE SAME rendezvous both times: the fixed-id convention.
+                        rendezvous_id: OpaqueId::parse("rdv-fixed").unwrap(),
+                        matures_in_seconds: None,
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        };
+
+        // The lease that exists when the sweep looks.
+        arm("arm-before", 0, 1);
+
+        // THE SWEEP CAPTURES HERE — before the sleeper wakes. Built the way phase 1 builds it,
+        // off the projection, so a corrupted fold moves this and the live lease TOGETHER just
+        // as it would in production. Its ring already crossed, which is why the reason is Rung.
+        let stale = vec![(
+            capture_like_the_sweep(events, &scope, "exec-rearm", "session-p"),
+            WakeConsumeReason::Rung,
+        )];
+
+        // Now the sleeper wakes and re-arms — same session, same rendezvous. Both arms land
+        // BEFORE the recorder runs: this is the OUT-of-window slice, the one the sequence pin
+        // cannot reach. An in-window variant would pass because of that fix and prove nothing
+        // about this defect.
+        arm("arm-after", 1, 2);
+
+        let recorded = record_consumptions(events, "exec-rearm", &stale);
+
+        let store = crate::commands::event_store(events).unwrap();
+        let history = store.read_replay_stream(&scope, "exec-rearm").unwrap();
+        let replayed = graphhelm_events::replay(&scope, "exec-rearm", &history);
+        assert!(
+            replayed.is_ok(),
+            "this defect is the SILENT one: burning a live lease is legal, so the log stays \
+             replayable. A corrupt stream here would mean the fixture is reproducing window 3 \
+             instead, and the shape needs re-deriving rather than relabelling: {replayed:?}"
+        );
+
+        assert_eq!(
+            recorded, 0,
+            "a consumption for the lease that existed before the wake must not be recorded \
+             against the lease armed after it"
+        );
+
+        // The assertion that measures. `recorded == 0` alone would also hold if the recorder
+        // had refused for an unrelated reason; the property is that the sleeper's CURRENT lease
+        // survives, because that lease is what a future append will ring.
+        assert!(
+            replayed
+                .expect("replayable")
+                .wake_leases
+                .contains_key("session-p"),
+            "the lease the sleeper is asleep on must still be live — burned here, no later \
+             append can ever ring it and the sleeper waits out its full horizon believing \
+             nothing happened"
+        );
+    }
+
     /// The recorder still records when the lease IS live — the guard filters rivals'
     /// leftovers, never legitimate consumptions.
     #[test]
     fn a_live_lease_consumption_still_records() {
         let directory = tempfile::tempdir().unwrap();
         let events = directory.path();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("exec-live").unwrap()),
+        );
         {
             let store = crate::commands::event_store(events).unwrap();
-            let scope = graphhelm_protocols::RepositoryScope::new(
-                graphhelm_protocols::WorkspaceId::parse("workspace-w").unwrap(),
-                graphhelm_protocols::ProjectId::parse("project-w").unwrap(),
-                Some(graphhelm_protocols::ExecutionId::parse("exec-live").unwrap()),
-            );
             let request = graphhelm_events::PreparedAppend::new(
-                scope,
+                scope.clone(),
                 OpaqueId::parse("exec-live").unwrap(),
                 1,
                 vec![NewEvent::new(
@@ -360,6 +856,7 @@ mod tests {
                         session_id: OpaqueId::parse("session-l").unwrap(),
                         cursor: 0,
                         rendezvous_id: OpaqueId::parse("rdv-l").unwrap(),
+                        matures_in_seconds: None,
                     }),
                     vec![],
                     vec![],
@@ -374,14 +871,41 @@ mod tests {
             events,
             "exec-live",
             &[(
-                DueLease {
-                    execution_id: "exec-live".to_owned(),
-                    session_id: "session-l".to_owned(),
-                    rendezvous_id: "rdv-l".to_owned(),
-                },
+                capture_like_the_sweep(events, &scope, "exec-live", "session-l"),
                 WakeConsumeReason::Rung,
             )],
         );
         assert_eq!(recorded, 1, "a live lease's consumption records normally");
+
+        // And what it recorded is the RIGHT consumption, not merely one consumption.
+        //
+        // A count is the only thing this guard used to check, and measurement showed that
+        // matters more here than anywhere else in the family: under a sabotage that stopped
+        // the recorder dead, this was the ONLY guard in the whole #55 set that noticed. So
+        // the chain's entire ability to see the recorder rests on this assertion — and a
+        // count can only see a recorder that is DEAD, never one that is WRONG. A recorder
+        // that burned this lease with the wrong reason satisfied it completely.
+        //
+        // Absent-by-key rather than an empty map: a later fixture with a second session would
+        // make "empty" false while this lease's burn was still perfectly correct, and the
+        // guard would then fail for something that is not the property.
+        let store = crate::commands::event_store(events).unwrap();
+        let history = store.read_replay_stream(&scope, "exec-live").unwrap();
+        let projection = graphhelm_events::replay(&scope, "exec-live", &history).unwrap();
+        assert!(
+            !projection.wake_leases.contains_key("session-l"),
+            "the lease it consumed must be gone from the live set"
+        );
+        assert_eq!(
+            projection
+                .wake_last_consumed
+                .get("session-l")
+                .expect("the consumption is on record")
+                .reason,
+            WakeConsumeReason::Rung,
+            "and the receipt must carry the reason the ring actually earned — a burn recorded \
+             as a stale rendezvous would be the store asserting the sleeper died when it was \
+             rung, which no count can tell apart"
+        );
     }
 }

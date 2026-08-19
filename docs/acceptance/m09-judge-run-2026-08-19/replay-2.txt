@@ -1,0 +1,1 @@
+{"ok":false,"command":"graph.replay","data":null,"diagnostics":[{"code":"GHE010_STREAM_SELECTION_REQUIRED","severity":"error","message":"repository replay requires an explicit scope and stream selection","path":"/events","source":"event-repository"}]}

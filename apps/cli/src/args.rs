@@ -79,13 +79,18 @@ pub enum QualityCommand {
 
 #[derive(Debug, Args)]
 pub struct WakeWaitArgs {
-    /// The opaque rendezvous id (the same id the session armed via wake_arm). The platform
-    /// rendezvous derives from it under a fixed local prefix — never a path.
-    #[arg(long = "rendezvous-id")]
-    pub rendezvous_id: String,
-    /// Seconds to wait before exiting 3 (the dead-man fallback path).
+    /// The events directory holding the lease this session armed.
     #[arg(long)]
-    pub timeout: u64,
+    pub events: PathBuf,
+    /// The execution whose stream carries the lease. Optional when the directory holds one.
+    #[arg(long)]
+    pub execution: Option<String>,
+    /// The session whose OWN lease this waits on. The rendezvous and the deadline both come
+    /// from that lease — this surface used to take a rendezvous id and a timeout from the
+    /// caller, which made two numbers answer "how long before I give up" with nothing tying
+    /// them together.
+    #[arg(long = "session-id")]
+    pub session_id: String,
 }
 
 #[derive(Debug, Args)]

@@ -42,15 +42,28 @@ fn content_head(history: &[graphhelm_protocols::EventEnvelope]) -> u64 {
 
 /// Arms (or re-arms — the fold replaces, never stacks) the caller's OWN lease. `cursor`
 /// defaults to the stream's current head: "wake me for anything after now".
+pub(crate) struct Arming<'a> {
+    pub session_id: &'a str,
+    pub rendezvous_id: &'a str,
+    /// Defaults to the stream's current head: "wake me for anything after now".
+    pub cursor: Option<u64>,
+    /// M09 decision B: how long quiet may last. Absent means absent.
+    pub matures_in_seconds: Option<u64>,
+}
+
 pub(crate) fn arm(
     events: &Path,
     execution: Option<&str>,
-    session_id: &str,
-    rendezvous_id: &str,
-    cursor: Option<u64>,
+    arming: &Arming<'_>,
     actor: PersistedActor,
     key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
+    let Arming {
+        session_id,
+        rendezvous_id,
+        cursor,
+        matures_in_seconds,
+    } = *arming;
     let store = event_store(events).map_err(|error| super::repository_failure(&error))?;
     let (scope, stream, history) = resolve_stream(&store, execution)?;
     let projection = graphhelm_events::replay(&scope, &stream, &history)
@@ -62,6 +75,14 @@ pub(crate) fn arm(
 
     let head = history.last().map_or(0, |event| event.sequence);
     let armed_cursor = cursor.unwrap_or(head);
+    // What this session was promised BEFORE this arming, so a shortening can be named. Read
+    // as an instant rather than its wire string: the canonical rendering varies its fractional
+    // digits with the value, so comparing the strings answers ordering backwards for the
+    // commonest pair there is.
+    let previous_horizon = projection
+        .wake_leases
+        .get(session_id)
+        .and_then(|lease| lease.matures_at.clone());
 
     let session = OpaqueId::parse(session_id)
         .map_err(|_| execution_state("the session identifier is not wire-safe", "/sessionId"))?;
@@ -89,6 +110,7 @@ pub(crate) fn arm(
                 session_id: session,
                 cursor: armed_cursor,
                 rendezvous_id: rendezvous,
+                matures_in_seconds,
             }),
             vec![],
             vec![],
@@ -102,13 +124,68 @@ pub(crate) fn arm(
     // is a fixed point (no free ring, and the next content event still wakes), so a client
     // may echo it straight back.
     let content_head = content_head(&history);
+    // The horizon the FOLD derived, read back rather than recomputed here. A write that
+    // answers with its own arithmetic can disagree with what the next reader sees, which is
+    // the previous milestone's F2 wearing a clock: the button worked in the reply and its
+    // effect was something else on the store.
+    //
+    // The price is one extra read, at ARMING — outside any loop and outside the wait, so the
+    // store's exclusive lock is held for milliseconds by someone who is awake. The price of
+    // the other design was measured: F2 cost nine paid judge runs and a day to find.
+    let (matures_at, horizon) = replayed_horizon(&store, &scope, &stream, session_id)?;
+    // Shortening is ACCEPTED and SAID; it is not a mistake and refusing it would be the "always
+    // refuse" rule wearing the clothes of "never invent". What it cannot do is reach a waiter
+    // that already read this lease and blocked, so the caller is told, in a field rather than a
+    // sentence: a client that must parse English to learn it is a convention, not a contract.
+    //
+    // Only this direction. Lengthening leaves a waiter on the OLD, earlier horizon, so it wakes
+    // early -- a false alarm, which is safe. A notice that fired for both would train the reader
+    // to ignore the one that matters.
+    let shortened = match (previous_horizon, horizon) {
+        (Some(before), Some(now)) if now < before => Some(serde_json::json!({
+            "from": serde_json::to_value(&before).unwrap_or(serde_json::Value::Null),
+            "to": serde_json::to_value(&now).unwrap_or(serde_json::Value::Null),
+            "remedy": "restart_wait",
+        })),
+        _ => None,
+    };
     Ok(serde_json::json!({
         "executionId": execution_id,
         "sessionId": session_id,
         "armedCursor": armed_cursor,
         "rendezvousId": rendezvous_id,
         "contentHead": content_head,
+        "maturesAt": matures_at,
+        "horizonShortened": shortened,
     }))
+}
+
+/// The horizon on the caller's live lease, as the projection holds it after the append.
+type Horizon = (
+    Option<String>,
+    Option<graphhelm_protocols::PersistedTimestamp>,
+);
+
+fn replayed_horizon(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    session_id: &str,
+) -> Result<Horizon, Failure> {
+    let history = store
+        .read_replay_stream(scope, stream)
+        .map_err(|error| super::repository_failure(&error))?;
+    let projection = graphhelm_events::replay(scope, stream, &history)
+        .map_err(|error| super::replay_failure(&error))?;
+    let horizon = projection
+        .wake_leases
+        .get(session_id)
+        .and_then(|lease| lease.matures_at.clone());
+    let rendered = horizon
+        .as_ref()
+        .and_then(|instant| serde_json::to_value(instant).ok())
+        .and_then(|value| value.as_str().map(str::to_owned));
+    Ok((rendered, horizon))
 }
 
 /// Reads the caller's OWN live lease from the projection — `live: false` when none is
@@ -155,6 +232,7 @@ pub(crate) fn status(
             "live": true,
             "cursor": lease.cursor,
             "rendezvousId": lease.rendezvous_id,
+            "maturesAt": lease.matures_at,
             "head": head,
             "contentHead": content_head,
             "lastConsumed": last_consumed,

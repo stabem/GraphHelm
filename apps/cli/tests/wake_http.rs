@@ -31,7 +31,12 @@ fn token_path(events: &Path) -> PathBuf {
 }
 
 fn serve(events: &Path) -> (ServerGuard, String, String) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    serve_with_env(events, &[])
+}
+
+fn serve_with_env(events: &Path, env: &[(&str, &str)]) -> (ServerGuard, String, String) {
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
         .args([
             "serve",
             "--events",
@@ -40,9 +45,11 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
             "127.0.0.1:0",
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::null());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
@@ -190,6 +197,16 @@ fn open_store(events: &Path) -> graphhelm_events::LocalEventRepository {
 /// Arms a lease by direct store append (the API surface for arming is Task 3; the ring is
 /// this task's subject and must work from the fold alone).
 fn arm_lease(events: &Path, execution: &str, rendezvous_id: &str, cursor: u64) {
+    arm_lease_bounded(events, execution, rendezvous_id, cursor, None);
+}
+
+fn arm_lease_bounded(
+    events: &Path,
+    execution: &str,
+    rendezvous_id: &str,
+    cursor: u64,
+    matures_in_seconds: Option<u64>,
+) {
     let store = open_store(events);
     let (stream, _events) = store.read_unique_replay_stream().unwrap();
     let next = store
@@ -211,6 +228,7 @@ fn arm_lease(events: &Path, execution: &str, rendezvous_id: &str, cursor: u64) {
                 session_id: graphhelm_protocols::OpaqueId::parse("session-sleeper-1").unwrap(),
                 cursor,
                 rendezvous_id: graphhelm_protocols::OpaqueId::parse(rendezvous_id).unwrap(),
+                matures_in_seconds,
             }),
             vec![],
             vec![],
@@ -226,6 +244,21 @@ fn head(events: &Path) -> u64 {
     let store = open_store(events);
     let (_stream, history) = store.read_unique_replay_stream().unwrap();
     history.last().map_or(0, |event| event.sequence)
+}
+
+/// The instant the LAST event actually recorded — the base the horizon is computed from.
+///
+/// Reading it back beats recomputing it here: a test that asserts against its own `now` would
+/// pass for an implementation that measured from a different base, and the base is the whole
+/// question.
+fn last_event_instant(events: &Path) -> chrono::DateTime<chrono::Utc> {
+    let store = open_store(events);
+    let (_stream, history) = store.read_unique_replay_stream().unwrap();
+    *history
+        .last()
+        .expect("the stream has at least the execution start")
+        .occurred_at
+        .as_datetime()
 }
 
 fn kinds_after(events: &Path, sequence: u64) -> Vec<String> {
@@ -444,19 +477,40 @@ fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {
 
 /// Spawns `graphhelm wake-wait` and returns the child (the sidecar CREATES the rendezvous).
 #[cfg(windows)]
-fn spawn_wake_wait(rendezvous_id: &str, timeout_seconds: &str) -> Child {
+/// The waiter no longer takes a rendezvous or a deadline from its caller: both come from the
+/// lease this session armed. So the harness arms one, and the test's "timeout" is now the
+/// bound the sleeper DECLARED — which is the point of the step.
+fn spawn_wake_wait(events: &Path, execution: &str, session: &str) -> Child {
     Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "wake-wait",
-            "--rendezvous-id",
-            rendezvous_id,
-            "--timeout",
-            timeout_seconds,
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+            "--session-id",
+            session,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap()
+}
+
+/// Reaps a sidecar and returns its exit status together with everything it wrote to
+/// stderr. The stderr pipe was created at spawn and then DISCARDED, so an exit-2 refusal
+/// (the sidecar's own diagnosis) was invisible and masqueraded as whatever assertion
+/// failed downstream. Reading after `wait` cannot deadlock here: the sidecar's stderr is
+/// at most a refusal line, far below the pipe buffer.
+#[cfg(windows)]
+fn reap_with_stderr(child: &mut Child) -> (std::process::ExitStatus, String) {
+    let status = child.wait().unwrap();
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        use std::io::Read as _;
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    (status, stderr)
 }
 
 /// Rings the sidecar's rendezvous with the given bytes (a HOSTILE ringer may write more
@@ -479,7 +533,11 @@ fn ring_pipe(rendezvous_id: &str, payload: &[u8]) -> std::io::Result<()> {
 #[cfg(windows)]
 #[test]
 fn wake_wait_exits_zero_on_ring_and_no_hostile_byte_reaches_stdout() {
-    let child = spawn_wake_wait("rvz-sidecar-1", "20");
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-sidecar-ring");
+    arm_lease_bounded(&events, "exec-sidecar-ring", "rvz-sidecar-1", 1, Some(20));
+    let child = spawn_wake_wait(&events, "exec-sidecar-ring", "session-sleeper-1");
     // Give the sidecar a moment to create the rendezvous, then ring with SENTINEL bytes.
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -509,24 +567,41 @@ fn wake_wait_exits_zero_on_ring_and_no_hostile_byte_reaches_stdout() {
 #[cfg(windows)]
 #[test]
 fn wake_wait_exits_three_on_timeout_and_two_on_a_bad_id() {
-    let child = spawn_wake_wait("rvz-sidecar-timeout", "1");
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-sidecar-timeout");
+    // The bound is DECLARED on the lease now, so exit 3 can only mean the deadline the sleeper
+    // itself set. It stopped being "the number I happened to type ran out".
+    arm_lease_bounded(
+        &events,
+        "exec-sidecar-timeout",
+        "rvz-sidecar-timeout",
+        1,
+        Some(1),
+    );
+    let child = spawn_wake_wait(&events, "exec-sidecar-timeout", "session-sleeper-1");
     let output = child.wait_with_output().unwrap();
     assert_eq!(output.status.code(), Some(3), "timeout exits 3: {output:?}");
 
+    // The unusable case is no longer a malformed id from the caller — the id comes from the
+    // lease. It is a session with no lease of its own, which refuses rather than waiting on
+    // whatever it found.
     let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "wake-wait",
-            "--rendezvous-id",
-            "NOT A VALID ID!!",
-            "--timeout",
-            "1",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec-sidecar-timeout",
+            "--session-id",
+            "session-nobody",
         ])
         .output()
         .unwrap();
     assert_eq!(
         output.status.code(),
         Some(2),
-        "a bad id refuses: {output:?}"
+        "a session with no lease refuses: {output:?}"
     );
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("GHCLI017"),
@@ -643,18 +718,18 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     let (_guard, base, token) = serve(&events);
     let proxy = counting_proxy(base.clone());
 
-    // The sidecar first: it CREATES the rendezvous the serve will ring.
+    // A arms ITSELF through the proxy FIRST — the waiter now takes its rendezvous and its
+    // deadline from its own lease, so the lease has to exist before it can wait on one. Its
+    // one read of the store is local and is not an API request, so the measurement below is
+    // unchanged: zero requests cross the proxy between sleep and ring.
     let rendezvous = "rdv-choreo-a";
-    let mut sidecar = spawn_wake_wait(rendezvous, "30");
-    std::thread::sleep(std::time::Duration::from_millis(400));
-
-    // A arms ITSELF through the proxy (this is A's last request before sleep).
     let replies = mcp_via(
         &proxy.address,
         &token,
         &initialize_lines(vec![serde_json::json!({"jsonrpc": "2.0", "id": 2,
             "method": "tools/call", "params": {"name": "wake_arm",
-            "arguments": {"executionId": execution, "rendezvousId": rendezvous}}})]),
+            "arguments": {"executionId": execution, "rendezvousId": rendezvous,
+                          "maturesInSeconds": 30}}})]),
     );
     let armed = &replies[1]["result"];
     assert_eq!(armed["isError"], false, "{replies:?}");
@@ -669,6 +744,41 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
         .as_str()
         .unwrap()
         .to_owned();
+
+    // The sidecar waits on THAT session's lease — the one the arm reply named. It reads the
+    // store once, locally, and drops the handle before blocking.
+    let mut sidecar = spawn_wake_wait(&events, execution, &armed_session);
+    // WAIT for the rendezvous to exist rather than sleeping and hoping. The sidecar used to be
+    // started before the arming, so it always won the race by construction; now it needs the
+    // lease first, and a fixed sleep would be a guess about a cold binary's start-up on a
+    // contended machine. It flaked once here before this loop existed -- a fixed sleep is a
+    // timing assumption wearing the clothes of a step.
+    let appeared = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let expected = format!("graphhelm-wake-{rendezvous}");
+    while !std::fs::read_dir("//./pipe").is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&expected))
+        })
+    }) {
+        // A dead child can never create the pipe: report ITS diagnosis immediately instead
+        // of burning the 10 s bound and blaming the pipe. Exit 2 (refusal) lives on stderr.
+        if let Some(status) = sidecar.try_wait().unwrap() {
+            let mut stderr = String::new();
+            if let Some(mut pipe) = sidecar.stderr.take() {
+                use std::io::Read as _;
+                let _ = pipe.read_to_string(&mut stderr);
+            }
+            panic!("the sidecar died before creating its rendezvous: {status:?}: {stderr}");
+        }
+        assert!(
+            std::time::Instant::now() < appeared,
+            "the sidecar never created its rendezvous"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
 
     // The window opens: whatever the proxy has seen so far was the arming.
     let at_sleep = proxy.connections.load(std::sync::atomic::Ordering::SeqCst);
@@ -686,10 +796,10 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
 
     // The ring: the sidecar exits 0, promptly.
     let started = std::time::Instant::now();
-    let sidecar_end = sidecar.wait().unwrap();
+    let (sidecar_end, sidecar_stderr) = reap_with_stderr(&mut sidecar);
     assert!(
         sidecar_end.success(),
-        "the sidecar must exit 0 on the ring: {sidecar_end:?}"
+        "the sidecar must exit 0 on the ring: {sidecar_end:?}: {sidecar_stderr}"
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(10),
@@ -732,15 +842,34 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     // woken session saw only `live: false` — indistinguishable from "I never armed" — so
     // it could not tell a ring from a stale burn without reading raw history. The receipt
     // answers in the sleeper's own words: "it rang, at #N".
-    let answer = get_json(
-        &base,
-        &token,
-        &format!("/v1/executions/{execution}/wake-lease?sessionId={armed_session}"),
-    );
-    assert!(
-        !answer.is_null(),
-        "the wake-lease read must parse: session {armed_session}"
-    );
+    //
+    // The consumption is two-phase BY DESIGN (serve/wake.rs module doc): the byte may
+    // arrive before the consume append is durable, so the receipt is EVENTUALLY visible,
+    // not instantly. Wait for the condition — the receipt existing — with a bound, the
+    // same shape as the consumption wait above (:376-387). Asserting immediately was a
+    // timing assumption wearing the clothes of a step: it failed 9/10 standalone as
+    // "the lease burned on the ring" with live:true, lastConsumed:null. (Ringing only
+    // AFTER the durable append would make the receipt instant — that is a product
+    // decision about wake latency vs receipt strength, routed to the owner separately.)
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let answer = loop {
+        let answer = get_json(
+            &base,
+            &token,
+            &format!("/v1/executions/{execution}/wake-lease?sessionId={armed_session}"),
+        );
+        if !answer["data"]["lastConsumed"].is_null() {
+            break answer;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the receipt must land — the ring already happened (sidecar exited 0), so a \
+             receipt that never appears means the consume append was lost: {answer}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    // (No "must parse" assert here: the loop only breaks on a non-null lastConsumed, so a
+    // null answer can no longer reach this line — a guard that cannot fail measures nothing.)
     let data = &answer["data"];
     assert_eq!(
         data["live"], false,
@@ -826,11 +955,11 @@ fn a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong() {
     let execution = "exec-wake-deadman";
     start_execution(&events, directory.path(), execution);
     let (guard, base, token) = serve(&events);
-    arm_lease(&events, execution, "rdv-deadman", 1);
+    arm_lease_bounded(&events, execution, "rdv-deadman", 1, Some(2));
     drop(guard); // the serve dies; nothing will ever ring.
     let _ = (base, token);
 
-    let mut sidecar = spawn_wake_wait("rdv-deadman", "2");
+    let mut sidecar = spawn_wake_wait(&events, execution, "session-sleeper-1");
     let end = sidecar.wait().unwrap();
     assert_eq!(
         end.code(),
@@ -922,11 +1051,18 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
             .output()
             .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(
-            value["ok"], true,
-            "round {round}: the stream must still replay — a refused replay means a \
-             double-consume landed: {value}"
-        );
+        if value["ok"] != true {
+            // The journal IS the evidence: two `wake_lease_consumed` for one `wake_lease`
+            // at consecutive sequences confirms the consume race; a storage-shaped refusal
+            // instead acquits it. The tempdir dies with the test, so dump it in the panic.
+            let journal = std::fs::read_to_string(events.join("journal.jsonl"))
+                .unwrap_or_else(|error| format!("<journal unreadable: {error}>"));
+            panic!(
+                "round {round}: the stream must still replay — a refused replay means a \
+                 double-consume landed: {value}\n\
+                 --- journal.jsonl of the failing run ---\n{journal}"
+            );
+        }
     }
 
     // Belt over the whole run: count consumptions per arming in the raw journal.
@@ -1044,5 +1180,453 @@ fn arming_a_lease_never_moves_the_execution_clock() {
         after["data"]["lastEventAt"], before_stamp,
         "watching is not progress: a wake lease is a reader announcing that it intends to \
          listen, and it must never make a wedged run look alive"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// M09 decision B, step 2: arming DECLARES the horizon.
+//
+// Until now a lease said "wake me for anything after #N" and nothing about how long quiet may
+// last. The horizon is computed ONCE here, at the only moment someone is provably awake and
+// consenting, and it is an absolute instant so no reader ever has to add a duration to a clock
+// of its own -- the two-clocks defect this decision exists to remove.
+//
+// The assertion is against the LEASE EVENT'S OWN recorded instant plus the declared seconds,
+// not against a number this test computed from its own clock. A test that says "roughly now
+// plus 300" passes for an implementation that used the wrong base, and the base is the thing
+// in question.
+// -------------------------------------------------------------------------------------------
+
+/// The armed horizon is the arming event's own instant plus the seconds the sleeper declared.
+#[test]
+fn arming_with_a_declared_bound_stores_that_instant_on_the_lease() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-horizon");
+    let (_guard, address, token) = serve(&events);
+
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-horizon/wake-lease",
+        "wake-horizon-1",
+        &serde_json::json!({
+            "sessionId": "session-sleeper-1",
+            "rendezvousId": "rvz-horizon-1",
+            "maturesInSeconds": 300,
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let armed_at = last_event_instant(&events);
+    let expected = (armed_at + chrono::Duration::seconds(300))
+        .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true);
+
+    // The write's own reply, and then a READ: a horizon that exists only in the response is
+    // the F2 defect of the previous milestone, where the button worked and its effect was
+    // discarded on the next read.
+    assert_eq!(
+        reply["data"]["maturesAt"], expected,
+        "the arming reply names the horizon it stored: {reply}"
+    );
+    let answer = get_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-horizon/wake-lease?sessionId=session-sleeper-1",
+    );
+    assert_eq!(
+        answer["data"]["maturesAt"], expected,
+        "the horizon is on the lease the next reader folds, not only in the write's reply: \
+         {answer}"
+    );
+}
+
+/// Absence stays absence: arming without declaring a bound promises nothing, and no horizon is
+/// invented for it. Sabotage: default the missing bound to any number at all.
+#[test]
+fn arming_without_a_declared_bound_promises_no_horizon() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-nohorizon");
+    let (_guard, address, token) = serve(&events);
+
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-nohorizon/wake-lease",
+        "wake-nohorizon-1",
+        &serde_json::json!({
+            "sessionId": "session-sleeper-1",
+            "rendezvousId": "rvz-nohorizon-1",
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert!(
+        reply["data"]["maturesAt"].is_null(),
+        "no bound declared means no horizon, and none is invented: {reply}"
+    );
+    let answer = get_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-nohorizon/wake-lease?sessionId=session-sleeper-1",
+    );
+    assert!(
+        answer["data"]["maturesAt"].is_null(),
+        "the read agrees that nothing was promised: {answer}"
+    );
+}
+
+/// The loose end of the bound, which is the dangerous one.
+///
+/// Zero was already refused. A trillion seconds was not: it produced a horizon in the year
+/// 33715 and the surface answered with a DATE, which reads as a promise while meaning never —
+/// absence laundered into calm through arithmetic. Worse, `u64::MAX` overflowed the conversion
+/// and silently yielded NO horizon at all, so an operator who declared a bound got none and was
+/// told nothing. The ceiling is the one its neighbours already use for a declared duration.
+#[test]
+fn a_bound_nobody_will_live_to_see_is_refused_rather_than_promised() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-absurd");
+    let (_guard, address, token) = serve(&events);
+
+    for (label, seconds) in [
+        ("a trillion seconds", 1_000_000_000_000_u64),
+        ("the largest number there is", u64::MAX),
+        ("one second past ten years", 315_576_001),
+    ] {
+        let (status, reply) = post_json(
+            &address,
+            &token,
+            "/v1/executions/exec-wake-absurd/wake-lease",
+            &format!("wake-absurd-{seconds}"),
+            &serde_json::json!({
+                "sessionId": "session-sleeper-1",
+                "rendezvousId": "rvz-absurd-1",
+                "maturesInSeconds": seconds,
+            }),
+        );
+        assert_eq!(status, 400, "{label} must be refused, not stored: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/maturesInSeconds",
+            "the refusal names the field the operator must change: {reply}"
+        );
+    }
+
+    // And nothing was armed by the attempts.
+    let answer = get_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-absurd/wake-lease?sessionId=session-sleeper-1",
+    );
+    assert_eq!(
+        answer["data"]["live"], false,
+        "a refused bound arms nothing: {answer}"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// M09 decision B, step 3: the waiter reads its OWN lease and nothing else.
+//
+// `wake-wait` took a rendezvous id and a timeout FROM THE CALLER. Two numbers answered "how
+// long before I give up" -- the one the sleeper declared at arming, and the one it happened to
+// pass on the command line -- and nothing tied them together. That is the F4 family on the
+// sleep surface: whenever two numbers answer one question, one of them is lying at some point.
+//
+// Now there is one. The waiter opens the store, reads the lease belonging to ITS OWN session,
+// LETS THE HANDLE GO, and only then blocks. Letting go matters: the repository holds an
+// OS-level exclusive lock for the handle's lifetime, so a waiter that held it would lock every
+// concurrent process out for the whole night -- the exact window the product is supposed to
+// keep working.
+// -------------------------------------------------------------------------------------------
+
+fn wake_wait(events: &Path, execution: &str, session: &str) -> (i32, serde_json::Value) {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "wake-wait",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+            "--session-id",
+            session,
+        ])
+        .output()
+        .unwrap();
+    let value = serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
+    (output.status.code().unwrap_or(-1), value)
+}
+
+/// B10: a horizon already past when the wait begins must answer AT ONCE.
+///
+/// Blocking here would mean the one case where everything has already gone wrong is the one
+/// case the tool sits quiet through. The lease is armed with a one-second bound and the wait
+/// starts after it, so the deadline is behind us before the first instruction runs.
+#[test]
+fn a_horizon_already_past_answers_immediately_rather_than_waiting() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-past");
+    let (_guard, address, token) = serve(&events);
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-past/wake-lease",
+        "wake-past-1",
+        &serde_json::json!({
+            "sessionId": "session-sleeper-1",
+            "rendezvousId": "rvz-past-1",
+            "maturesInSeconds": 1,
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+
+    let (code, answer) = wake_wait(&events, "exec-wake-past", "session-sleeper-1");
+    assert_eq!(code, 3, "the declared deadline passed: {answer}");
+    assert_eq!(
+        answer["data"]["matured"], true,
+        "the answer says the DECLARED deadline passed, not merely that nothing rang: {answer}"
+    );
+    // The assertion that actually measures "at once". An elapsed-time bound cannot: process
+    // start-up costs more than the one-second wait a broken implementation would perform, so
+    // a generous threshold passes for the bug and a tight one fails for the fixture. The
+    // answer says whether it waited at all.
+    assert_eq!(
+        answer["data"]["alreadyPast"], true,
+        "the deadline was behind us before the wait began, and the answer says so: {answer}"
+    );
+}
+
+/// B11: a waiter may only wait on the lease of its own session.
+///
+/// Accepting whatever lease happened to be in the store is the waiter reading more than its
+/// own -- the property this step exists to keep. Refusal names the session, and it is a
+/// refusal rather than an indefinite wait, because waiting forever on nothing is the silent
+/// failure this milestone is about.
+#[test]
+fn a_waiter_with_no_lease_of_its_own_refuses_instead_of_waiting() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-other");
+    let (_guard, address, token) = serve(&events);
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-other/wake-lease",
+        "wake-other-1",
+        &serde_json::json!({
+            "sessionId": "session-sleeper-1",
+            "rendezvousId": "rvz-other-1",
+            "maturesInSeconds": 300,
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let (code, answer) = wake_wait(&events, "exec-wake-other", "session-somebody-else");
+    assert_eq!(
+        code, 2,
+        "a waiter with no lease of its own refuses: {answer}"
+    );
+    assert_eq!(answer["ok"], false, "{answer}");
+    assert!(
+        answer["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("session-somebody-else"),
+        "the refusal names the session that has no lease: {answer}"
+    );
+}
+
+/// A lease armed with no bound promises nothing, so waiting on it is refused rather than
+/// silently becoming a wait with no end. Absence stays absence on this surface too.
+#[test]
+fn waiting_on_a_lease_that_declared_no_bound_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-unbounded");
+    let (_guard, address, token) = serve(&events);
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-unbounded/wake-lease",
+        "wake-unbounded-1",
+        &serde_json::json!({
+            "sessionId": "session-sleeper-1",
+            "rendezvousId": "rvz-unbounded-1",
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let (code, answer) = wake_wait(&events, "exec-wake-unbounded", "session-sleeper-1");
+    assert_eq!(
+        code, 2,
+        "no bound declared, so no wait is promised: {answer}"
+    );
+    assert_eq!(answer["ok"], false, "{answer}");
+}
+
+// -------------------------------------------------------------------------------------------
+// M09 decision B, step 4: shortening a horizon is ALLOWED and SAID, never refused in silence.
+//
+// A waiter reads its lease once and then blocks, so re-arming cannot reach it. The two
+// directions of that gap are not the same failure. Lengthening means the sleeper wakes EARLY
+// -- a false alarm, annoying and safe. Shortening means it wakes LATE, missing the deadline
+// someone set precisely because they thought it more urgent, which is the silent broken
+// promise this milestone exists to remove.
+//
+// Refusing the shortening was the first answer and it was wrong: shortening is not a mistake,
+// and "never invent" and "always refuse" are different rules. What is wrong is failing in
+// silence. So the arm accepts it and SAYS so -- as a named field, because a sentence would
+// repeat the exit-code gap the quickstart documents: a client must be able to decide without
+// reading prose.
+// -------------------------------------------------------------------------------------------
+
+/// Shortening is accepted and named, with both instants, so a client can act without parsing
+/// English.
+#[test]
+fn shortening_a_horizon_is_accepted_and_named_with_both_instants() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-shorter");
+    let (_guard, address, token) = serve(&events);
+
+    let arm = |key: &str, seconds: u64| {
+        post_json(
+            &address,
+            &token,
+            "/v1/executions/exec-wake-shorter/wake-lease",
+            key,
+            &serde_json::json!({
+                "sessionId": "session-sleeper-1",
+                "rendezvousId": "rvz-shorter-1",
+                "maturesInSeconds": seconds,
+            }),
+        )
+    };
+
+    let (status, first) = arm("wake-shorter-1", 3600);
+    assert_eq!(status, 200, "{first}");
+    assert!(
+        first["data"]["horizonShortened"].is_null(),
+        "the first arming shortens nothing: {first}"
+    );
+    let was = first["data"]["maturesAt"].as_str().unwrap().to_owned();
+
+    let (status, shorter) = arm("wake-shorter-2", 60);
+    assert_eq!(
+        status, 200,
+        "shortening is accepted, not refused: {shorter}"
+    );
+    let notice = &shorter["data"]["horizonShortened"];
+    assert_eq!(
+        notice["from"], was,
+        "the notice names the horizon that was replaced: {shorter}"
+    );
+    assert_eq!(
+        notice["to"], shorter["data"]["maturesAt"],
+        "and the one that replaced it: {shorter}"
+    );
+    assert_eq!(
+        notice["remedy"], "restart_wait",
+        "a client must be able to decide from a field, not from prose: {shorter}"
+    );
+}
+
+/// The other direction stays quiet, because it fails toward waking early — which is safe.
+/// Sabotage: notify on any change at all. This falls, and it matters: a notice that fires for
+/// the harmless direction trains the reader to ignore the dangerous one.
+#[test]
+fn lengthening_a_horizon_says_nothing_because_it_fails_safe() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-longer");
+    let (_guard, address, token) = serve(&events);
+
+    let arm = |key: &str, seconds: u64| {
+        post_json(
+            &address,
+            &token,
+            "/v1/executions/exec-wake-longer/wake-lease",
+            key,
+            &serde_json::json!({
+                "sessionId": "session-sleeper-1",
+                "rendezvousId": "rvz-longer-1",
+                "maturesInSeconds": seconds,
+            }),
+        )
+    };
+
+    let (status, first) = arm("wake-longer-1", 60);
+    assert_eq!(status, 200, "{first}");
+    let (status, longer) = arm("wake-longer-2", 3600);
+    assert_eq!(status, 200, "{longer}");
+    assert!(
+        longer["data"]["horizonShortened"].is_null(),
+        "waking early is safe, so nothing is said: {longer}"
+    );
+}
+
+/// #72 S7, the green half: the phase-3 delay seam makes "eventually" a CHOSEN number
+/// (2s here), and the receipt wait absorbs it deterministically — the guard waits for
+/// the condition, not the schedule. The red half (same delay, wait removed -> fails
+/// every time) is a sabotage run recorded in the issue's evidence, not committed code.
+/// The final assert is this test's own blade: if the seam's env plumbing ever dies, the
+/// receipt arrives instantly and the >=1.5s check falls — a delay hook nobody can
+/// trigger would otherwise pass this test while measuring nothing.
+#[cfg(windows)]
+#[test]
+fn a_designed_phase3_delay_is_absorbed_by_the_receipt_wait() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-wake-delay";
+    start_execution(&events, directory.path(), execution);
+    let armed_at = head(&events);
+    let sleeper = Sleeper::arm("rvz-delay-1", &events);
+    arm_lease(&events, execution, "rvz-delay-1", armed_at);
+    let (_guard, base, token) =
+        serve_with_env(&events, &[("GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS", "2000")]);
+
+    let evidence_out = directory.path().join("delay-evidence.json");
+    let (status, reply) = post_json(
+        &base,
+        &token,
+        &format!("/v1/executions/{execution}/signal"),
+        "delay-signal-1",
+        &signal_body("signal-delay-1", &evidence_out),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    // Two-phase by design: the byte crosses BEFORE the (deliberately delayed) durable
+    // consume append.
+    let (bytes, _at_ring) = sleeper.wait();
+    assert_eq!(bytes.len(), 1, "exactly one content-free byte crossed");
+    let rung_at = Instant::now();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let answer = loop {
+        let answer = get_json(
+            &base,
+            &token,
+            &format!("/v1/executions/{execution}/wake-lease?sessionId=session-sleeper-1"),
+        );
+        if !answer["data"]["lastConsumed"].is_null() {
+            break answer;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the receipt must land despite the designed delay: {answer}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(
+        answer["data"]["lastConsumed"]["reason"], "rung",
+        "the receipt names the ring, delay or no delay: {answer}"
+    );
+    assert!(
+        rung_at.elapsed() >= Duration::from_millis(1500),
+        "the seam actually delayed phase 3 — a receipt this early means the delay hook \
+         is dead and this test is measuring nothing: {:?}",
+        rung_at.elapsed()
     );
 }

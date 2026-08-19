@@ -1266,7 +1266,12 @@ fn digest_prints_the_digest_the_catalog_verifies() {
         .expect("the committed catalog records a sha256 for the agent schema");
 
     let output = command()
-        .args(args(["schema", "digest", "--file", schema_path.to_str().unwrap()]))
+        .args(args([
+            "schema",
+            "digest",
+            "--file",
+            schema_path.to_str().unwrap(),
+        ]))
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -1288,7 +1293,11 @@ fn digest_is_invariant_under_key_order_and_formatting() {
     let a = directory.path().join("a.json");
     let b = directory.path().join("b.json");
     fs::write(&a, "{\"b\":1,\"a\":{\"y\":2,\"x\":3}}").unwrap();
-    fs::write(&b, "{\n  \"a\": {\n    \"x\": 3,\n    \"y\": 2\n  },\n  \"b\": 1\n}").unwrap();
+    fs::write(
+        &b,
+        "{\n  \"a\": {\n    \"x\": 3,\n    \"y\": 2\n  },\n  \"b\": 1\n}",
+    )
+    .unwrap();
     let digest_of = |path: &Path| {
         let output = command()
             .args(args(["schema", "digest", "--file", path.to_str().unwrap()]))

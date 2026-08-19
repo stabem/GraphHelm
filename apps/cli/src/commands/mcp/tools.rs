@@ -90,7 +90,7 @@ const TOOLS: [ToolSpec; 14] = [
     },
     ToolSpec {
         name: "wake_wait",
-        description: "Block until THIS session's armed lease rings, or until the bound                       expires. Reads GET /v1/executions/{executionId}/wake-lease first to                       refuse any rendezvous this session does not hold, then blocks locally                       -- the block itself is NOT an API call, which is why this tool alone                       names the request it consults rather than the one it performs.                       Content-free by construction: the reply says THAT something happened,                       never what -- re-read the log to learn anything.",
+        description: "Block until THIS session's armed lease rings, or until the deadline that                       lease declared. Reads GET /v1/executions/{executionId}/wake-lease                       first and takes BOTH the rendezvous and the deadline from it -- the                       caller supplies an identity, never a duration, so arming with one                       horizon and waiting on another cannot be expressed. Then it blocks                       locally; the block itself is NOT an API call, which is why this tool                       alone names the request it consults rather than the one it performs.                       Content-free by construction: the reply says THAT something happened,                       never what -- re-read the log to learn anything.",
         schema: wake_wait_schema,
     },
     ToolSpec {
@@ -213,6 +213,8 @@ fn wake_arm_schema() -> serde_json::Value {
                                 sidecar derives the platform rendezvous from it."},
             "cursor": {"type": "integer",
                 "description": "Ring for appends AFTER this sequence; defaults to the head."},
+            "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000,
+                "description": "How long quiet may last before the wait ends by itself.                                 Omit it and nothing promises to end the wait: the lease rings                                 on an append or not at all."},
         }),
         &["executionId", "rendezvousId"],
     )
@@ -246,16 +248,13 @@ fn amend_budget_schema() -> serde_json::Value {
 }
 
 fn wake_wait_schema() -> serde_json::Value {
+    // Identity in, never a duration and never a rendezvous. Both come from the lease this
+    // session armed, so arming with one horizon and waiting on another cannot be expressed
+    // here either -- the CLI half of this surface was fixed first, and two definitions of one
+    // tool is the very defect being removed.
     object_schema(
-        serde_json::json!({
-            "executionId": {"type": "string"},
-            "rendezvousId": {"type": "string",
-                "description": "Opaque rendezvous identity -- never a filesystem path."},
-            "timeoutSeconds": {"type": "integer", "minimum": 1,
-                "maximum": MAX_WAIT_SECONDS,
-                "description": "Upper bound on the block; defaults to the maximum."},
-        }),
-        &["executionId", "rendezvousId"],
+        serde_json::json!({"executionId": {"type": "string"}}),
+        &["executionId"],
     )
 }
 
@@ -269,11 +268,6 @@ fn probe_schema() -> serde_json::Value {
     )
 }
 
-/// The ceiling on a blocked MCP wait. Chosen to be shorter than any sane client's own
-/// request timeout: the sidecar may block for far longer, but a chat transport that has
-/// stopped answering looks dead, and "looks dead" is a worse failure than "timed out".
-const MAX_WAIT_SECONDS: u64 = 300;
-
 /// The blocking wait as an MCP primitive (M08 Task 4), with the 05g sleeper-only rule
 /// intact: a session may wait ONLY on a lease it holds itself. That is enforced by asking
 /// the API which lease THIS session (`nonce`) has live, and refusing any other rendezvous --
@@ -284,23 +278,19 @@ const MAX_WAIT_SECONDS: u64 = 300;
 /// bytes crossed the rendezvous die in the sidecar's wait; the caller learns only THAT it
 /// should re-read its log.
 fn wake_wait_tool(api: &ApiClient, nonce: &str, arguments: &serde_json::Value) -> HandlerOutcome {
-    let (Some(execution), Some(rendezvous)) = (
-        str_arg(arguments, "executionId"),
-        str_arg(arguments, "rendezvousId"),
-    ) else {
+    let Some(execution) = str_arg(arguments, "executionId") else {
         return HandlerOutcome::Error {
             code: INVALID_PARAMS,
-            message: "wake_wait needs both executionId and rendezvousId".to_owned(),
+            message: "wake_wait needs executionId".to_owned(),
         };
     };
-    let bound = arguments
-        .get("timeoutSeconds")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(MAX_WAIT_SECONDS)
-        .clamp(1, MAX_WAIT_SECONDS);
 
-    // Sleeper-only, asked of the API rather than assumed: the lease this session holds is
-    // the only rendezvous it may block on.
+    // ONE read, and exactly one thing read from it: the lease belonging to THIS session. The
+    // rendezvous and the deadline both come from there. This tool used to take a rendezvous id
+    // and a `timeoutSeconds` from its caller, which left two numbers answering "how long before
+    // I give up" -- the bound the sleeper declared at arming, and whatever the call happened to
+    // carry. Two surfaces of one tool disagreeing about when an operator should wake is the
+    // defect §8 promises against, and this half was the one the pair itself sleeps on.
     let live = api.request(
         "GET",
         &format!("/v1/executions/{execution}/wake-lease?sessionId={nonce}"),
@@ -308,40 +298,71 @@ fn wake_wait_tool(api: &ApiClient, nonce: &str, arguments: &serde_json::Value) -
         None,
         None,
     );
-    let held = match live {
-        Ok((_status, envelope)) => envelope["data"]["rendezvousId"].as_str().map(str::to_owned),
+    let lease = match live {
+        Ok((_status, envelope)) => envelope["data"].clone(),
         Err(transport) => {
-            return HandlerOutcome::Result(serde_json::json!({
-                "content": [{"type": "text", "text": format!("the API is unreachable: {transport}")}],
-                "isError": true,
-            }));
+            return refused(&format!("the API is unreachable: {transport}"));
         }
     };
-    if held.as_deref() != Some(rendezvous) {
-        return HandlerOutcome::Result(serde_json::json!({
-            "content": [{"type": "text", "text": format!(
-                "refused: this session holds {held:?}, not {rendezvous:?} -- a session waits only on its own lease (05g sleeper-only)"
-            )}],
-            "isError": true,
-        }));
+    let Some(rendezvous) = lease["rendezvousId"].as_str().map(str::to_owned) else {
+        return refused(
+            "refused: this session holds no live lease -- a session waits only on its own              (05g sleeper-only)",
+        );
+    };
+    let Some(matures_at) = lease["maturesAt"].as_str() else {
+        return refused(
+            "refused: this session's lease declared no bound, so nothing here promises to end              the wait -- arm again with maturesInSeconds",
+        );
+    };
+    let Ok(matures_at) = chrono::DateTime::parse_from_rfc3339(matures_at) else {
+        return refused("refused: the lease carries a horizon that cannot be read");
+    };
+
+    let remaining = matures_at
+        .with_timezone(&chrono::Utc)
+        .signed_duration_since(chrono::Utc::now());
+    if remaining <= chrono::Duration::zero() {
+        // Already past when asked: answer at once. Blocking would make the one case where
+        // something has already gone wrong the one case this tool sits quiet through.
+        return matured_reply(true);
     }
 
-    let outcome = match crate::commands::wake_wait::wait(rendezvous, bound) {
+    let outcome = match crate::commands::wake_wait::wait(
+        &rendezvous,
+        u64::try_from(remaining.num_seconds()).unwrap_or(1).max(1),
+    ) {
         crate::commands::wake_wait::WaitEnd::Rung => "rung",
-        crate::commands::wake_wait::WaitEnd::TimedOut => "timeout",
+        // The only bound is the declared one, so this cannot mean "the number I passed ran
+        // out" any more.
+        crate::commands::wake_wait::WaitEnd::TimedOut => return matured_reply(false),
         crate::commands::wake_wait::WaitEnd::Unusable(reason) => {
-            return HandlerOutcome::Result(serde_json::json!({
-                "content": [{"type": "text", "text": format!("the rendezvous is unusable: {reason}")}],
-                "isError": true,
-            }));
+            return refused(&format!("the rendezvous is unusable: {reason}"));
         }
     };
-    // Content-free: the outcome word and the bound that produced it. Never a payload.
+    // Content-free: the outcome word alone. Never a payload.
     HandlerOutcome::Result(serde_json::json!({
         "content": [{"type": "text", "text": serde_json::json!({
             "ok": true,
             "command": "wake.wait",
-            "data": {"outcome": outcome, "timeoutSeconds": bound},
+            "data": {"outcome": outcome},
+        }).to_string()}],
+        "isError": false,
+    }))
+}
+
+fn refused(message: &str) -> HandlerOutcome {
+    HandlerOutcome::Result(serde_json::json!({
+        "content": [{"type": "text", "text": message}],
+        "isError": true,
+    }))
+}
+
+fn matured_reply(already_past: bool) -> HandlerOutcome {
+    HandlerOutcome::Result(serde_json::json!({
+        "content": [{"type": "text", "text": serde_json::json!({
+            "ok": true,
+            "command": "wake.wait",
+            "data": {"outcome": "timeout", "matured": true, "alreadyPast": already_past},
         }).to_string()}],
         "isError": false,
     }))
@@ -528,6 +549,14 @@ pub(crate) fn call(
             });
             if let Some(cursor) = arguments.get("cursor").and_then(serde_json::Value::as_u64) {
                 body["cursor"] = serde_json::json!(cursor);
+            }
+            // M09 decision B: the bound the sleeper declares. Passed through untouched —
+            // absent means absent, and no default is supplied here or anywhere else.
+            if let Some(seconds) = arguments
+                .get("maturesInSeconds")
+                .and_then(serde_json::Value::as_u64)
+            {
+                body["maturesInSeconds"] = serde_json::json!(seconds);
             }
             api.request(
                 "POST",

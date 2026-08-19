@@ -179,7 +179,7 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
 /// Resolves which stream a command addresses and reads its raw history: `--execution` when
 /// given, otherwise `status.rs`'s own fallback — a repository holding exactly one stream selects
 /// it. Every `execution` command past `start` shares this addressing rule.
-pub(super) fn resolve_stream(
+pub(crate) fn resolve_stream(
     store: &LocalEventRepository,
     execution: Option<&str>,
 ) -> Result<(RepositoryScope, String, Vec<EventEnvelope>), Failure> {

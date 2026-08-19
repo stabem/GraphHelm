@@ -1,0 +1,56 @@
+{
+  "executionId": "exec-m09-judge",
+  "findings": [
+    {
+      "claim": "The story's central goal \u00e2\u20ac\u201d approve the retry and get the release moving again \u00e2\u20ac\u201d cannot be reached: `resume` against the named graph file (C:/.../m09-paid-run/release.yaml) fails deterministically with `GHCLI016_DRIVER_FAILURE: workspace configuration refused: the staging area must not overlap the project`. Reproduced 3x (forward-slash and backslash path, and after a fresh pause). The `resume` tool exposes only executionId/file/fixtures/ifMatch \u00e2\u20ac\u201d there is no staging-area or workspace parameter \u00e2\u20ac\u201d so an operator working through the MCP surface has no way to satisfy the refusal. After approve + resume, `deploy` never re-ran: three wake leases (10s, 30s, 60s) all returned `outcome: timeout` with zero appends past sequence 24/34. Tonight's release does not ship.",
+      "evidence": [],
+      "remediation": "Make the workspace/staging location settable (or auto-corrected) on resume, or default the staging area outside the project so a resume of an already-started execution cannot hit this. Until then, the error must name the offending path and the exact remedy instead of a bare policy sentence.",
+      "severity": "critical"
+    },
+    {
+      "claim": "A `resume` call that returns `ok: false` still mutates the execution. The first refused resume appended `execution_resumed` (seq 23) and released held nodes (`verify` -> queued, seq 24), flipping status from `paused` to `running`; the second identical call was then refused with `GHCLI005_EXECUTION_STATE: resume refused: not_paused`. Same pattern repeated on the second pause/resume cycle (head 29 -> 33). The operator is told the operation was refused while their manual hold has silently been dropped and no work is being driven \u00e2\u20ac\u201d the worst of both states, and the run is left un-held on a production release at night.",
+      "evidence": [],
+      "remediation": "Make resume atomic: validate the workspace/driver configuration before emitting `execution_resumed` or releasing held nodes, and roll back (or never write) the state transition when the driver refuses. Any partial application must be reported in the error body.",
+      "severity": "critical"
+    },
+    {
+      "claim": "The 'leave a record for the day shift' requirement is unachievable: every `signal` call is rejected with `GHCLI003_SIGNAL_INVALID: the signal envelope failed schema validation, path: /signal` and no schema, no example, no expected-field list. Nine distinct envelope shapes were tried (kind/summary, note-only, {type,data}, {schemaVersion,kind:{type,data}}, {signalId,nodeId,kind,body}, {kind,payload}, {}, {interruption:{...}}, event-style with actor/occurredAt) \u00e2\u20ac\u201d all rejected identically. `signalsRecorded` stayed 0 for the whole incident, so nothing the on-call did or found is on the record.",
+      "evidence": [],
+      "remediation": "Return the validation error detail (failing JSON-pointer + expected shape) in `diagnostics`, and publish the signal envelope schema in the tool description or via a discoverable schema/example endpoint. A record-keeping primitive that cannot be invoked without out-of-band knowledge of its schema is unusable during a page.",
+      "severity": "high"
+    },
+    {
+      "claim": "'Understand why deploy stopped' is not answerable from the surface. The four failures report only `outcome: retryable_failure, reason: tool_exited_non_zero` with no exit code, command, or message. Each attempt carries evidenceRefs (\u00e2\u20ac\u00a6-a1..a4-record/-stdout/-stderr) but there is no tool to fetch evidence content, and the stdout/stderr contentSha256 for all four attempts is e3b0c442\u00e2\u20ac\u00a6b855 \u00e2\u20ac\u201d the hash of an empty string. So the operator sees that deploy failed identically four times and can never see why.",
+      "evidence": [],
+      "remediation": "Add an evidence-read operation to the MCP surface (fetch by evidenceId), and capture the failing command line and exit code in the `node_outcome_recorded` payload so the reason survives even when stdout/stderr are empty.",
+      "severity": "high"
+    },
+    {
+      "claim": "Mutation responses return a status payload with the timestamp fields blanked: `pause`, `approve`, and `cancel` all replied with `lastEventAt: null`, `startedAt: null`, and `nodeLastEventAt: {}`, while a `status` call moments later returned real values for all three. An operator reading only the mutation reply sees a run with no start time and no last activity \u00e2\u20ac\u201d the exact fields they need to judge 'stuck or quiet' \u00e2\u20ac\u201d and must issue an extra read to get them.",
+      "evidence": [],
+      "remediation": "Populate lastEventAt/startedAt/nodeLastEventAt in mutation replies from the same projection `status` uses, or omit the fields entirely rather than emitting null, which reads as 'never happened'.",
+      "severity": "medium"
+    },
+    {
+      "claim": "`acceptedMutations` reports 0 in every single response across the whole incident (pause, approve, cancel, amend_budget, and after 5 head-sequence advances from 17 to 35), and `signalsRecorded` stays 0. The counters that would let the day shift see how much manual intervention occurred never move, so the handoff record the story asks for has no quantitative trace even setting aside the broken `signal`.",
+      "evidence": [],
+      "remediation": "Increment `acceptedMutations` on each accepted operator mutation, or drop the field; a permanently-zero counter is worse than no counter because it reads as 'nobody touched this run'.",
+      "severity": "medium"
+    },
+    {
+      "claim": "The silence verdict only appears after a budget is declared, and the transition to overdue emits no log append \u00e2\u20ac\u201d so the wake lease cannot signal it. Deploy's silence surfaced as `attention: unknown` / `silence_unevaluated` with remedy `declareNodeBudget`; after `amend_budget(deploy, 45s)` the verdict flipped to `can_sleep`, but when the budget elapsed the armed lease (cursor 34, 60s) returned `outcome: timeout` with head still 35 \u00e2\u20ac\u201d no event was written. Confirming the breach still required a manual `status` read, which partially undercuts the 'without sitting there refreshing' promise.",
+      "evidence": [],
+      "remediation": "Append a silence-breach event when a declared node budget elapses so an armed lease rings on it, or document explicitly that the intended pattern is arm-with-horizon-equal-to-budget then read status once.",
+      "severity": "low"
+    },
+    {
+      "claim": "Wake-lease outcome narration is inconsistent with the log: `wake_wait` reported `{matured: true, outcome: \"timeout\"}` for the first lease, while the log recorded `wake_lease_consumed` with `reason: \"stale_rendezvous\"` (seq 21). Two different explanations for the same wait make it hard to tell whether a quiet return means 'nothing happened' or 'your lease was invalidated by an intervening pause'.",
+      "evidence": [],
+      "remediation": "Surface the consumption reason in the wake_wait reply (or align the vocabularies) so a lease invalidated by the operator's own pause is distinguishable from a genuinely quiet horizon.",
+      "severity": "low"
+    }
+  ],
+  "gateId": "judge-usefulness",
+  "nodeId": "judge",
+  "passed": false
+}

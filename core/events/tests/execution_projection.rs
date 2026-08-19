@@ -30,6 +30,15 @@ impl Clock for FixedClock {
     }
 }
 
+/// A clock whose instant carries a FRACTION, which the canonical rendering keeps. Used by the
+/// ordering guard: a horizon derived from it prints with `.500`, and `.` sorts before `Z`.
+struct FractionalClock;
+impl Clock for FractionalClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap() + chrono::Duration::milliseconds(500)
+    }
+}
+
 #[derive(Default)]
 struct Ids(AtomicU64);
 impl IdGenerator for Ids {
@@ -68,13 +77,13 @@ fn event(key: impl Into<String>, kind: EventKind) -> NewEvent {
 /// sequencing, idempotency and the hash chain are produced by the same code that runs in
 /// production rather than hand-computed here.
 fn append(events: Vec<NewEvent>) -> Vec<EventEnvelope> {
+    append_under(Arc::new(FixedClock), events)
+}
+
+fn append_under(clock: Arc<dyn Clock>, events: Vec<NewEvent>) -> Vec<EventEnvelope> {
     let directory = tempfile::tempdir().unwrap();
-    let repository = LocalEventRepository::open(
-        directory.path(),
-        Arc::new(FixedClock),
-        Arc::new(Ids::default()),
-    )
-    .unwrap();
+    let repository =
+        LocalEventRepository::open(directory.path(), clock, Arc::new(Ids::default())).unwrap();
     let request = PreparedAppend::new(
         scope(),
         OpaqueId::parse(STREAM).unwrap(),
@@ -412,6 +421,237 @@ fn an_incoherent_pause_or_resume_is_corrupt() {
     );
 }
 
+/// A lease's `armed_at_sequence` is the ENVELOPE's sequence, and a re-arm moves it.
+///
+/// This is the property the wake sweep's discriminator rests on, asserted directly instead of
+/// through a consumer. It exists because the guards that used to catch a broken fold caught it
+/// BY ACCIDENT: their fixtures hand-wrote the number, so any wrong value disagreed with them and
+/// they went red for a reason unrelated to what they claimed to test. Accidental coverage is a
+/// coincidence wearing a guard's clothes; this is the same detection, by design and at the grain
+/// of the property.
+///
+/// Both assertions compare against the envelope's OWN sequence rather than a literal. Against a
+/// literal they would still pass for a fold that copied a cursor, or a constant that happened to
+/// match, or an off-by-one that cancelled in this fixture.
+#[test]
+fn a_leases_armed_at_sequence_is_its_envelopes_and_a_re_arm_moves_it() {
+    use graphhelm_protocols::WakeLease;
+
+    let arm = |key: &str, rendezvous: &str| {
+        NewEvent::new(
+            OpaqueId::parse(key).unwrap(),
+            actor(),
+            Sensitivity::Internal,
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-fold").unwrap(),
+                cursor: 0,
+                rendezvous_id: OpaqueId::parse(rendezvous).unwrap(),
+                matures_in_seconds: None,
+            }),
+            vec![],
+            vec![],
+        )
+    };
+    let committed = append(vec![arm("arm-first", "rdv-1"), arm("arm-second", "rdv-2")]);
+
+    // The first arming alone: the lease carries THAT envelope's sequence.
+    let first_only = replay(&scope(), STREAM, &committed[..1]).unwrap();
+    assert_eq!(
+        first_only
+            .wake_leases
+            .get("session-fold")
+            .expect("the first arming is live")
+            .armed_at_sequence,
+        committed[0].sequence,
+        "the fold must copy the arming event's own sequence, not a cursor or a constant"
+    );
+
+    // Both: the re-arm REPLACES, so the lease now carries the second envelope's sequence. That
+    // replacement is what lets a stale capture be told from the lease that replaced it.
+    let both = replay(&scope(), STREAM, &committed).unwrap();
+    assert_eq!(
+        both.wake_leases
+            .get("session-fold")
+            .expect("the re-armed lease is live")
+            .armed_at_sequence,
+        committed[1].sequence,
+        "a re-arm must move it — if it did not, a capture from before the re-arm would still \
+         match the lease that replaced it, which is the defect this discriminator exists for"
+    );
+}
+
+/// A consumption naming an arming other than the one it burns is RECORDED, and replay SUCCEEDS.
+///
+/// This is the record-don't-refuse ruling as an executable statement. The fold refuses a
+/// consumption with no live lease at all, because that log cannot be interpreted — replay
+/// genuinely cannot build the next state from it. A consumption that burns the WRONG arming is a
+/// different animal: the log is consistent and reconstructs exactly, it merely records a sweep
+/// doing something bad. Refusing there would make history unreadable BECAUSE it recorded a
+/// mistake, on a product whose thesis is that history reproduces — and it would take down the
+/// glance at the moment an operator most needs it.
+///
+/// Built by hand-appending the mismatched history rather than by breaking the recorder. The
+/// recorder will never produce this once the discriminator is in; the FOLD's contract is what is
+/// under test, so the fixture states that contract directly and keeps working if the recorder is
+/// rewritten.
+#[test]
+fn a_consumption_that_burns_the_wrong_arming_is_recorded_and_replay_still_succeeds() {
+    use graphhelm_protocols::{WakeConsumeReason, WakeLease, WakeLeaseConsumed};
+
+    let arm = |key: &str, rendezvous: &str| {
+        NewEvent::new(
+            OpaqueId::parse(key).unwrap(),
+            actor(),
+            Sensitivity::Internal,
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-mis").unwrap(),
+                cursor: 0,
+                rendezvous_id: OpaqueId::parse(rendezvous).unwrap(),
+                matures_in_seconds: None,
+            }),
+            vec![],
+            vec![],
+        )
+    };
+    // Two armings, then a consumption naming the FIRST while the SECOND is live.
+    let committed = append(vec![
+        arm("mis-first", "rdv-a"),
+        arm("mis-second", "rdv-b"),
+        NewEvent::new(
+            OpaqueId::parse("mis-consume").unwrap(),
+            actor(),
+            Sensitivity::Internal,
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-mis").unwrap(),
+                reason: WakeConsumeReason::Rung,
+                captured_arming: Some(1),
+            }),
+            vec![],
+            vec![],
+        ),
+    ]);
+
+    // REPLAY SUCCEEDS. If this ever refuses, the fold has started punishing a legal log.
+    let projection = replay(&scope(), STREAM, &committed)
+        .expect("burning the wrong arming is legal history — the fold must not refuse it");
+
+    let mis = projection
+        .wake_mis_burns
+        .get("session-mis")
+        .expect("the mismatch must be recorded where the attention predicate can reach it");
+    assert_eq!(
+        mis.captured_arming, committed[0].sequence,
+        "the record names the arming the sweep CAPTURED"
+    );
+    assert_eq!(
+        mis.live_arming, committed[1].sequence,
+        "and the arming that was actually live and got burned — the PAIR is the diagnosis, \
+         which is why a bare flag would not do"
+    );
+    assert_eq!(
+        mis.at_sequence, committed[2].sequence,
+        "and the consumption that did it"
+    );
+
+    // The lease is still gone: recording the mistake does not undo it. The sleeper is stranded,
+    // which is the condition attention has to surface.
+    assert!(
+        !projection.wake_leases.contains_key("session-mis"),
+        "the burn still happened — this records it, it does not prevent it"
+    );
+}
+
+/// A consumption that names the arming it actually burns records NOTHING. Absent means absent.
+#[test]
+fn a_matching_consumption_and_a_pre_change_one_record_no_mis_burn() {
+    use graphhelm_protocols::{WakeConsumeReason, WakeLease, WakeLeaseConsumed};
+
+    let arm = |key: &str, session: &str| {
+        NewEvent::new(
+            OpaqueId::parse(key).unwrap(),
+            actor(),
+            Sensitivity::Internal,
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse(session).unwrap(),
+                cursor: 0,
+                rendezvous_id: OpaqueId::parse("rdv-ok").unwrap(),
+                matures_in_seconds: None,
+            }),
+            vec![],
+            vec![],
+        )
+    };
+    let consume = |key: &str, session: &str, captured: Option<u64>| {
+        NewEvent::new(
+            OpaqueId::parse(key).unwrap(),
+            actor(),
+            Sensitivity::Internal,
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse(session).unwrap(),
+                reason: WakeConsumeReason::Rung,
+                captured_arming: captured,
+            }),
+            vec![],
+            vec![],
+        )
+    };
+    let committed = append(vec![
+        arm("ok-arm", "session-ok"),
+        arm("old-arm", "session-old"),
+        // Names the arming it burns.
+        consume("ok-consume", "session-ok", Some(1)),
+        // Written before the field existed: absent, and absence is not a mismatch.
+        consume("old-consume", "session-old", None),
+    ]);
+    let projection = replay(&scope(), STREAM, &committed).unwrap();
+
+    assert!(
+        projection.wake_mis_burns.is_empty(),
+        "a matching consumption and a pre-change one are both clean — inventing a mismatch \
+         from an absent field would make every committed consumption look like a defect: {:?}",
+        projection.wake_mis_burns
+    );
+
+    // THE BRICK-GATE: an absent captured arming emits NO KEY, never a null.
+    //
+    // Every event is re-hashed on replay, so a consumption written before this field existed
+    // must serialize to exactly the bytes it did then. A `"capturedArming": null` would change
+    // those bytes and break the hash chain of every consumption already committed — the whole
+    // stream unreadable, for a field nobody set.
+    //
+    // THIS ASSERTION IS REDUNDANT TODAY, and that is recorded rather than hidden. Measured:
+    // removing `skip_serializing_if` fells four tests in this file, EVERY ONE AT ITS OWN
+    // `append` (execution_projection.rs:96:40), because the schema types this field as an
+    // integer and validation rejects a null before anything reaches here. The schema is the
+    // live guard, and under that sabotage this line never executes.
+    //
+    // It is kept because redundant-today is not redundant-permanently: `{"type": "integer"}`
+    // is one edit from being relaxed, and the day it is, this becomes a single-sabotage blade
+    // with nothing else behind it. A guard whose redundancy is written down survives the change
+    // that makes it necessary again; a removed one does not. It blinds nothing meanwhile — it
+    // sits downstream of the schema and is simply unreached while the schema holds.
+    //
+    // ITS OWN SABOTAGE NEEDS TWO EDITS — loosen the schema AND remove the skip — and HAS NOT
+    // BEEN RUN. Unobserved, and saying so is the point.
+    let pre_change = serde_json::to_value(
+        &committed
+            .iter()
+            .find(|event| event.idempotency_key.as_str() == "old-consume")
+            .expect("the pre-change consumption is in the batch")
+            .kind,
+    )
+    .unwrap();
+    assert!(
+        pre_change["data"].get("capturedArming").is_none(),
+        "an absent captured arming must not appear on the wire at all: {pre_change}"
+    );
+}
+
 fn resume_via_generation(first: &[EventEnvelope], second: &[EventEnvelope]) -> ExecutionProjection {
     let mut generation =
         ProjectionGeneration::new(scope(), STREAM.to_owned(), "execution".to_owned(), 1, 1)
@@ -738,6 +978,7 @@ fn arming_twice_replaces_the_lease_and_consumption_burns_it() {
                 session_id: OpaqueId::parse("session-a").unwrap(),
                 cursor,
                 rendezvous_id: OpaqueId::parse(rendezvous).unwrap(),
+                matures_in_seconds: None,
             }),
         )
     };
@@ -761,6 +1002,7 @@ fn arming_twice_replaces_the_lease_and_consumption_burns_it() {
             execution_id: OpaqueId::parse("execution-test").unwrap(),
             session_id: OpaqueId::parse("session-a").unwrap(),
             reason: WakeConsumeReason::Rung,
+            captured_arming: None,
         }),
     ));
     let burned = append(events);
@@ -803,6 +1045,7 @@ fn consuming_an_unarmed_lease_is_a_replay_integrity_refusal() {
                 execution_id: OpaqueId::parse("execution-test").unwrap(),
                 session_id: OpaqueId::parse("session-ghost").unwrap(),
                 reason: WakeConsumeReason::StaleRendezvous,
+                captured_arming: None,
             }),
         ),
     ]);
@@ -1007,6 +1250,7 @@ fn a_burned_lease_leaves_its_receipt_behind() {
                 session_id: OpaqueId::parse("session-a").unwrap(),
                 cursor,
                 rendezvous_id: OpaqueId::parse("rdv-one").unwrap(),
+                matures_in_seconds: None,
             }),
         )
     };
@@ -1017,6 +1261,7 @@ fn a_burned_lease_leaves_its_receipt_behind() {
                 execution_id: OpaqueId::parse("execution-test").unwrap(),
                 session_id: OpaqueId::parse("session-a").unwrap(),
                 reason,
+                captured_arming: None,
             }),
         )
     };
@@ -1058,4 +1303,122 @@ fn a_burned_lease_leaves_its_receipt_behind() {
         .expect("the second burn replaces the first");
     assert_eq!(receipt.reason, WakeConsumeReason::StaleRendezvous);
     assert_eq!(receipt.sequence, 5);
+}
+
+// -------------------------------------------------------------------------------------------
+// M09 decision B, guard 1 — written BEFORE the field it needs, and before any schema.
+//
+// The alarm's horizon is an instant STORED at arming. The danger is not storing it; it is that
+// the first convenient refactor caches whether it has PASSED, because `matured` is what every
+// caller actually wants. A projection that answers that question is a function of the wall
+// clock, and byte-identical replay dies silently — on the machines whose clock crossed the
+// horizon mid-replay, and nowhere else.
+//
+// So the invariant is MECHANICAL, not a rule anyone has to remember: the horizon is stored and
+// never evaluated below the surface boundary. Two logs identical except for a horizon far in
+// the past and one far in the future must fold to projections that differ ONLY in that stored
+// value. Anything clock-derived splits them apart, because one side is mature and the other is
+// not.
+// -------------------------------------------------------------------------------------------
+
+use graphhelm_protocols::WakeLease;
+
+/// The fixture clock stands at 2026-08-10T12:00:00Z, so one second is long past and the
+/// schema's ten-year ceiling is far ahead. The two sides of the guard are a MATURED horizon
+/// and an unmatured one, which is what a clock-reading fold would answer differently about.
+const SHORT_BOUND: u64 = 1;
+const LONG_BOUND: u64 = 315_576_000;
+
+fn lease_with_horizon(seconds: u64) -> Vec<EventEnvelope> {
+    append(lease_events(seconds))
+}
+
+fn lease_events(seconds: u64) -> Vec<NewEvent> {
+    vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                )
+                .unwrap(),
+                mode: ExecutionMode::Autopilot,
+            }),
+        ),
+        event(
+            "lease-armed",
+            EventKind::WakeLease(WakeLease {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                session_id: OpaqueId::parse("session-a").unwrap(),
+                cursor: 1,
+                rendezvous_id: OpaqueId::parse("rdv-one").unwrap(),
+                matures_in_seconds: Some(seconds),
+            }),
+        ),
+    ]
+}
+
+/// The horizon is DATA the fold carries, never a question the fold answers.
+#[test]
+fn a_horizon_in_the_past_folds_exactly_like_one_in_the_future() {
+    let past = replay(&scope(), STREAM, &lease_with_horizon(SHORT_BOUND)).unwrap();
+    let future = replay(&scope(), STREAM, &lease_with_horizon(LONG_BOUND)).unwrap();
+
+    let past = serde_json::to_string(&past).unwrap();
+    let future = serde_json::to_string(&future).unwrap();
+
+    // Without this, the guard passes by COINCIDENCE: a projection that stores no horizon at
+    // all makes both sides identical and the substitution below a no-op. The equality is only
+    // evidence once there is something for it to be evidence ABOUT.
+    assert!(
+        past.contains("2026-08-10T12:00:01Z"),
+        "the projection must carry the horizon the record implies: {past}"
+    );
+
+    // Substituting ONE known literal — not a normalising regex. The lesson of the day is that a
+    // normalisation can merge what differs and split what matches; replacing an exact string
+    // this test itself chose can do neither.
+    assert_eq!(
+        past.replace("2026-08-10T12:00:01Z", "<HORIZON>"),
+        future.replace("2036-08-10T00:00:00Z", "<HORIZON>"),
+        "the fold answered a question about the clock: the two projections differ by more than \
+         the horizon each one stores"
+    );
+    assert!(
+        !past.contains("matured"),
+        "maturity is derived at the surface with an injected instant, never cached in the \
+         projection: {past}"
+    );
+}
+
+/// The stored horizon must ORDER chronologically, which the wire string does not.
+///
+/// The reviewer measured it: the canonical rendering carries 0, 3, 6 or 9 fractional digits
+/// depending on the instant, so `...:01.500Z` sorts BEFORE `...:01Z` — `.` is 0x2E and `Z` is
+/// 0x5A. Half a second later compares as earlier. The pair is not exotic: the horizon inherits
+/// the fraction of the instant the arming event was stamped with, so any real clock produces
+/// one side of it and a round one produces the other.
+///
+/// Sabotage: hold the wire string in `WakeLeaseState` again. This falls, because the assertion
+/// is about ORDER and a string answers it backwards.
+#[test]
+fn a_horizon_half_a_second_later_is_stored_as_later() {
+    let earlier = replay(&scope(), STREAM, &lease_with_horizon(1)).unwrap();
+    let later = replay(
+        &scope(),
+        STREAM,
+        &append_under(Arc::new(FractionalClock), lease_events(1)),
+    )
+    .unwrap();
+
+    let earlier = earlier.wake_leases.get("session-a").unwrap();
+    let later = later.wake_leases.get("session-a").unwrap();
+    assert!(
+        later.matures_at > earlier.matures_at,
+        "half a second later must STORE as later: {:?} vs {:?}",
+        later.matures_at,
+        earlier.matures_at
+    );
 }

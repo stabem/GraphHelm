@@ -699,6 +699,21 @@ pub struct WakeLease {
     pub cursor: u64,
     /// Opaque rendezvous identity (never a path).
     pub rendezvous_id: OpaqueId,
+    /// M09 decision B: how long this sleeper's quiet may last, in seconds, declared at arming
+    /// by the only party who is provably awake and consenting at that moment.
+    ///
+    /// A DURATION on the wire and an INSTANT in the projection, and the boundary between them
+    /// is the point. The horizon is `occurred_at + this`, computed by the fold from the
+    /// event's OWN recorded instant — so it is a pure function of the log, replay stays
+    /// byte-identical, and no reader ever adds a duration to a clock of its own. Carrying the
+    /// instant on the wire instead would have meant computing it from a second clock reading
+    /// microseconds away from the one that stamped the event: two clocks answering "when did
+    /// this happen", which is the defect this decision exists to remove, in miniature.
+    ///
+    /// Absent means absent: a lease armed without one gets no expiry promise, and no implicit
+    /// horizon is ever invented for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matures_in_seconds: Option<u64>,
 }
 
 /// The lease's end — appended by the ringer as its own follow-up append AFTER the ring
@@ -712,6 +727,24 @@ pub struct WakeLeaseConsumed {
     pub execution_id: OpaqueId,
     pub session_id: OpaqueId,
     pub reason: WakeConsumeReason,
+    /// The arming the sweep CAPTURED — the sequence of the `wake_lease` event it read — not the
+    /// arming that happens to be live when this is written.
+    ///
+    /// WHICH SIDE THIS RECORDS IS THE WHOLE POINT, and the two are indistinguishable in a diff.
+    /// The defect this exists for is a MISMATCH between what the sweep captured and what was
+    /// live when it recorded, and replay already knows the live side — it rebuilds it from the
+    /// arming events. Recording the live one would compare a value against itself: always
+    /// equal, a check that cannot fail. Only the captured side is unknown to the log.
+    ///
+    /// OMITTED when absent, never null: replay re-hashes every event, so emitting a null for
+    /// consumptions committed before this field existed would break the chain of every one of
+    /// them. Absent stays absent on the wire, as it does in the store.
+    ///
+    /// Absent is also the permanent state of all committed history, which is why no analysis
+    /// can ever decide whether this defect fired in the past — the captured side was never
+    /// written down. Going forward it is what makes the question answerable at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_arming: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

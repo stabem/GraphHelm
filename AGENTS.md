@@ -74,6 +74,13 @@ ignored PostgreSQL matrix twice - once in the C locale and once under a real col
 C locale cannot reveal collation-dependent ordering defects. `-SkipPostgres` exists for changes that
 cannot touch persistence; a run using it is not a full gate and must be reported as such.
 
+**Never pipe the gate's output when you intend to check its exit code** (`./ci/gate.ps1 | tail`,
+`| head`, `| grep`, and so on). In bash, `$?` after a pipe belongs to the last command in it, not to
+`gate.ps1` - a genuinely red run reads back as success. Check the exit code from the same command
+that produced it; if you need to page long output, redirect to a file first and read the file
+afterward (`./ci/gate.ps1 > gate.log 2>&1; echo $?`). This cost two silent false-greens in one day
+before it was named (issue #97).
+
 The individual commands, if you need to run one in isolation:
 
 ```powershell

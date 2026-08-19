@@ -6,9 +6,22 @@
     This is the authoritative gate. The project does not run hosted CI, so nothing verifies a change
     unless it is run here. Treat a red gate exactly as you would a red pipeline: do not merge.
 
-    The gate is ordered cheapest-first so an obvious failure stops the run before the expensive
-    PostgreSQL matrix. Every stage must pass; the script exits non-zero on the first failure and
-    reports which stage failed.
+    The gate is ordered cheapest-first so an obvious failure is reported early, but a failing stage
+    does NOT stop the run: every stage executes regardless, so one invocation reports every failure
+    rather than only the first. The script exits non-zero if any stage failed, zero if every stage
+    passed - verified directly by running the exit-code logic against a forced failure and a clean
+    pass (see the PR that closed https://github.com/stabem/GraphHelm/issues/97).
+
+    DO NOT PIPE THIS SCRIPT'S OUTPUT (e.g. `./ci/gate.ps1 | tail -50`) if you intend to check its
+    exit code afterward. In bash/POSIX shells, `$?` after a pipe reflects the LAST command in the
+    pipe (`tail`, here), never this script's - the exit code you read back is the pager's, not the
+    gate's, and a genuinely red run reads as success. This is not a bug in this script; it is how
+    pipes work, and no script on the producing end of one can fix it from the inside. If you need
+    to see only the tail of a long run, redirect to a file and page the file AFTER the run:
+        ./ci/gate.ps1 > gate.log 2>&1; echo "exit: $LASTEXITCODE"; Get-Content gate.log -Tail 50
+    Checking the exit code from the SAME command that produced it (no intervening pipe) is what
+    makes the check trustworthy. (Issue #97, found live: the exact pipe-through-tail pattern above
+    produced a RED banner with an apparently-successful exit status, twice in one day.)
 
 .PARAMETER SkipPostgres
     Skips the ignored PostgreSQL matrix. Use only when a change cannot touch persistence, and say so
@@ -81,7 +94,15 @@ function Invoke-Stage {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & $Body
+        # `& $Body` without capturing its result makes the native command's STDOUT part of THIS
+        # FUNCTION'S OWN output stream (ordinary PowerShell function behaviour) - every call site
+        # discards it with `| Out-Null`, so the tool's actual output (a test binary's own
+        # `test foo ... ok/FAILED` lines, a compiler's stdout diagnostics) never reached the
+        # console or a log at all, silently, on every stage. Piping through Write-Host here
+        # forces it out immediately as its own side effect, decoupled from this function's return
+        # value, so callers remain free to discard the numeric exit code without losing the tool's
+        # own evidence of what happened (issue #97/#98's log-completeness finding).
+        & $Body | ForEach-Object { Write-Host $_ }
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
@@ -103,11 +124,27 @@ try {
         cargo $toolchain test --workspace --all-features --locked
     } | Out-Null
 
-    # This list is an allowlist, so a new suite is under-gated by DEFAULT and silently: it still
-    # runs inside `workspace tests`, but misses the isolated pass this loop exists to give — the one
-    # that catches cross-test interference. #98 replaces the list with a derivation from tests/*.rs
-    # so the omission cannot be silent; until then, a new suite must be added here by hand.
-    foreach ($suite in @('cli_smoke', 'schema_cli', 'event_store_cli', 'execution_cli', 'api_http', 'gateway_cli', 'tool_cli', 'runtime_http', 'mcp_stdio', 'monitor_http', 'wake_http', 'gate_http', 'resume_atomicity')) {
+    # DERIVED, not hand-maintained (#98): a hardcoded allowlist under-gates every new suite by
+    # DEFAULT and silently - a new tests/*.rs file still runs inside `workspace tests` above, but
+    # misses the isolated `--test <suite>` pass this loop exists to give, which is exactly what
+    # catches cross-test interference (server-spawning/port-binding/tempdir suites, the common
+    # shape here). Enumerating the directory means a new suite is gated the day it is born.
+    #
+    # Any exclusion must be a NAMED entry here, with a reason, so it is visible in the gate's own
+    # output (below) rather than only inferable from a diff against the filesystem - an allowlist
+    # that rots silently becomes a denylist nobody chose, which is the exact defect this replaces.
+    $excludedSuites = @{
+        # (none today - add 'suite_name' = 'reason' here if one is ever needed)
+    }
+    $suiteFiles = Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'apps\cli\tests') -Filter '*.rs' |
+        Sort-Object -Property Name
+    $suites = $suiteFiles | ForEach-Object { $_.BaseName } | Where-Object { -not $excludedSuites.ContainsKey($_) }
+    Write-Host ''
+    Write-Host "[gate] cli suites: $($suites.Count) discovered in apps/cli/tests/*.rs" -ForegroundColor Cyan
+    foreach ($excluded in $excludedSuites.Keys) {
+        Write-Host "[gate] cli suite EXCLUDED: $excluded - $($excludedSuites[$excluded])" -ForegroundColor Yellow
+    }
+    foreach ($suite in $suites) {
         Invoke-Stage "cli: $suite" {
             cargo $toolchain test -p graphhelm-cli --test $suite --locked
         } | Out-Null

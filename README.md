@@ -1,11 +1,46 @@
 # GraphHelm — full product documentation
 
+> **Repository:** https://github.com/stabem/GraphHelm
+> **Licence:** MIT — see [LICENSE](LICENSE)
+> **Start here:** [QUICKSTART.md](QUICKSTART.md) — a real run, offline, no account, no daemon
+>
 > **Product name:** GraphHelm
 > **Original codename:** Programação 5.0
 > **Category:** open source operating system for AI agents
-> **State of this repository:** full specification, Foundation Graph Kernel implemented, `1.0.0` protocol baseline, and the production Event/Evidence Store implemented
 > **Specification version:** 0.1.1
-> **Baseline date:** 2026-08-08
+
+### What actually runs today
+
+This section is the one a newcomer needs, and it is written last on purpose: it stated
+`2026-08-08` for eleven days while the binary moved three milestones ahead of it. A newcomer
+given only the old text concluded the project was still a validator and would have closed the
+tab — measured, in a probe run against this README.
+
+**Runs now, verifiable with the clone and no accounts:**
+
+* Graph authoring: validate, lint, semantic hashing, immutable versions, drafts, waivers.
+* Nine JSON Schemas with a verifiable catalog, an immutable `1.0.0` snapshot, and conformance
+  fixtures.
+* An append-only event store (local JSONL and PostgreSQL) with byte-identical replay,
+  cryptographic erasure, and verified restore.
+* **Execution**: start a graph, drive it, pause, resume, approve, cancel — offline via
+  fixtures, or against a real model gateway and a brokered tool sandbox.
+* **The one-glance answer**: `attention` says `needs_you`, `can_sleep` or `unknown`, with the
+  reason and the node named, and time on the surface.
+* **A read-only monitor**, an HTTP API, and an **MCP server** exposing the same operations to a
+  chat client.
+* **A quality gate** that refuses to certify itself against a suite of deliberately useless
+  deliverables, and a **blind judge** — an evaluator that cannot see the code and only probes
+  the shipped surface.
+
+**Does not exist yet, said plainly because the specification below describes it in detail:**
+
+* **Studio** — the visual application. Specified, not built. No command opens it.
+* **Context Compiler** and **Dreams Engine** — specified, not built.
+* Anything describing a VPS daemon deployment story.
+
+**Known limitation you would otherwise hit:** `execution status` exits `0` whatever the answer,
+so a script must read the `attention` field rather than the exit code.
 
 GraphHelm is a local-first platform in which the user controls, through a visual interface, an agentic infrastructure running on their own VPS. Each request is classified, decomposed, and converted into an execution graph specific to the scenario. The system selects or creates agents, models, tools, context, isolation, tests, and reviews without relying on fixed domain-specific workflows.
 
@@ -69,7 +104,7 @@ The product is made up of three open surfaces:
 - [docs/security/SECURITY_ISOLATION_THREAT_MODEL.md](docs/security/SECURITY_ISOLATION_THREAT_MODEL.md): isolation, secrets, and threat model.
 - [docs/architecture/DATA_AND_PROTOCOLS.md](docs/architecture/DATA_AND_PROTOCOLS.md): entities, events, APIs, and contracts.
 - [docs/operations/OBSERVABILITY_AND_RECOVERY.md](docs/operations/OBSERVABILITY_AND_RECOVERY.md): metrics, checkpoints, replay, and recovery.
-- [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): AGPLv3, commercial license, CLA, and governance.
+- [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): MIT licence, contribution terms, and governance.
 - [docs/product/ROADMAP_AND_ACCEPTANCE.md](docs/product/ROADMAP_AND_ACCEPTANCE.md): phases, acceptance criteria, and metrics.
 - [docs/product/NAMING_DECISION.md](docs/product/NAMING_DECISION.md): name, positioning, and brand architecture.
 - [CODEX_BOOTSTRAP_PROMPT.md](CODEX_BOOTSTRAP_PROMPT.md): initial prompt for planning and first implementation in Codex.
@@ -98,4 +133,4 @@ This repository describes the entire product, including the generalist vision. T
 
 ## Legal status
 
-The proposed strategy is AGPLv3 for the community edition, an alternative commercial license over the same codebase, and a non-exclusive CLA for contributions. The final texts of the commercial license, ICLA, and CCLA must be drafted and validated by legal counsel before publication.
+The licence is MIT: anyone may use, modify and redistribute the code, including inside a closed commercial product. An earlier strategy proposed AGPLv3 with a commercial dual licence; it was reversed, and `docs/open-source/GOVERNANCE_AND_LICENSING.md` records that rather than hiding it.

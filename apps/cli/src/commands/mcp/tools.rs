@@ -85,7 +85,7 @@ const TOOLS: [ToolSpec; 14] = [
     },
     ToolSpec {
         name: "amend_budget",
-        description: "Declare a silence bound for one node AFTER the run began (POST                       /v1/executions/{executionId}/amend-budget), valid from that sequence                       forward. This is the operation the attention verdict's own remedy names:                       the seventh judge run found every reason pointing at declareNodeBudget                       while no exposed tool could declare one. Answers with the RECOMPUTED                       verdict, never a bare ok.",
+        description: "Declare how long one node may stay silent before it needs you (POST                       /v1/executions/{executionId}/amend-budget), valid from that point                       forward. Use it when `status` answers `unknown` for a node: the answer                       names this operation as its remedy. Replies with the recomputed verdict,                       so you do not have to read again to find out what changed.",
         schema: amend_budget_schema,
     },
     ToolSpec {

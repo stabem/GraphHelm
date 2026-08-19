@@ -29,11 +29,11 @@ pub enum TopLevel {
     /// Serves the chat surface: a stateless MCP server over stdio whose tools map 1:1 onto
     /// Public Runtime API requests. Speaks newline-delimited JSON-RPC 2.0 until stdin closes.
     Mcp(McpArgs),
-    /// The wake doorbell's sidecar (05g): creates the rendezvous for an opaque id, blocks
+    /// The wake doorbell's sidecar: creates the rendezvous for an opaque id, blocks
     /// for free, exits 0 on ring / 3 on timeout / 2 on unusable arguments. Content never
     /// crosses: the woken host learns only THAT it should re-read its log.
     WakeWait(WakeWaitArgs),
-    /// Quality-gate operations (M06): the thymus ritual and the certification stamp.
+    /// Quality-gate operations: the thymus ritual and the certification stamp.
     Quality(QualityArgs),
 }
 
@@ -100,7 +100,7 @@ pub struct ServeArgs {
     /// beyond localhost.
     #[arg(long)]
     pub bind: String,
-    /// Milestone 05d Task 9: the real-executor wiring. Optional as a GROUP — see
+    /// The real-executor wiring. Optional as a GROUP — see
     /// `commands::serve::mod`'s startup validation for the exact all-or-none rule this and its
     /// siblings below must satisfy. Absent entirely, `serve` stays the fixture-only 05a server.
     #[arg(long)]
@@ -168,11 +168,24 @@ pub enum ExecutionCommand {
         #[arg(long)]
         html: Option<PathBuf>,
     },
-    /// Admits a Graph Signal envelope, externalizes its evidence, and reports the governance
-    /// verdict for the mode in force. Evidence externalizes to an operator-supplied file, not the
-    /// encrypted Evidence store — the sealed-provider pipeline expects the Governor's own content
-    /// slots, which a signal envelope does not have; operator-grade encrypted externalization of
-    /// signal envelopes is Milestone 05 work.
+    /// Admits a Graph Signal envelope and reports the governance verdict for the mode in
+    /// force.
+    ///
+    /// Its evidence is written to a file YOU name (`--evidence-out`), not to the encrypted
+    /// evidence store: a signal envelope has none of the content slots that pipeline seals.
+    /// Encrypted externalization for signals is still unbuilt.
+    //
+    // NOTE, deliberately a code comment and NOT a doc comment: everything above this line is
+    // printed by `--help`, and this paragraph is for whoever edits the file.
+    //
+    // The previous help text called that gap "Milestone 05 work" while other commands in this
+    // same binary announced themselves as 05g and M06 — both shipped. A newcomer probe read
+    // the contradiction and stopped trusting the help output entirely, which was the correct
+    // response: internal milestone numbers date instantly and say nothing to a reader outside
+    // the project.
+    //
+    // Writing this as `///` is how the first version of this fix leaked the project's own
+    // history back into the surface it was cleaning, one paragraph after removing it.
     Signal {
         #[arg(long)]
         events: PathBuf,
@@ -200,9 +213,13 @@ pub enum ExecutionCommand {
         #[arg(long)]
         node: String,
     },
-    /// Declares a silence bound for one node AFTER the run began, valid from this sequence
-    /// forward. This is the socket the attention verdict's own remedy plugs into: the judge
-    /// found every reason pointing at `declareNodeBudget` while nothing could declare one.
+    /// Declares how long one node may stay silent before it needs you, valid from now
+    /// forward. Use it when `execution status` answers `unknown` for a node: the answer names
+    /// this command as its remedy.
+    ///
+    /// Earlier versions of this text explained the finding that produced the command instead
+    /// of what the command does. A newcomer probe read it and concluded the project had an
+    /// audience of two people, which was fair.
     ///
     /// Answers with the RECOMPUTED verdict, never a bare ok -- a write that says "done" forces
     /// a second read, and between them two surfaces can disagree about whether the operator

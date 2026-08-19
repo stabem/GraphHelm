@@ -789,15 +789,18 @@ fn recognized_empty_partial_initialization_is_completed_idempotently() {
     drop(repository(&root));
 }
 
+/// The three components a recognized repository will never recreate.
+///
+/// `.tmp` and `active` USED to be in this list and were deliberately removed (#76): they are
+/// transient workspace holding nothing the journal does not already carry, and empty directories
+/// are dropped by git, zip and rsync alike — which is how committed acceptance stores became
+/// unopenable. The assertion is not deleted, it is SPLIT: what is still refused stays here, and
+/// what is now recovered is pinned by the test below, including that recovery writes no file
+/// bytes. `blobs` stays in this list on purpose. A blob is a tracked FILE, so a missing `blobs/`
+/// means evidence is genuinely gone, and that is a signal rather than a shape to restore.
 #[test]
 fn complete_format_never_recreates_a_missing_required_component() {
-    for name in [
-        "blobs",
-        ".tmp",
-        "active",
-        "journal.jsonl",
-        "repository.lock",
-    ] {
+    for name in ["blobs", "journal.jsonl", "repository.lock"] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("repository");
         drop(repository(&root));
@@ -822,6 +825,38 @@ fn complete_format_never_recreates_a_missing_required_component() {
         assert_eq!(
             std::fs::read(root.join("format.json")).unwrap(),
             format_before
+        );
+    }
+}
+
+/// The other half of the split above: the two transient directories ARE recreated, and recovery
+/// writes nothing else. `format.json` is compared byte-for-byte because the pre-existing partial
+/// path rewrites it, and an archive is exactly the thing that may be checksummed or mounted
+/// read-only.
+#[test]
+fn complete_format_recreates_only_the_transient_workspace_directories() {
+    for name in [".tmp", "active"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(repository(&root));
+        let target = root.join(name);
+        std::fs::remove_dir(&target).unwrap();
+        let format_before = std::fs::read(root.join("format.json")).unwrap();
+
+        drop(
+            LocalEventRepository::open(
+                &root,
+                Arc::new(FixedClock),
+                Arc::new(SequenceIds::default()),
+            )
+            .unwrap_or_else(|error| panic!("{name} is recoverable, got {error:?}")),
+        );
+
+        assert!(target.is_dir(), "{name} was not restored");
+        assert_eq!(
+            std::fs::read(root.join("format.json")).unwrap(),
+            format_before,
+            "recovering {name} rewrote format.json"
         );
     }
 }

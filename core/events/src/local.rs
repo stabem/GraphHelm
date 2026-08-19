@@ -2017,6 +2017,15 @@ fn parse_physical_batch(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LayoutState {
     RecognizedPartial,
+    /// A recognized repository missing only `.tmp` and/or `active`.
+    ///
+    /// Those two directories are transient workspace, not evidence: they hold nothing the
+    /// journal does not already carry, and an active marker is republished from history on
+    /// every open. Empty, they are dropped by git, zip and rsync alike — which is how two
+    /// committed acceptance stores spent their whole life unopenable while every checksum
+    /// stayed green. `blobs` is deliberately NOT in this state: a missing evidence directory
+    /// is a real signal and must keep failing.
+    RecoverableDirs,
     Complete,
 }
 
@@ -2076,10 +2085,19 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
         }
     }
     if has_format {
-        if names != allowed {
-            return Err(EventRepositoryError::Integrity);
+        if names == allowed {
+            return Ok(LayoutState::Complete);
         }
-        return Ok(LayoutState::Complete);
+        // Every name present is already known to be allowed (the loop above refuses anything
+        // else), so the difference is exactly what the layout is missing. Only the transient
+        // workspace directories may be missing and still be recoverable.
+        if allowed
+            .difference(&names)
+            .all(|name| name == ".tmp" || name == "active")
+        {
+            return Ok(LayoutState::RecoverableDirs);
+        }
+        return Err(EventRepositoryError::Integrity);
     }
     Ok(LayoutState::RecognizedPartial)
 }
@@ -2101,6 +2119,22 @@ fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, Event
 
     match classify_layout(root, root_handle)? {
         LayoutState::Complete => return Ok(lock),
+        // Create ONLY what is missing, and nothing else. The partial path below rewrites
+        // `format.json` and may create `journal.jsonl`; doing that to a recognized repository
+        // would write file bytes into an archive that asked for two empty directories, and an
+        // archive is exactly the thing that may be checksummed, mounted read-only, or both.
+        // The re-classification afterwards is the same PURE classifier, so the check still
+        // means something.
+        LayoutState::RecoverableDirs => {
+            for name in [".tmp", "active"] {
+                let _ = ensure_child_directory(root_handle, root, name)?;
+            }
+            sync_directory_handle(root_handle)?;
+            if classify_layout(root, root_handle)? != LayoutState::Complete {
+                return Err(EventRepositoryError::Integrity);
+            }
+            return Ok(lock);
+        }
         LayoutState::RecognizedPartial => {}
     }
     for name in ["blobs", ".tmp", "active"] {

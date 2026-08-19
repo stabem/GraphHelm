@@ -1,0 +1,8 @@
+=== RESTORATION VERIFICATION ===
+--- diff vs pristine (must be empty) ---
+IDENTICAL
+--- sabotage markers absent? ---
+0
+0 markers - clean
+--- the live condition ---
+191:        if *state == NodeState::Queued && satisfied_with(&predecessors, states, node) {

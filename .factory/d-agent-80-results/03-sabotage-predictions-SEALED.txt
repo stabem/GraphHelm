@@ -1,0 +1,57 @@
+SEALED BEFORE ANY SABOTAGE RUN. Base 0f4e7fe, CARGO_TARGET_DIR=D:/graphhelm-target-m10.
+Phase 1 and Phase 2 are already recorded; these predictions are written with the fix APPLIED
+and green (44/44 lib), before any sabotage is typed.
+
+Rule being applied: a guard is only evidence if the sabotage it is aimed at makes THAT guard
+fail, in ITS OWN assertion (panic site inside the guard). A guard that catches a sabotage it
+was not aimed at is a coincidence worth recording, not a pass. Casualties predicted per
+sabotage; an UNPREDICTED casualty is a finding, not a rounding error.
+
+-------------------------------------------------------------------------------------------
+SABOTAGE 1 — drop the edge check from the Queued arm entirely.
+
+NOT RE-RUN. This sabotage IS the pre-fix code, already measured in Phase 1
+(01-unit-pre-fix.txt). Re-running it would produce the same three reds at the same three
+panic sites. Cited rather than repeated.
+
+OBSERVED (Phase 1), all three panicking in their own assertion:
+  a_queued_node_behind_an_unfinished_predecessor_is_not_a_candidate   ready.rs:276:9
+  a_queued_node_whose_predecessor_was_invalidated_is_not_a_candidate  ready.rs:317:9
+  a_queued_failure_handler_is_not_a_candidate_when_its_source_succeeded ready.rs:397:9
+
+-------------------------------------------------------------------------------------------
+SABOTAGE 2 — replace the edge rule with "every predecessor is Succeeded".
+
+The phrasing a reasonable person writes. It reads correctly. THIS IS THE ONE THAT MATTERS.
+
+PREDICTED CASUALTIES: exactly 2.
+  1. a_queued_failure_handler_dispatches_when_its_source_failed  -> MUST FAIL.
+     A Failure edge releases on Failed and only Failed; "Succeeded" excludes the handler,
+     stranding every failure route in the system. NOTHING ELSE IN THE FILE CATCHES THIS.
+  2. a_queued_failure_handler_is_not_a_candidate_when_its_source_succeeded -> MUST FAIL.
+     Mirror: a Succeeded source now ADMITS the handler, which must not run when nothing
+     failed.
+
+PREDICTED SURVIVORS (must stay green — if any fails, my model of the rule is wrong):
+  a_queued_node_behind_an_unfinished_predecessor_is_not_a_candidate  (Running != Succeeded)
+  a_queued_node_whose_predecessor_was_invalidated_is_not_a_candidate (Invalidated != Succeeded)
+  a_queued_node_whose_predecessor_finished_is_still_a_candidate      (Succeeded)
+  a_queued_root_node_is_always_a_candidate         (no predecessors -> vacuously true)
+  the_ready_half_of_the_union_is_unchanged         (Ready half untouched)
+
+KNOWN GAP, stated now rather than discovered later: no guard covers a Queued node behind a
+WAIVED or SKIPPED predecessor. Both satisfy dependents and both would be wrongly excluded by
+this sabotage, and no test would notice. That gap is real but currently unreachable — #94
+records that no surface produces either outcome.
+
+-------------------------------------------------------------------------------------------
+SABOTAGE 3 — exclude queued ROOT nodes (require at least one incoming edge).
+
+Applied to the union's condition only, NOT to `satisfied_with`. Sabotaging `satisfied_with`
+itself would break the Ready half too and take out most of the crate, which would prove the
+blast radius of a shared helper rather than testing this guard.
+
+PREDICTED CASUALTIES: exactly 1.
+  a_queued_root_node_is_always_a_candidate -> MUST FAIL.
+
+PREDICTED SURVIVORS: all six others.

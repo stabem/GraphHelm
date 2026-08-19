@@ -1,0 +1,55 @@
+SEALED BEFORE THE RUN, and before the cargo slot was even available. Written after L's review
+found the flagship guard non-discriminating, and after the exchange that corrected my own
+dependency note. Base: commit b4a5876 plus the uncommitted order-guard rewrite.
+
+THE DEFECT BEING FIXED (L's finding, verified independently by me):
+`nodeAttempts["deploy"] == 1` holds IDENTICALLY with and without the gate when the rewritten
+story script is used, because that script gives `implementation` a route to success. Both worlds
+end: deploy Succeeded, implementation Succeeded, deploy attempts 1. The assertion I shipped as
+the discriminator discriminated nothing. Only ORDER differs.
+
+THE NEW GUARD: read the raw stream (LocalEventRepository::open + read_unique_replay_stream),
+assert deploy's `Started`->`Running` position is AFTER implementation's `Succeeded` position.
+
+-------------------------------------------------------------------------------------------
+RUN 1 — with the gate present (current working tree).
+
+PREDICTED: `the_operator_story_runs_end_to_end_and_replays_byte_identical` GREEN, and the whole
+`execution_cli` suite GREEN (22 tests: the 21 that passed at b4a5876, unchanged in count — the
+helpers are additions, not new #[test] fns).
+
+FALSIFIED IF: the story is red. That would mean deploy dispatches before implementation succeeds
+even WITH the gate, i.e. the gate does not do what the entire PR claims. Nothing about the guard
+would be salvageable; the fix itself would be wrong.
+
+-------------------------------------------------------------------------------------------
+RUN 2 — the observed red. Remove EXACTLY the `satisfied_with(&predecessors, states, node)`
+condition from `dispatch_candidates`' Queued loop. Nothing else: helpers stay, order assertion
+stays, BOTH drivers keep calling `dispatch_candidates`, the two smaller tests stay.
+
+PREDICTED: `the_operator_story_runs_end_to_end_and_replays_byte_identical` RED, panicking IN THE
+ORDER ASSERTION (the `assert!(deploy_ran > implementation_succeeded, ...)`), not in a helper, not
+in a fixture, not in the later replay assertions. The panic message must carry both positions.
+
+ALSO PREDICTED RED in the same run (they are the order-independent guards and the gate is gone):
+  resume_does_not_run_held_work_whose_predecessor_never_finished
+  resume_never_redispatches_a_waiting_node
+
+MECHANISM PREDICTED, so the red is attributable rather than merely present: `dispatch_plan` sorts
+by `(attempts, name)` — attempt-fair first (dispatch.rs:41). At the resume drive's first pass in
+the ungated world, deploy has 0 attempts and implementation has >= 1 (it failed at start). Deploy
+therefore leads on the ATTEMPT key, the lexicographic tiebreak never executes, and with this
+graph's `maxParallelModelCalls: 1` deploy is dispatched alone in that pass — before implementation
+has succeeded.
+
+FALSIFIED IF the story is GREEN in run 2. That would mean my reading of `dispatch_plan` is wrong
+and the new guard is no better than the one it replaces. THE REPORT WOULD SAY THAT IN THOSE WORDS
+— my reading was wrong, the guard is unvalidated — rather than adjusting the story to fit.
+
+ALSO A MISS, recorded as one, if the story goes red but the panic lands anywhere other than the
+order assertion: that would prove the sabotage broke something, not that this guard sees it
+(the vacuous-red rule).
+
+-------------------------------------------------------------------------------------------
+NOT PREDICTED, DELIBERATELY: whether `approve_is_not_a_dead_end_once_the_condition_is_fixed` goes
+red in run 2. I have not derived it and will not guess to inflate the sealed set.

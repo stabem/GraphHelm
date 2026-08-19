@@ -180,7 +180,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use graphhelm_events::ExecutionProjection;
-use graphhelm_execution::{dispatch_plan, ready_set};
+use graphhelm_execution::{dispatch_candidates, dispatch_plan};
 use graphhelm_protocols::{
     EventKind as WireEventKind, ExecutionCompleted, ExecutionPaused, GraphSpec, NodeOutcome,
     SimulationStatus,
@@ -468,16 +468,13 @@ pub async fn drive_to_quiescence_async(
         }
 
         let projection = reread_async(&store_open, &scope, &stream).await?;
-        let ready =
-            ready_set(&spec, &projection.node_states).map_err(|_| DriverError::Transition)?;
-        let retry_pending = projection
-            .node_states
-            .iter()
-            .filter(|(_, state)| **state == NodeState::Queued)
-            .map(|(node, _)| node.clone());
-        let candidates: BTreeSet<String> = ready
+        // The union (ready + retry-pending) lives in `dispatch_candidates` rather than here, so
+        // the edge rule reaches BOTH halves from one implementation. It used to be built inline,
+        // with the retry-pending half a bare `state == Queued` filter — which is how a node whose
+        // dependencies were unmet could reach dispatch (#80).
+        let candidates: BTreeSet<String> = dispatch_candidates(&spec, &projection.node_states)
+            .map_err(|_| DriverError::Transition)?
             .into_iter()
-            .chain(retry_pending)
             .filter(|node| !in_flight_nodes.contains(node) && !refused.contains(node))
             .collect();
         let plan = dispatch_plan(

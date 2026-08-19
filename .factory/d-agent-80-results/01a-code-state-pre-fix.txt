@@ -1,0 +1,12 @@
+pub fn dispatch_candidates(
+    spec: &GraphSpec,
+    states: &BTreeMap<String, NodeState>,
+) -> Result<BTreeSet<String>, ScheduleError> {
+    let mut candidates = ready_set(spec, states)?;
+    for (node, state) in states {
+        if *state == NodeState::Queued {
+            candidates.insert(node.clone());
+        }
+    }
+    Ok(candidates)
+}

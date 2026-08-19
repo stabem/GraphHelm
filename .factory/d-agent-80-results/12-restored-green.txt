@@ -1,0 +1,33 @@
+   Compiling graphhelm-execution v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\core\execution)
+   Compiling graphhelm-simulation v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\core\simulation)
+   Compiling graphhelm-governor v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\core\governor)
+   Compiling graphhelm-runtime v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\core\runtime)
+   Compiling graphhelm-cli v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\apps\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.81s
+     Running tests\execution_cli.rs (D:/graphhelm-target-m10\debug\deps\execution_cli-d81f539efe97d901.exe)
+
+running 21 tests
+test a_node_without_a_declared_deadline_arrives_absent_never_zero ... ok
+test the_declared_shape_and_the_start_are_one_append ... ok
+test a_start_declares_the_shape_of_the_execution ... ok
+test approve_refuses_a_node_that_is_not_ghost_or_blocked ... ok
+test start_drives_a_two_node_graph_to_completion_and_status_reports_it_independently ... ok
+test start_refuses_a_stream_that_already_has_an_execution_started ... ok
+test cancel_terminates_every_non_terminal_node_then_refuses_a_second_call ... ok
+test signal_preserves_evidence_for_an_unrecordable_identity_and_refuses ... ok
+test status_html_writes_a_frozen_snapshot_and_keeps_the_envelope ... ok
+test signal_rejects_a_garbage_envelope_without_writing_or_appending ... ok
+test signal_fails_closed_when_the_evidence_path_is_unwritable ... ok
+test a_signal_envelope_is_sealed_beside_its_record ... ok
+test signal_admits_a_valid_envelope_and_reports_the_governance_verdict ... ok
+test start_blocks_a_no_progress_node_and_leaves_its_dependent_ready ... ok
+test resume_never_redispatches_a_waiting_node ... ok
+test pause_refuses_a_second_time_once_already_paused ... ok
+test approve_readies_a_blocked_node ... ok
+test resume_does_not_run_held_work_whose_predecessor_never_finished ... ok
+test resume_refuses_a_graph_file_that_does_not_match_the_started_hash ... ok
+test approve_is_not_a_dead_end_once_the_condition_is_fixed ... ok
+test the_operator_story_runs_end_to_end_and_replays_byte_identical ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.08s
+

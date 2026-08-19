@@ -15,7 +15,8 @@ use std::collections::BTreeSet;
 
 use graphhelm_events::{ExecutionProjection, LocalEventRepository, PreparedAppend};
 use graphhelm_execution::{
-    NodeExecutor, TransitionRequest, apply_transition, classify_progress, dispatch_plan, ready_set,
+    NodeExecutor, TransitionRequest, apply_transition, classify_progress, dispatch_candidates,
+    dispatch_plan,
 };
 use graphhelm_protocols::{
     EventKind, ExecutionCompleted, GraphSpec, IdGenerator, NewEvent, NodeOutcome,
@@ -53,21 +54,22 @@ pub(super) fn drive_to_quiescence(
         approve_untouched(store, scope, &stream_id, &execution_id, spec, actor)?;
 
         let projection = reread(store, scope, stream)?;
-        let ready = ready_set(spec, &projection.node_states).map_err(|_| {
-            execution_state(
-                "more nodes are ready than the execution may dispatch at once",
-                "/execution/readySet",
-            )
-        })?;
-        // A node sitting `Queued` at a pass boundary has already been dispatched once and failed
-        // retryably under bound; `ready_set` never surfaces it again (only `Ready` is
-        // dispatchable), so the driver redispatches it directly here.
-        let retry_pending = projection
-            .node_states
-            .iter()
-            .filter(|(_, state)| **state == NodeState::Queued)
-            .map(|(node, _)| node.clone());
-        let candidates: BTreeSet<String> = ready.into_iter().chain(retry_pending).collect();
+        // The ready set plus the retry-pending `Queued` nodes, both edge-gated by the ONE rule in
+        // `graphhelm_execution::ready`. This used to be an inline union here — `ready_set` chained
+        // with a bare `state == Queued` filter — and that filter is the #80 defect: a node sitting
+        // `Queued` at a pass boundary was redispatched without anyone asking whether its
+        // dependencies still held.
+        //
+        // The sync CLI driver and the async runtime driver each had their OWN copy of this union.
+        // Fixing one left the other open, which is exactly the drift the extraction exists to
+        // prevent, and it is why both now call the same function instead of agreeing by hand.
+        let candidates: BTreeSet<String> = dispatch_candidates(spec, &projection.node_states)
+            .map_err(|_| {
+                execution_state(
+                    "more nodes are ready than the execution may dispatch at once",
+                    "/execution/readySet",
+                )
+            })?;
 
         let running = projection
             .node_states

@@ -52,6 +52,13 @@ pub enum NodeOutcome {
     Skipped,
     Cancelled,
     /// An upstream change invalidated a completed node's output.
+    ///
+    /// NO PRODUCTION EMITTER AS OF 0f4e7fe — every occurrence in the tree is a test. #80 relies on
+    /// that: it gates dispatch on unsatisfied edges but leaves attention state-only, which is safe
+    /// only while no reachable predecessor can gate a dependent without raising a reason of its
+    /// own. This outcome is exactly such a predecessor. THE FIRST PRODUCTION EMITTER OF THIS
+    /// VARIANT MUST MAKE ATTENTION EDGE-AWARE — see #95, which carries the
+    /// clause design ready to apply.
     Invalidated,
     /// The owner paused work that had not started. Only `Ready` and `Queued` nodes pause; a
     /// running node in this milestone completes instantly, and interrupting real work is

@@ -1,0 +1,67 @@
+=== SABOTAGE 3: queued roots excluded ===
+   Compiling graphhelm-execution v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\core\execution)
+   Compiling graphhelm-simulation v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\core\simulation)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.86s
+     Running unittests src\lib.rs (D:/graphhelm-target-m10\debug\deps\graphhelm_execution-a3c26cc1852e5c07.exe)
+
+running 44 tests
+test bounds::tests::bounds_are_counts_and_are_ordered_sensibly ... ok
+test dispatch::tests::a_zero_limit_is_an_error_not_a_silent_stall ... ok
+test dispatch::tests::a_saturated_execution_dispatches_nothing ... ok
+test dispatch::tests::an_empty_ready_set_is_an_empty_plan ... ok
+test progress::tests::a_run_of_a_different_outcome_does_not_block_this_one ... ok
+test ready::tests::a_queued_node_whose_predecessor_was_invalidated_is_not_a_candidate ... ok
+test ready::tests::a_queued_failure_handler_is_not_a_candidate_when_its_source_succeeded ... ok
+test progress::tests::a_node_with_attempts_left_may_continue ... ok
+test progress::tests::a_repeating_outcome_blocks_as_no_progress ... ok
+test dispatch::tests::a_retrying_node_cannot_starve_a_first_attempt ... ok
+test progress::tests::an_unknown_node_may_continue ... ok
+test ready::tests::a_ghost_is_never_ready_and_never_satisfies_a_dependent ... ok
+test ready::tests::a_non_control_edge_gates_just_like_a_control_edge ... ok
+test ready::tests::a_queued_failure_handler_dispatches_when_its_source_failed ... ok
+test dispatch::tests::dispatch_respects_the_parallel_limit_deterministically ... ok
+test ready::tests::a_queued_node_behind_an_unfinished_predecessor_is_not_a_candidate ... ok
+test ready::tests::a_successor_becomes_ready_once_every_predecessor_is_satisfied ... ok
+test recovery::tests::resume_refuses_a_version_mismatch ... ok
+test ready::tests::a_queued_root_node_is_always_a_candidate ... FAILED
+test ready::tests::an_untouched_node_is_not_dispatchable_until_it_is_ready ... ok
+test ready::tests::every_dispatchable_state_accepts_a_start ... ok
+test ready::tests::only_ready_nodes_are_dispatchable ... ok
+test ready::tests::the_ready_half_of_the_union_is_unchanged ... ok
+test recovery::tests::a_clean_projection_needs_no_recovery ... ok
+test recovery::tests::recovery_interrupts_exactly_the_running_nodes ... ok
+test progress::tests::exhausted_attempts_block ... ok
+test transition::tests::a_queued_node_starts_and_then_succeeds ... ok
+test recovery::tests::resume_requires_a_paused_execution_with_matching_version_and_no_running_node ... ok
+test signal::tests::a_recognized_signal_parses_into_the_typed_subset ... ok
+test ready::tests::a_queued_node_whose_predecessor_finished_is_still_a_candidate ... ok
+test signal::tests::a_schema_valid_signal_is_never_dropped_for_being_useless ... ok
+test transition::tests::exhausting_attempts_blocks_rather_than_failing_silently ... ok
+test transition::tests::pause_holds_ready_and_queued_work_only ... ok
+test signal::tests::an_unrecognized_signal_is_recorded_but_can_never_propose_a_mutation ... ok
+test transition::tests::a_ghost_node_can_never_start ... ok
+test recovery::tests::resume_refuses_an_untriaged_interruption_but_not_other_blocks ... ok
+test transition::tests::a_terminal_node_never_transitions_again ... ok
+test transition::tests::an_owner_approval_readies_a_blocked_node ... ok
+test transition::tests::an_owner_waiver_clears_a_blocked_node ... ok
+test signal::tests::a_signal_violating_the_schema_contract_is_rejected ... ok
+test transition::tests::repeated_identical_outcomes_block_as_no_progress ... ok
+test transition::tests::an_interrupted_running_node_blocks ... ok
+test ready::tests::an_oversized_ready_set_blocks_rather_than_truncating ... ok
+test dispatch::tests::fairness_is_deterministic_and_replay_indifferent ... ok
+
+failures:
+
+---- ready::tests::a_queued_root_node_is_always_a_candidate stdout ----
+
+thread 'ready::tests::a_queued_root_node_is_always_a_candidate' (66348) panicked at core\execution\src\ready.rs:346:9:
+a has no predecessors, so no edge can gate it: {}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ready::tests::a_queued_root_node_is_always_a_candidate
+
+test result: FAILED. 43 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p graphhelm-execution --lib`

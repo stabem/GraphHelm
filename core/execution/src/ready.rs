@@ -86,6 +86,48 @@ fn edge_gates(edge: &GraphEdge, predecessor: NodeState) -> bool {
     }
 }
 
+/// Every incoming edge of one node, indexed once so a caller asking about many nodes pays for
+/// the walk once rather than per node.
+fn predecessor_map(spec: &GraphSpec) -> BTreeMap<&str, Vec<&GraphEdge>> {
+    let mut predecessors: BTreeMap<&str, Vec<&GraphEdge>> = BTreeMap::new();
+    for edge in &spec.edges {
+        predecessors.entry(edge.to.as_str()).or_default().push(edge);
+    }
+    predecessors
+}
+
+/// The edge half of readiness, against a prebuilt index. THE one implementation of "may this
+/// node's dependencies let it run"; everything else calls it.
+fn satisfied_with(
+    predecessors: &BTreeMap<&str, Vec<&GraphEdge>>,
+    states: &BTreeMap<String, NodeState>,
+    node: &str,
+) -> bool {
+    predecessors.get(node).is_none_or(|incoming| {
+        incoming.iter().all(|edge| {
+            !edge_gates(
+                edge,
+                states
+                    .get(edge.from.as_str())
+                    .copied()
+                    .unwrap_or(NodeState::Draft),
+            )
+        })
+    })
+}
+
+/// Whether `node`'s incoming edges currently release it, independent of its own state.
+///
+/// Extracted from `ready_set` deliberately: the scheduler asks this of `Ready` nodes, and the
+/// driver's retry chain must ask it of `Queued` ones (#80). A second copy of the rule in the
+/// driver would be the same source of truth today and drift tomorrow, so there is exactly one
+/// implementation and both callers reach it. Builds its own index for a single query; callers
+/// asking about many nodes should use [`dispatch_candidates`], which indexes once.
+#[must_use]
+pub fn edges_satisfied(spec: &GraphSpec, states: &BTreeMap<String, NodeState>, node: &str) -> bool {
+    satisfied_with(&predecessor_map(spec), states, node)
+}
+
 /// Computes the set of nodes that may be dispatched now.
 ///
 /// # Errors
@@ -94,10 +136,7 @@ pub fn ready_set(
     spec: &GraphSpec,
     states: &BTreeMap<String, NodeState>,
 ) -> Result<BTreeSet<String>, ScheduleError> {
-    let mut predecessors: BTreeMap<&str, Vec<&GraphEdge>> = BTreeMap::new();
-    for edge in &spec.edges {
-        predecessors.entry(edge.to.as_str()).or_default().push(edge);
-    }
+    let predecessors = predecessor_map(spec);
 
     let mut ready = BTreeSet::new();
     for node_id in spec.nodes.keys() {
@@ -106,18 +145,7 @@ pub fn ready_set(
         if !is_dispatchable(state) {
             continue;
         }
-        let satisfied = predecessors.get(node_id.as_str()).is_none_or(|incoming| {
-            incoming.iter().all(|edge| {
-                !edge_gates(
-                    edge,
-                    states
-                        .get(edge.from.as_str())
-                        .copied()
-                        .unwrap_or(NodeState::Draft),
-                )
-            })
-        });
-        if satisfied {
+        if satisfied_with(&predecessors, states, node_id) {
             ready.insert(node_id.clone());
             if ready.len() > MAX_READY_SET {
                 return Err(ScheduleError::ReadySetTooLarge);
@@ -125,6 +153,49 @@ pub fn ready_set(
         }
     }
     Ok(ready)
+}
+
+/// Everything the driver may dispatch on this pass: the ready set, plus nodes already `Queued`
+/// and awaiting a retry.
+///
+/// `ready_set` alone is not the driver's candidate set, because `is_dispatchable` is `Ready`-only
+/// by design — a `Queued` node is retry-pending, reached that state through the state machine,
+/// and must still be dispatched. The driver used to build this union inline; it lives here so
+/// the edge rule applies to BOTH halves from one implementation.
+///
+/// #80: the retry half is edge-gated too. It was a bare `state == Queued` filter, so a node could
+/// reach dispatch with its dependencies unmet — reachable through pause/resume, which records
+/// `Started` for a held-but-gated node and lands it here via `(Paused, Started) => Queued`. The
+/// condition below is `satisfied_with`, the SAME rule `ready_set` applies, against the same index:
+/// asking the question a second way is how the two halves would come to disagree.
+///
+/// This is deliberately not a `Succeeded`-predecessor check, which is the phrasing that reads
+/// correctly and strands every failure route in the system — a `Failure` edge releases on `Failed`
+/// and nothing else. `edge_gates` already owns that distinction, and
+/// `a_queued_failure_handler_dispatches_when_its_source_failed` is what stops anyone rewriting it.
+///
+/// # Errors
+/// Propagates `ScheduleError::ReadySetTooLarge` from [`ready_set`].
+///
+/// THE BOUND COVERS THE READY HALF ONLY, and the returned set can exceed `MAX_READY_SET` without
+/// error, because the `Queued` insertions happen after `ready_set` has already tested its own
+/// count. That is inherited behaviour — the inline union this replaced had the same property — but
+/// it is stated here because this function's NAME now implies the whole set, so silence would read
+/// as "the bound covers this". Making the bound mean the union is a deliberate decision nobody has
+/// taken; it would newly block executions that legitimately run today.
+pub fn dispatch_candidates(
+    spec: &GraphSpec,
+    states: &BTreeMap<String, NodeState>,
+) -> Result<BTreeSet<String>, ScheduleError> {
+    let mut candidates = ready_set(spec, states)?;
+    // Indexed once for the whole loop, unlike `edges_satisfied`'s single-query convenience form.
+    let predecessors = predecessor_map(spec);
+    for (node, state) in states {
+        if *state == NodeState::Queued && satisfied_with(&predecessors, states, node) {
+            candidates.insert(node.clone());
+        }
+    }
+    Ok(candidates)
 }
 
 #[cfg(test)]
@@ -196,6 +267,153 @@ mod tests {
             .iter()
             .map(|(node, state)| ((*node).to_owned(), *state))
             .collect()
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // #80: the driver's candidate set. `ready_set` was always edge-gated; the retry-pending half
+    // the driver chained in beside it was a bare `state == Queued` filter, so a node could reach
+    // dispatch with its dependencies unmet. These pin the union, one door each.
+    // ---------------------------------------------------------------------------------------
+
+    /// THE DEFECT (#80). A node sitting `Queued` behind an unfinished predecessor must not be a
+    /// dispatch candidate.
+    ///
+    /// This is the state `resume` manufactures: `pause` records a bare-`Ready` but edge-gated node
+    /// as `Paused`, and `(Paused, Started) => Queued` (`transition.rs:109`) puts it in the retry
+    /// chain. The node never ran, so nothing about its own history says it should not run — only
+    /// its edges do.
+    #[test]
+    fn a_queued_node_behind_an_unfinished_predecessor_is_not_a_candidate() {
+        let spec = spec(&["a", "b"], &[("a", "b")]);
+        let states = states(&[("a", NodeState::Running), ("b", NodeState::Queued)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            !candidates.contains("b"),
+            "b is queued behind a predecessor that has not satisfied its edge; \
+             dispatching it runs work whose precondition was never met: {candidates:?}"
+        );
+    }
+
+    /// THE NO-REGRESSION TWIN. A genuinely retrying node — queued with its predecessor finished —
+    /// must still dispatch.
+    ///
+    /// Deliberately paired with the test above: a fix that simply dropped `Queued` from the union
+    /// would satisfy that one and silently stop every retry in the system. This is the guard that
+    /// makes over-tightening fail loudly.
+    #[test]
+    fn a_queued_node_whose_predecessor_finished_is_still_a_candidate() {
+        let spec = spec(&["a", "b"], &[("a", "b")]);
+        let states = states(&[("a", NodeState::Succeeded), ("b", NodeState::Queued)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            candidates.contains("b"),
+            "b's predecessor succeeded, so this is an ordinary retry and must dispatch: \
+             {candidates:?}"
+        );
+    }
+
+    /// THE THIRD DOOR. A predecessor can stop satisfying its dependents AFTER the dependent was
+    /// queued: `(Succeeded, Invalidated) => Invalidated` (`transition.rs:60`) reopens a completed
+    /// node.
+    ///
+    /// Pinned because it exists nowhere else. It is not reachable through the pause/resume path
+    /// #80 reported, so a fix aimed only at that path would leave it open — and nothing in the
+    /// tree would notice.
+    #[test]
+    fn a_queued_node_whose_predecessor_was_invalidated_is_not_a_candidate() {
+        let spec = spec(&["a", "b"], &[("a", "b")]);
+        let states = states(&[("a", NodeState::Invalidated), ("b", NodeState::Queued)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            !candidates.contains("b"),
+            "a was invalidated after b queued, so b's dependency is unmet again: {candidates:?}"
+        );
+    }
+
+    /// A `Queued` node with no incoming edges has nothing to wait for. Guards the gate against
+    /// the opposite error — an edge rule that accidentally excludes roots would stall every
+    /// entrypoint retry, and the three tests above would all still pass.
+    #[test]
+    fn a_queued_root_node_is_always_a_candidate() {
+        let spec = spec(&["a", "b"], &[("a", "b")]);
+        let states = states(&[("a", NodeState::Queued), ("b", NodeState::Draft)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            candidates.contains("a"),
+            "a has no predecessors, so no edge can gate it: {candidates:?}"
+        );
+    }
+
+    /// The union must not lose the half that was already correct: a `Ready` node with satisfied
+    /// edges is still a candidate. Pins that the fix touched the retry chain only.
+    #[test]
+    fn the_ready_half_of_the_union_is_unchanged() {
+        let spec = spec(&["a", "b"], &[("a", "b")]);
+        let states = states(&[("a", NodeState::Succeeded), ("b", NodeState::Ready)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            candidates.contains("b"),
+            "b is ready with its edge satisfied — the ready_set half is untouched: {candidates:?}"
+        );
+        assert_eq!(
+            candidates,
+            ready_set(&spec, &states).unwrap(),
+            "with no node queued, the candidate set IS the ready set"
+        );
+    }
+
+    /// A `Queued` failure handler whose source FAILED must dispatch.
+    ///
+    /// The sharpest guard against over-tightening, and the reason the union calls `edge_gates`
+    /// rather than asking a question of its own. Every other test here would still pass if the
+    /// rule were written as "queued dispatches when its predecessor SUCCEEDED" — that phrasing is
+    /// the obvious one, it reads correctly, and it silently stops every retry of every failure
+    /// route in the system, because a failure handler's source is precisely the thing that did not
+    /// succeed. `edge_gates` already knows this (`EdgeType::Failure` releases on `Failed` and only
+    /// `Failed`); this pins that the retry chain inherits that knowledge instead of paraphrasing it.
+    #[test]
+    fn a_queued_failure_handler_dispatches_when_its_source_failed() {
+        let mut spec = spec(&["a", "handler"], &[("a", "handler")]);
+        spec.edges[0].edge_type = EdgeType::Failure;
+        let states = states(&[("a", NodeState::Failed), ("handler", NodeState::Queued)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            candidates.contains("handler"),
+            "a failure route releases exactly when its source failed; gating this one would \
+             strand every failure handler that ever retries: {candidates:?}"
+        );
+    }
+
+    /// The same edge, the other way. A failure handler whose source SUCCEEDED must not dispatch —
+    /// nothing failed, so there is nothing to handle.
+    ///
+    /// Paired with the test above so neither direction can be satisfied by a constant. Together
+    /// they also prove the union consults the edge's TYPE: a rule that only asked "is the
+    /// predecessor terminal" would pass the first and fail this one.
+    #[test]
+    fn a_queued_failure_handler_is_not_a_candidate_when_its_source_succeeded() {
+        let mut spec = spec(&["a", "handler"], &[("a", "handler")]);
+        spec.edges[0].edge_type = EdgeType::Failure;
+        let states = states(&[("a", NodeState::Succeeded), ("handler", NodeState::Queued)]);
+
+        let candidates = dispatch_candidates(&spec, &states).unwrap();
+
+        assert!(
+            !candidates.contains("handler"),
+            "nothing failed, so the failure route has nothing to run: {candidates:?}"
+        );
     }
 
     /// An untouched node defaults to `Draft`, which is not dispatchable: it reaches `Ready` through

@@ -100,10 +100,24 @@ pub(crate) fn execute(
         ),
     )?;
 
-    // Held exactly here, from the projection as read before the pause itself: every node still
-    // dispatchable (`Ready`) or retry-pending (`Queued`) right now. `resume` re-derives its own
-    // list independently rather than reading this one back, so a node this pause missed cannot be
-    // silently re-dispatched by trusting a stale record of what was held.
+    // Held exactly here, from the projection as read before the pause itself: every node in bare
+    // state `Ready` or `Queued` right now.
+    //
+    // SCOPE OF THE GUARANTEE BELOW, corrected in #80 — it protects against a stale LIST, not
+    // against an over-broad STATE. `resume` re-derives its own list independently rather than
+    // reading this one back, so a node this pause missed cannot be re-dispatched by trusting a
+    // stale record of what was held. That was true and it was not enough: this filter tests BARE
+    // STATE, so it also holds a node that is `Ready` but still edge-gated behind an unfinished
+    // predecessor — one the driver would never have dispatched. `resume` then force-records
+    // `Started` for it, `(Paused, Started) => Queued` puts it in the retry chain, and before #80's
+    // gate the driver dispatched it.
+    //
+    // The dispatch consequence is closed at the driver
+    // (`graphhelm_execution::dispatch_candidates`), so what remains here is a RECORD-ACCURACY
+    // defect rather than a behavioural one: this list can claim to have held a node that was never
+    // going anywhere, which makes a stream harder to read back as an incident. Narrowing it is
+    // deliberately deferred and tracked separately — the fix belongs where dispatch is decided,
+    // and widening this diff to also change what gets recorded would mix the two.
     let held: Vec<String> = projection
         .node_states
         .iter()

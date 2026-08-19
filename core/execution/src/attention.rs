@@ -442,10 +442,21 @@ pub enum AttentionReason {
 
 /// A node state that still moves without the operator: either a dispatcher can pick it up
 /// now, or the condition it waits on clears on its own.
+///
+/// DELIBERATELY STATE-ONLY, and after #80 that is a narrower claim than it used to be. The
+/// driver's gate (`graphhelm_execution::dispatch_candidates`) can leave a `Queued` node
+/// undispatchable, so "a dispatcher can pick it up now" is true of the STATE and not always of
+/// the node. Making this edge-aware was considered and deferred, because the case where the
+/// difference goes unheard is unreachable today: this predicate only decides an outcome through
+/// `WedgedQuiescence`, which is already suppressed by `reasons.is_empty()` below, and every
+/// reachable predecessor that gates a dependent raises a reason of its own — `Failed` speaks,
+/// `Blocked` speaks, `WaitingInput` speaks, `cancel` sweeps every non-terminal node in the same
+/// pass, and `Invalidated` has no production emitter at all. See #95 for the
+/// full clause design and the trigger that revives it.
 const fn advances_without_the_operator(state: NodeState) -> bool {
     matches!(
         state,
-        // Dispatchable now.
+        // A dispatcher may pick this state up — subject to the edge gate, for `Queued`.
         NodeState::Ready | NodeState::Queued | NodeState::Running
             // Resumes itself when quota returns (§12 park-and-wait).
             | NodeState::WaitingCapacity

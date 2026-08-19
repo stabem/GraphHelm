@@ -227,6 +227,18 @@ pub(crate) fn execute_prepared(
     // Exactly the nodes the pause held (`Paused`) — never a `WaitingInput`/`WaitingCapacity` node,
     // which is legitimately still waiting on something that has not changed. Forcing a `Started`
     // hop for one of those would be the blind-redispatch bug 04e named.
+    //
+    // 04e's door list was not complete, and #80 is the door it missed. This `Started` does NOT run
+    // the node: `(Paused, Started) => Queued` (`core/execution/src/transition.rs:109`) puts it in
+    // the driver's retry chain, and that chain used to be a bare `state == Queued` filter with no
+    // edge check — so a node whose predecessor had never finished could reach dispatch one hop
+    // after resume. The gate now lives where dispatch is DECIDED
+    // (`graphhelm_execution::dispatch_candidates`), not here, deliberately: a node can reach
+    // `Queued` by routes this function knows nothing about — an ordinary retry, or a predecessor
+    // invalidated after the fact — and a filter here would cover only the one route it can see.
+    // Re-checking readiness HERE would also be wrong in the opposite direction: `is_dispatchable`
+    // is `Ready`-only, so a `Paused` node is never in `ready_set` by construction, and filtering
+    // this list by it would strand every paused node permanently.
     let paused_nodes: Vec<String> = projection
         .node_states
         .iter()

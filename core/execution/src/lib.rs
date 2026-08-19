@@ -24,7 +24,7 @@ pub use bounds::{
 pub use dispatch::{DispatchError, dispatch_plan};
 pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
 pub use progress::{Progress, classify_progress};
-pub use ready::{ScheduleError, ready_set};
+pub use ready::{ScheduleError, dispatch_candidates, edges_satisfied, ready_set};
 pub use recovery::{ResumeError, recovery_plan, resume_preconditions};
 pub use signal::{SignalError, SignalKind, SignalSource, TypedSignal};
 pub use transition::{ExecutionError, NodeExecutor, TransitionRequest, apply_transition};

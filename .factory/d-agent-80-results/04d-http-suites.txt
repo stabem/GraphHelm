@@ -1,0 +1,21 @@
+   Compiling graphhelm-cli v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\apps\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.48s
+     Running tests\gate_http.rs (D:/graphhelm-target-m10\debug\deps\gate_http-0d2e9f1d3b136a0e.exe)
+
+running 3 tests
+test an_uncertified_gate_through_the_serve_never_runs_and_never_verdicts ... ok
+test an_unknown_gate_is_refused_with_the_registry_code ... ok
+test certify_then_resume_runs_the_gate_and_the_verdict_reads_back_over_http ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.06s
+
+     Running tests\runtime_http.rs (D:/graphhelm-target-m10\debug\deps\runtime_http-cf21e08f2d763671.exe)
+
+running 4 tests
+test the_fixture_story_drives_async_and_parity_holds ... ok
+test immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve ... ok
+test an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence ... ok
+test throughput_is_measured_and_printed ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.25s
+

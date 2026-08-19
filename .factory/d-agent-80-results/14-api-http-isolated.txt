@@ -1,0 +1,39 @@
+   Compiling graphhelm-cli v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-25b466\apps\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.14s
+     Running tests\api_http.rs (D:/graphhelm-target-m10\debug\deps\api_http-9d8a75daaace784c.exe)
+
+running 31 tests
+test a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened ... ok
+test no_flag_means_no_recording ... ok
+test a_read_is_recorded_with_the_bytes_it_was_served ... ok
+test gateway_reads_refuse_a_missing_or_wrong_token_with_401 ... ok
+test gateway_routes_over_http_matches_the_cli_report_for_the_same_manifest ... ok
+test health_answers_without_auth_and_everything_else_refuses_without_the_token ... ok
+test gateway_probe_over_http_is_quota_free_and_reports_the_cli_shape ... ok
+test recording_a_read_leaves_the_execution_untouched ... ok
+test the_events_tail_refuses_a_limit_above_the_cap_instead_of_truncating ... ok
+test missing_or_invalid_actor_headers_are_400_before_the_store_is_touched ... ok
+test a_declared_timeout_reaches_the_verdict_over_the_real_surface ... ok
+test start_over_http_drives_the_graph_and_a_second_start_is_refused ... ok
+test a_signal_over_http_is_attributed_to_the_calling_agent ... ok
+test a_retried_start_does_not_reload_the_now_missing_graph_file ... ok
+test status_over_http_matches_the_cli_and_the_events_tail_pages ... ok
+test the_api_says_when_silence_could_not_be_judged ... ok
+test a_retried_mutation_with_the_same_idempotency_key_appends_nothing ... ok
+test the_status_carries_time_and_never_a_number_that_moves_on_its_own ... ok
+test the_api_answers_the_sleep_question_and_zero_fills_every_bucket ... ok
+test an_idempotency_key_over_64_characters_is_refused_before_the_store_is_touched ... ok
+test a_non_calm_answer_never_publishes_an_empty_reason_list ... ok
+test a_fresh_mutations_head_sequence_matches_an_immediately_following_status_read ... ok
+test if_match_refuses_a_stale_head_with_the_current_one ... ok
+test approve_over_http_is_attributed_idempotent_and_maps_its_refusal_to_409 ... ok
+test two_agents_share_information_only_through_the_api ... ok
+test pause_over_http_is_attributed_idempotent_and_maps_its_refusal_to_409 ... ok
+test cancel_over_http_is_attributed_idempotent_and_maps_its_refusal_to_409 ... ok
+test resume_over_http_is_attributed_idempotent_and_maps_its_refusal_to_409 ... ok
+test a_reused_key_with_a_different_body_is_refused_not_absorbed ... ok
+test the_cli_and_the_api_report_identical_status_for_the_same_story ... ok
+test the_storm_holds_under_eight_concurrent_agents ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.27s
+

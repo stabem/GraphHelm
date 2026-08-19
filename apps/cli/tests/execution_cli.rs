@@ -23,6 +23,64 @@ fn json(output: &[u8]) -> Value {
 /// out of scope until Milestone 05a Task 4. Strips `headSequence` back out so a `status` reply can
 /// still be asserted byte-for-byte against a `start` reply; callers assert `headSequence` itself
 /// separately at each call site.
+/// Every `NodeOutcomeRecorded` in the stream, IN RECORDED ORDER, as `(node, outcome, next_state)`.
+///
+/// Reads the store directly instead of going through `graph replay`, because the projection is a
+/// FOLD: it answers "what state did each node end in" and deliberately forgets the order they were
+/// reached in. #80's flagship story is a claim about ORDER — `deploy` ran only AFTER
+/// `implementation` succeeded — and no field of the projection can carry that. The reviewer's
+/// finding that made this necessary: in the pre-fix world, running the SAME rewritten script,
+/// `deploy` also enters `Running` exactly once and also ends `Succeeded`, so both the state and the
+/// attempt count are identical either side of the fix. Only the order differs.
+fn recorded_outcomes(events: &Path) -> Vec<(String, String, String)> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TestClock;
+    impl graphhelm_protocols::Clock for TestClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
+    #[derive(Default)]
+    struct TestIds(AtomicU64);
+    impl graphhelm_protocols::IdGenerator for TestIds {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+        }
+    }
+
+    let repository = graphhelm_events::LocalEventRepository::open(
+        events,
+        Arc::new(TestClock),
+        Arc::new(TestIds::default()),
+    )
+    .unwrap();
+    let (_stream, history) = repository.read_unique_replay_stream().unwrap();
+    history
+        .iter()
+        .filter_map(|envelope| match &envelope.kind {
+            graphhelm_protocols::EventKind::NodeOutcomeRecorded(payload) => Some((
+                payload.node_id.to_string(),
+                format!("{:?}", payload.outcome),
+                format!("{:?}", payload.next_state),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The position at which `node` ENTERED RUNNING — the one event the attempt counter is derived
+/// from (`core/events/src/projection.rs:896-899`: `Started` with `next_state == Running`).
+fn entered_running_at(outcomes: &[(String, String, String)], node: &str) -> usize {
+    outcomes
+        .iter()
+        .position(|(recorded, outcome, next)| {
+            recorded == node && outcome == "Started" && next == "Running"
+        })
+        .unwrap_or_else(|| panic!("{node} never entered Running: {outcomes:?}"))
+}
+
 fn without_head_sequence(mut data: Value) -> Value {
     if let Some(object) = data.as_object_mut() {
         object.remove("headSequence");
@@ -852,19 +910,29 @@ fn resume(events: &Path, fixtures: &Path, execution: &str) -> Value {
     json(&output.stdout)["data"].clone()
 }
 
-/// The plan's Step 1 story. `start` leaves `deploy` `Ready`: its predecessor `implementation`
-/// blocks on no-progress (Task 3's own third test proves this exact fixture blocks a predecessor
-/// and leaves its dependent `Ready`) rather than ever reaching a success-like state, so `deploy`
-/// is never dispatched. `pause` holds it `Paused`, naming it in `heldNodes`; `resume` re-dispatches
-/// it — held work runs to completion.
+/// The plan's Step 1 story, corrected by #80. `start` leaves `deploy` `Ready`: its predecessor
+/// `implementation` blocks on no-progress (Task 3's own third test proves this exact fixture blocks
+/// a predecessor and leaves its dependent `Ready`) rather than ever reaching a success-like state.
+/// `pause` holds `deploy` `Paused`, naming it in `heldNodes`; `resume` records `Started` for it,
+/// which `(Paused, Started) => Queued` puts in the driver's retry chain.
 ///
-/// The aggregate itself stays `running`, not `completed`: `implementation` is genuinely `Blocked`
-/// (no-progress, not an untriaged interruption — `resume_preconditions` lets this resume proceed),
-/// and neither `pause` nor `resume` retries a blocked node. Clearing it is `approve`'s job,
-/// exercised in Task 4's own tests, not this one's — pause/resume only ever touch the nodes the
-/// pause itself held.
+/// AND THERE IT STAYS. This test asserted the opposite until #80: it required `deploy` to SUCCEED
+/// while `implementation` was still `Blocked` — a `data` edge delivering a payload its source never
+/// produced. That was the defect, not the feature. The retry chain was a bare `state == Queued`
+/// filter with no edge check, so the one node pause held was the one node that could reach dispatch
+/// with its dependency unmet.
+///
+/// The doc comment this replaces credited `deploy.userOverrideAllowed: true` for the behaviour. No
+/// execution-lane consumer of that field exists — the string "override" appears nowhere in
+/// `core/execution` or `core/runtime`. Nothing authorised the override; three missing checks
+/// produced it, and no event recorded it.
+///
+/// Getting a blocked release moving is still a supported story and still tested — through the
+/// recorded path that exists (`approve` then `resume`, see
+/// `approve_is_not_a_dead_end_once_the_condition_is_fixed` and the Task 6 story). What this test
+/// now pins is that the UNRECORDED path does not.
 #[test]
-fn pause_holds_ready_work_and_resume_completes_it() {
+fn resume_does_not_run_held_work_whose_predecessor_never_finished() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let fixtures = fixtures_file(
@@ -884,11 +952,33 @@ fn pause_holds_ready_work_and_resume_completes_it() {
     let resume_data = resume(&events, &fixtures, "exec_pause_resume");
     assert_eq!(resume_data["status"], "running");
     assert_eq!(resume_data["nodeStateCounts"]["blocked"], 1);
-    assert_eq!(resume_data["nodeStateCounts"]["succeeded"], 1);
+    // Zero, not absent: `state_counts` zero-fills every bucket on purpose (mod.rs:594 — "absence
+    // must be visible as `0`, not inferred from silence"), so asserting null here would fail for
+    // a reason that has nothing to do with #80.
+    assert_eq!(
+        resume_data["nodeStateCounts"]["succeeded"], 0,
+        "nothing may succeed here: the only node resume touched depends on one that never \
+         finished: {resume_data}"
+    );
+    assert_eq!(resume_data["nodeStateCounts"]["queued"], 1);
 
     let projection = replay_projection(&events);
-    assert_eq!(projection["nodeStates"]["deploy"], "succeeded");
+    assert_eq!(
+        projection["nodeStates"]["deploy"], "queued",
+        "deploy is in the retry chain but edge-gated, so it waits rather than running on an \
+         input that never arrived"
+    );
     assert_eq!(projection["nodeStates"]["implementation"], "blocked");
+    // Present and zero, which is the sharpest form this assertion has. `deploy` HAS recorded
+    // outcomes (`Paused`, then `Started`), so the fold creates its entry
+    // (`projection.rs:896`) — but attempts count entries into `Running`, not reports
+    // (`projection.rs:892-895`). So `0` says exactly "the driver was told about this node twice
+    // and never once ran it", which a state assertion alone would not: `Queued` is also where a
+    // node lands after running and being returned to the queue.
+    assert_eq!(
+        projection["nodeAttempts"]["deploy"], 0,
+        "deploy must never have entered Running at all"
+    );
 }
 
 /// `pause` states its own precondition before the fold would call a second pause corrupt: refused
@@ -1002,6 +1092,13 @@ fn cancel_terminates_every_non_terminal_node_then_refuses_a_second_call() {
 /// `pause` does not touch (only `Ready`/`Queued` pause). `deploy` — held `Paused` — is the only
 /// node resume may re-dispatch; `nodeAttempts.implementation` staying at 1 is the direct measure
 /// that it was not.
+///
+/// #80 sharpened what "may re-dispatch" means and this test kept its own point either way. Resume
+/// re-QUEUES `deploy`; whether it then RUNS is the driver's decision, and the driver now checks
+/// edges. `implementation` is `WaitingInput`, which never satisfies a dependent, so `deploy` waits.
+/// The two `nodeAttempts` assertions below now measure the same property from both ends: the
+/// waiting node was not redispatched (1, unchanged), and the held node was never dispatched at all
+/// (0). Before the gate the second one was 1 and `deploy` read `succeeded`.
 #[test]
 fn resume_never_redispatches_a_waiting_node() {
     let directory = tempfile::tempdir().unwrap();
@@ -1018,11 +1115,16 @@ fn resume_never_redispatches_a_waiting_node() {
     assert_eq!(pause_data["heldNodes"], serde_json::json!(["deploy"]));
 
     let resume_data = resume(&events, &fixtures, "exec_resume_waiting");
-    assert_eq!(resume_data["nodeStateCounts"]["succeeded"], 1);
+    assert_eq!(resume_data["nodeStateCounts"]["succeeded"], 0);
     assert_eq!(resume_data["nodeStateCounts"]["waiting_input"], 1);
 
     let projection = replay_projection(&events);
-    assert_eq!(projection["nodeStates"]["deploy"], "succeeded");
+    // #80: `deploy` was held and re-`Started`, but `implementation` is `WaitingInput`, which does
+    // not satisfy a dependent. It waits in the retry chain instead of running on input that never
+    // arrived. Before the gate this read `succeeded`.
+    assert_eq!(projection["nodeStates"]["deploy"], "queued");
+    assert_eq!(projection["nodeAttempts"]["deploy"], 0);
+    // Unchanged, and still this test's own point: the WAITING node was never redispatched.
     assert_eq!(projection["nodeStates"]["implementation"], "waiting_input");
     assert_eq!(projection["nodeAttempts"]["implementation"], 1);
 }
@@ -1064,23 +1166,37 @@ fn assert_envelope(stdout: &[u8]) -> Value {
     value
 }
 
-/// The plan's Task 6 story, driven entirely through the compiled binary: `start` (Supervised)
-/// leaves `implementation` permanently `Blocked` at the no-progress bound and `deploy`
-/// `Ready`-but-undispatched — the same fixture `pause_holds_ready_work_and_resume_completes_it`
-/// uses, and the scenario this graph is named for (`deploy.userOverrideAllowed: true`: a human
-/// overrides a blocked predecessor). `signal` then records a governance-relevant envelope and
-/// reports `requires_approval` under Supervised; `pause` holds `deploy`; `resume` force-dispatches
-/// it to completion. Every command's stdout is checked against the bare four-key envelope, and two
+/// The plan's Task 6 story, driven entirely through the compiled binary. `start` (Supervised)
+/// leaves `implementation` `Blocked` at the no-progress bound and `deploy` `Ready`-but-undispatched.
+/// `signal` records a governance-relevant envelope and reports `requires_approval` under Supervised.
+/// `pause` holds `deploy`. `approve` clears the blocked predecessor. `resume` drives, and the whole
+/// graph finishes. Every command's stdout is checked against the bare four-key envelope, and two
 /// independent `graph replay` runs over the finished stream are asserted byte-identical — the
 /// operator-visible form of the milestone's replay guarantee.
 ///
-/// "Fixtures that complete cleanly" describes `deploy`, the node pause holds and resume actually
-/// drives: its fixture is a plain `success`, so it neither errors nor waits on unknown input once
-/// dispatched. It does not describe `implementation` — a permanently blocked predecessor is not a
-/// terminal state (the driver's own `is_terminal` excludes `Blocked`), so the aggregate itself
-/// never reaches `execution_completed`; clearing `implementation` is `approve`'s job (Task 4),
-/// outside this story's five named commands. "Resume completes it" therefore names `deploy`
-/// reaching `Succeeded`, exactly as the Task 5 precedent test's own name puts it.
+/// #80 CHANGED THE MIDDLE OF THIS STORY AND KEPT ITS POINT. It used to have no `approve` step:
+/// `pause` held `deploy`, `resume` force-dispatched it, and the release "shipped" while
+/// `implementation` was still `Blocked` — a `data` edge delivering a payload its source never
+/// produced, with no event naming the override and no actor attached to it. The story's doc comment
+/// credited `deploy.userOverrideAllowed: true` for that, "the scenario this graph is named for". No
+/// execution-lane consumer of that field exists; the string "override" appears nowhere in
+/// `core/execution` or `core/runtime`. Three missing checks produced the behaviour and a field name
+/// explained it after the fact.
+///
+/// So the story now tells the same thing — AN OPERATOR GETS A BLOCKED RELEASE MOVING — through the
+/// mechanism the product actually has, and every step of it is recorded with an actor: approve the
+/// blocked node, fix what broke it, resume. That is a better story than the one it replaces,
+/// because the old one could not distinguish a release the operator authorised from one that
+/// escaped.
+///
+/// The FIXED fixtures at resume are load-bearing, not convenience. Approving a node does not change
+/// why it failed; redispatching it against the original `failure` fixture would simply re-block it.
+/// The operator's real act is "I fixed the cause and re-ran", and the second fixtures file is that
+/// act — the same shape `approve_is_not_a_dead_end_once_the_condition_is_fixed` established.
+///
+/// Ordering note: `approve` runs INSIDE the pause, which is legal because `approve` gates on the
+/// node's own state (`Ghost`/`Blocked`) and never on the aggregate. That keeps `heldNodes` at
+/// exactly `["deploy"]`, so the pause assertions still say what they always said.
 #[test]
 fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
     let directory = tempfile::tempdir().unwrap();
@@ -1195,8 +1311,60 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
         "the signal recorded before the pause must still be visible in it"
     );
 
-    // resume — force-dispatches `deploy` (the node pause held) to completion; `implementation`
-    // stays Blocked, so the aggregate itself stays Running rather than Completed.
+    // Read before the operator intervenes, so the redispatch assertion at the end compares against
+    // a measured baseline instead of a hardcoded retry count.
+    let attempts_at_pause = replay_projection(&events)["nodeAttempts"]["implementation"].clone();
+
+    // approve — the operator clears the blocked predecessor. `(Blocked, Approved) => Ready`
+    // (transition.rs:79). This is the step #80 revealed the story was missing: without it, `deploy`
+    // used to run anyway, on an input `implementation` never produced. `approve` gates on the NODE
+    // state alone, never on the aggregate, so a paused execution approves fine — and it does not
+    // drive, which is why `resume` below is still the step that makes anything run.
+    let approve_output = command()
+        .args([
+            "execution",
+            "approve",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+            "--node",
+            "implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        approve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&approve_output.stdout)
+    );
+    let approve_value = assert_envelope(&approve_output.stdout);
+    assert_eq!(approve_value["command"], "execution.approve");
+    assert_eq!(
+        approve_value["data"]["nodeStateCounts"]["ready"], 1,
+        "approve returns implementation to Ready without dispatching it: {approve_value}"
+    );
+    assert_eq!(
+        approve_value["data"]["status"], "paused",
+        "approving inside a pause must not resume the execution: {approve_value}"
+    );
+
+    // resume — the only command besides `start` that drives (resume.rs:87). `implementation` is
+    // Ready and rootless, so it dispatches first; its `Succeeded` satisfies `deploy`'s data edge,
+    // and `deploy` — queued by the `Started` this resume recorded — dispatches on a later pass of
+    // the same drive. Both finish, so the aggregate completes.
+    //
+    // The FIXED fixtures are the honest half of the story: the operator did not merely approve the
+    // failure, they fixed what caused it and re-ran. Approving alone would redispatch
+    // `implementation` into the same `failure` and re-block it. Same shape as
+    // `approve_is_not_a_dead_end_once_the_condition_is_fixed`.
+    let fixed = write_json(
+        directory.path(),
+        "fixed.json",
+        &serde_json::json!({
+            "nodeOutcomes": {"implementation": "success", "deploy": "success"}
+        }),
+    );
     let resume_output = command()
         .args([
             "execution",
@@ -1206,7 +1374,7 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
             "--events",
             events.to_str().unwrap(),
             "--fixtures",
-            fixtures.to_str().unwrap(),
+            fixed.to_str().unwrap(),
             "--execution",
             execution,
         ])
@@ -1219,14 +1387,94 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
     );
     let resume_value = assert_envelope(&resume_output.stdout);
     assert_eq!(resume_value["command"], "execution.resume");
-    assert_eq!(resume_value["data"]["status"], "running");
-    assert_eq!(resume_value["data"]["nodeStateCounts"]["succeeded"], 1);
-    assert_eq!(resume_value["data"]["nodeStateCounts"]["blocked"], 1);
+    assert_eq!(
+        resume_value["data"]["status"], "completed",
+        "the release the operator unblocked must actually ship: {resume_value}"
+    );
+    assert_eq!(
+        resume_value["data"]["nodeStateCounts"]["succeeded"], 2,
+        "both nodes run: implementation because it was approved and fixed, deploy because \
+         implementation's success finally satisfied its edge: {resume_value}"
+    );
+    assert_eq!(resume_value["data"]["nodeStateCounts"]["blocked"], 0);
+    assert_eq!(resume_value["data"]["nodeStateCounts"]["queued"], 0);
     assert_eq!(resume_value["data"]["signalsRecorded"], 1);
 
-    // completion, replayed twice: the finished stream — `deploy` held then completed, the signal
-    // recorded, `implementation` permanently blocked — must replay to byte-identical output both
-    // times, independent of any in-process state, since each invocation is its own fresh process.
+    // The story's own point, MEASURED AS ORDER, which is the only thing that separates this run
+    // from the pre-#80 one.
+    //
+    // The obvious assertions do not discriminate, and the reviewer caught me shipping one that
+    // did not. Run this exact script against the UNFIXED code: `deploy` still enters `Running`
+    // exactly once, still ends `Succeeded`, and `implementation` still succeeds — because this
+    // script gives `implementation` a route to success, the end state is the same on both sides
+    // of the fix. Final states match. Attempt counts match. What differs is WHEN `deploy` ran:
+    // unfixed, the ungated retry chain could dispatch it before `implementation` ever succeeded;
+    // fixed, its edge cannot release until that success is recorded.
+    //
+    // So the guard reads the raw stream, where order survives, rather than the projection, which
+    // folds it away.
+    //
+    // WHAT THE RED RESTS ON, stated so nobody has to re-derive it. Removing the gate makes this
+    // assertion fail because `deploy` is then dispatched BEFORE `implementation` succeeds — and
+    // that is DETERMINED, not scheduling luck. `dispatch_plan` is attempt-fair (fewer attempts
+    // first, lexicographic only as a tiebreak: `dispatch.rs`), and at the resume drive's first
+    // pass `deploy` has 0 attempts while `implementation` has already spent at least one failing
+    // at start. So `deploy` sorts first on the attempt key, and with this graph's
+    // `maxParallelModelCalls: 1` it is dispatched alone in that pass. The tiebreak never runs, so
+    // the red does NOT depend on "deploy" sorting before "implementation" alphabetically.
+    //
+    // The red SURVIVES any attempt-count change, because `deploy`'s count at this point is 0 and 0
+    // is minimal — it cannot lose the attempt key. Equal counts do not defeat it either: the
+    // tiebreak is lexicographic and "deploy" < "implementation", so `deploy` still leads.
+    //
+    // THE ONE THING THAT WOULD DEFEAT IT IS A RENAME. If both nodes ever sit on the same attempt
+    // key AND the predecessor is renamed to sort before "deploy" (or "deploy" renamed to sort
+    // after it), the ungated world would dispatch the predecessor first, it would succeed, and
+    // this assertion would pass without the gate — green for a reason it does not name. **The two
+    // node ids in `examples/graphs/manual-override-deploy.yaml` are load-bearing for dispatch
+    // order here, not merely labels.**
+    //
+    // The order-INDEPENDENT guards are the two smaller tests, where `implementation` never
+    // succeeds at all and `deploy` therefore cannot run under any dispatch order or naming.
+    let outcomes = recorded_outcomes(&events);
+    let deploy_ran = entered_running_at(&outcomes, "deploy");
+    let implementation_succeeded = outcomes
+        .iter()
+        .position(|(node, _, next)| node == "implementation" && next == "Succeeded")
+        .expect("implementation must reach Succeeded in this story");
+    assert!(
+        deploy_ran > implementation_succeeded,
+        "deploy must not enter Running until implementation has SUCCEEDED — it ran at {deploy_ran}, \
+         implementation succeeded at {implementation_succeeded}: {outcomes:?}"
+    );
+
+    let ordered = replay_projection(&events);
+    assert_eq!(ordered["nodeStates"]["implementation"], "succeeded");
+    assert_eq!(ordered["nodeStates"]["deploy"], "succeeded");
+    // Kept as a supporting fact, NOT as the discriminator — it holds identically without the fix.
+    // It rules out a different failure (deploy thrashing through several attempts), which the
+    // order assertion above does not cover.
+    assert_eq!(ordered["nodeAttempts"]["deploy"], 1);
+    // Measured against its own earlier value rather than asserted as a constant: how many times
+    // the driver retries `implementation` before the no-progress bound blocks it is the retry
+    // policy's business, not this story's, and pinning a number here would make this test fail on
+    // a change it is not about. What the story claims is only that approving made it run AGAIN.
+    let attempts_before = attempts_at_pause
+        .as_u64()
+        .unwrap_or_else(|| panic!("implementation must have a recorded attempt count at pause"));
+    let attempts_after = ordered["nodeAttempts"]["implementation"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("implementation must have a recorded attempt count at the end"));
+    assert!(
+        attempts_after > attempts_before,
+        "approve must actually redispatch implementation, not merely relabel it: \
+         {attempts_before} attempts at pause, {attempts_after} at completion"
+    );
+
+    // completion, replayed twice: the finished stream — the signal recorded, `implementation`
+    // blocked then approved and rerun to success, `deploy` held then released by that success —
+    // must replay to byte-identical output both times, independent of any in-process state, since
+    // each invocation is its own fresh process.
     let replay_args = ["graph", "replay", "--events", events.to_str().unwrap()];
     let replay_first = command().args(replay_args).output().unwrap();
     assert!(
@@ -1242,7 +1490,7 @@ fn the_operator_story_runs_end_to_end_and_replays_byte_identical() {
     );
     assert_eq!(
         replay_first_value["data"]["nodeStates"]["implementation"],
-        "blocked"
+        "succeeded"
     );
     assert_eq!(replay_first_value["data"]["signalsRecorded"], 1);
 

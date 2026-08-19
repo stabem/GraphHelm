@@ -77,6 +77,13 @@ pub(crate) fn execute(
 
     // Cancellation is owner sovereignty and applies from any non-terminal state
     // (`apply_transition`'s own short-circuit); every node not already terminal is cancelled.
+    //
+    // THE SWEEP IS LOAD-BEARING BEYOND THIS FILE. Because it takes EVERY non-terminal node in one
+    // pass, a `Cancelled` node can never leave a live dependent behind it. #80 leans on that: it
+    // gates dispatch on unsatisfied edges but leaves attention state-only, which is safe only
+    // while no reachable predecessor can gate a dependent without raising a reason of its own.
+    // A CANCEL PATH THAT CANCELS SOME NODES AND LEAVES DEPENDENTS ALIVE MUST MAKE ATTENTION
+    // EDGE-AWARE — see #95, which carries the clause design ready to apply.
     let non_terminal: Vec<String> = projection
         .node_states
         .iter()

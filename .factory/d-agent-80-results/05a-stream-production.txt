@@ -1,0 +1,6 @@
+=== PHASE 5 step 1: produce a stream UNDER the gate ===
+{"ok":true,"command":"execution.start","data":{"acceptedMutations":0,"attention":"needs_you","attentionReasons":[{"kind":"blocked_node","node":"implementation"}],"executionId":"exec_rollback","lastEventAt":"2026-08-19T21:32:25.635828800+00:00","mode":"supervised","nodeLastEventAt":{"deploy":"2026-08-19T21:32:24.287310400+00:00","implementation":"2026-08-19T21:32:25.635828800+00:00"},"nodeStateCoun
+--- pause ---
+{"ok":true,"command":"execution.pause","data":{"acceptedMutations":0,"attention":"needs_you","attentionReasons":[{"kind":"blocked_node","node":"implementation"}],"executionId":"exec_rollback","heldNodes":["deploy"],"lastEventAt":null,"mode":"supervised","nodeLastEventAt":{},"nodeStateCounts":{"block
+--- resume ---
+{"ok":true,"command":"execution.resume","data":{"acceptedMutations":0,"attention":"needs_you","attentionReasons":[{"kind":"blocked_node","node":"implementation"}],"executionId":"exec_rollback","lastEventAt":null,"mode":"supervised","nodeLastEventAt":{},"nodeStateCounts":{"blocked":1,"cancelled":0,"draft":0,"failed":0,"ghost":0,"invalidated":0,"linting":0,"paused":0,"queued":1,"ready":0,"running":0

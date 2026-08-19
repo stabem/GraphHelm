@@ -329,7 +329,9 @@ fn purchased_calm(
     projection
         .node_states
         .iter()
-        .filter(|(_, state)| **state == NodeState::Running)
+        // The SAME question the reason arm asks. Two predicates for one question is the
+        // defect this milestone has already paid for twice.
+        .filter(|(node, state)| has_judgeable_silence(**state, attempts_of(projection, node)))
         .filter_map(|(node, _)| {
             let silence = *inputs.node_silence_seconds.get(node)?;
             let budget = *inputs.silence_budget_seconds.get(node)?;
@@ -453,6 +455,70 @@ const fn advances_without_the_operator(state: NodeState) -> bool {
     )
 }
 
+/// Whether a node's quiet is SILENCE — something that can be judged against a bound — or
+/// merely the absence of a turn.
+///
+/// This was `state == Running` and nothing else, by a filter nobody could trace to a
+/// decision. The blind judge measured the cost: `flaky_check` failed, was requeued, and sat
+/// in `Queued` for over two minutes reading as healthy — and declaring a budget for it did
+/// not help, because the node never entered the question at all.
+///
+/// The property is NOT "did it fail". It is **has anyone got to this node yet**. Keying on a
+/// retryable failure would name one cause of that and miss the others: `Invalidated` returns
+/// a COMPLETED node to the queue with no failure anywhere in its history, and a
+/// failure-keyed rule would leave exactly that node mute forever. `attempts` is
+/// `node_attempts`, which the fold increments only on an entry into `Running`, so the
+/// question is asked of the record that already answers it and needs no maintenance when a
+/// new outcome is added.
+///
+/// Every state is classified here and the excluded ones say WHY — a bare list is how the
+/// original `== Running` became untraceable. There is no catch-all arm, so a future state
+/// cannot be silently unclassified: the COMPILER refuses it. Verified rather than asserted —
+/// deleting the `Paused` arm gives `error[E0004]: non-exhaustive patterns`. What the compiler
+/// does NOT check is whether a written reason is true; that stays prose, and prose has no
+/// guard.
+pub(crate) const fn has_judgeable_silence(state: NodeState, attempts: u32) -> bool {
+    match state {
+        // In flight by definition: quiet here is either work or a hang, and telling those
+        // apart is the whole question.
+        NodeState::Running => true,
+        // Dispatched at least once and back in the queue — by retry, by invalidation, or by
+        // anything later that returns a node the driver already reached. Nothing is moving
+        // it, and the operator declared a bound expecting otherwise.
+        NodeState::Queued => attempts > 0,
+        // EXCLUDED, each for its own reason:
+        //
+        // Never dispatched: quiet is the absence of a turn, not silence. Judging these would
+        // name every node of a freshly started graph, and a confident false alarm is how a
+        // rule dies — this milestone watched one accuse a clean branch by name.
+        NodeState::Draft | NodeState::Ghost | NodeState::Linting | NodeState::Ready => false,
+        // Waiting on a named party, so the quiet has a known owner and an existing reason of
+        // its own (`WaitingInputNode`); silence would say the same thing twice.
+        NodeState::WaitingInput => false,
+        // Parked by a declared park-and-wait rule (M05) with its own resumption condition.
+        // Excluded in THIS milestone, not forever: quota that never returns is silence, and
+        // saying so here is what stops this exclusion from becoming the next untraceable
+        // filter.
+        NodeState::WaitingCapacity => false,
+        // The operator stopped it. Silence after an explicit pause is the thing asked for.
+        NodeState::Paused => false,
+        // Already named by a reason of its own (`BlockedNode`, `UntriagedInterruption`,
+        // `FailedNode`), so silence would be noise on top of an answer.
+        NodeState::Blocked | NodeState::Failed => false,
+        // Terminated. A finished node has no silence to judge, and listing it is the noise
+        // that kills an honest field.
+        NodeState::Succeeded
+        | NodeState::Waived
+        | NodeState::Skipped
+        | NodeState::Cancelled
+        | NodeState::Invalidated => false,
+    }
+}
+
+fn attempts_of(projection: &ExecutionProjection, node: &str) -> u32 {
+    projection.node_attempts.get(node).copied().unwrap_or(0)
+}
+
 /// Decides the sleep question over a projection. `required` is `!reasons.is_empty()` —
 /// derived, never declared, so the field and its justification cannot drift apart.
 ///
@@ -486,7 +552,7 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
             // there is no type, therefore no applicable budget, therefore the node is
             // unevaluated rather than assumed fine (the same posture the wedge keeps when
             // nothing is published).
-            NodeState::Running => {
+            state if has_judgeable_silence(*state, attempts_of(projection, node)) => {
                 let budget = inputs.silence_budget_seconds.get(node);
                 match (budget, inputs.node_silence_seconds.get(node)) {
                     (Some(budget), Some(age)) if age > budget => {

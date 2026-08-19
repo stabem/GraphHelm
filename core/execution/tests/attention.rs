@@ -914,3 +914,148 @@ fn every_unknown_carries_a_remedy_and_never_a_suggested_value() {
          not the same as forgetting the field: {shapeless:?}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// M09 A: which states have judgeable silence.
+//
+// Today the seam asks `state == Running` and nothing else. A node that failed, was requeued and
+// then sat in `queued` for minutes reads as healthy forever — the judge measured exactly that on
+// `flaky_check`, and declaring a budget for it did not help, because the node never entered the
+// question at all.
+//
+// The property is not "did it fail". It is "has anyone got to this node yet": `Invalidated`
+// returns a COMPLETED node to the queue without any retryable failure, and a rule keyed on
+// failure would leave it mute forever. `node_attempts` already folds exactly that — it counts
+// entries into `Running`, never reports about a node — so the question is asked of the record
+// that already answers it.
+// ---------------------------------------------------------------------------------------------
+
+fn silent_queued_node(attempts: u32) -> graphhelm_events::ExecutionProjection {
+    let mut projection = graphhelm_events::ExecutionProjection {
+        execution_id: Some("exec-m09-a".to_owned()),
+        ..graphhelm_events::ExecutionProjection::default()
+    };
+    projection.node_states.insert(
+        "flaky_check".to_owned(),
+        graphhelm_protocols::NodeState::Queued,
+    );
+    if attempts > 0 {
+        projection
+            .node_attempts
+            .insert("flaky_check".to_owned(), attempts);
+    }
+    projection
+}
+
+fn judged(projection: &graphhelm_events::ExecutionProjection) -> graphhelm_execution::Attention {
+    graphhelm_execution::attention(
+        projection,
+        &graphhelm_execution::AttentionInputs {
+            node_silence_seconds: [("flaky_check".to_owned(), 900)].into_iter().collect(),
+            // Declared ON PURPOSE in both directions of the scissor: without a budget the
+            // absence rule already keeps the node unevaluated, so a guard that omitted it
+            // would pass by coincidence rather than by measuring the policy.
+            silence_budget_seconds: [("flaky_check".to_owned(), 30)].into_iter().collect(),
+            at_sequence: Some(11),
+        },
+    )
+}
+
+/// The judge's own case: requeued after it had already run, silent far past its declared bound.
+#[test]
+fn a_requeued_node_that_already_ran_has_judgeable_silence() {
+    let answer = judged(&silent_queued_node(1));
+    // At the grain the question has. The first version of this assertion searched the whole
+    // debug rendering for the node id, and Agent B proved it vacuous by breaking the budget
+    // lookup: the answer became `unknown`/`NoDeclaredBudget`, the id still appeared in the
+    // string, and the guard stayed green while the product regressed into the exact defect
+    // M08 spent nine judge runs removing. An assertion one level above what it measures is
+    // the family this milestone is named after, and it bit inside the test written to enforce
+    // the rule.
+    assert!(
+        answer
+            .reasons()
+            .contains(&graphhelm_execution::AttentionReason::SilentNode {
+                node: "flaky_check".to_owned(),
+            }),
+        "a node that already ran and is sitting requeued past its bound is SILENT, and must be          named as such rather than merely appearing somewhere in the answer: {answer:?}"
+    );
+}
+
+/// The other blade. A rule that simply included every `Queued` node would satisfy the test
+/// above and turn every freshly started graph into a false-alarm factory, naming nodes nobody
+/// has dispatched yet. A confident false alarm is how a rule dies.
+#[test]
+fn a_node_that_never_ran_is_not_judged_for_silence() {
+    let answer = judged(&silent_queued_node(0));
+    assert!(
+        !format!("{answer:?}").contains("flaky_check"),
+        "nobody has dispatched this node yet, so its quiet is not silence: {answer:?}"
+    );
+}
+
+/// L7: including `Queued` must not turn "declared nothing" into calm. Absence stays absence.
+#[test]
+fn a_requeued_node_with_no_declared_bound_is_unevaluated_not_calm() {
+    let answer = graphhelm_execution::attention(
+        &silent_queued_node(1),
+        &graphhelm_execution::AttentionInputs {
+            node_silence_seconds: [("flaky_check".to_owned(), 900)].into_iter().collect(),
+            silence_budget_seconds: std::collections::BTreeMap::new(),
+            at_sequence: Some(11),
+        },
+    );
+    let rendered = format!("{answer:?}");
+    assert!(
+        rendered.contains("NoDeclaredBudget") && rendered.contains("flaky_check"),
+        "a requeued node nobody bounded is UNEVALUATED, never quiet: {rendered}"
+    );
+}
+
+/// L2: the reason arm and `purchased_calm` ask ONE question. Two predicates for one question
+/// is the defect this milestone paid for twice — two budget functions, then two "where were
+/// you looking" counters. Sabotage: return `purchased_calm` to `== Running` and this falls,
+/// because a calm BOUGHT over a requeued node becomes invisible while the reason arm sees it.
+#[test]
+fn a_requeued_node_whose_calm_was_bought_is_still_named() {
+    let mut projection = silent_queued_node(1);
+    projection.declared_form = Some(graphhelm_protocols::ExecutionFormDeclared {
+        execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),
+        node_ids: vec![graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap()],
+        node_timeout_seconds: [(
+            graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap(),
+            30,
+        )]
+        .into_iter()
+        .collect(),
+    });
+    projection.apply_amendment(graphhelm_protocols::ExecutionFormAmended {
+        execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),
+        node_timeout_seconds: [(
+            graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap(),
+            100_000,
+        )]
+        .into_iter()
+        .collect(),
+        observed_silence_seconds: [(
+            graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap(),
+            900,
+        )]
+        .into_iter()
+        .collect(),
+        computed_at_sequence: 11,
+    });
+
+    let answer = graphhelm_execution::attention(
+        &projection,
+        &graphhelm_execution::AttentionInputs {
+            node_silence_seconds: [("flaky_check".to_owned(), 900)].into_iter().collect(),
+            silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
+            at_sequence: Some(12),
+        },
+    );
+    assert!(
+        format!("{answer:?}").contains("CalmedByAmendment"),
+        "the ceiling was raised over a requeued node that had already blown a tighter one, and          that calm must not read as untroubled: {answer:?}"
+    );
+}

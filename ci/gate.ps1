@@ -12,16 +12,24 @@
     passed - verified directly by running the exit-code logic against a forced failure and a clean
     pass (see the PR that closed https://github.com/stabem/GraphHelm/issues/97).
 
-    DO NOT PIPE THIS SCRIPT'S OUTPUT (e.g. `./ci/gate.ps1 | tail -50`) if you intend to check its
-    exit code afterward. In bash/POSIX shells, `$?` after a pipe reflects the LAST command in the
-    pipe (`tail`, here), never this script's - the exit code you read back is the pager's, not the
-    gate's, and a genuinely red run reads as success. This is not a bug in this script; it is how
-    pipes work, and no script on the producing end of one can fix it from the inside. If you need
-    to see only the tail of a long run, redirect to a file and page the file AFTER the run:
-        ./ci/gate.ps1 > gate.log 2>&1; echo "exit: $LASTEXITCODE"; Get-Content gate.log -Tail 50
-    Checking the exit code from the SAME command that produced it (no intervening pipe) is what
-    makes the check trustworthy. (Issue #97, found live: the exact pipe-through-tail pattern above
-    produced a RED banner with an apparently-successful exit status, twice in one day.)
+    THE SAFE PATTERN, when you need to check the exit code: redirect the run to a file, check the
+    exit code of THAT SAME COMMAND immediately, then read the file separately - never pipe the
+    live run into anything if the exit code matters.
+        From PowerShell:
+            ./ci/gate.ps1 > gate.log 2>&1; echo "exit: $LASTEXITCODE"; Get-Content gate.log -Tail 50
+        From bash (invoking the PowerShell host directly, no pipe on the invocation itself):
+            powershell.exe -File ci/gate.ps1 > gate.log 2>&1; echo "exit: $?"; tail -50 gate.log
+    Both read the exit code from the command that produced it, then inspect the FILE afterward -
+    a completely separate step with no bearing on `$?`/`$LASTEXITCODE`, however it gets filtered.
+
+    DO NOT PIPE THIS SCRIPT'S LIVE OUTPUT (e.g. `./ci/gate.ps1 | tail -50`,
+    `powershell.exe -File ci/gate.ps1 | tail -50`) if you intend to check its exit code afterward.
+    In bash/POSIX shells, `$?` after a pipe reflects the LAST command in the pipe (`tail`, here),
+    never this script's - the exit code you read back is the pager's, not the gate's, and a
+    genuinely red run reads as success. This is not a bug in this script; it is how pipes work,
+    and no script on the producing end of one can fix it from the inside. (Issue #97, found live:
+    the exact pipe-through-tail pattern above produced a RED banner with an apparently-successful
+    exit status, twice in one day.)
 
 .PARAMETER SkipPostgres
     Skips the ignored PostgreSQL matrix. Use only when a change cannot touch persistence, and say so

@@ -53,7 +53,9 @@ were needed, and the rule earned its keep twice:
    pinned `null` were inverted: they were right about the events and wrong about the
    operator.
 
-**The verdict trail** (`docs/acceptance/m07-run-2026-08-17/`): run 1 — 8 findings, 1
+**The verdict trail** (`docs/acceptance/m07-run-2026-08-17/` — transcripts, not stores: the
+committed `journal.jsonl` has no `format.json` and no `blobs/`, so it cannot be opened or
+replayed, and the evidence its batches reference was never committed): run 1 — 8 findings, 1
 critical; run 2 — 7 findings, 2 critical; run 3 — 7 findings, **zero critical**, and the
 judge crediting a fix in its own words: *"wake_status does correctly separate contentHead
 (12) from head (14)"*. In run 3 the judge quotes `reason "tool_exited_non_zero"` from the

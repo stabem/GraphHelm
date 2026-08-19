@@ -11,7 +11,7 @@ Generated from `m05-clauses.toml` by `tools/acceptance-map` — do not edit by h
 The 05d/05e acceptance sentence as one named test: a replying model fake, a real git tool in a Tier 1 worktree, sealed evidence, and a double replay compared byte for byte.
 
 - `an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence` (suite: runtime_http) — fingerprint: `replay must be byte-identical`
-- **committed run evidence** `docs/acceptance/m05-run-2026-08-16` — one real story on the owner-subscription route (claude CLI), completed and replayed byte-identically (every file checksummed in its `SHA256SUMS`; the grounding test re-hashes it)
+- **committed run evidence** `docs/acceptance/m05-run-2026-08-16` — one real story on the owner-subscription route (claude CLI), completed and replayed byte-identically (every file checksummed in its `SHA256SUMS`; the grounding test re-hashes it AND opens the archived store, replaying it against the current build. The store is archived as bytes: git cannot carry its empty `.tmp/` and `active/` directories, so the shape is restored before opening — see the directory's `README.md`)
 - **recorded demonstration** `docs/acceptance/demos/m06-fixture-journey` — a fixture journey (manual-override-deploy, autopilot) recorded whole: committed store, frozen seed, seed-derived node-check traversal, and the projection digest the current build must reproduce (frozen seed, seed-derived traversal, and a projection digest the current build must reproduce on replay; every file tracked and checksummed)
 
 ### one-state-from-every-surface

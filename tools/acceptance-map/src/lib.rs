@@ -410,7 +410,10 @@ pub fn generate(clauses: &Clauses) -> String {
         for artifact in &clause.artifact {
             out.push_str(&format!(
                 "- **committed run evidence** `{}` — {} (every file checksummed in its \
-                 `SHA256SUMS`; the grounding test re-hashes it)\n",
+                 `SHA256SUMS`; the grounding test re-hashes it AND opens the archived store, \
+                 replaying it against the current build. The store is archived as bytes: git \
+                 cannot carry its empty `.tmp/` and `active/` directories, so the shape is \
+                 restored before opening — see the directory's `README.md`)\n",
                 artifact.directory, artifact.description
             ));
         }

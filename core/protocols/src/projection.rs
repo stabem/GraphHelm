@@ -301,6 +301,20 @@ pub struct PersistedNode {
     optionality: Optionality,
     controls: Vec<PersistedControl>,
     content_slot_ids: Vec<OpaqueId>,
+    /// The bound the USER declared for this node, carried into the store (M08).
+    ///
+    /// It was already declared in the graph and already demanded by our own linter
+    /// (`GHG101_DEFAULT_TIMEOUT`, for the executable node types) — and persistence dropped
+    /// it, so nothing downstream could derive a silence budget from what the user had
+    /// already told us. This is not a new policy; it is a declaration that did not survive
+    /// the store.
+    ///
+    /// `skip_serializing_if` keeps every graph version already published byte-identical:
+    /// replay re-serializes and re-hashes, so an always-emitted null would break their
+    /// chains. Absence therefore stays ABSENCE — never zero, never a default — and reads
+    /// downstream as `unknown`, which is the only honest verdict for work nobody bounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timeout_seconds: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -310,6 +324,12 @@ struct RawPersistedNode {
     optionality: Optionality,
     controls: Vec<PersistedControl>,
     content_slot_ids: Vec<OpaqueId>,
+    /// `u64` by type, so a negative, fractional or non-numeric declaration is REFUSED at
+    /// this boundary rather than arriving downstream as a bound nobody can read. A limit
+    /// that cannot be read is not a limit, and the surface must never publish calm over
+    /// one.
+    #[serde(default)]
+    timeout_seconds: Option<u64>,
 }
 
 impl PersistedNode {
@@ -318,6 +338,7 @@ impl PersistedNode {
         optionality: Optionality,
         controls: Vec<PersistedControl>,
         content_slot_ids: Vec<OpaqueId>,
+        timeout_seconds: Option<u64>,
     ) -> Result<Self, PersistenceError> {
         if controls.len() > 64 || content_slot_ids.len() > 64 || !all_unique(&content_slot_ids) {
             return Err(PersistenceError::new("node"));
@@ -327,7 +348,15 @@ impl PersistedNode {
             optionality,
             controls,
             content_slot_ids,
+            timeout_seconds,
         })
+    }
+
+    /// The bound the user declared, or `None` when they declared none. `None` is an
+    /// ABSENCE, never a zero: downstream it must produce `unknown`, not calm.
+    #[must_use]
+    pub const fn timeout_seconds(&self) -> Option<u64> {
+        self.timeout_seconds
     }
 
     #[must_use]
@@ -360,6 +389,7 @@ impl TryFrom<RawPersistedNode> for PersistedNode {
             raw.optionality,
             raw.controls,
             raw.content_slot_ids,
+            raw.timeout_seconds,
         )
     }
 }

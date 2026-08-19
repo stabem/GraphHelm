@@ -90,6 +90,37 @@ text = "The full local gate is green, both PostgreSQL locale passes included."
 rationale = "Proven by the gate run itself, not by one test: the grounding check pins that the gate script still ends in the GREEN verdict line and still carries both PostgreSQL passes."
 gate = true
 
+# M08 Task 0b: the seventh clause, added by OWNER DECISION on 2026-08-17 and in that order
+# — the promise entered §8 first, these bindings second, the grounding count last. M07
+# produced this property and M07's map REFUSED to anchor it, correctly: a clause added at
+# the end of a milestone by its own author is a promise nobody made. Every prover below
+# already existed and already proved the property; what was missing was the promise, not
+# the proof.
+[[clause]]
+id = "surfaces-cannot-disagree-about-attention"
+text = "No surface recalculates the attention verdict. The CLI, the HTTP API, the MCP server and the monitor all derive it from the same predicate, so they cannot disagree about whether the operator needs to wake up."
+rationale = "Three angles, none of which a private copy of the predicate can survive: the API's own answer must be a FILTER over its reasons rather than a second computation; the monitor must say exactly what the API says about silence, on a store seeded with a node in flight so the question actually exists; and the two parity traces (CLI vs API, MCP vs API) carry exception lists that are empty by design, so a surface that answered differently would have to be listed."
+
+[[clause.prover]]
+fn = "the_api_answers_the_sleep_question_and_zero_fills_every_bucket"
+suite = "api_http"
+assert_fingerprint = "not a second computation"
+
+[[clause.prover]]
+fn = "the_page_and_the_api_never_disagree_about_silence"
+suite = "monitor_http"
+assert_fingerprint = "the page must say 'not evaluated' exactly when the API does"
+
+[[clause.prover]]
+fn = "the_cli_and_the_api_report_identical_status_for_the_same_story"
+suite = "api_http"
+assert_fingerprint = "identical status data for the identical story"
+
+[[clause.prover]]
+fn = "the_mcp_and_the_api_report_identical_status_for_the_same_story"
+suite = "mcp_stdio"
+assert_fingerprint = "empty by design"
+
 # The refused scope (D-040): every banned monitor mutation, each citing the decision
 # register's own sentence. The grounding check verifies the quoted phrase still appears in
 # docs/DECISION_REGISTER.md — the ban stays diff-visible.

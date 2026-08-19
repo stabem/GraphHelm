@@ -13,7 +13,10 @@ mod recovery;
 mod signal;
 mod transition;
 
-pub use attention::{Attention, AttentionReason, attention};
+pub use attention::{
+    Attention, AttentionInputs, AttentionReason, ExecutionUnevaluated, NodeUnevaluated, NonEmpty,
+    PurchasedCalm, Remedy, RemedyUnavailable, Unevaluated, Verdict, attention, effective_budgets,
+};
 pub use bounds::{
     MAX_ACCEPTED_MUTATIONS, MAX_IDENTICAL_OUTCOMES, MAX_NODE_ATTEMPTS, MAX_READY_SET,
     MAX_SIGNALS_PER_EXECUTION,

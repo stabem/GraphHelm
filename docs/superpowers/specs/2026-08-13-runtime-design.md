@@ -143,6 +143,12 @@ Each plan produces working, testable software on its own, in dependency order.
 - An exhausted subscription route parks the node in `NeedsCapacity` — wait, not aggressive retry —
   per the gateway spec.
 - The full local gate is green, both PostgreSQL locale passes included.
+- No surface recalculates the attention verdict. The CLI, the HTTP API, the MCP server and
+  the monitor all derive it from the same predicate, so they cannot disagree about whether
+  the operator needs to wake up. (Added 2026-08-17 by owner decision, after M07 produced the
+  property and M07's own acceptance map correctly REFUSED to anchor it: a clause added at the
+  end of a milestone by its author is a promise nobody made. The order was promise first,
+  bindings second, count last — never a number pushed until an assert agrees.)
 
 ## 9. Risks
 

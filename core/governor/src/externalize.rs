@@ -998,6 +998,14 @@ fn build_topology(
                     node.optionality.clone(),
                     controls,
                     content_slot_ids,
+                    // The operator's own declaration, the one `GHG101_DEFAULT_TIMEOUT` warns
+                    // about when it is missing. Persistence used to drop it here, which left
+                    // the attention seam with no budget to compare a node's silence against —
+                    // so it answered `unknown` forever and no surface could ever say "sleep".
+                    // Read through the single definition in `protocols`, which the CLI also
+                    // uses to record the declared form at start. Two readings of one rule is
+                    // how the first divergence becomes invisible.
+                    graphhelm_protocols::declared_timeout_seconds(node),
                 )
                 .map_err(|_| GovernorError::InvalidProjection)?,
             ))

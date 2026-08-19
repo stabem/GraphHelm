@@ -3721,9 +3721,19 @@ fn official_graphs_prepare_safe_projection_without_authoring_plaintext() {
         .unwrap_or_else(|error| panic!("{name}: {error:?}"));
         let bytes = serde_json::to_vec(prepared.version()).unwrap();
         let expected_hashes = match name {
+            // RE-RECORDED DELIBERATELY. `PersistedNode` now carries the operator's declared
+            // `timeoutSeconds`, so the persisted topology of any graph that declares one is a
+            // different document and hashes differently. Both values move together because
+            // `persisted_hashes` derives the semantic hash from the topology; the AUTHORING
+            // graph is untouched and means exactly what it meant before.
+            //
+            // The evidence that this is the declared change and not an accident: of the three
+            // canaries, only this one moved. `research-to-publish.yaml` and
+            // `manual-override-deploy.yaml` declare no `timeoutSeconds` (measured: zero
+            // occurrences) and both still hash to the values frozen before this change.
             "software-feature.yaml" => (
-                "sha256:258ab606014c716ea9a7735107c36f95fcf984b12e84560efb4b06f876c24647",
-                "sha256:f000e619e23ad61e1ed0b25717f6c80c46723f19c2f6f3dedaa610d5fedbce51",
+                "sha256:804511a9be8aa778291e3740c96bba7a27bb706b31cb56100c46fd3fae27929b",
+                "sha256:4eaa88979d43364ac37e0bfe0bf70bdd08d90486f7bc78024ffcb47951ac5c97",
             ),
             "research-to-publish.yaml" => (
                 "sha256:5a71610a5a01f0f39f855276fbb3ff6a818cb83f5950ec626e0b686711ed50a1",

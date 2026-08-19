@@ -115,6 +115,15 @@ pub struct ServeArgs {
     pub route: Option<String>,
     #[arg(long)]
     pub staging: Option<PathBuf>,
+    /// Append every request and the exact bytes served to this file, as JSON lines.
+    ///
+    /// Off unless asked for: the recorded bodies carry the operator's own execution data, so
+    /// recording is a deliberate act rather than a default. The file is written OUTSIDE the
+    /// event store on purpose - a surface that wrote into the execution stream in order to
+    /// observe it would advance `headSequence` without advancing `lastEventAt`, and head
+    /// movement would stop implying progress.
+    #[arg(long = "read-audit")]
+    pub read_audit: Option<PathBuf>,
     #[arg(long = "tests-runner", default_value = "cargo")]
     pub tests_runner: String,
     /// Repeatable; defaults to `git`+`cargo` when empty (the same default the plan gives
@@ -190,6 +199,29 @@ pub enum ExecutionCommand {
         execution: Option<String>,
         #[arg(long)]
         node: String,
+    },
+    /// Declares a silence bound for one node AFTER the run began, valid from this sequence
+    /// forward. This is the socket the attention verdict's own remedy plugs into: the judge
+    /// found every reason pointing at `declareNodeBudget` while nothing could declare one.
+    ///
+    /// Answers with the RECOMPUTED verdict, never a bare ok -- a write that says "done" forces
+    /// a second read, and between them two surfaces can disagree about whether the operator
+    /// may sleep.
+    AmendBudget {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        node: String,
+        /// The bound the OPERATOR decides. Nothing suggests a value: a default here would
+        /// turn "absent means unknown" into "absent means 300s" through the back door.
+        #[arg(long)]
+        seconds: u64,
+        /// The frontier this was computed against, from the verdict that asked for it. An
+        /// amendment the store cannot place is refused, never guessed.
+        #[arg(long)]
+        at: u64,
     },
     /// Holds every dispatchable node (`Ready`/`Queued`), refusing unless the aggregate status is
     /// unset or `Running`.

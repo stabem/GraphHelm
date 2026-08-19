@@ -9,6 +9,37 @@ use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, PersistedActor, Sensiti
 use super::{Failure, append_event, execution_state, resolve_stream};
 use crate::commands::event_store;
 
+/// Whether an event is CONTENT — something that happened to the work — rather than wake
+/// bookkeeping, which is a reader announcing that it intends to listen.
+///
+/// This predicate is shared with the liveness instants, and the sharing is the point. The
+/// M08 judge caught `lastEventAt` advancing purely because of his own read-side `wake_arm`:
+/// the field an operator uses to judge whether anything is happening was being BUMPED BY THE
+/// ACT OF MONITORING. That is the head-versus-contentHead defect wearing a clock. A second
+/// copy of "what counts as something happening" is how the two would drift apart again.
+pub(crate) fn is_content(event: &graphhelm_protocols::EventEnvelope) -> bool {
+    !matches!(
+        event.kind,
+        graphhelm_protocols::EventKind::WakeLease(_)
+            | graphhelm_protocols::EventKind::WakeLeaseConsumed(_)
+    )
+}
+
+/// The head the DOORBELL compares against: content only, skipping wake bookkeeping.
+///
+/// ONE function, called by both `arm` and `status`. A second copy of "what the ring
+/// compares" is the defect this pair has spent two milestones killing — and it would be
+/// the worst possible place for it, since the two surfaces of the SAME tool disagreeing
+/// about the number is exactly what the M08 judge caught.
+fn content_head(history: &[graphhelm_protocols::EventEnvelope]) -> u64 {
+    history
+        .iter()
+        .filter(|event| is_content(event))
+        .map(|event| event.sequence)
+        .max()
+        .unwrap_or(0)
+}
+
 /// Arms (or re-arms — the fold replaces, never stacks) the caller's OWN lease. `cursor`
 /// defaults to the stream's current head: "wake me for anything after now".
 pub(crate) fn arm(
@@ -64,11 +95,19 @@ pub(crate) fn arm(
         ),
     )?;
 
+    // The number the DOORBELL decides on, returned by the call that arms (M08, from the
+    // judge's finding and A's measurement). `wake_arm` used to answer with `headSequence`
+    // alone — a number the ring never compares — so a client could not predict from the
+    // reply whether it would be woken. Measured before shipping: re-arming with this value
+    // is a fixed point (no free ring, and the next content event still wakes), so a client
+    // may echo it straight back.
+    let content_head = content_head(&history);
     Ok(serde_json::json!({
         "executionId": execution_id,
         "sessionId": session_id,
         "armedCursor": armed_cursor,
         "rendezvousId": rendezvous_id,
+        "contentHead": content_head,
     }))
 }
 
@@ -95,18 +134,7 @@ pub(crate) fn status(
     // reading of a surface that published one notion of head while the doorbell used
     // another. Both are reported now, because the operator's question is "will I be woken",
     // and only this number answers it.
-    let content_head = history
-        .iter()
-        .filter(|event| {
-            !matches!(
-                event.kind,
-                graphhelm_protocols::EventKind::WakeLease(_)
-                    | graphhelm_protocols::EventKind::WakeLeaseConsumed(_)
-            )
-        })
-        .map(|event| event.sequence)
-        .max()
-        .unwrap_or(0);
+    let content_head = content_head(&history);
 
     // F4: the alarm answers its OWN question. `live:false` alone is indistinguishable
     // between "never armed" and "already rang", which is exactly what the judge could not

@@ -57,6 +57,10 @@ fn token_path(events: &Path) -> PathBuf {
 /// (`assert_cmd::cargo::cargo_bin!`, backed by Cargo's `CARGO_BIN_EXE_graphhelm`) but drives a
 /// plain `std::process::Command` so a live `Child` can be kept and killed.
 fn serve(events: &Path) -> (ServerGuard, String, String) {
+    serve_with(events, &[])
+}
+
+fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
     let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
@@ -65,6 +69,7 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
             "--bind",
             "127.0.0.1:0",
         ])
+        .args(extra)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1681,7 +1686,7 @@ fn all_events(base: &str, token: &str, execution: &str) -> Vec<Value> {
 // legitimately differ between the two runs is who the commands are attributed to (the CLI's 04f
 // owner/system split vs. the API's caller-supplied header actor) — and attribution is not part of
 // `execution::render`'s output (see `core/…`/`execution/mod.rs`'s `render`: executionId, mode,
-// status, attentionRequired, attentionReasons, nodeStateCounts, signalsRecorded,
+// status, attention (tri-state), attentionReasons, nodeStateCounts, signalsRecorded,
 // acceptedMutations, untriagedInterruptions, plus
 // `headSequence` from `status.rs`), nor are the `--file`/`--fixtures` paths either surface was given
 // (redaction discipline: neither field ever reaches `render`'s output). So the final `status` `data`
@@ -1721,10 +1726,42 @@ fn parity_recovery_fixtures(directory: &Path) -> PathBuf {
 /// be recorded — with a comment justifying it — instead of silently loosening the assertion.
 const PARITY_EXCEPTIONS: &[&str] = &[];
 
+/// Instants are NORMALISED, not excluded, and the difference is the whole point.
+///
+/// M08 publishes `startedAt`, `lastEventAt` and `nodeLastEventAt` so the glance can say
+/// WHEN. The two halves of this guard drive the same story against two independent stores
+/// at two different moments, so those instants can never be equal -- that is a property of
+/// the clock, not a divergence between surfaces.
+///
+/// Deleting them would be the easy move and the wrong one: a deleted field is a field this
+/// guard stops watching, so a surface that dropped `lastEventAt` entirely would still pass.
+/// Instead each instant is replaced by a marker, which keeps under comparison everything
+/// that parity is actually about -- that the field is PRESENT on both sides, that
+/// `nodeLastEventAt` carries the SAME NODES, and that neither surface invented or lost one.
+/// Only the unequal-by-construction value goes.
+///
+/// `PARITY_EXCEPTIONS` therefore stays empty by design; this is not an exception, it is a
+/// comparison performed at the right granularity.
+fn normalise_instant(value: &mut Value) {
+    if !value.is_null() {
+        *value = Value::String("<instant>".to_owned());
+    }
+}
+
 fn strip_parity_exceptions(mut data: Value) -> Value {
     if let Some(object) = data.as_object_mut() {
         for field in PARITY_EXCEPTIONS {
             object.remove(*field);
+        }
+        for field in ["startedAt", "lastEventAt"] {
+            if let Some(value) = object.get_mut(field) {
+                normalise_instant(value);
+            }
+        }
+        if let Some(Value::Object(per_node)) = object.get_mut("nodeLastEventAt") {
+            for value in per_node.values_mut() {
+                normalise_instant(value);
+            }
         }
     }
     data
@@ -1733,7 +1770,7 @@ fn strip_parity_exceptions(mut data: Value) -> Value {
 /// Drives the parity story through the CLI alone — `start`, `signal`, `approve`, `pause`, `resume`,
 /// each a fresh `graphhelm` invocation exactly as `execution_cli.rs` drives them — and returns the
 /// final `execution status` read's `data`.
-fn run_story_over_cli(events: &Path, directory: &Path) -> Value {
+fn run_story_over_cli(events: &Path, directory: &Path) -> (Value, Value) {
     let graph = root().join("examples/graphs/manual-override-deploy.yaml");
     let blocking = parity_blocking_fixtures(directory);
     let start_data = cli_start(events, &blocking, PARITY_EXECUTION);
@@ -1741,6 +1778,12 @@ fn run_story_over_cli(events: &Path, directory: &Path) -> Value {
         start_data["nodeStateCounts"]["blocked"], 1,
         "the fixture must leave exactly one node blocked for approve to ready: {start_data}"
     );
+    // The BLOCKED moment, captured before the story resolves it. The final view is a
+    // COMPLETED execution, where attention is legitimately empty on both surfaces -- so a
+    // comparison made only at the end proves parity about attention by comparing two empty
+    // answers, and would pass with both surfaces broken (measured 2026-08-17: `false [] []`
+    // on both sides). Parity has to be asserted where the question exists.
+    let cli_blocked = cli_status(events, PARITY_EXECUTION);
 
     let signal_path = write_json(
         directory,
@@ -1828,7 +1871,7 @@ fn run_story_over_cli(events: &Path, directory: &Path) -> Value {
     assert_eq!(resume["ok"], true, "{resume}");
     assert_eq!(resume["data"]["status"], "completed", "{resume}");
 
-    cli_status(events, PARITY_EXECUTION)
+    (cli_blocked, cli_status(events, PARITY_EXECUTION))
 }
 
 /// Drives the identical parity story through the API alone — same graph, same fixtures at each
@@ -1836,7 +1879,7 @@ fn run_story_over_cli(events: &Path, directory: &Path) -> Value {
 /// mutation is attributed to `owner-parity`, deliberately never the CLI's own `owner-cli`/
 /// `system-cli` constants, so that a field which leaked attribution into `status` would show up as
 /// a real, visible difference below rather than an accidental match.
-fn run_story_over_api(events: &Path, directory: &Path) -> Value {
+fn run_story_over_api(events: &Path, directory: &Path) -> (Value, Value) {
     let graph = root().join("examples/graphs/manual-override-deploy.yaml");
     let blocking = parity_blocking_fixtures(directory);
 
@@ -1864,6 +1907,12 @@ fn run_story_over_api(events: &Path, directory: &Path) -> Value {
         reply["data"]["nodeStateCounts"]["blocked"], 1,
         "the fixture must leave exactly one node blocked for approve to ready: {reply}"
     );
+    // The same blocked moment on this surface -- see the note in the CLI half.
+    let api_blocked = get_json(
+        &format!("{base}/v1/executions/{PARITY_EXECUTION}"),
+        Some(&token),
+    )["data"]
+        .clone();
 
     let signal_out = directory.join("api-parity-evidence.json");
     let signal_body = serde_json::json!({
@@ -1916,11 +1965,14 @@ fn run_story_over_api(events: &Path, directory: &Path) -> Value {
     assert_eq!(status, 200, "{reply}");
     assert_eq!(reply["data"]["status"], "completed", "{reply}");
 
-    get_json(
-        &format!("{base}/v1/executions/{PARITY_EXECUTION}"),
-        Some(&token),
-    )["data"]
-        .clone()
+    (
+        api_blocked,
+        get_json(
+            &format!("{base}/v1/executions/{PARITY_EXECUTION}"),
+            Some(&token),
+        )["data"]
+            .clone(),
+    )
 }
 
 /// The parity guard itself: the same story, driven once per surface against two fresh stores, must
@@ -1931,11 +1983,30 @@ fn run_story_over_api(events: &Path, directory: &Path) -> Value {
 fn the_cli_and_the_api_report_identical_status_for_the_same_story() {
     let cli_directory = tempfile::tempdir().unwrap();
     let cli_events = cli_directory.path().join("events");
-    let cli_data = run_story_over_cli(&cli_events, cli_directory.path());
+    let (cli_blocked, cli_data) = run_story_over_cli(&cli_events, cli_directory.path());
 
     let api_directory = tempfile::tempdir().unwrap();
     let api_events = api_directory.path().join("events");
-    let api_data = run_story_over_api(&api_events, api_directory.path());
+    let (api_blocked, api_data) = run_story_over_api(&api_events, api_directory.path());
+
+    // This guard REFUSES TO RUN in a world where the question does not exist. The §8 clause
+    // this test anchors says no surface recalculates the attention verdict -- and a parity
+    // assertion made only over a finished execution compares two empty attentions, which is
+    // agreement no private copy of the predicate could ever break. The reviewer raised it
+    // against the clause and measurement confirmed it: at the end of the story both sides
+    // read `false [] []`.
+    assert!(
+        cli_blocked["attention"] == "needs_you"
+            && cli_blocked["attentionReasons"]
+                .as_array()
+                .is_some_and(|reasons| !reasons.is_empty()),
+        "the blocked moment must exercise attention or this parity proves nothing about it:          {cli_blocked}"
+    );
+    assert_eq!(
+        strip_parity_exceptions(cli_blocked),
+        strip_parity_exceptions(api_blocked),
+        "the CLI and the API must agree at the BLOCKED moment, where attention is non-empty;          this is the half of the parity that anchors the §8 clause on surfaces not disagreeing          about whether the operator is needed"
+    );
 
     assert_eq!(
         strip_parity_exceptions(cli_data),
@@ -2179,8 +2250,12 @@ fn the_api_answers_the_sleep_question_and_zero_fills_every_bucket() {
     let data = &view["data"];
 
     // F1: the question is answered directly, with named reasons — never inferred from counts.
+    // The tri-state, not a boolean: "needs_you" is one of THREE answers now, and the other
+    // two are "can_sleep" and "unknown". The judge's critical finding was that a boolean has
+    // no seat for "I could not tell", so the unknown was demoted to a side field while the
+    // headline said false.
     assert_eq!(
-        data["attentionRequired"], true,
+        data["attention"], "needs_you",
         "a blocked story must say the operator is needed: {view}"
     );
     let reasons = data["attentionReasons"].as_array().expect("reasons array");
@@ -2234,4 +2309,484 @@ fn the_api_answers_the_sleep_question_and_zero_fills_every_bucket() {
             "bucket {state:?} must be present with a number: {view}"
         );
     }
+}
+
+/// M08 Task 2: the surfaces answer time through ONE subtraction, and an unevaluated
+/// silence is VISIBLE rather than rendered as calm.
+///
+/// The §8 clause the owner approved forbids surfaces disagreeing about whether the
+/// operator is needed. Moving the subtraction out of the pure seam created a fresh chance
+/// to disagree — two implementations of "how long has this node been quiet" agree until
+/// the day they do not — so this pins that the API publishes the unevaluated set and that
+/// it is derived, not invented.
+#[test]
+fn the_api_says_when_silence_could_not_be_judged() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m08-silence";
+    let (_guard, base, token) = serve(&events);
+
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = write_json(
+        directory.path(),
+        "m08-fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "failure"}}),
+    );
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "m08-silence-start"),
+            ("X-GraphHelm-Actor", "owner-m08"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+            "project": root().to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let view = get_json(&format!("{base}/v1/executions/{execution}"), Some(&token));
+    let data = &view["data"];
+    assert!(
+        data["silenceUnevaluated"].is_array(),
+        "the surface must publish what it could NOT judge, not omit it: {view}"
+    );
+}
+
+/// M08 re-judge: the surface must CONTAIN time, not merely agree about it.
+///
+/// The blind judge refused this milestone with the seed it had already raised three times in
+/// M07 — the glance carries no liveness at all. The measurement was blunt: `lastEventAt`
+/// existed only inside a comment promising it would exist. Every guard this milestone wrote
+/// proved that the surfaces AGREE, and **agreement is satisfied by mutual silence**: two
+/// screens that say nothing about time agree perfectly.
+///
+/// So this guard asserts PRESENCE, not consistency. It is the structural half of the fix —
+/// without it, the seed can disappear again in a later milestone with every test still green.
+///
+/// The values are INSTANTS read out of the store, never durations computed from a clock:
+/// publishing elapsed seconds broke `hammering_the_monitor_never_changes_a_byte_of_the_store`
+/// the moment it was tried (the same node read 0s then 1s), because a reply that is a
+/// function of the wall clock cannot be compared for equality by any guard we own.
+#[test]
+fn the_status_carries_time_and_never_a_number_that_moves_on_its_own() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m08-liveness";
+    let (_guard, base, token) = serve(&events);
+
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = write_json(
+        directory.path(),
+        "m08-fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "failure"}}),
+    );
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "m08-liveness-start"),
+            ("X-GraphHelm-Actor", "owner-m08"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let view = get_json(&format!("{base}/v1/executions/{execution}"), Some(&token));
+    let data = &view["data"];
+
+    // Presence: the operator's "how long has this been like this?" must be answerable from
+    // the payload alone, without a second call and without arithmetic the caller invents.
+    let started = data["startedAt"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the glance must say when the run began: {view}"));
+    let last = data["lastEventAt"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the glance must say when the log last moved: {view}"));
+    for stamp in [started, last] {
+        chrono::DateTime::parse_from_rfc3339(stamp)
+            .unwrap_or_else(|_| panic!("time is published as an RFC3339 instant: {stamp}"));
+    }
+    assert!(
+        last >= started,
+        "the log cannot have moved before the run began: {started} .. {last}"
+    );
+
+    // Per node, because "the run is alive" and "this node is alive" are different questions
+    // and the wedged-node case is the one the judge kept finding.
+    let per_node = data["nodeLastEventAt"]
+        .as_object()
+        .unwrap_or_else(|| panic!("each node's own last movement is published: {view}"));
+    assert!(
+        !per_node.is_empty(),
+        "a story that ran must leave at least one node with a timestamp: {view}"
+    );
+
+    // And the negative half, which is what keeps the reply comparable: no elapsed number.
+    let text = data.to_string();
+    for banned in ["silenceSeconds", "ageSeconds", "elapsedSeconds", "uptime"] {
+        assert!(
+            !text.contains(banned),
+            "{banned} is a moving fact wearing a value's clothes; the surface publishes the \
+             INSTANT and the reader subtracts: {text}"
+        );
+    }
+}
+
+/// The budget must REACH the seam, and only a surface test can prove it did.
+///
+/// The judge's third refusal was `attention='unknown'` on every read across six minutes. The
+/// seam was right, the tri-state was right, and the answer was still useless: no surface ever
+/// filled `silence_budget_seconds`, so every node in flight came back unevaluated forever.
+/// The pure-crate test proves the seam CAN leave unknown; only this one proves the wiring
+/// actually carries the operator's declared `timeoutSeconds` from the published graph to the
+/// verdict.
+///
+/// That distinction is this milestone's whole lesson repeated once more: a component that
+/// behaves correctly in isolation proves nothing about the surface an operator reads.
+#[test]
+fn a_declared_timeout_reaches_the_verdict_over_the_real_surface() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m08-budgeted";
+    let (_guard, base, token) = serve(&events);
+
+    // This graph DECLARES `timeoutSeconds` on its executable nodes -- the same declaration
+    // `GHG101_DEFAULT_TIMEOUT` has always demanded and that persistence used to discard.
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "m08-budgeted-start"),
+            ("X-GraphHelm-Actor", "owner-m08"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({"file": graph.to_str().unwrap(), "mode": "supervised"}),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    // A node IN FLIGHT, or this proves nothing. The start drives to quiescence, so a store
+    // built by it alone has NOTHING running -- and then `silenceUnevaluated` is empty and the
+    // verdict is not unknown REGARDLESS of whether any budget reached the seam. Measured, not
+    // assumed: without this, the sabotage (budgets replaced by an empty map) left this test
+    // GREEN. Fifth instance in one milestone of a guard comparing two empty answers, and the
+    // rule that came out of it is stated here as required: name the store state that makes
+    // the question exist. Here it is `tests` RUNNING, which declares `timeoutSeconds: 1800`.
+    strand_running(&events, execution, "tests");
+
+    let view = get_json(&format!("{base}/v1/executions/{execution}"), Some(&token));
+    let data = &view["data"];
+    assert!(
+        data["nodeStateCounts"]["running"].as_u64().unwrap_or(0) > 0
+            || data["nodeStateCounts"]["queued"].as_u64().unwrap_or(0) > 0,
+        "the fixture must leave work in flight or the question does not exist: {view}"
+    );
+
+    // The verdict may legitimately be any of the three -- what it may NOT be is unknown for
+    // a node whose bound the operator wrote down. An unknown here means the declaration was
+    // dropped somewhere between the YAML and the seam, which is exactly the defect that made
+    // the judge refuse.
+    let unevaluated = data["silenceUnevaluated"].as_array().expect("array");
+    assert!(
+        unevaluated.is_empty(),
+        "every node in flight here declared its own timeoutSeconds, so none may come back \
+         unevaluated -- an entry means the declaration never reached the seam: {view}"
+    );
+    assert_ne!(
+        data["attention"], "unknown",
+        "a story whose nodes all declared their bounds must produce a real answer: {view}"
+    );
+}
+
+struct WallClock;
+impl graphhelm_protocols::Clock for WallClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+#[derive(Default)]
+struct Ids(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for Ids {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-budget-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
+}
+
+/// Leaves `node` RUNNING by direct append, because the drive the CLI performs runs to
+/// QUIESCENCE: a store built by `start_execution` alone has no node in flight, and silence
+/// is only judged for work in flight. A guard built on such a store compares two empty
+/// answers and calls that agreement — which is how this test passed while the page ignored
+/// the seam entirely. Same posture as `arm_lease` in `wake_http`: the fixture states the
+/// condition production reaches on its own (a node dispatched and not yet finished), and
+/// the transitions are the production ones, taken through `apply_transition` from the
+/// state the fold actually holds — never a state hand-set to a value production skips.
+fn strand_running(events: &Path, execution: &str, node: &str) {
+    let store = graphhelm_events::LocalEventRepository::open(
+        events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap();
+    loop {
+        let (stream, history) = store.read_unique_replay_stream().unwrap();
+        let projection =
+            graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).unwrap();
+        let current = projection
+            .node_states
+            .get(node)
+            .copied()
+            .unwrap_or(graphhelm_protocols::NodeState::Draft);
+        // Read the step off the state the fold HOLDS, never off a step count: the drive
+        // already advanced this node some distance, and how far is production's business.
+        let (label, outcome) = match current {
+            graphhelm_protocols::NodeState::Draft => {
+                ("approve", graphhelm_protocols::NodeOutcome::Approved)
+            }
+            graphhelm_protocols::NodeState::Ready | graphhelm_protocols::NodeState::Queued => {
+                ("start", graphhelm_protocols::NodeOutcome::Started)
+            }
+            graphhelm_protocols::NodeState::Running => break,
+            other => panic!("{node} sits in {other:?}, from which production never reaches flight"),
+        };
+        let next_state =
+            graphhelm_execution::apply_transition(&graphhelm_execution::TransitionRequest {
+                current,
+                outcome,
+                attempts: projection.node_attempts.get(node).copied().unwrap_or(0),
+                identical_outcomes: projection.identical_outcomes_for(node, outcome),
+            })
+            .unwrap_or_else(|error| panic!("{label} from {current:?} must be legal: {error:?}"));
+        let next = store
+            .next_sequence(&stream.scope, &stream.stream_id)
+            .unwrap();
+        let request = graphhelm_events::PreparedAppend::new(
+            stream.scope.clone(),
+            graphhelm_protocols::OpaqueId::parse(stream.stream_id.clone()).unwrap(),
+            next,
+            vec![graphhelm_protocols::NewEvent::new(
+                // The state is part of the key because Ready and Queued both advance on
+                // Started, and two appends under one key is an IdempotencyConflict.
+                graphhelm_protocols::OpaqueId::parse(format!(
+                    "budget-{label}-{}",
+                    format!("{current:?}").to_lowercase()
+                ))
+                .unwrap(),
+                graphhelm_protocols::PersistedActor::new(
+                    graphhelm_protocols::PersistedActorType::Agent,
+                    graphhelm_protocols::ActorId::parse("agent-budget").unwrap(),
+                ),
+                graphhelm_protocols::Sensitivity::Internal,
+                graphhelm_protocols::EventKind::NodeOutcomeRecorded(
+                    graphhelm_protocols::NodeOutcomeRecorded {
+                        execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                        node_id: graphhelm_protocols::OpaqueId::parse(node).unwrap(),
+                        outcome,
+                        next_state,
+                        reason: None,
+                    },
+                ),
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        store.append_atomic(&request).unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Read audit: what a probing agent asked, and the exact bytes it was served.
+//
+// Four paid blind-judge runs produced findings whose own `evidence` field was empty, and the
+// probes that produced them left no trace anywhere: reads do not write to the store, and the
+// server logged nothing. So a finding could be neither reproduced nor checked, and re-running
+// the judge was the only way to learn anything — at subscription cost, every time.
+//
+// The audit is what makes a probe replayable for free afterwards. It is NOT telemetry about the
+// execution: it is a record of the read surface's own answers, kept outside the execution stream
+// for the reason the tests below pin.
+// ---------------------------------------------------------------------------------------------
+
+/// Every line the audit recorded, in order.
+fn audit_lines(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("the audit file {path:?} must be readable: {error}"))
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("each audit line is JSON"))
+        .collect()
+}
+
+/// A read is recorded with what was asked and the exact bytes that answered it.
+#[test]
+fn a_read_is_recorded_with_the_bytes_it_was_served() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let audit = directory.path().join("read-audit.jsonl");
+    let (_guard, base, token) = serve_with(&events, &["--read-audit", audit.to_str().unwrap()]);
+
+    let served = get_json(&format!("{base}/v1/executions/exec-audit"), Some(&token));
+
+    let lines = audit_lines(&audit);
+    let recorded = lines
+        .iter()
+        .find(|line| line["path"] == "/v1/executions/exec-audit")
+        .expect("the probe must be recorded");
+    assert_eq!(recorded["method"], "GET");
+    assert!(
+        recorded["status"].as_u64().is_some(),
+        "the audit records the status served: {recorded}"
+    );
+    // The exact bytes, not a summary of them. A finding that quotes what a surface answered can
+    // then be checked against the answer instead of believed.
+    assert_eq!(
+        recorded["body"], served,
+        "the audit must hold the same body the caller received"
+    );
+    // The token is a credential and must never be written to disk beside the audit.
+    let raw = std::fs::read_to_string(&audit).unwrap();
+    assert!(
+        !raw.contains(&token),
+        "the audit must never record the bearer token"
+    );
+}
+
+/// Recording a read must not change what a reader sees.
+///
+/// This is the trap the wake lease already sprang once: a surface that writes into the execution
+/// stream in order to observe it moves `headSequence` without moving `lastEventAt`, so head
+/// movement stops implying progress and the monitor poisons its own signal. The audit therefore
+/// lives outside the store entirely.
+#[test]
+fn recording_a_read_leaves_the_execution_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let audit = directory.path().join("read-audit.jsonl");
+    let (_guard, base, token) = serve_with(&events, &["--read-audit", audit.to_str().unwrap()]);
+
+    let before = get_json(&format!("{base}/v1/executions/exec-audit"), Some(&token));
+    for _ in 0..5 {
+        let _ = get_json(&format!("{base}/v1/executions/exec-audit"), Some(&token));
+        let _ = get_json(
+            &format!("{base}/v1/executions/exec-audit/events"),
+            Some(&token),
+        );
+    }
+    let after = get_json(&format!("{base}/v1/executions/exec-audit"), Some(&token));
+
+    assert_eq!(
+        before["data"]["headSequence"], after["data"]["headSequence"],
+        "reading must not advance the head"
+    );
+    assert_eq!(
+        before["data"]["lastEventAt"], after["data"]["lastEventAt"],
+        "reading must not touch the freshness signal"
+    );
+    // ...and the audit DID record, so the assertions above are not satisfied by a recorder that
+    // simply never ran.
+    assert!(
+        audit_lines(&audit).len() >= 11,
+        "the audit must have recorded every read it was asked to"
+    );
+}
+
+/// Without the flag there is no audit at all. Recording what a caller was served is a deliberate
+/// act, never a default: the bytes can carry an operator's own execution data.
+#[test]
+fn no_flag_means_no_recording() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let _ = get_json(&format!("{base}/v1/executions/exec-audit"), Some(&token));
+
+    let strays: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains("audit"))
+        .collect();
+    assert!(strays.is_empty(), "an audit appeared unasked: {strays:?}");
+}
+
+/// The judge's fifth run, and the invariant that makes it impossible to repeat.
+///
+/// He probed twice with his own node in flight and read `attention: "unknown"` beside
+/// `attentionReasons: []` — the remedy had been published in `silenceUnevaluated` and the
+/// field the story actually reads was left blank. That is the same beside-instead-of-inside
+/// geometry that produced the lying boolean two refusals earlier: an answer whose evidence
+/// lives next to it rather than in it.
+///
+/// The type now forbids the internal version (a non-calm verdict carries a NonEmpty payload,
+/// so an empty one does not compile). This guard pins the WIRE, which is the only surface the
+/// judge can see: **a reply that is not `can_sleep` may never publish an empty reason list.**
+#[test]
+fn a_non_calm_answer_never_publishes_an_empty_reason_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m08-unknown-wire";
+    let (_guard, base, token) = serve(&events);
+
+    // A graph that declares NO timeoutSeconds anywhere -- the judge's own situation.
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = write_json(
+        directory.path(),
+        "unknown-fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "failure"}}),
+    );
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "m08-unknown-start"),
+            ("X-GraphHelm-Actor", "owner-m08"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    // The store state that makes the question exist: work IN FLIGHT with no declared bound.
+    strand_running(&events, execution, "deploy");
+
+    let view = get_json(&format!("{base}/v1/executions/{execution}"), Some(&token));
+    let data = &view["data"];
+    // The headline may legitimately be `needs_you` here -- a named reason OUTRANKS an
+    // unknown -- but ranking must never erase. Both properties are pinned: the unjudged node
+    // survives into the payload, and the reason list is never blank on a non-calm answer.
+    assert_ne!(data["attention"], "can_sleep", "work is in flight: {view}");
+    let unevaluated = data["silenceUnevaluated"].as_array().expect("array");
+    assert!(
+        unevaluated.iter().any(|item| item["node"] == "deploy"),
+        "a node whose silence could not be judged must survive even when another reason          wins the headline -- outranking is not forgetting: {view}"
+    );
+
+    let reasons = data["attentionReasons"].as_array().expect("reasons array");
+    assert!(
+        !reasons.is_empty(),
+        "an unknown must SAY something in the field the operator reads -- publishing the \
+         remedy only in silenceUnevaluated is what the judge caught twice: {view}"
+    );
+    assert!(
+        reasons.iter().all(|reason| reason["kind"].is_string()),
+        "and every reason names its kind, not a mood: {view}"
+    );
 }

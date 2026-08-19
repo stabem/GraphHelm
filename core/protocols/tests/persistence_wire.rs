@@ -773,6 +773,7 @@ fn private_topology_constructors_validate_collections() {
         Optionality::Required,
         vec![],
         vec![OpaqueId::parse("slot-objective").unwrap()],
+        None,
     )
     .unwrap();
     let topology = PersistedTopology::new(
@@ -1005,7 +1006,8 @@ fn persistence_read_api_exposes_budget_edge_and_topology_fields() {
         BTreeMap::new(),
     )
     .unwrap();
-    let node = PersistedNode::new(NodeType::Agent, Optionality::Required, vec![], vec![]).unwrap();
+    let node =
+        PersistedNode::new(NodeType::Agent, Optionality::Required, vec![], vec![], None).unwrap();
     let topology = PersistedTopology::new(
         OpaqueId::parse("graph-fixture").unwrap(),
         ExecutionId::parse("execution-fixture").unwrap(),

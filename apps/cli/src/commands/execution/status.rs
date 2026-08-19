@@ -31,7 +31,19 @@ pub(crate) fn execute(
     let projection = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
     let head_sequence = history.last().map_or(0, |event| event.sequence);
-    let mut value = render(&projection);
+    // The read surface is the one that CAN measure: it is holding the history. It supplies
+    // the subtraction; the budget stays empty until a surface can see the manifest that
+    // declares it, and an unbudgeted node comes back as unevaluated rather than as calm.
+    let inputs = graphhelm_execution::AttentionInputs {
+        node_silence_seconds: super::node_silence_seconds(&history, chrono::Utc::now()),
+        // The budgets the operator declared, now that persistence carries them. Before this
+        // they never reached the seam at all, so every node in flight came back unevaluated
+        // and the verdict was PERMANENTLY unknown -- honest, and useless.
+        silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
+        // Where this read was looking, so a remedy can be placed in the history later.
+        at_sequence: Some(head_sequence),
+    };
+    let mut value = render(&projection, &inputs, &super::Liveness::measured(&history));
     value["headSequence"] = serde_json::json!(head_sequence);
     Ok(value)
 }

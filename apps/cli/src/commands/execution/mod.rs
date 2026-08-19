@@ -1,3 +1,4 @@
+pub(super) mod amend;
 pub(super) mod approve;
 pub(super) mod cancel;
 mod driver;
@@ -15,7 +16,7 @@ use graphhelm_events::{
     EventRepositoryError, ExecutionProjection, LocalEventRepository, PreparedAppend, ReplayError,
 };
 use graphhelm_execution::{
-    Attention, AttentionReason, TransitionRequest, apply_transition, attention,
+    Attention, AttentionInputs, AttentionReason, TransitionRequest, apply_transition, attention,
 };
 use graphhelm_protocols::{
     ActorId, Diagnostic, EventEnvelope, EventKind, ExecutionId, GraphSpec, IdGenerator, NewEvent,
@@ -457,6 +458,137 @@ pub(super) const fn node_state_label(state: NodeState) -> &'static str {
     }
 }
 
+/// How long each node has been quiet, in seconds — the ONE subtraction every surface uses.
+///
+/// The seam judges silence but never sees time (`core/execution` forbids `chrono` in
+/// production, and the projection folds a hash of the last event, not an instant), so the
+/// arithmetic lives here, at the impure edge. It lives here ONCE: the monitor used to fold
+/// its own `last_event_per_node`, and two implementations of "how long has this been
+/// quiet" agree until the day they do not. The §8 clause forbids exactly that disagreement,
+/// so the monitor calls this and the copy is gone — the same move that killed the third
+/// copy of the triage rule in M07.
+///
+/// A node with no event of its own is ABSENT from the result rather than reported as zero:
+/// absent means "not measured", which the seam turns into `silence_unevaluated`, while a
+/// zero would claim it was measured and found fresh.
+/// The liveness instants a surface publishes, or the honest statement that it measured none.
+///
+/// Mirrors `AttentionInputs`' posture exactly: a path holding the history MEASURES, and a
+/// path that does not SAYS SO rather than implying stillness. Everything here is an instant
+/// out of the store, never a duration -- see `node_last_event_at`.
+#[derive(Default)]
+pub(crate) struct Liveness {
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_event_at: Option<chrono::DateTime<chrono::Utc>>,
+    node_last_event_at: BTreeMap<String, chrono::DateTime<chrono::Utc>>,
+}
+
+impl Liveness {
+    /// `started_at` is the FIRST event this execution's history carries: the run begins when
+    /// its log does, which is a fact of the store rather than a guess about intent.
+    /// Reads the instants straight out of the store a command has just written to. Used by
+    /// EVERY path that can reach the history -- including the mutating ones.
+    ///
+    /// The silence BUDGET stays unmeasured on mutation replies, and that asymmetry is not an
+    /// oversight: judging silence needs a clock reading and a declared bound, while an
+    /// instant is a fact already sitting in the log. A command that appended to the store can
+    /// honestly report when the store last moved; it cannot honestly report whether that is
+    /// too long. Blurring the two is what produced the version of this reply where `start`
+    /// and `status`, read a second apart on the same execution, disagreed about whether time
+    /// exists -- caught by `execution_cli`'s independence tests, not by review.
+    pub(crate) fn from_store(
+        store: &graphhelm_events::LocalEventRepository,
+        scope: &graphhelm_protocols::RepositoryScope,
+        stream: &str,
+    ) -> Self {
+        store
+            .read_replay_stream(scope, stream)
+            .map(|history| Self::measured(&history))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn measured(events: &[EventEnvelope]) -> Self {
+        // CONTENT only, through the doorbell's own predicate. A reader arming a wake lease
+        // is announcing that it intends to listen, not reporting that anything happened, and
+        // the judge caught the previous version advancing `lastEventAt` on exactly that --
+        // liveness bumped by the act of monitoring.
+        let mut content = events.iter().filter(|event| wake::is_content(event));
+        let first = content.next().map(|event| *event.occurred_at.as_datetime());
+        let last = content
+            .next_back()
+            .map(|event| *event.occurred_at.as_datetime())
+            .or(first);
+        Self {
+            started_at: first,
+            last_event_at: last,
+            node_last_event_at: node_last_event_at(events),
+        }
+    }
+
+    fn stamp(at: Option<chrono::DateTime<chrono::Utc>>) -> serde_json::Value {
+        at.map_or(serde_json::Value::Null, |at| {
+            serde_json::json!(at.to_rfc3339())
+        })
+    }
+}
+
+// `node_silence_budget_seconds` lived here and read ONLY the original declaration, so a
+// budget the operator amended never reached a read. The write path folded amendments and the
+// read path did not: two answers to one question, which is the defect this milestone deleted
+// from the monitor on day one and which I then rebuilt across two files. The eighth judge run
+// caught it as "the remedy does not stick" -- amend returned `needs_you`, the next status read
+// reverted to `unknown`, and nothing in the run had changed.
+//
+// There is one function now, and it lives in the seam: `graphhelm_execution::effective_budgets`
+// folds the declaration and every amendment in log order. Deleted rather than left unused,
+// because a leftover reading is what a future edit re-attaches a surface to.
+
+/// When each node's log last moved, as an INSTANT read out of the store.
+///
+/// This is the source the whole liveness answer is built on, and it is deliberately a
+/// timestamp rather than an age: an instant is a fact the store already contains, so a reply
+/// carrying it is a pure function of the history and stays byte-comparable across reads. An
+/// age is a function of the wall clock, and the moment one was published every equality-based
+/// guard we own started failing -- the same node read 0s then 1s.
+///
+/// The subtraction still happens ONCE, in `node_silence_seconds` below, which is now a thin
+/// layer over this map rather than a second traversal.
+pub(crate) fn node_last_event_at(
+    events: &[EventEnvelope],
+) -> BTreeMap<String, chrono::DateTime<chrono::Utc>> {
+    let mut newest: BTreeMap<String, chrono::DateTime<chrono::Utc>> = BTreeMap::new();
+    for event in events {
+        let kind = serde_json::to_value(&event.kind).unwrap_or(serde_json::Value::Null);
+        if let Some(node) = kind["data"]["nodeId"].as_str() {
+            let at = *event.occurred_at.as_datetime();
+            newest
+                .entry(node.to_owned())
+                .and_modify(|current| {
+                    if at > *current {
+                        *current = at;
+                    }
+                })
+                .or_insert(at);
+        }
+    }
+    newest
+}
+
+pub(crate) fn node_silence_seconds(
+    events: &[EventEnvelope],
+    now: chrono::DateTime<chrono::Utc>,
+) -> BTreeMap<String, u64> {
+    node_last_event_at(events)
+        .into_iter()
+        .map(|(node, at)| {
+            // A clock that ran backwards (skew, a restored backup) must not report a
+            // negative age as a huge one: saturate at zero and let the budget decide.
+            let seconds = (now - at).num_seconds().max(0);
+            (node, u64::try_from(seconds).unwrap_or(0))
+        })
+        .collect()
+}
+
 /// Per-state node counts, keyed by the same wire vocabulary the projection itself uses.
 fn state_counts(node_states: &BTreeMap<String, NodeState>) -> BTreeMap<&'static str, u64> {
     // F2: every lifecycle state is a bucket, zero-filled. An omitted key reads as "no such
@@ -497,9 +629,78 @@ const ALL_NODE_STATES: [NodeState; 16] = [
 /// instead of recomputed: `core/execution`'s `attention` owns the predicate (M07 F1), so
 /// this list and `attentionReasons` can never disagree. The shape is unchanged, which is
 /// why every test that pinned it stays green untouched.
+/// The verdict word an operator reads: `needs_you`, `unknown`, `can_sleep`.
+fn verdict_tag(verdict: &graphhelm_execution::Verdict) -> &'static str {
+    match verdict {
+        graphhelm_execution::Verdict::NeedsYou { .. } => "needs_you",
+        graphhelm_execution::Verdict::Unknown { .. } => "unknown",
+        graphhelm_execution::Verdict::CalmedByAmendment { .. } => "calmed_by_amendment",
+        graphhelm_execution::Verdict::CanSleep => "can_sleep",
+    }
+}
+
+/// `attentionReasons` for the wire, which for an UNKNOWN is not empty: each unjudged node
+/// becomes a reason naming itself and the input that was missing. A non-calm answer whose
+/// reason list is blank is unreadable, and it is what the blind judge found twice.
+/// The OPERATION that performs each remedy, named by the surface rather than by the seam.
+///
+/// Two jobs, and the second is the one the judge kept finding:
+///
+/// * **The fence the MCP surface did not have.** The monitor matches remedies exhaustively,
+///   so a new variant breaks its build; nothing did that for the tool layer. The reviewer
+///   measured the consequence: with the monitor's arm satisfied, the workspace builds clean
+///   while the tool surface silently cannot render the new remedy. A fence on one surface and
+///   not the other is exactly how F4 was born -- the first fence failing MASKS the second that
+///   does not exist. This match is that missing fence.
+/// * **The invitation, not just the offer.** A client told "declare a bound" still has to
+///   guess WHICH operation does it. Naming it turns an offer into something callable without
+///   a search, and the seventh run showed that answering a question the caller cannot act on
+///   is only half an answer.
+///
+/// Transport names live HERE and never in the seam: `core/execution` knows nothing about
+/// tools or routes, and the purity test pinning its two dependencies keeps that true.
+pub(crate) const fn remedy_operation(remedy: &graphhelm_execution::Remedy) -> Option<&'static str> {
+    match remedy {
+        graphhelm_execution::Remedy::DeclareNodeBudget { .. } => Some("amend_budget"),
+        // Nothing to call, and saying so is the point: "no operation exists" and "nobody named
+        // one" must not be the same absence.
+        graphhelm_execution::Remedy::Unavailable { .. } => None,
+    }
+}
+
+fn wire_reasons(answer: &Attention) -> Vec<serde_json::Value> {
+    if !answer.reasons().is_empty() {
+        return answer
+            .reasons()
+            .iter()
+            .map(|reason| serde_json::to_value(reason).unwrap_or(serde_json::Value::Null))
+            .collect();
+    }
+    answer
+        .silence_unevaluated()
+        .iter()
+        .map(|item| {
+            // The whole `Unevaluated` on the wire: a node-scoped unknown publishes its node,
+            // an execution-scoped one publishes none rather than an invented id.
+            let mut reason = serde_json::to_value(item).unwrap_or(serde_json::Value::Null);
+            if let Some(map) = reason.as_object_mut() {
+                map.insert("kind".to_owned(), serde_json::json!("silence_unevaluated"));
+                // The operation that performs this remedy, so a caller is INVITED rather than
+                // merely informed. `null` means there is nothing to call, said out loud.
+                map.insert(
+                    "operation".to_owned(),
+                    remedy_operation(item.remedy())
+                        .map_or(serde_json::Value::Null, |tool| serde_json::json!(tool)),
+                );
+            }
+            reason
+        })
+        .collect()
+}
+
 fn untriaged_interruptions(answer: &Attention) -> Vec<String> {
     answer
-        .reasons
+        .reasons()
         .iter()
         .filter_map(|reason| match reason {
             AttentionReason::UntriagedInterruption { node } => Some(node.clone()),
@@ -530,20 +731,60 @@ pub(in crate::commands) fn reported_status(
 /// status, per-state node counts, signal/mutation counters, and the untriaged-interruption triage
 /// list. `signal` reports its own governance-verdict shape instead, and `pause` extends this one
 /// with `heldNodes`.
-pub(super) fn render(projection: &ExecutionProjection) -> serde_json::Value {
+pub(super) fn render(
+    projection: &ExecutionProjection,
+    inputs: &AttentionInputs,
+    liveness: &Liveness,
+) -> serde_json::Value {
     // F1: the sleep question, answered ONCE and shared. `attentionRequired` is derived
     // from the reasons inside `attention`, and the triage list below is a FILTER over the
     // same value — no surface in the system recomputes this predicate.
-    let answer = attention(projection);
+    // M08 Task 1 delivers the judgement; Task 2 teaches this surface to measure ages and
+    // declare budgets. Until then the inputs are empty ON PURPOSE, and the answer says so
+    // through `silence_unevaluated` instead of pretending silence was judged.
+    let answer = attention(projection, inputs);
     serde_json::json!({
         "executionId": projection.execution_id,
         "mode": projection.mode,
         "status": reported_status(projection),
-        "attentionRequired": answer.required,
-        "attentionReasons": answer.reasons,
+        // The tri-state on the wire, replacing the boolean the judge caught lying. There is
+        // NO `attentionRequired` beside it: a convenience projection of a three-valued answer
+        // onto two values is exactly how "I could not tell" became "nothing needs you".
+        // The verdict's TAG only: the evidence lives in the variant now, and republishing it
+        // nested here as well would be the same value in two places on one wire.
+        "attention": verdict_tag(&answer.verdict),
+        // NEVER empty unless the answer is "can sleep". The judge's fifth run caught this
+        // field null on both probes while the verdict said `unknown`: the remedy had been
+        // published in `silenceUnevaluated` and the field the story actually reads was left
+        // blank, which is the same beside-instead-of-inside geometry that produced the lying
+        // boolean. An unknown now spends its reasons here too, saying which node and why.
+        "attentionReasons": wire_reasons(&answer),
         "nodeStateCounts": state_counts(&projection.node_states),
         "signalsRecorded": projection.signals_recorded,
         "acceptedMutations": projection.accepted_mutations,
         "untriagedInterruptions": untriaged_interruptions(&answer),
+        // What the surface could NOT judge, published rather than omitted: an empty answer
+        // and an unjudged one are different facts, and only one of them means "all calm".
+        "silenceUnevaluated": answer.silence_unevaluated(),
+        // The seed the blind judge raised in every M07 run and again against M08: a glance
+        // with no time in it cannot tell a healthy run from a wedged one. These are INSTANTS,
+        // so the reader does the subtraction and the reply stays a pure function of history.
+        // A path that did not measure publishes null rather than a stillness it cannot see.
+        "startedAt": Liveness::stamp(liveness.started_at),
+        "lastEventAt": Liveness::stamp(liveness.last_event_at),
+        "nodeLastEventAt": liveness
+            .node_last_event_at
+            .iter()
+            .map(|(node, at)| (node.clone(), at.to_rfc3339()))
+            .collect::<BTreeMap<String, String>>(),
+        // NOT published: the elapsed seconds the judgement was made from. Publishing them
+        // was tried and reverted — an ELAPSED age changes between two identical reads, and
+        // `hammering_the_monitor_never_changes_a_byte_of_the_store` caught it immediately
+        // (0s then 1s for the same node). Every equality-based guard we own — that one, the
+        // CLI/API parity trace, the MCP parity trace — depends on this reply being a pure
+        // function of the projection and its declared inputs. Time must therefore enter as
+        // an INSTANT (a stable fact the reader subtracts from), never as a duration the
+        // surface computed. That is what `lastEventAt` will publish; an elapsed number is a
+        // moving fact wearing a value's clothes.
     })
 }

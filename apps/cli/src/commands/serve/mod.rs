@@ -64,6 +64,11 @@ const SERVE_INVALID_CODE: &str = "GHCLI006_SERVE_INVALID";
 const UNAUTHORIZED_CODE: &str = "GHCLI007_SERVE_UNAUTHORIZED";
 /// No route matches the request (method+path), reported once auth has already passed.
 const NOT_FOUND_CODE: &str = "GHCLI008_SERVE_NOT_FOUND";
+/// The read audit was asked for and could not be written. Reported rather than swallowed: an
+/// audit that silently stops recording reads as "the caller asked nothing", which is the exact
+/// lie the audit exists to prevent.
+const AUDIT_CODE: &str = "GHCLI009_SERVE_AUDIT_FAILED";
+const AUDIT_COMMAND: &str = "serve.read_audit";
 
 /// The command name `serve`'s own pre-bind failures report under — there is no verb, unlike
 /// `execution`/`events`, so the bare subcommand name is the closest existing precedent
@@ -124,6 +129,9 @@ struct ServeState {
     /// before `drive_to_quiescence_async` starts and deregistered once it returns. `pause
     /// {"mode":"immediate"}` (STEP 5) looks a live execution up here to interrupt it.
     cancels: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Where to append the read audit, when `--read-audit` asked for one. `None` - the default -
+    /// means nothing is recorded at all.
+    read_audit: Option<Arc<Path>>,
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -150,6 +158,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         runtime: runtime_wiring.map(Arc::new),
         sealing: sealing.map(Arc::new),
         cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        read_audit: args.read_audit.as_deref().map(Arc::from),
     };
 
     let rt =
@@ -284,6 +293,10 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/start", post(routes::start))
         .route("/v1/executions/{id}/signal", post(routes::signal))
         .route("/v1/executions/{id}/approve", post(routes::approve))
+        .route(
+            "/v1/executions/{id}/amend-budget",
+            post(routes::amend_budget),
+        )
         .route("/v1/executions/{id}/pause", post(routes::pause))
         .route("/v1/executions/{id}/resume", post(routes::resume))
         .route("/v1/executions/{id}/cancel", post(routes::cancel))
@@ -298,6 +311,10 @@ fn build_router(state: ServeState) -> Router {
         // path with no route must still be refused 401, not fall through to a 404 that would
         // leak whether the path exists to an unauthenticated caller.
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
+        // OUTSIDE the auth layer, so a refused request is recorded too: "the judge was told
+        // 401" is exactly the kind of fact that was unrecoverable before. Headers never reach
+        // the recorder, so the bearer token cannot land on disk.
+        .layer(middleware::from_fn_with_state(state.clone(), record_read))
         // The monitor sub-router merges AFTER the auth layer: its cookie bootstrap replaces
         // the Bearer scheme (same token bytes, same constant-time verifier — one authority),
         // and it is GET-only by construction — a mutating verb never has a handler to reach,
@@ -1232,6 +1249,94 @@ fn encode_hex(bytes: &[u8]) -> String {
         out.push(DIGITS[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+/// Appends one JSON line per request: what was asked, and the exact bytes served.
+///
+/// This exists because four paid blind-judge runs produced findings that could not be checked:
+/// reads do not write to the store, the server logged nothing, and the findings' own evidence
+/// field came back empty. A probe that leaves no trace can only be re-run, never verified.
+///
+/// Three rules the shape encodes:
+///
+/// - It writes OUTSIDE the event store. A recorder that appended to the execution stream would
+///   advance `headSequence` without advancing `lastEventAt`, and head movement would stop
+///   implying progress - the surface poisoning the signal it exists to serve. That failure has
+///   already been paid for once, through the wake lease.
+/// - It never sees headers, so the bearer token cannot reach disk. Only method, path, query,
+///   status and body are recorded.
+/// - A failure to record is reported, never swallowed. An audit that silently stops recording
+///   is worse than no audit: it reads as "the caller asked nothing".
+async fn record_read(
+    State(state): State<ServeState>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Some(path_to_audit) = state.read_audit.clone() else {
+        return next.run(request).await;
+    };
+    let method = request.method().to_string();
+    let uri = request.uri().clone();
+    let response = next.run(request).await;
+
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::domain(
+                    AUDIT_COMMAND,
+                    vec![Diagnostic::error(
+                        AUDIT_CODE,
+                        "the response body could not be read for the audit",
+                        "/read-audit",
+                        "serve",
+                    )],
+                )
+                .output,
+            );
+        }
+    };
+
+    // The body is recorded as a value when it parses as JSON and as a string otherwise, so a
+    // reader can compare it against what a caller received without unquoting anything.
+    let recorded_body = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_else(|_| {
+        serde_json::Value::String(String::from_utf8_lossy(&bytes).into_owned())
+    });
+    let line = serde_json::json!({
+        "method": method,
+        "path": uri.path(),
+        "query": uri.query(),
+        "status": parts.status.as_u16(),
+        "body": recorded_body,
+    });
+
+    if let Err(error) = append_audit_line(&path_to_audit, &line) {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::domain(
+                AUDIT_COMMAND,
+                vec![Diagnostic::error(
+                    AUDIT_CODE,
+                    format!("the read audit could not be written: {error}"),
+                    "/read-audit",
+                    "serve",
+                )],
+            )
+            .output,
+        );
+    }
+    Response::from_parts(parts, axum::body::Body::from(bytes))
+}
+
+fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{line}")
 }
 
 #[cfg(test)]

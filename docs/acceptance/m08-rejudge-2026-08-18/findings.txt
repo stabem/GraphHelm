@@ -1,0 +1,20 @@
+--- F1 ---
+The one-glance verdict field is inert: status returns attention="unknown" with attentionReasons=[] on first open and still returns "unknown" 60s later, so the monitor never answers "can I go back to sleep?" — the operator must hand-derive it from the raw event log every time.
+
+--- F2 ---
+A real failure is invisible on the glance surface. The event log shows flaky_check outcome=retryable_failure reason=tool_exited_non_zero (seq 11), but status reports nodeStateCounts.failed=0 and folds the node into queued=1 — an operator who reads only status sees a clean board and goes back to sleep while a node is failing.
+
+--- F3 ---
+No stall or staleness signal. judge has been "running" since 18:38:15 with zero progress events through a 60s wake_wait that timed out; status still shows status=running and exposes only raw lastEventAt timestamps, forcing the operator to compare wall-clock times by hand to notice the execution is wedged.
+
+--- F4 ---
+The retry is unobservable: after flaky_check's retryable_failure the node was requeued at 18:38:15 and no retry attempt event appeared for over 60s. status exposes no attempt count, retry budget, or next-retry time, so the operator cannot tell whether it self-heals or is stuck forever.
+
+--- F5 ---
+silenceUnevaluated=["judge"] appears on the glance surface as bare jargon with no accompanying explanation or severity, so the operator cannot tell whether it is benign bookkeeping or the reason the execution is wedged.
+
+--- F6 ---
+Observing the monitor pollutes it: wake_arm wrote a wake_lease event (seq 14) into the same stream the operator reads, so status.headSequence advanced 13→14 while lastEventAt stayed pinned to seq 13. Head movement therefore no longer implies real progress, and the two fields disagree at a glance.
+
+--- F7 ---
+Answering the story's question took five tool calls (status, events, wake_arm, wake_wait, re-read) and still did not resolve, because every actionable fact — the failure, its reason, the stall — lives only in the raw event tail and not in the summary.

@@ -256,6 +256,7 @@ pub fn graph_published_event(key: &str, execution: &str) -> NewEvent {
                     .unwrap(),
                 ],
                 vec![],
+                None,
             )
             .unwrap(),
         )]),

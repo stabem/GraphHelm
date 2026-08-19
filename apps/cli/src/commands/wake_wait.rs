@@ -57,14 +57,14 @@ pub fn run(args: &WakeWaitArgs) -> Outcome {
     }
 }
 
-enum WaitEnd {
+pub(crate) enum WaitEnd {
     Rung,
     TimedOut,
     Unusable(String),
 }
 
 #[cfg(windows)]
-fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
+pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     use tokio::io::AsyncReadExt;
     let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
@@ -108,7 +108,7 @@ fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
 }
 
 #[cfg(not(windows))]
-fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
+pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     use std::io::Read;
     let runtime = match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => dir,

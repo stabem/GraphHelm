@@ -356,11 +356,15 @@ fn path_content_slots_are_identical_closed_1_0_0_contracts() {
             .is_empty()
     );
 
+    // DELIBERATE (M08): the pinned digest moved because the persisted node gained the
+    // OPTIONAL timeoutSeconds the user already declares and the linter already demands —
+    // a declaration that used to be dropped at persistence. The pin exists so a schema
+    // edit is a decision someone defends in a diff, which is what this comment is.
     assert_eq!(
         schema_digest(&current.schemas["persisted-graph-version"])
             .unwrap()
             .as_str(),
-        "sha256:3b49e3d800018c2fd5ed4f6b78c383f56b7da148cdc8e2bd734b250ce5a81906"
+        "sha256:da059b44e693939d367b817422894e5ff1dc741db25282cf245639760bbcf6e3"
     );
 }
 

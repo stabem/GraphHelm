@@ -1,0 +1,140 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: pair_loop_v1
+  name: GraphHelm pair loop
+  executionId: pair-loop
+  version: 1
+  labels:
+    origin: dogfood
+    mode: supervised
+spec:
+  entrypoints:
+    - propose
+  nodes:
+    propose:
+      type: agent
+      name: Propose the task
+      objective: One task, one owner, one falsifiable claim.
+      optionality: required
+      timeoutSeconds: 3600
+      agent:
+        ephemeral:
+          purpose: State the task and who holds the pen.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://ImplementationPlan@1
+          instructions: Name the task, the owner, and the claim that could be false.
+          completionContract:
+            requires:
+              - plan
+          isolationMinimum: tier_1
+    sabotage_list:
+      type: agent
+      name: Sabotage list, written BEFORE the code
+      objective: The reviewer publishes how he will try to break it, before it exists.
+      optionality: required
+      timeoutSeconds: 3600
+      agent:
+        ephemeral:
+          purpose: Publish the falsification list ahead of the implementation.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://ImplementationPlan@1
+          outputSchema: schema://ImplementationPlan@1
+          instructions: List the sabotages. Written first so neither side can tune to the other.
+          completionContract:
+            requires:
+              - plan
+          isolationMinimum: tier_1
+    implement:
+      type: agent
+      name: Implement, red first
+      objective: Observed red, then green, then the sabotage that proves the guard.
+      optionality: required
+      timeoutSeconds: 7200
+      agent:
+        ephemeral:
+          purpose: Write the change with the failing test observed first.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://ImplementationPlan@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Red observed, then green, then sabotage with the failing assertion quoted.
+          completionContract:
+            requires:
+              - build_artifact
+          isolationMinimum: tier_1
+    cross_review:
+      type: agent
+      name: Cross review, SPEC then QUALITY
+      objective: The one who did not write it runs the published sabotage list.
+      optionality: required
+      timeoutSeconds: 3600
+      agent:
+        ephemeral:
+          purpose: Verify against the list published before the code.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://ImplementationResult@1
+          outputSchema: schema://TestReport@1
+          instructions: Run each sabotage. Withdrawal requires a transcript, never prose.
+          completionContract:
+            requires:
+              - test_report
+          isolationMinimum: tier_1
+    gate:
+      type: gate
+      name: Local gate
+      objective: The whole gate, under --locked.
+      optionality: required
+      timeoutSeconds: 5400
+      completion:
+        requires:
+          - gate_green
+    judge:
+      type: evaluator
+      name: Blind judge
+      objective: Judge the shipped surface without seeing the code.
+      optionality: required
+      timeoutSeconds: 3600
+      judge:
+        {
+          "judgeId": "judge-usefulness",
+          "userStory": "As an operator I ask once whether I can go back to sleep.",
+          "mcpSurface": "the graphhelm MCP server; probe execution pair-loop",
+        }
+  edges:
+    - id: propose_to_sabotage
+      from: propose
+      to: sabotage_list
+      type: data
+    - id: sabotage_to_implement
+      from: sabotage_list
+      to: implement
+      type: data
+    - id: implement_to_review
+      from: implement
+      to: cross_review
+      type: data
+    - id: review_to_gate
+      from: cross_review
+      to: gate
+      type: data
+    - id: gate_to_judge
+      from: gate
+      to: judge
+      type: data
+  budgets:
+    maxNodes: 10
+    maxDepth: 6
+    maxMutations: 4
+    maxRetriesPerNode: 1
+    maxWallClockSeconds: 86400
+    maxApiCostUsd: 25
+    maxParallelModelCalls: 1
+  completion:
+    terminalNodes:
+      - judge
+    allowWaivers: true

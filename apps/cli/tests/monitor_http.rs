@@ -149,6 +149,107 @@ fn start_execution(events: &Path, directory: &Path, execution: &str) {
     assert!(output.status.success(), "{:?}", output);
 }
 
+struct WallClock;
+impl graphhelm_protocols::Clock for WallClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+#[derive(Default)]
+struct Ids(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for Ids {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-silence-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
+}
+
+/// Leaves `node` RUNNING by direct append, because the drive the CLI performs runs to
+/// QUIESCENCE: a store built by `start_execution` alone has no node in flight, and silence
+/// is only judged for work in flight. A guard built on such a store compares two empty
+/// answers and calls that agreement — which is how this test passed while the page ignored
+/// the seam entirely. Same posture as `arm_lease` in `wake_http`: the fixture states the
+/// condition production reaches on its own (a node dispatched and not yet finished), and
+/// the transitions are the production ones, taken through `apply_transition` from the
+/// state the fold actually holds — never a state hand-set to a value production skips.
+fn strand_node_running(events: &Path, execution: &str, node: &str) {
+    let store = graphhelm_events::LocalEventRepository::open(
+        events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap();
+    loop {
+        let (stream, history) = store.read_unique_replay_stream().unwrap();
+        let projection =
+            graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).unwrap();
+        let current = projection
+            .node_states
+            .get(node)
+            .copied()
+            .unwrap_or(graphhelm_protocols::NodeState::Draft);
+        // Read the step off the state the fold HOLDS, never off a step count: the drive
+        // already advanced this node some distance, and how far is production's business.
+        let (label, outcome) = match current {
+            graphhelm_protocols::NodeState::Draft => {
+                ("approve", graphhelm_protocols::NodeOutcome::Approved)
+            }
+            graphhelm_protocols::NodeState::Ready | graphhelm_protocols::NodeState::Queued => {
+                ("start", graphhelm_protocols::NodeOutcome::Started)
+            }
+            graphhelm_protocols::NodeState::Running => break,
+            other => panic!("{node} sits in {other:?}, from which production never reaches flight"),
+        };
+        let next_state =
+            graphhelm_execution::apply_transition(&graphhelm_execution::TransitionRequest {
+                current,
+                outcome,
+                attempts: projection.node_attempts.get(node).copied().unwrap_or(0),
+                identical_outcomes: projection.identical_outcomes_for(node, outcome),
+            })
+            .unwrap_or_else(|error| panic!("{label} from {current:?} must be legal: {error:?}"));
+        let next = store
+            .next_sequence(&stream.scope, &stream.stream_id)
+            .unwrap();
+        let request = graphhelm_events::PreparedAppend::new(
+            stream.scope.clone(),
+            graphhelm_protocols::OpaqueId::parse(stream.stream_id.clone()).unwrap(),
+            next,
+            vec![graphhelm_protocols::NewEvent::new(
+                // The state is part of the key because Ready and Queued both advance on
+                // Started, and two appends under one key is an IdempotencyConflict.
+                graphhelm_protocols::OpaqueId::parse(format!(
+                    "silence-{label}-{}",
+                    format!("{current:?}").to_lowercase()
+                ))
+                .unwrap(),
+                graphhelm_protocols::PersistedActor::new(
+                    graphhelm_protocols::PersistedActorType::Agent,
+                    graphhelm_protocols::ActorId::parse("agent-silence").unwrap(),
+                ),
+                graphhelm_protocols::Sensitivity::Internal,
+                graphhelm_protocols::EventKind::NodeOutcomeRecorded(
+                    graphhelm_protocols::NodeOutcomeRecorded {
+                        execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                        node_id: graphhelm_protocols::OpaqueId::parse(node).unwrap(),
+                        outcome,
+                        next_state,
+                        reason: None,
+                    },
+                ),
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        store.append_atomic(&request).unwrap();
+    }
+}
+
 #[test]
 fn the_bootstrap_url_sets_a_cookie_and_redirects_clean() {
     let directory = tempfile::tempdir().unwrap();
@@ -462,4 +563,72 @@ Connection: close
         "the store must be bit-identical after the hammer"
     );
     assert_eq!(before_status, after_status, "the status JSON is unchanged");
+}
+
+/// M08 Task 2: the page and the API cannot disagree about silence.
+///
+/// Moving the subtraction out of the pure seam created a fresh chance for two surfaces to
+/// compute "how long has this node been quiet" differently — the F1 defect (three copies of
+/// one predicate) reborn inside the fix, and forbidden by the §8 clause. This pins that the
+/// page's silence verdict IS the API's, node for node.
+///
+/// Found by sabotage against my own delivery: giving the monitor a private subtraction
+/// again left every existing test green, which meant the one-truth claim was an intention,
+/// not a guard.
+#[test]
+fn the_page_and_the_api_never_disagree_about_silence() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-monitor-silence";
+    start_execution(&events, directory.path(), execution);
+    strand_node_running(&events, execution, "deploy");
+    let (_guard, address, token) = serve(&events);
+
+    let (api_status, _, api_body) = request(
+        &address,
+        "GET",
+        &format!("/v1/executions/{execution}"),
+        &[("Authorization", &format!("Bearer {token}"))],
+    );
+    assert_eq!(api_status, 200, "{api_body}");
+    let api: serde_json::Value = serde_json::from_str(&api_body).expect("api json");
+    let unevaluated: Vec<String> = api["data"]["silenceUnevaluated"]
+        .as_array()
+        .expect("the API publishes what it could not judge")
+        .iter()
+        // Each entry is now an OBJECT carrying the node AND the reason it could not be
+        // judged -- the judge called the old bare-id list jargon with no remedy, and he was
+        // right. This guard reads the node out of it and still compares the two surfaces.
+        .filter_map(|entry| entry["node"].as_str().map(str::to_owned))
+        .collect();
+    // The guard refuses to run in a world where the question does not exist. Without this,
+    // agreement between two empty answers passes with BOTH surfaces broken -- the exact
+    // family this milestone spent the day burying, reappearing inside the guard written to
+    // forbid it.
+    assert!(
+        !unevaluated.is_empty(),
+        "the fixture must leave a node in flight or this test proves nothing: {api_body}"
+    );
+
+    let (page_status, _, page) = request(
+        &address,
+        "GET",
+        &format!("/monitor/{execution}"),
+        &[("Cookie", &format!("graphhelm_monitor={token}"))],
+    );
+    assert_eq!(page_status, 200);
+
+    // Every node the API could not judge must be SAID on the page, not rendered as calm.
+    for node in &unevaluated {
+        assert!(
+            page.contains(node),
+            "node {node} is unevaluated for the API but absent from the page: {page}"
+        );
+    }
+    let page_says_unevaluated = page.contains("silence NOT evaluated");
+    assert_eq!(
+        page_says_unevaluated,
+        !unevaluated.is_empty(),
+        "the page must say 'not evaluated' exactly when the API does — api: {unevaluated:?}"
+    );
 }

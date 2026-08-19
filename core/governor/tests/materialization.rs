@@ -160,11 +160,21 @@ fn scope() -> RepositoryScope {
 }
 
 fn preparation(keys: Keys) -> graphhelm_governor::ProjectionPreparation {
-    let graph = graphhelm_schema::load_graph(
+    preparation_with(keys, |_| {})
+}
+
+/// The same preparation, with a chance to edit the graph the user declared before it is
+/// published. Only a declaration the operator could actually write belongs here.
+fn preparation_with(
+    keys: Keys,
+    edit: impl FnOnce(&mut graphhelm_protocols::ExecutionGraph),
+) -> graphhelm_governor::ProjectionPreparation {
+    let mut graph = graphhelm_schema::load_graph(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml"),
     )
     .unwrap()
     .graph;
+    edit(&mut graph);
     let record = GraphVersion::publish(
         graph,
         None,
@@ -393,5 +403,124 @@ fn integrity_failures_never_collapse_into_content_unavailable() {
     assert_eq!(
         MaterializationError::Integrity.code(),
         "GHE005_INTEGRITY_FAILURE"
+    );
+}
+
+/// `timeoutSeconds` is the one budget the operator already declares and the linter already
+/// demands (`GHG101_DEFAULT_TIMEOUT`). Until now persistence dropped it on the floor, so the
+/// attention seam had no budget to compare silence against and answered `unknown` forever.
+/// This measures the declaration against the shipped example graph, not an invented fixture:
+/// `map_repository` declares 900 and `tests` declares 1800 in
+/// `examples/graphs/software-feature.yaml`.
+#[test]
+fn declared_node_timeouts_survive_externalization() {
+    let prepared = preparation(Keys::default());
+    let nodes = prepared.version().topology().nodes();
+    let of = |id: &str| {
+        nodes
+            .get(&graphhelm_protocols::OpaqueId::parse(id).unwrap())
+            .unwrap_or_else(|| panic!("the example graph declares a node `{id}`"))
+            .timeout_seconds()
+    };
+    assert_eq!(of("map_repository"), Some(900));
+    assert_eq!(of("tests"), Some(1800));
+    // A node that declares nothing must stay undeclared. Absence is the honest answer; a
+    // zero here would read as "budget of zero seconds" and make every node look overdue.
+    assert_eq!(of("plan"), None);
+}
+
+/// Agent B's declared unknown, measured rather than assumed — and the measurement answered
+/// something better than either of us expected.
+///
+/// His worry was that the linter only checks that `timeoutSeconds` EXISTS, never what it
+/// holds, so a graph declaring `-5` would pass lint and have to be carried as an unknown.
+/// Measuring the whole pipeline shows every unreadable declaration is refused by the
+/// governor's authoring validation, and refused in DEPTH: the property is typed in both
+/// schema copies, checked by `validate_positive_integer` in the property sweep, and checked
+/// again by `configuration.integer` when the node control is built.
+///
+/// The honest limit, stated because a guard nobody can break is indistinguishable from a
+/// guard that measures nothing: **no sabotage found makes the unreadable half of this test
+/// fail.** Removing the schema constraint from both copies, removing the sweep check, and
+/// making this crate's own read lenient (`as_u64().unwrap_or(0)`) — separately and all at
+/// once — still refused all five values. So this half is a witness to a property already
+/// enforced upstream, not a new control, and it must not be read as one.
+///
+/// The `42` assertion at the end is a different matter: it DID fail before this change, with
+/// `left: None, right: Some(42)`, and it is what stops persistence from silently going back
+/// to dropping the operator's declaration on the floor.
+#[test]
+fn an_unreadable_node_timeout_never_becomes_a_budget() {
+    /// What the pipeline did with a declaration: refused it somewhere, or carried it through.
+    #[derive(Debug)]
+    enum Outcome {
+        RefusedAtAuthoring,
+        RefusedByGovernor,
+        Carried(Option<u64>),
+    }
+
+    let declare = |declared: serde_json::Value| {
+        let mut graph = graphhelm_schema::load_graph(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/graphs/software-feature.yaml"),
+        )
+        .unwrap()
+        .graph;
+        graph
+            .spec
+            .nodes
+            .get_mut("plan")
+            .expect("the example graph declares a node `plan`")
+            .properties
+            .insert("timeoutSeconds".to_owned(), declared);
+        let Ok(version) = GraphVersion::publish(
+            graph,
+            None,
+            Actor::new(ActorType::Owner, "owner-test"),
+            Utc.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap(),
+        ) else {
+            return Outcome::RefusedAtAuthoring;
+        };
+        let record = version.to_record();
+        let Ok(prepared) = block_on(
+            SealingGraphExternalizer::new(EvidenceProtector::new(Keys::default()))
+                .prepare(scope(), &record),
+        ) else {
+            return Outcome::RefusedByGovernor;
+        };
+        Outcome::Carried(
+            prepared
+                .version()
+                .topology()
+                .nodes()
+                .get(&graphhelm_protocols::OpaqueId::parse("plan").unwrap())
+                .unwrap()
+                .timeout_seconds(),
+        )
+    };
+
+    // Declarations a person could plausibly write, none of them readable as a count of
+    // seconds. `0` is included on purpose: it is the value a dropped field would look like if
+    // anyone ever "defaulted" the absent case to zero, and it would make every node overdue.
+    for unreadable in [
+        serde_json::json!(-5),
+        serde_json::json!(0),
+        serde_json::json!(0.5),
+        serde_json::json!("900"),
+        serde_json::json!(null),
+    ] {
+        let outcome = declare(unreadable.clone());
+        assert!(
+            !matches!(outcome, Outcome::Carried(Some(_))),
+            "the declaration {unreadable} reached the store as a real budget ({outcome:?}); an              unreadable deadline must be refused or carried as nothing, never read as a number"
+        );
+    }
+
+    // ...and the refusal is CONDITIONAL. Without this, every assertion above would still hold
+    // in a build that refused EVERY timeout — which would silently switch the whole budget
+    // off and hand the seam back the permanent `unknown` this milestone exists to remove.
+    assert!(
+        matches!(declare(serde_json::json!(42)), Outcome::Carried(Some(42))),
+        "a legal declaration must still publish and still arrive"
     );
 }

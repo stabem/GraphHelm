@@ -1382,3 +1382,181 @@ fn status_html_writes_a_frozen_snapshot_and_keeps_the_envelope() {
     let refusal = json(&refused.stdout);
     assert_eq!(refusal["ok"], false, "{refusal}");
 }
+
+/// Every event the journal holds, as `(batch index, type, data)`.
+///
+/// The batch index is the point: the local store writes one line per ATOMIC append, so two
+/// events sharing an index were committed together or not at all. Adjacency in a flat list
+/// would only show they happened to land in order.
+fn journal_events(events: &std::path::Path) -> Vec<(usize, String, serde_json::Value)> {
+    fn find(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                find(&path, found);
+            } else if path.file_name().is_some_and(|name| name == "journal.jsonl") {
+                found.push(path);
+            }
+        }
+    }
+    let mut journals = Vec::new();
+    find(events, &mut journals);
+    journals.sort();
+    assert!(
+        !journals.is_empty(),
+        "no journal was written under {events:?}"
+    );
+    journals
+        .iter()
+        .flat_map(|path| {
+            std::fs::read_to_string(path)
+                .expect("journal readable")
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    serde_json::from_str::<serde_json::Value>(line).expect("journal line is JSON")
+                })
+                .collect::<Vec<_>>()
+        })
+        .enumerate()
+        .flat_map(|(batch, value)| {
+            value["events"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(move |event| {
+                    Some((
+                        batch,
+                        event["kind"]["type"].as_str()?.to_owned(),
+                        event["kind"]["data"].clone(),
+                    ))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn start_once(directory: &std::path::Path, graph: &str) -> std::path::PathBuf {
+    let events = directory.join("events");
+    let graph = root().join(graph);
+    let fixtures = all_success_fixtures(directory);
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "start failed: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    events
+}
+
+/// A start records the shape the operator declared, and it is readable without a seal.
+///
+/// This is the event whose absence left two separate rules mute: the attention seam had no
+/// deadline to compare a node's silence against, and M07's wedge rule had no node set to call
+/// complete. One missing event, two rules unable to speak.
+#[test]
+fn a_start_declares_the_shape_of_the_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = start_once(directory.path(), "examples/graphs/software-feature.yaml");
+    let declared = journal_events(&events)
+        .into_iter()
+        .find(|(_, kind, _)| kind == "execution_form_declared")
+        .expect("a start must declare the shape of the execution");
+
+    let node_ids: Vec<&str> = declared.2["nodeIds"]
+        .as_array()
+        .expect("the declared shape names its node set")
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    // The completeness set: every node the graph declares, so a rule can ask whether
+    // everything has been accounted for without a published topology to consult.
+    assert!(node_ids.contains(&"plan"), "node set: {node_ids:?}");
+    assert!(
+        node_ids.contains(&"map_repository"),
+        "node set: {node_ids:?}"
+    );
+
+    // The deadlines the operator wrote, carried as themselves.
+    assert_eq!(declared.2["nodeTimeoutSeconds"]["map_repository"], 900);
+    assert_eq!(declared.2["nodeTimeoutSeconds"]["tests"], 1800);
+}
+
+/// The declared shape and the start are ONE append, so a history holding the second without the
+/// first is an impossible prefix rather than an unlikely one.
+///
+/// Stated exactly, because the difference matters and cannot be papered over: this is a promise
+/// about what this version WRITES. Histories written before this event existed hold an
+/// `execution_started` with no declaration, and they must keep replaying — five of them are
+/// committed in `docs/acceptance/`. The projection reads their missing declaration as
+/// UNDECLARED, never as calm, which is the same answer the seam gives for a budget it was
+/// never handed.
+#[test]
+fn the_declared_shape_and_the_start_are_one_append() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = start_once(directory.path(), "examples/graphs/software-feature.yaml");
+    let all = journal_events(&events);
+    let batch_of = |wanted: &str| {
+        all.iter()
+            .find(|(_, kind, _)| kind == wanted)
+            .map(|(batch, _, _)| *batch)
+    };
+    let started = batch_of("execution_started");
+    let declared = batch_of("execution_form_declared");
+    assert!(
+        started.is_some() && declared.is_some(),
+        "a start writes both events or neither: {:?}",
+        all.iter().map(|(_, kind, _)| kind).collect::<Vec<_>>()
+    );
+    // The SAME atomic batch, not merely the next line. The store commits a batch whole or not
+    // at all, so there is no instant at which a reader could see the start without the shape.
+    assert_eq!(
+        declared, started,
+        "the declaration must be committed in the same atomic append as the start"
+    );
+}
+
+/// A node that declares no deadline arrives ABSENT — not zero, not a default.
+///
+/// Zero is the specific lie this guards: it is what a dropped field looks like once someone
+/// "helpfully" defaults it, and it would make every undeclared node permanently overdue, which
+/// reads to an operator as a system screaming about work that is perfectly fine.
+#[test]
+fn a_node_without_a_declared_deadline_arrives_absent_never_zero() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = start_once(directory.path(), "examples/graphs/software-feature.yaml");
+    let declared = journal_events(&events)
+        .into_iter()
+        .find(|(_, kind, _)| kind == "execution_form_declared")
+        .expect("a start must declare the shape of the execution")
+        .2;
+    let timeouts = declared["nodeTimeoutSeconds"]
+        .as_object()
+        .expect("the declared deadlines are an object");
+    assert!(
+        !timeouts.contains_key("plan"),
+        "`plan` declares no deadline, so it must have no entry at all: {timeouts:?}"
+    );
+    // ...and the absence is CONDITIONAL: the same map does carry the nodes that declared one.
+    // Without this, an empty map would satisfy the assertion above and hide a total failure.
+    assert!(
+        timeouts.contains_key("map_repository"),
+        "a declared deadline must still arrive: {timeouts:?}"
+    );
+}

@@ -67,12 +67,32 @@ findings are new dimensions, recorded as the M08 seed.
    is its charter; a bare pass may be unreachable by construction. The criterion is
    withdrawal of the named findings, which is checkable — but it means "the judge approved"
    is a sentence this project cannot say.
-2. **F4's receipt was proven by tests, not by the live run.** Both attempts to arm and ring
-   an operator alarm during the run failed for harness reasons — the serve drives the whole
-   execution inside `/start` on a current-thread runtime, so a concurrent request cannot be
-   served, and arming *before* the start is refused because no execution exists yet
-   (`alarm-refusal.txt` is committed rather than hidden). The lease the judge inspected was
-   its own. `rung`/`stale_rendezvous` receipts are covered by `wake_http`'s choreography.
+2. **F4's receipt was proven by tests, not by the live run — and the cause this entry once
+   asserted was wrong.** Both attempts to arm and ring an operator alarm during the run
+   failed (`alarm-refusal.txt` is committed rather than hidden); the lease the judge
+   inspected was its own, and `rung`/`stale_rendezvous` receipts are covered by
+   `wake_http`'s choreography.
+
+   The original text explained the failure by saying the serve drives the whole execution
+   inside `/start` on a current-thread runtime, so a concurrent request cannot be served.
+   **M08 measured that claim and refuted it.** With a drive parked inside a 90-second model
+   call, `/health` answered in 0.00s, `GET status` answered in 0.03s reporting the execution
+   as running, and `POST wake-lease` was **accepted** in 0.08s with a live lease — while the
+   journal grew durably mid-drive. The serve is not deaf, and arming during a live execution
+   works.
+
+   Four causes were proposed for the original failure across two agents — the model
+   adapter's blocking child process, a monopolised async thread, the store's write lock, and
+   an execution invisible from outside — and **all four were refuted by measurement**. The
+   fourth was refuted last: the probe that produced it swallowed the failure of its own
+   `POST /start`, so it described a store where nothing had ever begun. What remains is the
+   honest shape: **the M07 alarm failed, and why is not known.** The most likely remaining
+   hypothesis — the judge's own MCP traffic hitting the same serve — is recorded as a
+   hypothesis, not a cause, because four before it looked just as plausible.
+
+   A milestone record that carries a confident wrong cause is the same defect this project
+   refuses everywhere else: an artifact describing a world that does not exist. If a fix is
+   ever built here, it must be justified by a reproduction, never by this paragraph.
 3. **`wake_last_consumed` only grows.** A lease leaves the map when it burns; its receipt
    never does. Combined with the MCP `sessionId` being a per-process nonce, distinct
    sessions accumulate without bound in a long-lived execution. Not fixed on purpose:

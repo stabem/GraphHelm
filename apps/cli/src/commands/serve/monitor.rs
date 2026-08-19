@@ -4,13 +4,12 @@
 //! ride `<meta http-equiv="refresh">` whose URL carries the `since` cursor, so the delta
 //! strip is stateless — the browser tells the server what the operator last saw.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use graphhelm_events::ExecutionProjection;
-use graphhelm_execution::{Attention, AttentionReason, attention};
-use graphhelm_protocols::{EventEnvelope, NodeState, NodeType};
+use graphhelm_execution::{Attention, AttentionInputs, AttentionReason, attention};
+use graphhelm_protocols::{EventEnvelope, NodeState};
 
 use crate::commands::remediation::{self, RemediationAction};
 
@@ -19,14 +18,10 @@ const REFRESH_SECONDS: u32 = 2;
 /// The event tail renders at most this many lines, newest last.
 const TAIL_LIMIT: usize = 50;
 
-/// Staleness thresholds, per node kind where the stream carries the graph (a tool silent
-/// for 30s is wedged; an agent quietly thinking for two minutes is normal), and a single
-/// default where it does not — Task 3's reconciled reality: the CLI/serve start paths do
-/// not publish the graph onto the stream (the 05d Task 7 discovery), so kinds and edges
-/// exist only on streams with an M03-era publication.
-const STALE_TOOL_SECONDS: i64 = 30;
-const STALE_AGENT_SECONDS: i64 = 120;
-const STALE_DEFAULT_SECONDS: i64 = 90;
+// The staleness thresholds that used to be documented here are gone with the code they
+// described (M08 Task 2). This page no longer decides when silence matters: the seam does,
+// from budgets a surface DECLARES, and the page reports that verdict. Keeping a private
+// threshold beside a shared verdict is how two answers to one question get born.
 
 /// Escapes every dynamic string before it touches the page. Minimal on purpose: the five
 /// characters HTML assigns meaning to, nothing else — no template engine enters the tree.
@@ -70,7 +65,7 @@ fn tail_line(event: &EventEnvelope) -> String {
 /// `attention` owns the rule now; this page consumes it and can no longer disagree.
 fn untriaged(answer: &Attention) -> Vec<String> {
     answer
-        .reasons
+        .reasons()
         .iter()
         .filter_map(|reason| match reason {
             AttentionReason::UntriagedInterruption { node } => Some(node.clone()),
@@ -82,11 +77,90 @@ fn untriaged(answer: &Attention) -> Vec<String> {
 /// The sleep question in the words an operator needs at 3am, from the same value the API
 /// answers with. Each reason names its node, so the header is actionable rather than a mood.
 fn attention_line(answer: &Attention) -> String {
-    if !answer.required {
-        return "can sleep — nothing is waiting on you".to_owned();
+    // Three answers, and the middle one is the reason this stopped being a boolean: a page
+    // that printed "can sleep" while the API admitted it had not judged the silence was the
+    // judge's critical finding. False calm reads worse than a false alarm, because nobody
+    // scrolls past an all-clear.
+    match &answer.verdict {
+        graphhelm_execution::Verdict::CanSleep => {
+            return "can sleep — nothing is waiting on you".to_owned();
+        }
+        graphhelm_execution::Verdict::CalmedByAmendment { nodes } => {
+            // Calm, and the page says WHO BOUGHT IT and for how much. An operator who raised
+            // a ceiling over a live alarm must not read the same sentence as one who never
+            // had an alarm at all.
+            let bought: Vec<String> = nodes
+                .as_slice()
+                .iter()
+                .map(|calm| {
+                    format!(
+                        "{} has been quiet {}s, which was over the {}s once declared for it and is inside the {}s in force now",
+                        calm.node,
+                        calm.silence_seconds,
+                        calm.superseded_budget_seconds,
+                        calm.budget_seconds
+                    )
+                })
+                .collect();
+            return format!(
+                "can sleep — but only after a ceiling was raised: {}",
+                bought.join("; ")
+            );
+        }
+        graphhelm_execution::Verdict::Unknown { .. } => {
+            // The remedy, not the jargon. The judge read a bare list of node ids and called
+            // it exactly that; an unknown that does not say what would resolve it strands the
+            // reader on a page whose whole purpose is to end their uncertainty.
+            let said: Vec<String> = answer
+                .silence_unevaluated()
+                .iter()
+                .map(|item| match item {
+                    graphhelm_execution::Unevaluated::Node { node, reason, .. } => match reason {
+                        graphhelm_execution::NodeUnevaluated::NoDeclaredBudget => format!(
+                            "{node} declared no timeoutSeconds, so its silence cannot be judged (declare one on the node to get a real answer)"
+                        ),
+                        graphhelm_execution::NodeUnevaluated::NotMeasured => format!(
+                            "{node} has a declared bound but this page measured no age for it (a surface fault, not yours)"
+                        ),
+                    },
+                    graphhelm_execution::Unevaluated::Execution { reason, .. } => match reason {
+                        graphhelm_execution::ExecutionUnevaluated::NoRecordedNodeSet => {
+                            "nothing recorded which nodes this run was meant to cover, so nobody here can say it finished".to_owned()
+                        }
+                    },
+                })
+                .collect();
+            // The remedy the seam sanctioned, rendered as the action this page may offer.
+            // No surface invents one, and none stays silent about one that exists: the match
+            // is exhaustive, so a new remedy variant fails to compile here rather than
+            // quietly rendering nothing.
+            let offered: Vec<String> = answer
+                .silence_unevaluated()
+                .iter()
+                .map(|item| match item.remedy() {
+                    graphhelm_execution::Remedy::DeclareNodeBudget { node, .. } => {
+                        format!("declare timeoutSeconds on {node}")
+                    }
+                    graphhelm_execution::Remedy::Unavailable { because } => match because {
+                        graphhelm_execution::RemedyUnavailable::AmendmentDeclaresBoundsNotShape => {
+                            "you can declare bounds going forward, but not which nodes this run was meant to cover".to_owned()
+                        }
+                        graphhelm_execution::RemedyUnavailable::SurfaceMeasuredNoAge => {
+                            "the bound exists; this surface reported no age, so there is nothing for you to fix".to_owned()
+                        }
+                    },
+                })
+                .collect();
+            return format!(
+                "NOT KNOWN — {} · what would fix it: {}",
+                said.join("; "),
+                offered.join("; ")
+            );
+        }
+        graphhelm_execution::Verdict::NeedsYou { .. } => {}
     }
     let reasons: Vec<String> = answer
-        .reasons
+        .reasons()
         .iter()
         .map(|reason| match reason {
             AttentionReason::UntriagedInterruption { node } => {
@@ -95,6 +169,9 @@ fn attention_line(answer: &Attention) -> String {
             AttentionReason::BlockedNode { node } => format!("{node} is blocked"),
             AttentionReason::FailedNode { node } => format!("{node} failed"),
             AttentionReason::WaitingInputNode { node } => format!("{node} is waiting for you"),
+            AttentionReason::SilentNode { node } => {
+                format!("{node} has said nothing past its own deadline")
+            }
             AttentionReason::WedgedQuiescence => {
                 "wedged — the run says running while nothing can advance".to_owned()
             }
@@ -103,24 +180,15 @@ fn attention_line(answer: &Attention) -> String {
     format!("needs you: {}", reasons.join("; "))
 }
 
-/// The newest event timestamp per node, folded from the tail's own `nodeId` payloads —
-/// silence rendered as signal: a hung worker emits nothing, and the gap IS the alarm.
-fn last_event_per_node(events: &[EventEnvelope]) -> BTreeMap<String, DateTime<Utc>> {
-    let mut latest = BTreeMap::new();
-    for event in events {
-        let kind = serde_json::to_value(&event.kind).unwrap_or(serde_json::Value::Null);
-        if let Some(node) = kind["data"]["nodeId"].as_str() {
-            latest.insert(node.to_owned(), *event.occurred_at.as_datetime());
-        }
-    }
-    latest
-}
+// `last_event_per_node` lived here and folded its own `occurred_at` per node. It is gone:
+// `execution::node_silence_seconds` is the ONE subtraction every surface uses now, because
+// two implementations of "how long has this been quiet" agree until the day they do not,
+// and the §8 clause forbids the surfaces disagreeing about whether the operator is needed.
 
 /// What the graph publication adds when the stream carries one: node kinds (per-kind
 /// staleness) and the edge list (blast radius). Absent on CLI/serve-started streams —
 /// rendered honestly as absent, never guessed.
 struct GraphExtras {
-    kinds: BTreeMap<String, NodeType>,
     edges: Vec<(String, String)>,
     entrypoints: Vec<String>,
     /// Sink nodes stand in for terminals: the completion control's own terminal list is a
@@ -130,11 +198,6 @@ struct GraphExtras {
 
 fn graph_extras(projection: &ExecutionProjection) -> Option<GraphExtras> {
     let topology = projection.current_graph.as_ref()?.topology();
-    let kinds = topology
-        .nodes()
-        .iter()
-        .map(|(id, node)| (id.as_str().to_owned(), node.node_type().clone()))
-        .collect();
     let edges: Vec<(String, String)> = topology
         .edges()
         .iter()
@@ -157,20 +220,18 @@ fn graph_extras(projection: &ExecutionProjection) -> Option<GraphExtras> {
         .map(|id| id.as_str().to_owned())
         .collect();
     Some(GraphExtras {
-        kinds,
         edges,
         entrypoints,
         terminals,
     })
 }
 
-fn stale_bound(kind: Option<&NodeType>) -> i64 {
-    match kind {
-        Some(NodeType::Tool) => STALE_TOOL_SECONDS,
-        Some(NodeType::Agent) => STALE_AGENT_SECONDS,
-        _ => STALE_DEFAULT_SECONDS,
-    }
-}
+// `stale_bound` lived here with STALE_TOOL_SECONDS/STALE_AGENT_SECONDS: a SECOND silence
+// budget, private to this page and invisible to every other surface. It is gone. The seam
+// judges silence from budgets the surface declares, and the page reports that verdict —
+// two budgets is two answers to one question, which the section 8 clause forbids. The
+// constants are deleted rather than left unused, because a leftover threshold is what a
+// future edit re-attaches a judgement to.
 
 /// The pure renderer: projection + tail + the operator's last-seen cursor + now. `since`
 /// bounds the delta strip; the emitted refresh URL carries the CURRENT head as the next
@@ -205,7 +266,7 @@ fn render_page(
     events_dir: &Path,
     refresh: bool,
 ) -> String {
-    let latest = last_event_per_node(events);
+    let silence_seconds = crate::commands::execution::node_silence_seconds(events, now);
     let extras = graph_extras(projection);
     let head = events.last().map_or(0, |event| event.sequence);
     let execution = projection.execution_id.as_deref().unwrap_or("(none)");
@@ -235,7 +296,22 @@ fn render_page(
     // aggregate status alone is what reported green on a wedged run; this line is the
     // sentence the judge asked for, and it cannot disagree with the API because both read
     // the same value.
-    let answer = attention(projection);
+    // The SAME inputs the API is given: the shared subtraction, and no invented budget.
+    // An unbudgeted running node comes back unevaluated, and the page says so rather than
+    // printing calm.
+    let answer = attention(
+        projection,
+        &AttentionInputs {
+            node_silence_seconds: silence_seconds.clone(),
+            // The SAME declared budgets the API reads, through the same function. A private
+            // reading here is the two-budgets defect this page already lost its thresholds
+            // over.
+            silence_budget_seconds: graphhelm_execution::effective_budgets(projection),
+            // The page renders a snapshot it did not fetch by sequence, so it reports no
+            // vantage point rather than inventing one.
+            at_sequence: None,
+        },
+    );
     page.push_str(&format!(
         "<h1>{id}</h1><p>status: <b>{status}</b> · <b>{verdict}</b> · head: {head} · rendered: {now} · read-only (D-040): this page mutates nothing and offers nothing that does</p>
 ",
@@ -271,14 +347,26 @@ fn render_page(
          <th>last event</th><th>blast radius</th></tr>\n",
     );
     for (node, state) in &projection.node_states {
-        let silence = latest.get(node).map_or_else(
+        let unevaluated = answer.silence_unevaluated().iter().any(|listed| {
+            matches!(
+                listed,
+                graphhelm_execution::Unevaluated::Node { node: listed, .. } if listed == node
+            )
+        });
+        let silence = silence_seconds.get(node).map_or_else(
             || "never".to_owned(),
-            |at| {
-                let age = (now - *at).num_seconds().max(0);
-                let kind = extras.as_ref().and_then(|extras| extras.kinds.get(node));
+            |age| {
+                let age = *age;
                 let running = *state == NodeState::Running;
-                if running && age > stale_bound(kind) {
-                    format!("<span class=\"stale\">{age}s ago — silent past its bound</span>")
+                // The VERDICT comes from the seam, never from a bound this page keeps for
+                // itself: the page reports what the shared answer decided.
+                let judged_silent = answer.reasons().iter().any(|reason| {
+                    matches!(reason, AttentionReason::SilentNode { node: listed } if listed == node)
+                });
+                if running && unevaluated {
+                    format!("<span class=\"stale\">{age}s ago — silence NOT evaluated (no declared budget for this node type)</span>")
+                } else if judged_silent {
+                    format!("<span class=\"stale\">{age}s ago — silent past its declared budget</span>")
                 } else {
                     format!("{age}s ago")
                 }
@@ -754,9 +842,12 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap(),
             Path::new("events"),
         );
-        let answer = graphhelm_execution::attention(&projection);
+        let answer = graphhelm_execution::attention(&projection, &AttentionInputs::default());
         assert!(
-            answer.required,
+            matches!(
+                answer.verdict,
+                graphhelm_execution::Verdict::NeedsYou { .. }
+            ),
             "the fixture has an untriaged interruption, so it must need the operator"
         );
         assert!(
@@ -765,12 +856,13 @@ mod tests {
         );
         // Every reason the seam names appears in the header — the page cannot report a
         // subset and still claim to be the one-glance answer.
-        for reason in &answer.reasons {
+        for reason in answer.reasons() {
             let node = match reason {
                 graphhelm_execution::AttentionReason::UntriagedInterruption { node }
                 | graphhelm_execution::AttentionReason::BlockedNode { node }
                 | graphhelm_execution::AttentionReason::FailedNode { node }
-                | graphhelm_execution::AttentionReason::WaitingInputNode { node } => node.clone(),
+                | graphhelm_execution::AttentionReason::WaitingInputNode { node }
+                | graphhelm_execution::AttentionReason::SilentNode { node } => node.clone(),
                 graphhelm_execution::AttentionReason::WedgedQuiescence => "wedged".to_owned(),
             };
             assert!(
@@ -783,7 +875,7 @@ mod tests {
     /// The other half of the same rule: a story with nothing wrong says so, in the words an
     /// operator at 3am actually needs.
     #[test]
-    fn a_healthy_story_tells_the_operator_to_go_back_to_sleep() {
+    fn an_unjudged_story_says_it_does_not_know_instead_of_offering_sleep() {
         let mut projection = ExecutionProjection {
             execution_id: Some("exec-monitor".to_owned()),
             ..ExecutionProjection::default()
@@ -798,13 +890,27 @@ mod tests {
             Path::new("events"),
         );
         assert!(
-            !graphhelm_execution::attention(&projection).required,
+            !matches!(
+                graphhelm_execution::attention(&projection, &AttentionInputs::default()).verdict,
+                graphhelm_execution::Verdict::NeedsYou { .. }
+            ),
             "a running node with nothing blocked needs nobody"
         );
-        assert!(page.contains("can sleep"), "{page}");
+        // This assertion used to demand "can sleep" and that expectation WAS the defect the
+        // blind judge named. The fixture has a node in flight and declares no silence budget,
+        // so nothing here checked whether that node has gone quiet -- and an all-clear that
+        // skipped its own check is false calm. The page now says so out loud.
+        assert!(
+            page.contains("NOT KNOWN"),
+            "in-flight work with no budget is an UNKNOWN, not an all-clear: {page}"
+        );
+        assert!(
+            !page.contains("can sleep"),
+            "the page must not offer sleep on a check it never ran: {page}"
+        );
         assert!(
             !page.contains("needs you"),
-            "a healthy story must not cry wolf: {page}"
+            "and it must not cry wolf either -- nothing is claimed broken: {page}"
         );
     }
 }

@@ -92,7 +92,16 @@ pub(crate) fn execute(
         &prepared.fixtures,
         &system_actor(),
     )?;
-    Ok(render(&projection))
+    Ok(render(
+        &projection,
+        // Nothing measured here on purpose: this command reports the mutation it just made,
+        // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
+        // rather than into calm, so the omission is stated instead of implied.
+        &graphhelm_execution::AttentionInputs::default(),
+        // Same posture for the instants: a mutation reply publishes null rather than a
+        // stillness it never looked for.
+        &super::Liveness::default(),
+    ))
 }
 
 /// The decision half of `execute` (Milestone 05d Task 9's `execute_prepared` split): the hash

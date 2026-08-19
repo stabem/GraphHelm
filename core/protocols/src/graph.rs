@@ -64,6 +64,20 @@ pub struct GraphBudgets {
     pub max_parallel_model_calls: Option<u64>,
 }
 
+/// The deadline this node declares, in seconds, or `None` when it declares none.
+///
+/// One definition on purpose. The governor reads it to persist the node, and the CLI reads it
+/// to record the declared form at start; two readings of one rule is how the first divergence
+/// becomes invisible. `as_u64` is the whole type check — a negative, fractional, string or
+/// null declaration yields `None` here rather than a number, and absence stays absence and
+/// never becomes zero, which would make every node look permanently overdue.
+#[must_use]
+pub fn declared_timeout_seconds(node: &GraphNode) -> Option<u64> {
+    node.properties
+        .get("timeoutSeconds")
+        .and_then(serde_json::Value::as_u64)
+}
+
 /// A node's stable fields plus forward-compatible schema-permitted properties.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GraphNode {
@@ -77,7 +91,17 @@ pub struct GraphNode {
 }
 
 /// Node kinds accepted by the checked-in v1 wire schema.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `PartialOrd`/`Ord` exist so a caller can key a `BTreeMap` by node type (M08 Task 1: the
+/// per-type silence budget the surface injects). The alternative — a `Vec` of pairs — would
+/// admit two entries for the same type and make "which one wins" an undeclared rule, which
+/// is the defect family this milestone spent a day burying. A map makes the duplicate
+/// unrepresentable, so the compiler guarantees what a comment would have had to promise.
+///
+/// The derived order follows DECLARATION ORDER and exists ONLY for keying. Nothing may
+/// depend on it for iteration or display: reordering the variants below must stay a
+/// cosmetic edit, not a silent behaviour change.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     Agent,

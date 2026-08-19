@@ -22,7 +22,7 @@ fn acceptance_map_is_grounded() {
         .collect();
     let gate = std::fs::read_to_string(root.join("ci/gate.ps1")).expect("gate.ps1 readable");
 
-    assert_eq!(clauses.clause.len(), 6, "the six §8 clauses, exactly");
+    assert_eq!(clauses.clause.len(), 7, "the seven §8 clauses, exactly");
 
     // The manual run's committed evidence still exists and still hashes to what the run
     // recorded — in both directions (nothing named missing, nothing on disk unnamed) —

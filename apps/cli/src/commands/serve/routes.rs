@@ -32,6 +32,7 @@ const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
 const SIGNAL_COMMAND: &str = "execution.signal";
 const APPROVE_COMMAND: &str = "execution.approve";
+const AMEND_BUDGET_COMMAND: &str = "execution.amend_budget";
 const PAUSE_COMMAND: &str = "execution.pause";
 const RESUME_COMMAND: &str = "execution.resume";
 const CANCEL_COMMAND: &str = "execution.cancel";
@@ -442,6 +443,90 @@ pub(super) async fn approve(
     .await
 }
 
+/// `POST /v1/executions/{id}/amend-budget`: the socket the attention verdict's own remedy
+/// plugs into, over HTTP.
+///
+/// Body mirrors the remedy the caller was handed: `{"node", "seconds", "computedAtSequence"}`.
+/// `seconds` is the operator's own decision and has no default here for the same reason it has
+/// none in the seam -- a suggested value would turn "absent means unknown" into "absent means
+/// 300s" through the back door.
+#[allow(clippy::result_large_err)]
+pub(super) async fn amend_budget(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                AMEND_BUDGET_COMMAND,
+                "the request body is not valid JSON",
+                "/",
+            );
+        }
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        AMEND_BUDGET_COMMAND,
+        &execution_id,
+        &payload,
+        &["outcome"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            AMEND_BUDGET_COMMAND,
+            "the request body must carry \"node\"",
+            "/node",
+        );
+    };
+    let Some(seconds) = payload.get("seconds").and_then(serde_json::Value::as_u64) else {
+        return bad_request(
+            AMEND_BUDGET_COMMAND,
+            "the request body must carry \"seconds\": the bound is the operator's to decide",
+            "/seconds",
+        );
+    };
+    let Some(at) = payload
+        .get("computedAtSequence")
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return bad_request(
+            AMEND_BUDGET_COMMAND,
+            "the request body must carry \"computedAtSequence\": an amendment the store cannot              place is refused, never guessed",
+            "/computedAtSequence",
+        );
+    };
+    let node = node.to_owned();
+    let events = state.events.clone();
+    let target = execution_id.clone();
+
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        AMEND_BUDGET_COMMAND,
+        identity,
+        |actor, key| {
+            Box::pin(async move {
+                Ok(execution::amend::execute(
+                    &events,
+                    Some(target.as_str()),
+                    &node,
+                    seconds,
+                    at,
+                    actor,
+                    key,
+                )?)
+            })
+        },
+    )
+    .await
+}
+
 /// `POST /v1/executions/{id}/pause`: no request body — mirrors the CLI's `execution pause`, which
 /// takes only `--events`/`--execution`. `pause` takes no meaningful parameters beyond the URL's own
 /// execution id, so a fixed `Value::Null` stands in for "no body" in the request digest
@@ -804,7 +889,13 @@ async fn drive(
     state.cancels.lock().await.remove(execution_id);
 
     match result {
-        Ok(projection) => Ok(execution::render(&projection)),
+        Ok(projection) => Ok(execution::render(
+            &projection,
+            // This path holds a projection and no history: it states that it measured
+            // nothing instead of implying calm.
+            &graphhelm_execution::AttentionInputs::default(),
+            &execution::Liveness::default(),
+        )),
         Err(error) => Err(MutationError::from(driver_failure(&error.to_string()))),
     }
 }

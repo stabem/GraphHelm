@@ -267,3 +267,80 @@ fn a_recorded_cause_uses_its_stable_wire_name() {
     );
     assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
 }
+
+// -----------------------------------------------------------------------------------
+// M08: the per-node timeout must SURVIVE persistence. The user declares it, our own
+// linter demands it (GHG101_DEFAULT_TIMEOUT), and the store threw it away — so the
+// silence budget could never be derived from what the user already told us. This is not
+// a new policy; it is a declaration that did not survive the store.
+// -----------------------------------------------------------------------------------
+
+/// (1) A node WITH a declared timeout survives the round trip.
+#[test]
+fn a_declared_node_timeout_survives_persistence() {
+    let value = serde_json::json!({
+        "nodeType": "agent",
+        "optionality": "required",
+        "controls": [],
+        "contentSlotIds": [],
+        "timeoutSeconds": 300,
+    });
+    let node: graphhelm_protocols::PersistedNode =
+        serde_json::from_value(value.clone()).expect("a node with a timeout deserializes");
+    assert_eq!(
+        node.timeout_seconds(),
+        Some(300),
+        "the declaration the user made must reach the store"
+    );
+    assert_eq!(serde_json::to_value(&node).unwrap(), value);
+}
+
+/// (2) Absence stays ABSENCE: never zero, never a default. Downstream it becomes
+/// `unknown`, which is the only honest verdict for work nobody set a bound on.
+#[test]
+fn an_undeclared_node_timeout_stays_absent_and_never_becomes_zero() {
+    let value = serde_json::json!({
+        "nodeType": "tool",
+        "optionality": "required",
+        "controls": [],
+        "contentSlotIds": [],
+    });
+    let node: graphhelm_protocols::PersistedNode =
+        serde_json::from_value(value.clone()).expect("an old node still deserializes");
+    assert_eq!(
+        node.timeout_seconds(),
+        None,
+        "no declaration is not a budget of zero — silence must read as unknown, not calm"
+    );
+    assert_eq!(
+        serde_json::to_value(&node).unwrap(),
+        value,
+        "and it re-serializes byte-identically: every graph version already published \
+         must keep validating and keep its hash"
+    );
+}
+
+/// (3) An unreadable value is NOT a budget. A negative or non-numeric timeout must arrive
+/// downstream as absent, or the surface would publish calm over a number nobody can read.
+#[test]
+fn an_unreadable_node_timeout_is_refused_never_silently_accepted() {
+    for hostile in [
+        serde_json::json!("soon"),
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+    ] {
+        let value = serde_json::json!({
+            "nodeType": "agent",
+            "optionality": "required",
+            "controls": [],
+            "contentSlotIds": [],
+            "timeoutSeconds": hostile,
+        });
+        let parsed: Result<graphhelm_protocols::PersistedNode, _> = serde_json::from_value(value);
+        assert!(
+            parsed.is_err(),
+            "an unreadable timeout ({hostile}) must be REFUSED at the boundary, never \
+             accepted as a bound the operator would be told to trust"
+        );
+    }
+}

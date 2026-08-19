@@ -123,7 +123,11 @@ pub(crate) fn execute(
     }
 
     let projection = replay_projection(&store, &scope, &stream)?;
-    let mut data = render(&projection);
+    let mut data = render(
+        &projection,
+        &graphhelm_execution::AttentionInputs::default(),
+        &super::Liveness::default(),
+    );
     if let serde_json::Value::Object(ref mut map) = data {
         map.insert("heldNodes".to_owned(), serde_json::json!(held));
     }

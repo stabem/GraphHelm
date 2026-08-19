@@ -1,0 +1,44 @@
+{
+  "executionId": "exec-m08-judge5",
+  "findings": [
+    {
+      "claim": "The one field that answers the story — `attention` in `status` — reads `\"unknown\"` with an empty `attentionReasons` array, both on first open and 60s later. The glance yields no go-back-to-sleep answer at all; the operator gets a null verdict rather than yes/no.",
+      "evidence": [],
+      "remediation": "Make `attention` a total function over observable state (`ok` | `needs_operator` | `degraded`), never `unknown` for a live execution, and always populate `attentionReasons` with the concrete drivers (failed/queued-after-failure nodes, unevaluated silence budgets, untriaged interruptions).",
+      "severity": "critical"
+    },
+    {
+      "claim": "`flaky_check` recorded `retryable_failure` / `tool_exited_non_zero` at 20:13:23 and sits in `queued`, but `status` shows `failed: 0`, no retry count, no last-failure field, and `attention: unknown`. A glancing operator sees `status: running` with a clean state histogram and concludes all is well while a node is actively failing.",
+      "evidence": [],
+      "remediation": "Surface retryable failures in the summary: add `retriesInFlight` / `lastFailure` (node, reason, occurredAt, attempt) to `status`, and let any non-zero retry count drive `attention` off `ok`.",
+      "severity": "high"
+    },
+    {
+      "claim": "`judge` has been `running` since 20:13:24 with zero events for 60+ seconds, and `silenceUnevaluated: [{node: judge, reason: no_declared_budget}]` means stall detection is switched off for exactly the node that is stuck. A hung node can therefore never raise attention, which is the failure mode the operator most needs to be woken for.",
+      "evidence": [],
+      "remediation": "Apply a default silence budget when a node declares none, and treat `silenceUnevaluated` as a degraded-observability condition that itself sets `attention` to needs-operator with the node named.",
+      "severity": "high"
+    },
+    {
+      "claim": "Nothing in `status` explains itself; discovering the flaky_check failure required paging the raw hash-chained event log and reading 13 envelopes of runtime bookkeeping. The 'one glance' costs at minimum a second call plus manual event triage.",
+      "evidence": [],
+      "remediation": "Fold a human-readable digest into `status` (last N state-changing events with node, outcome, reason, timestamp) so no event-log read is needed to answer the sleep question.",
+      "severity": "medium"
+    },
+    {
+      "claim": "Arming the wake lease appended `wake_lease` event seq 14 to the same stream, so `headSequence` advanced 13 → 14 while `lastEventAt` stayed at 20:13:24. Monitoring mutates the very counter an operator reads as a liveness proxy, and the two progress indicators now contradict each other.",
+      "evidence": [],
+      "remediation": "Keep observer-side lease events out of the content stream (or expose `contentHead` — already computed internally — as the headline progress field) so operator instrumentation cannot fake forward motion.",
+      "severity": "medium"
+    },
+    {
+      "claim": "`wake_wait` returned `{\"outcome\":\"timeout\"}` with no indication of whether the execution is still healthy, so the sanctioned block-and-wait path also ends with no answer and forces another full `status` + `events` round trip.",
+      "evidence": [],
+      "remediation": "Include the attention verdict and content head in the wake_wait timeout reply, or document that a timeout means 'no change since armed cursor' so the operator can act on it directly.",
+      "severity": "low"
+    }
+  ],
+  "gateId": "judge-usefulness",
+  "nodeId": "judge",
+  "passed": false
+}

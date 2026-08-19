@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -162,6 +162,8 @@ pub enum EventKind {
     NodeStateChanged(NodeStateChanged),
     SimulationCompleted(SimulationCompleted),
     ExecutionStarted(ExecutionStarted),
+    ExecutionFormDeclared(ExecutionFormDeclared),
+    ExecutionFormAmended(ExecutionFormAmended),
     ExecutionModeChanged(ExecutionModeChanged),
     NodeOutcomeRecorded(NodeOutcomeRecorded),
     ExecutionCompleted(ExecutionCompleted),
@@ -310,6 +312,46 @@ pub struct ExecutionStarted {
     pub graph_version: u64,
     pub graph_hash: WireHash,
     pub mode: ExecutionMode,
+}
+
+/// The shape the operator DECLARED for this execution, recorded without a seal.
+///
+/// Separate from `GraphVersionPublished` on purpose: a seal exists to protect the evidence
+/// behind content slots, and a declared shape — the node set and the deadlines — carries no
+/// evidence to seal. Fusing the two concepts into one type is what forced every rule that
+/// needs the shape to demand a credential it has no use for.
+///
+/// `node_ids` is the completeness set: it is what lets a rule ask "has everything this graph
+/// declares been accounted for" without a published topology. `node_timeout_seconds` holds an
+/// entry ONLY for a node that declared one, so an absent key means the operator declared
+/// nothing — never a budget of zero.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionFormDeclared {
+    pub execution_id: OpaqueId,
+    pub node_ids: Vec<OpaqueId>,
+    pub node_timeout_seconds: BTreeMap<OpaqueId, u64>,
+}
+
+/// A bound the operator declared AFTER the run began, valid from its own sequence FORWARD.
+///
+/// Appended beside `ExecutionFormDeclared`, never replacing it: the fold takes the latest
+/// amendment up to the sequence being replayed, so a replay positioned earlier still answers
+/// with what was known THEN. The timeline reads "not judged for twelve minutes, judged from
+/// here" -- an amendment is a declaration, never an eraser, and nothing an operator types can
+/// make the history claim it knew something it did not.
+///
+/// `observed_silence_seconds` records what the operator was looking at when they decided, so
+/// a later reader can see the decision in its own light rather than in hindsight's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionFormAmended {
+    pub execution_id: OpaqueId,
+    /// The frontier this amendment was computed against. An amendment that cannot be placed
+    /// in the history is refusable, and refusing needs the number it claimed.
+    pub computed_at_sequence: u64,
+    pub node_timeout_seconds: BTreeMap<OpaqueId, u64>,
+    pub observed_silence_seconds: BTreeMap<OpaqueId, u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

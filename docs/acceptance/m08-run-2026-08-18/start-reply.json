@@ -1,0 +1,44 @@
+{
+  "ok": true,
+  "command": "execution.start",
+  "data": {
+    "acceptedMutations": 0,
+    "attentionReasons": [
+      {
+        "kind": "blocked_node",
+        "node": "flaky_check"
+      },
+      {
+        "kind": "failed_node",
+        "node": "judge"
+      }
+    ],
+    "attentionRequired": true,
+    "executionId": "exec-m08-judge",
+    "headSequence": 21,
+    "mode": "autopilot",
+    "nodeStateCounts": {
+      "blocked": 1,
+      "cancelled": 0,
+      "draft": 0,
+      "failed": 1,
+      "ghost": 0,
+      "invalidated": 0,
+      "linting": 0,
+      "paused": 0,
+      "queued": 0,
+      "ready": 0,
+      "running": 0,
+      "skipped": 0,
+      "succeeded": 1,
+      "waiting_capacity": 0,
+      "waiting_input": 0,
+      "waived": 0
+    },
+    "signalsRecorded": 0,
+    "silenceUnevaluated": [],
+    "status": "running",
+    "untriagedInterruptions": []
+  },
+  "diagnostics": []
+}

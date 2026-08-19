@@ -1,0 +1,44 @@
+{
+  "executionId": "exec-m08-judge9",
+  "findings": [
+    {
+      "claim": "The one-glance verdict defaults to attention=\"unknown\" for any node without a pre-declared silence budget. On first open of exec-m08-judge9 the monitor answered \"unknown\" with reason silence_unevaluated/no_declared_budget, and it stayed \"unknown\" through 101s of node silence. The operator's core question (sleep or not?) has no answer until they hand-configure a per-node bound, which is exactly the work the monitor exists to avoid.",
+      "evidence": [],
+      "remediation": "Ship a default execution-level silence bound (or derive one from observed node runtimes) so attention resolves to ok/needs_you on first read; reserve \"unknown\" for genuinely unobservable state and never for missing config that the runtime could default.",
+      "severity": "high"
+    },
+    {
+      "claim": "amend_budget's freshness token is not what its schema says. Passing the exact computed_at_sequence the verdict published (14) was refused: \"computed against sequence 14, and the execution has moved to 0\". Only computedAtSequence=0 was accepted; the next call then demanded 15. The field tracks the last accepted amendment, not the verdict frontier, so the documented remedy path fails on first use.",
+      "evidence": [],
+      "remediation": "Either make amend_budget accept the verdict's own computed_at_sequence (as documented and as the remedy payload advertises), or rename the field and return the expected value in the verdict itself so the operator can act without a guess-and-retry loop.",
+      "severity": "high"
+    },
+    {
+      "claim": "A node that failed and requeued is invisible in the glance. flaky_check recorded retryable_failure (tool_exited_non_zero) at seq 11 and has sat in `queued` for over 2 minutes; status shows failed:0, queued:1 and lists no attentionReason for it — even after a 30s silence budget was explicitly declared for that node. Silence appears to be evaluated only for `running` nodes, so a run wedged in queue reads as healthy forever.",
+      "evidence": [],
+      "remediation": "Evaluate silence budgets for queued/waiting nodes too, and surface retry churn in the glance (e.g. a retrying/degraded count or a retry_exhaustion attention reason) instead of folding failed-and-requeued back into a benign `queued` tally.",
+      "severity": "high"
+    },
+    {
+      "claim": "attention=\"needs_you\" carries no remedy or urgency. The reason object is bare {\"kind\":\"silent_node\",\"node\":\"judge\"} — unlike the silence_unevaluated reason, which did carry an operation and remedy. The operator learns they cannot sleep but not what to do or how bad it is.",
+      "evidence": [],
+      "remediation": "Attach the same remedy/operation shape (and a severity or since-timestamp) to every actionable attention reason, including silent_node.",
+      "severity": "medium"
+    },
+    {
+      "claim": "acceptedMutations stays 0 after mutations are accepted. Two amend_budget calls succeeded and moved headSequence 14 -> 15 -> 17, yet every subsequent status still reports acceptedMutations:0. An operator using that counter to confirm their intervention landed gets a false negative.",
+      "evidence": [],
+      "remediation": "Increment acceptedMutations on every accepted mutation, or drop the field if it means something narrower than its name suggests and document that meaning.",
+      "severity": "medium"
+    },
+    {
+      "claim": "Arming the wake lease appends to the same sequence space as real work: wake_arm returned headSequence 14 with contentHead 13, so a monitoring action inflates the head the operator uses to judge progress and to build the amend_budget token.",
+      "evidence": [],
+      "remediation": "Keep lease bookkeeping off the content stream, or have status report contentHead alongside headSequence so freshness comparisons are made against real activity.",
+      "severity": "low"
+    }
+  ],
+  "gateId": "judge-usefulness",
+  "nodeId": "judge",
+  "passed": false
+}

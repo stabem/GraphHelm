@@ -19,7 +19,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 12] = [
+const TOOLS: [ToolSpec; 14] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -82,6 +82,16 @@ const TOOLS: [ToolSpec; 12] = [
         description: "Read THIS session's live wake lease (GET /v1/executions/{executionId}/\
                       wake-lease).",
         schema: wake_status_schema,
+    },
+    ToolSpec {
+        name: "amend_budget",
+        description: "Declare a silence bound for one node AFTER the run began (POST                       /v1/executions/{executionId}/amend-budget), valid from that sequence                       forward. This is the operation the attention verdict's own remedy names:                       the seventh judge run found every reason pointing at declareNodeBudget                       while no exposed tool could declare one. Answers with the RECOMPUTED                       verdict, never a bare ok.",
+        schema: amend_budget_schema,
+    },
+    ToolSpec {
+        name: "wake_wait",
+        description: "Block until THIS session's armed lease rings, or until the bound                       expires. Reads GET /v1/executions/{executionId}/wake-lease first to                       refuse any rendezvous this session does not hold, then blocks locally                       -- the block itself is NOT an API call, which is why this tool alone                       names the request it consults rather than the one it performs.                       Content-free by construction: the reply says THAT something happened,                       never what -- re-read the log to learn anything.",
+        schema: wake_wait_schema,
     },
     ToolSpec {
         name: "probe",
@@ -215,6 +225,40 @@ fn wake_status_schema() -> serde_json::Value {
     )
 }
 
+/// The wait is bounded IN THE SCHEMA, not only in the code: a client reading the tool table
+/// sees the ceiling without calling anything. An absent bound would make "wait" mean "hang",
+/// and a chat client that hangs is indistinguishable from one that died.
+/// The remedy handed back to the caller, as arguments. `seconds` has NO default and no
+/// suggestion: the number is the operator's decision, and a hint here would be the invented
+/// threshold this milestone deleted on day one, returning through the tool surface.
+fn amend_budget_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "node": {"type": "string"},
+            "seconds": {"type": "integer", "minimum": 1,
+                "description": "The bound YOU decide. Nothing here suggests one."},
+            "computedAtSequence": {"type": "integer", "minimum": 0,
+                "description": "The frontier the verdict you are answering was computed at.                                 A stale amendment is refused with the current one."},
+        }),
+        &["executionId", "node", "seconds", "computedAtSequence"],
+    )
+}
+
+fn wake_wait_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "rendezvousId": {"type": "string",
+                "description": "Opaque rendezvous identity -- never a filesystem path."},
+            "timeoutSeconds": {"type": "integer", "minimum": 1,
+                "maximum": MAX_WAIT_SECONDS,
+                "description": "Upper bound on the block; defaults to the maximum."},
+        }),
+        &["executionId", "rendezvousId"],
+    )
+}
+
 fn probe_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({
@@ -223,6 +267,84 @@ fn probe_schema() -> serde_json::Value {
         }),
         &["route"],
     )
+}
+
+/// The ceiling on a blocked MCP wait. Chosen to be shorter than any sane client's own
+/// request timeout: the sidecar may block for far longer, but a chat transport that has
+/// stopped answering looks dead, and "looks dead" is a worse failure than "timed out".
+const MAX_WAIT_SECONDS: u64 = 300;
+
+/// The blocking wait as an MCP primitive (M08 Task 4), with the 05g sleeper-only rule
+/// intact: a session may wait ONLY on a lease it holds itself. That is enforced by asking
+/// the API which lease THIS session (`nonce`) has live, and refusing any other rendezvous --
+/// so a hostile or careless client cannot park itself on a peer's doorbell and consume the
+/// ring that peer was waiting for.
+///
+/// The reply is content-free by construction: `rung` or `timeout`, nothing else. Whatever
+/// bytes crossed the rendezvous die in the sidecar's wait; the caller learns only THAT it
+/// should re-read its log.
+fn wake_wait_tool(api: &ApiClient, nonce: &str, arguments: &serde_json::Value) -> HandlerOutcome {
+    let (Some(execution), Some(rendezvous)) = (
+        str_arg(arguments, "executionId"),
+        str_arg(arguments, "rendezvousId"),
+    ) else {
+        return HandlerOutcome::Error {
+            code: INVALID_PARAMS,
+            message: "wake_wait needs both executionId and rendezvousId".to_owned(),
+        };
+    };
+    let bound = arguments
+        .get("timeoutSeconds")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(MAX_WAIT_SECONDS)
+        .clamp(1, MAX_WAIT_SECONDS);
+
+    // Sleeper-only, asked of the API rather than assumed: the lease this session holds is
+    // the only rendezvous it may block on.
+    let live = api.request(
+        "GET",
+        &format!("/v1/executions/{execution}/wake-lease?sessionId={nonce}"),
+        None,
+        None,
+        None,
+    );
+    let held = match live {
+        Ok((_status, envelope)) => envelope["data"]["rendezvousId"].as_str().map(str::to_owned),
+        Err(transport) => {
+            return HandlerOutcome::Result(serde_json::json!({
+                "content": [{"type": "text", "text": format!("the API is unreachable: {transport}")}],
+                "isError": true,
+            }));
+        }
+    };
+    if held.as_deref() != Some(rendezvous) {
+        return HandlerOutcome::Result(serde_json::json!({
+            "content": [{"type": "text", "text": format!(
+                "refused: this session holds {held:?}, not {rendezvous:?} -- a session waits only on its own lease (05g sleeper-only)"
+            )}],
+            "isError": true,
+        }));
+    }
+
+    let outcome = match crate::commands::wake_wait::wait(rendezvous, bound) {
+        crate::commands::wake_wait::WaitEnd::Rung => "rung",
+        crate::commands::wake_wait::WaitEnd::TimedOut => "timeout",
+        crate::commands::wake_wait::WaitEnd::Unusable(reason) => {
+            return HandlerOutcome::Result(serde_json::json!({
+                "content": [{"type": "text", "text": format!("the rendezvous is unusable: {reason}")}],
+                "isError": true,
+            }));
+        }
+    };
+    // Content-free: the outcome word and the bound that produced it. Never a payload.
+    HandlerOutcome::Result(serde_json::json!({
+        "content": [{"type": "text", "text": serde_json::json!({
+            "ok": true,
+            "command": "wake.wait",
+            "data": {"outcome": outcome, "timeoutSeconds": bound},
+        }).to_string()}],
+        "isError": false,
+    }))
 }
 
 /// The `tools/list` reply body: the closed table, verbatim.
@@ -289,6 +411,14 @@ pub(crate) fn call(
                       credentials never travel the chat"
                 .to_owned(),
         };
+    }
+
+    // `wake_wait` is the one tool whose work is NOT an API request: it blocks on the local
+    // rendezvous. It is handled before the request table rather than inside it, because
+    // folding a blocking local wait into the arm that builds HTTP calls is how a surface
+    // grows a second meaning for the same shape.
+    if name == "wake_wait" {
+        return wake_wait_tool(api, nonce, arguments);
     }
 
     let key = derive_key(nonce, rpc_id);
@@ -402,6 +532,22 @@ pub(crate) fn call(
             api.request(
                 "POST",
                 &format!("/v1/executions/{id}/wake-lease"),
+                Some(&body),
+                Some(&key),
+                if_match,
+            )
+        }),
+        "amend_budget" => require(arguments, "executionId").map(|id| {
+            let body = serde_json::json!({
+                "node": str_arg(arguments, "node").unwrap_or_default(),
+                "seconds": arguments.get("seconds").and_then(serde_json::Value::as_u64),
+                "computedAtSequence": arguments
+                    .get("computedAtSequence")
+                    .and_then(serde_json::Value::as_u64),
+            });
+            api.request(
+                "POST",
+                &format!("/v1/executions/{id}/amend-budget"),
                 Some(&body),
                 Some(&key),
                 if_match,

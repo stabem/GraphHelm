@@ -5,14 +5,6 @@
 //! dependency; these tests make that statement fail loudly the first time it stops being true.
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
-const LIB: &str = include_str!("../src/lib.rs");
-const BOUNDS: &str = include_str!("../src/bounds.rs");
-const DISPATCH: &str = include_str!("../src/dispatch.rs");
-const TRANSITION: &str = include_str!("../src/transition.rs");
-const SIGNAL: &str = include_str!("../src/signal.rs");
-const READY: &str = include_str!("../src/ready.rs");
-const PROGRESS: &str = include_str!("../src/progress.rs");
-const RECOVERY: &str = include_str!("../src/recovery.rs");
 
 /// The `[dependencies]` table only, stopping at the next `[section]` header.
 ///
@@ -108,19 +100,74 @@ fn the_execution_crate_depends_on_exactly_the_declared_crates() {
     assert_eq!(declared, ["graphhelm-protocols", "graphhelm-events"]);
 }
 
+/// Every `.rs` file under `src/`, DERIVED — never a hand-written list.
+///
+/// The list this replaced enumerated eight files and silently missed the ninth
+/// (`attention.rs`, added in M07 and never covered). A hand-maintained roster does not
+/// guard a crate; it guards the roster, and it guarantees the NEXT file escapes too. The
+/// same defect family as a fixture that invents state production never writes: the check
+/// measures what it was told, not what is there.
+///
+/// Anchored on `CARGO_MANIFEST_DIR` rather than a relative path: `include_str!` resolved at
+/// compile time and never cared about the working directory, but reading a directory at
+/// runtime does, and a `cd` that did not survive a backgrounded command bit this pair the
+/// same day this test was written.
+fn every_source_file() -> Vec<(String, String)> {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&src).expect("the crate's src/ directory is readable") {
+        let entry = entry.expect("a readable directory entry");
+        let path = entry.path();
+        // Refuse an unforeseen subdirectory instead of walking it silently: a module tree
+        // that grows a directory is a decision, and an unreviewed decision must not inherit
+        // this invariant by accident.
+        assert!(
+            path.is_file(),
+            "unexpected subdirectory in src/: {}. Decide explicitly whether this invariant              covers it, then teach this test — do not let it inherit coverage silently.",
+            path.display()
+        );
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            let name = path
+                .file_name()
+                .expect("a file name")
+                .to_string_lossy()
+                .into_owned();
+            let source = std::fs::read_to_string(&path).expect("a readable source file");
+            files.push((name, source));
+        }
+    }
+    files.sort();
+    files
+}
+
+/// A derived scan that finds nothing would pass for every possible defect — the exact
+/// failure mode that let a `git -C` check report on the parent repository and read as
+/// evidence. So the derivation is itself checked before it is trusted.
+#[test]
+fn the_source_scan_actually_finds_the_crate() {
+    let files = every_source_file();
+    assert!(
+        files.len() >= 9,
+        "the scan found only {} files; a scan that finds nothing passes silently: {files:?}",
+        files.len()
+    );
+    for required in ["lib.rs", "attention.rs", "transition.rs"] {
+        assert!(
+            files.iter().any(|(name, _)| name == required),
+            "{required} must be in the derived scan: {:?}",
+            files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+    }
+    assert!(
+        files.iter().all(|(_, source)| !source.is_empty()),
+        "an empty source file would satisfy every assertion below"
+    );
+}
+
 #[test]
 fn no_source_file_reads_a_clock_or_randomness() {
-    for (name, source) in [
-        ("lib.rs", LIB),
-        ("bounds.rs", BOUNDS),
-        ("dispatch.rs", DISPATCH),
-        ("transition.rs", TRANSITION),
-        ("signal.rs", SIGNAL),
-        ("ready.rs", READY),
-        ("progress.rs", PROGRESS),
-        ("recovery.rs", RECOVERY),
-    ] {
-        let code = code_only(source);
+    for (name, source) in every_source_file() {
+        let code = code_only(&source);
         for forbidden in [
             "SystemTime",
             "Instant",

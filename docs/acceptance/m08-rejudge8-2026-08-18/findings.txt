@@ -1,0 +1,20 @@
+--- F1 (critical) ---
+The one-glance answer is not an answer: status on exec-m08-judge8 returns attention="unknown" (reason silence_unevaluated / no_declared_budget) on the very first look and again on every later look. The operator opening the monitor is told the system cannot say whether it is fine, which is the exact opposite of the story's promise.
+
+--- F2 (critical) ---
+The remedy the monitor itself names does not stick. amend_budget(judge, 30s) returned attention="needs_you" with reason silent_node, but the very next status read reverted to attention="unknown" / no_declared_budget with silenceUnevaluated repopulated. Reproduced twice (seq 15 then seq 19, reverting at seq 18 and seq 20). The verdict flaps between "wake up" and "I don't know" with nothing in the run changing.
+
+--- F3 (high) ---
+A node that already failed is invisible at a glance. flaky_check recorded retryable_failure (tool_exited_non_zero) at sequence 11 and was requeued, yet status shows failed:0, only queued:1, no attention reason, no retry count, and no failure marker anywhere in the glance surface. Worse, it then sat queued from 01:07:28 to 01:10:45 (200s, zero events) and even after amend_budget(flaky_check, 20s) was accepted, attentionReasons still listed only judge. A stuck retry after a real failure never wakes the operator.
+
+--- F4 (high) ---
+The staleness pin on amend_budget is inconsistent with everything the monitor shows. computedAtSequence=14 (the value the remedy payload itself carried as computed_at_sequence, matching headSequence) was refused with "the execution has moved to 0"; later 0 was refused with "moved to 15"; later 18 (the current headSequence) was refused with "moved to 17" — the frontier moved backwards. Every remedy attempt costs an extra rejected round trip and guesswork.
+
+--- F5 (medium) ---
+There is no wake path for the failure mode the story cares about — nothing happening. wake_arm at cursor 13 then wake_wait(60s) returned outcome=timeout, and a second arm at cursor 17 with wake_wait(45s) also timed out, while the run was in fact stalled (judge silent 200s, flaky_check silent 200s). The lease only rings on log appends, so a sleeping operator is never woken by a stall — the one condition that should wake them.
+
+--- F6 (medium) ---
+The glance gives no evidence that operator action landed. acceptedMutations stayed 0 and signalsRecorded stayed 0 across two accepted amend_budget calls, and status shows no record that any budget was ever declared. The operator cannot distinguish "my fix applied" from "my fix was dropped" — which is exactly what happened here.
+
+--- F7 (low) ---
+There is no glance-sized rendering. Answering "can I go back to sleep" required reading ~20 sibling fields (attention, attentionReasons, silenceUnevaluated, nodeStateCounts with 16 zero-heavy buckets, nodeLastEventAt) and then pulling 13 full event envelopes with hashes and evidence refs to discover the flaky_check failure that status omitted.

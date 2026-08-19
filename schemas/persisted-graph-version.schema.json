@@ -161,6 +161,7 @@
       "type": "object",
       "required": ["nodeType", "optionality", "controls", "contentSlotIds"],
       "properties": {
+        "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
         "nodeType": {
           "enum": [
             "agent",

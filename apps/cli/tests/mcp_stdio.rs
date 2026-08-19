@@ -513,7 +513,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 }
 
 #[test]
-fn tools_list_names_exactly_the_twelve_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_fourteen_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -541,9 +541,11 @@ fn tools_list_names_exactly_the_twelve_tools_with_closed_schemas() {
             "routes",
             "wake_arm",
             "wake_status",
+            "amend_budget",
+            "wake_wait",
             "probe"
         ],
-        "exactly the twelve tools, in order, and NOTHING else — no credential tool exists by \
+        "exactly the fourteen tools, in order, and NOTHING else — no credential tool exists by \
          design (omission is the enforcement)"
     );
     for tool in &tools {
@@ -559,12 +561,46 @@ fn tools_list_names_exactly_the_twelve_tools_with_closed_schemas() {
             "{}: required fields listed",
             tool["name"]
         );
+        // What this loop CHECKS is that a /v1/ path is named. What its message used to
+        // CLAIM was that the tool maps to that call -- a stronger statement, true of the
+        // first twelve by accident and never asserted anywhere. `wake_wait` is the first
+        // tool where the claim went false while the check stayed true: it CONSULTS a
+        // request (the lease read that enforces sleeper-only) and maps to none, because
+        // its work is a local block.
+        //
+        // The exception is a closed list in code, not a sentence in a description --
+        // the same shape as PARITY_EXCEPTIONS. A fourteenth non-mapping tool fails the
+        // arity below and has to be argued for in a diff.
         assert!(
             tool["description"].as_str().unwrap().contains("/v1/"),
-            "{}: the description names the API call it maps to",
+            "{}: the description names a /v1/ request -- the one it maps to, or, for the              consult-only list, the one it consults",
             tool["name"]
         );
     }
+
+    /// Tools that NAME a request without MAPPING to one. Exactly one exists.
+    const CONSULT_ONLY: [&str; 1] = ["wake_wait"];
+    for name in CONSULT_ONLY {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed as consult-only but is not a tool"));
+        assert!(
+            tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("is NOT an API call"),
+            "{name}: a consult-only tool must SAY the block is not the request it names"
+        );
+    }
+    // The per-tool mapping is proven by `each_tool_maps_to_exactly_one_api_request_and_
+    // returns_the_envelope`, which exercises tools BY NAME rather than iterating this
+    // table -- so it does not cover `wake_wait`, and this list is where that is said out
+    // loud instead of being discovered by the next reader.
+    assert!(
+        CONSULT_ONLY.len() == 1 && CONSULT_ONLY[0] == "wake_wait",
+        "a new consult-only tool needs its own justification, not a longer list"
+    );
 }
 
 #[test]
@@ -751,6 +787,33 @@ fn a_secret_shaped_argument_is_refused_and_never_echoed() {
 /// surfaces would be named here with its reason. Empty by design — a difference is a real
 /// finding, not something to paper over.
 const MCP_PARITY_EXCEPTIONS: &[&str] = &[];
+
+/// M08's liveness instants are NORMALISED here, never excluded, for the same reason the
+/// HTTP parity guard normalises them: the two halves drive the same story against two
+/// independent stores at two different moments, so `startedAt`/`lastEventAt` cannot be equal
+/// -- that is the clock, not a divergence between surfaces.
+///
+/// Removing the fields would stop this guard watching them, and a surface that dropped
+/// `lastEventAt` altogether would then pass. Replacing each value with a marker keeps
+/// PRESENCE and, for `nodeLastEventAt`, the SET OF NODES under comparison. Only the
+/// unequal-by-construction value goes, so `MCP_PARITY_EXCEPTIONS` stays empty by design.
+fn normalise_instants(mut data: serde_json::Value) -> serde_json::Value {
+    if let Some(object) = data.as_object_mut() {
+        for field in ["startedAt", "lastEventAt"] {
+            if let Some(value) = object.get_mut(field)
+                && !value.is_null()
+            {
+                *value = serde_json::Value::String("<instant>".to_owned());
+            }
+        }
+        if let Some(serde_json::Value::Object(per_node)) = object.get_mut("nodeLastEventAt") {
+            for value in per_node.values_mut() {
+                *value = serde_json::Value::String("<instant>".to_owned());
+            }
+        }
+    }
+    data
+}
 
 /// The 05a scripted story (start → signal → approve → pause → resume → completion) driven
 /// entirely through MCP tools against a fresh store, returning the final status envelope's
@@ -947,7 +1010,8 @@ fn the_mcp_and_the_api_report_identical_status_for_the_same_story() {
 
     assert!(MCP_PARITY_EXCEPTIONS.is_empty(), "empty by design");
     assert_eq!(
-        mcp_data, http_data,
+        normalise_instants(mcp_data),
+        normalise_instants(http_data),
         "the MCP surface and the API must report identical status data for the identical \
          story; MCP_PARITY_EXCEPTIONS is empty by design — a difference here is a real \
          finding (D-039's sentence as a test, the tripwire for every serve change under \
@@ -1395,5 +1459,51 @@ fn wake_arm_arms_this_session_and_wake_status_reads_it_back() {
     assert_eq!(
         wake_events, 2,
         "both armings are ordinary durable events: {tail}"
+    );
+}
+
+/// M08 Task 4: the blocking wait as an MCP primitive, and the rule that keeps it safe --
+/// **a session may block only on a lease it holds itself** (the 05g sleeper-only rule,
+/// which the CLI sidecar got for free by being started by the sleeper and which an MCP
+/// tool must earn, since any client can name any rendezvous).
+///
+/// The fixture ARMS a real lease first, deliberately. A session that holds nothing would
+/// be refused too, and such a test would pass with the rule deleted -- it would only prove
+/// that an absent lease is not a present one. What has to be refused is the interesting
+/// case: a session that IS armed, reaching for a rendezvous that belongs to someone else.
+#[test]
+fn a_session_may_block_only_on_the_lease_it_holds() {
+    let harness = wired("exec-mcp-wait");
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!("arm-mine"),
+            "wake_arm",
+            serde_json::json!({"executionId": "exec-mcp-wait", "rendezvousId": "rdv-mine"}),
+        ),
+        tool_call(
+            serde_json::json!("wait-peer"),
+            "wake_wait",
+            serde_json::json!({"executionId": "exec-mcp-wait", "rendezvousId": "rdv-a-peers",
+                "timeoutSeconds": 1}),
+        ),
+    ]);
+    assert_eq!(session.replies.len(), 3, "{:?}", session.replies);
+
+    let (is_error, armed) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "the fixture must really hold a lease: {armed}");
+    assert_eq!(armed["data"]["rendezvousId"], "rdv-mine", "{armed}");
+
+    let refused = &session.replies[2]["result"];
+    assert_eq!(
+        refused["isError"],
+        serde_json::json!(true),
+        "waiting on a peer's rendezvous must be refused, not served: {refused}"
+    );
+    let text = refused["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("rdv-mine") && text.contains("rdv-a-peers"),
+        "the refusal names both leases so the operator can see the mistake: {text}"
     );
 }

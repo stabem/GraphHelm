@@ -56,6 +56,17 @@ Proven by the gate run itself, not by one test: the grounding check pins that th
 
 **Proven by the gate run itself**: `./ci/gate.ps1` must end in its GREEN verdict with both PostgreSQL locale passes on the surface.
 
+### surfaces-cannot-disagree-about-attention
+
+> No surface recalculates the attention verdict. The CLI, the HTTP API, the MCP server and the monitor all derive it from the same predicate, so they cannot disagree about whether the operator needs to wake up.
+
+Three angles, none of which a private copy of the predicate can survive: the API's own answer must be a FILTER over its reasons rather than a second computation; the monitor must say exactly what the API says about silence, on a store seeded with a node in flight so the question actually exists; and the two parity traces (CLI vs API, MCP vs API) carry exception lists that are empty by design, so a surface that answered differently would have to be listed.
+
+- `the_api_answers_the_sleep_question_and_zero_fills_every_bucket` (suite: api_http) — fingerprint: `not a second computation`
+- `the_page_and_the_api_never_disagree_about_silence` (suite: monitor_http) — fingerprint: `the page must say 'not evaluated' exactly when the API does`
+- `the_cli_and_the_api_report_identical_status_for_the_same_story` (suite: api_http) — fingerprint: `identical status data for the identical story`
+- `the_mcp_and_the_api_report_identical_status_for_the_same_story` (suite: mcp_stdio) — fingerprint: `empty by design`
+
 ## Refused scope (D-040)
 
 Every affordance below is banned from the monitor; the citation is the decision register's own sentence, and the grounding test verifies it still appears there.

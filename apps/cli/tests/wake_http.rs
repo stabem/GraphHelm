@@ -948,3 +948,101 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
         "never more consumptions than armings ({consumed} > {armed})"
     );
 }
+
+/// M08, from the judge's finding: `wake_arm` answered with a number the ring never
+/// compares, so a client could not predict from the reply whether it would be woken. The
+/// reply must now name the doorbell's own head — and, because a client will echo it back
+/// as its next cursor, re-arming with it must be a FIXED POINT: no free ring, and the next
+/// content event still wakes.
+///
+/// State that makes the question exist: an execution with content on the stream, then an
+/// arm, then one more content append.
+#[test]
+fn arming_reports_the_head_the_doorbell_compares_and_re_arming_with_it_is_a_fixed_point() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-arm-contract";
+    start_execution(&events, directory.path(), execution);
+    let content = head(&events);
+    arm_lease(&events, execution, "rvz-contract", content);
+    let (_guard, address, token) = serve(&events);
+
+    let armed = get_json(
+        &address,
+        &token,
+        &format!("/v1/executions/{execution}/wake-lease?sessionId=session-sleeper-1"),
+    );
+    let reported = armed["data"]["contentHead"]
+        .as_u64()
+        .expect("the read reports the doorbell's head");
+
+    // Re-arm with exactly what the surface reports: the fixed-point property a client
+    // needs in order to echo the reply back without arming itself past the ring.
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        &format!("/v1/executions/{execution}/wake-lease"),
+        "arm-contract-echo",
+        &serde_json::json!({
+            "sessionId": "session-sleeper-1",
+            "rendezvousId": "rvz-contract",
+            "cursor": reported,
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["contentHead"].as_u64(),
+        Some(reported),
+        "arming answers with the SAME doorbell head it was armed against — a client that \
+         echoes the reply back must land where it already was: {reply}"
+    );
+    assert_eq!(
+        reply["data"]["armedCursor"].as_u64(),
+        Some(reported),
+        "the echoed cursor is honoured verbatim: {reply}"
+    );
+
+    let after = get_json(
+        &address,
+        &token,
+        &format!("/v1/executions/{execution}/wake-lease?sessionId=session-sleeper-1"),
+    );
+    assert_eq!(
+        after["data"]["live"], true,
+        "re-arming at the doorbell's own head must NOT burn the lease — a free ring would \
+         wake an operator who was told nothing happened: {after}"
+    );
+}
+
+/// M08 judge, finding 2: `lastEventAt` advanced purely because of the observer's own
+/// `wake_arm`, while no node made any progress. The field an operator reads to decide
+/// whether anything is happening was being BUMPED BY THE ACT OF MONITORING — the
+/// head-versus-contentHead defect, wearing a clock.
+///
+/// The store state that makes the question exist: a real execution with real content, then
+/// wake bookkeeping and NOTHING else. If arming moved the clock, an operator watching a
+/// wedged run would see it look alive precisely because they were watching it.
+#[test]
+fn arming_a_lease_never_moves_the_execution_clock() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-observer-clock";
+    start_execution(&events, directory.path(), execution);
+    let (_guard, address, token) = serve(&events);
+
+    let before = get_json(&address, &token, &format!("/v1/executions/{execution}"));
+    let before_stamp = before["data"]["lastEventAt"].clone();
+    assert!(
+        before_stamp.is_string(),
+        "the fixture must have content to timestamp: {before:?}"
+    );
+
+    arm_lease(&events, execution, "rdv-observer", 1);
+
+    let after = get_json(&address, &token, &format!("/v1/executions/{execution}"));
+    assert_eq!(
+        after["data"]["lastEventAt"], before_stamp,
+        "watching is not progress: a wake lease is a reader announcing that it intends to \
+         listen, and it must never make a wedged run look alive"
+    );
+}

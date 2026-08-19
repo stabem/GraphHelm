@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionId, ExecutionMode, NodeOutcome,
-    NodeState, OpaqueId, PersistedGraphVersion, PolicyWaiver, ProjectId, RepositoryScope,
-    SimulationStatus, WorkspaceId,
+    EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared, ExecutionId,
+    ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion, PolicyWaiver,
+    ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -147,6 +147,25 @@ pub enum EvidenceAvailability {
 pub struct ExecutionProjection {
     pub stream_id: Option<String>,
     pub current_graph: Option<PersistedGraphVersion>,
+    /// The shape the operator DECLARED, which is a different and weaker claim than
+    /// `current_graph`'s "this was sealed and published". A rule that needs the node set or a
+    /// node's deadline can be answered from a declaration; a rule that needs sealed evidence
+    /// cannot, and must keep asking `current_graph`. Keeping them apart is what stops a
+    /// declaration from being laundered into a publication.
+    ///
+    /// `None` means no declaration was recorded — including every history written before this
+    /// event existed. Undeclared, never calm.
+    ///
+    /// `skip_serializing_if` is load-bearing, not tidiness: `projection.rs` re-serializes a
+    /// projection to digest it, so a field that emitted `null` for every history written
+    /// before this event existed would change all their digests and break the frozen
+    /// demonstrations. Absent stays absent on the wire, exactly as it does in the store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_form: Option<ExecutionFormDeclared>,
+    /// Amendments in log order, each with the sequence that carried it. Never collapsed into
+    /// a single map: see the fold arm.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub form_amendments: Vec<(u64, graphhelm_protocols::ExecutionFormAmended)>,
     pub proposed_drafts: Vec<String>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
@@ -223,6 +242,32 @@ pub struct WakeLeaseState {
 }
 
 impl ExecutionProjection {
+    /// The sequence the newest amendment arrived at, or 0 when none has. Callers name this
+    /// as the frontier they computed against, so a stale amendment can be refused.
+    #[must_use]
+    pub fn amendment_head(&self) -> u64 {
+        self.form_amendments
+            .last()
+            .map_or(0, |(sequence, _)| *sequence)
+    }
+
+    /// This projection as it stood AT `sequence`: amendments after it are dropped.
+    ///
+    /// The whole point of step 2 lives here. An amendment declares a bound going forward, so
+    /// a reader positioned before it must still see the unknown that was true then. Without
+    /// this, "forward" would be an adjective rather than a behaviour.
+    #[must_use]
+    pub fn as_of(&self, sequence: u64) -> Self {
+        let mut earlier = self.clone();
+        earlier.form_amendments.retain(|(at, _)| *at <= sequence);
+        earlier
+    }
+
+    /// Appends an amendment in memory, for callers that build a projection directly.
+    pub fn apply_amendment(&mut self, amendment: graphhelm_protocols::ExecutionFormAmended) {
+        let next = self.amendment_head().saturating_add(1);
+        self.form_amendments.push((next, amendment));
+    }
     /// Consecutive identical outcomes already observed for `node`, for the `outcome` about to be
     /// reported.
     ///
@@ -652,6 +697,26 @@ fn apply_projection_event(
         .stream_id
         .get_or_insert_with(|| event.stream_id.to_string());
     match &event.kind {
+        EventKind::ExecutionFormDeclared(payload) => {
+            // A second declaration on one stream would give the shape two owners, which is the
+            // trap this event was designed around: a deadline the execution can legally change
+            // must not be frozen twice under one name.
+            if projection.declared_form.is_some() {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.declared_form = Some(payload.clone());
+        }
+        EventKind::ExecutionFormAmended(payload) => {
+            // APPENDED, never replacing. Amendments accumulate in the order the log gives
+            // them, and the effective bound for a node is the LAST one at or before the
+            // sequence being replayed -- so a replay positioned earlier answers with what was
+            // known THEN. Storing them as a list rather than folding them into one map is
+            // what makes that possible: a folded map cannot be un-folded to an earlier
+            // moment, and the past would silently inherit a decision made after it.
+            projection
+                .form_amendments
+                .push((event.sequence, payload.clone()));
+        }
         EventKind::GraphVersionPublished(payload) => {
             graphhelm_graph::validate_persisted_projection(&payload.version)
                 .map_err(|_| ReplayError::Corrupt)?;
@@ -1258,8 +1323,8 @@ mod tests {
             BTreeMap::new(),
         )
         .unwrap();
-        let node =
-            PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![]).unwrap();
+        let node = PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![], None)
+            .unwrap();
         let topology = PersistedTopology::new(
             OpaqueId::parse("graph-1").unwrap(),
             graphhelm_protocols::ExecutionId::parse("execution-1").unwrap(),
@@ -1287,6 +1352,98 @@ mod tests {
                 .unwrap(),
         )
         .unwrap()
+    }
+
+    fn declaration_event(sequence: u64, id: &str) -> EventEnvelope {
+        let mut envelope = EventEnvelope::new(
+            OpaqueId::parse(id).unwrap(),
+            graphhelm_protocols::RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+                Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+            ),
+            OpaqueId::parse("stream-1").unwrap(),
+            sequence,
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+            graphhelm_protocols::NewEvent::new(
+                OpaqueId::parse(id).unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-test").unwrap(),
+                ),
+                graphhelm_protocols::Sensitivity::Internal,
+                EventKind::ExecutionFormDeclared(ExecutionFormDeclared {
+                    execution_id: OpaqueId::parse("execution-1").unwrap(),
+                    node_ids: vec![
+                        OpaqueId::parse("plan").unwrap(),
+                        OpaqueId::parse("tests").unwrap(),
+                    ],
+                    node_timeout_seconds: std::collections::BTreeMap::from([(
+                        OpaqueId::parse("tests").unwrap(),
+                        1800,
+                    )]),
+                }),
+                vec![],
+                vec![],
+            ),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+            EventHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
+        );
+        // The chain has to actually close, or `replay` refuses the event for a reason that has
+        // nothing to do with what this test is asking about — and a refusal that arrives for
+        // the wrong reason is a test measuring its own fixture.
+        let previous = envelope.previous_hash.as_str().to_owned();
+        let computed = crate::canonical::event_hash(&envelope, &previous).unwrap();
+        envelope.event_hash = EventHash::parse(computed).unwrap();
+        envelope
+    }
+
+    /// The declared shape reaches the projection, in its own home.
+    ///
+    /// It deliberately does NOT touch `current_graph`. That field means "this was sealed and
+    /// published"; this one means "this was declared". Keeping them apart is what stops a
+    /// declaration from being read as a publication by a rule that needs sealed evidence.
+    #[test]
+    fn a_declared_shape_reaches_the_projection_without_touching_the_published_graph() {
+        let event = declaration_event(1, "event-1");
+        let scope = event.scope.clone();
+        let projection = replay(&scope, "stream-1", &[event]).expect("a declaration replays");
+        let declared = projection
+            .declared_form
+            .expect("the declared shape must reach the projection");
+        assert_eq!(declared.node_ids.len(), 2);
+        // A node that declared no deadline has NO entry — absence stays absence.
+        assert!(
+            !declared
+                .node_timeout_seconds
+                .contains_key(&OpaqueId::parse("plan").unwrap())
+        );
+        assert_eq!(
+            declared
+                .node_timeout_seconds
+                .get(&OpaqueId::parse("tests").unwrap()),
+            Some(&1800)
+        );
+        assert!(
+            projection.current_graph.is_none(),
+            "a declaration is not a publication and must not fill the sealed graph"
+        );
+    }
+
+    /// Two declarations on one stream give the shape two owners, and the fold refuses it.
+    #[test]
+    fn a_second_declaration_on_one_stream_is_corrupt() {
+        let first = declaration_event(1, "event-1");
+        let scope = first.scope.clone();
+        assert_eq!(
+            replay(
+                &scope,
+                "stream-1",
+                &[first, declaration_event(2, "event-2")]
+            ),
+            Err(ReplayError::Corrupt)
+        );
     }
 
     #[test]

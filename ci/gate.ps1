@@ -103,7 +103,11 @@ try {
         cargo $toolchain test --workspace --all-features --locked
     } | Out-Null
 
-    foreach ($suite in @('cli_smoke', 'schema_cli', 'event_store_cli', 'execution_cli', 'api_http', 'gateway_cli', 'tool_cli', 'runtime_http', 'mcp_stdio', 'monitor_http', 'wake_http', 'gate_http')) {
+    # This list is an allowlist, so a new suite is under-gated by DEFAULT and silently: it still
+    # runs inside `workspace tests`, but misses the isolated pass this loop exists to give — the one
+    # that catches cross-test interference. #98 replaces the list with a derivation from tests/*.rs
+    # so the omission cannot be silent; until then, a new suite must be added here by hand.
+    foreach ($suite in @('cli_smoke', 'schema_cli', 'event_store_cli', 'execution_cli', 'api_http', 'gateway_cli', 'tool_cli', 'runtime_http', 'mcp_stdio', 'monitor_http', 'wake_http', 'gate_http', 'resume_atomicity')) {
         Invoke-Stage "cli: $suite" {
             cargo $toolchain test -p graphhelm-cli --test $suite --locked
         } | Out-Null

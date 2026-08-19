@@ -10,6 +10,7 @@ use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use graphhelm_events::EvidenceSealer;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{ActorId, Diagnostic, PersistedActor, PersistedActorType};
 use graphhelm_runtime::driver::{StoreOpen, drive_to_quiescence_async};
@@ -274,6 +275,9 @@ pub(super) async fn start(
                 // `core/runtime`'s `build_work` refuses regardless of executor) still completes
                 // exactly as the 05a fixture-only server always drove it.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
+                    // #83: same ordering as `resume` — the shared shape is where the fix lands, so
+                    // `start` cannot commit `ExecutionStarted` for a drive whose setup then refuses.
+                    let setup = prepare_drive(&drive_state, &payload).await?;
                     let prepared = execution::start::execute_prepared(
                         &version,
                         &drive_state.events,
@@ -283,7 +287,7 @@ pub(super) async fn start(
                         actor,
                         key,
                     )?;
-                    drive(&drive_state, &drive_execution_id, prepared, &payload).await
+                    drive(&drive_state, &drive_execution_id, prepared, setup).await
                 } else {
                     Ok(execution::start::execute(
                         &version,
@@ -674,6 +678,10 @@ pub(super) async fn resume(
                     load_and_publish(&file, RESUME_COMMAND).map_err(MutationError::Prepared)?;
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
+                    // #83: the drive's fallible setup runs FIRST, so the resume decision is the
+                    // last thing that can fail rather than the first thing that commits. A setup
+                    // refusal now leaves the operator's pause hold exactly where they left it.
+                    let setup = prepare_drive(&drive_state, &payload).await?;
                     let prepared = execution::resume::execute_prepared(
                         &version,
                         &drive_state.events,
@@ -682,7 +690,7 @@ pub(super) async fn resume(
                         actor,
                         key,
                     )?;
-                    drive(&drive_state, &drive_execution_id, prepared, &payload).await
+                    drive(&drive_state, &drive_execution_id, prepared, setup).await
                 } else {
                     Ok(execution::resume::execute(
                         &version,
@@ -806,19 +814,40 @@ fn runtime_actor() -> PersistedActor {
 /// `ServeToolPort` is built against (FIXED decision — defaults to the server process's current
 /// working directory when absent, since the request shape carries no other signal and the tool
 /// host needs a project directory to root Tier 0 reads and Tier 1 worktrees against).
-async fn drive(
+/// The half of the drive's setup that can FAIL, resolved by [`prepare_drive`] BEFORE the caller
+/// commits its decision. Issue #83: `execute_prepared` used to commit `ExecutionResumed` and drop
+/// the operator's pause hold, and only then did this setup run — so a setup failure answered
+/// `GHCLI016_DRIVER_FAILURE` over a store that had already recorded the resume. "The call failed"
+/// and "your hold still holds" are one fact to an operator, and that ordering made them two.
+struct DriveSetup {
+    sealer: Arc<dyn EvidenceSealer>,
+    ports: Option<PreparedPorts>,
+}
+
+/// The runtime-backed ports, built once and moved into the executor after the commit.
+struct PreparedPorts {
+    model: ServeModelPort,
+    tools: ServeToolPort,
+    route_id: String,
+    lease: ToolLease,
+}
+
+/// Builds everything in the drive's setup that can refuse, so the *decision* is the last thing that
+/// can fail rather than the first thing that commits.
+///
+/// Every step here is READ-ONLY, which is what makes hoisting it safe: `build_sealer` validates an
+/// environment variable; `ServeModelPort::build`'s `direct_api` arm opens the broker (`open`, which
+/// reads — not `open_or_create`) and `lease`s a credential, and `CredentialBroker::lease` takes
+/// `&self`, acquires no lock and persists nothing — it verifies a MAC and decrypts. `ServeToolPort::build`
+/// validates a workspace config and constructs a host. So a decision that is refused after this ran
+/// leaves nothing behind to release, and no lifetime story is owed.
+async fn prepare_drive(
     state: &ServeState,
-    execution_id: &str,
-    prepared: PreparedDrive,
     payload: &serde_json::Value,
-) -> Result<serde_json::Value, MutationError> {
+) -> Result<DriveSetup, MutationError> {
     let sealer = build_sealer(state.sealing.as_deref())
         .map_err(|message| MutationError::from(driver_failure(&message)))?;
-    let ids = Arc::new(crate::commands::UuidIds);
-    let events = state.events.clone();
-    let store_open: StoreOpen = Arc::new(move || event_store(&events));
-
-    let executor: Arc<dyn AsyncNodeExecutor> = match &state.runtime {
+    let ports = match &state.runtime {
         Some(wiring) => {
             let model = ServeModelPort::build(wiring)
                 .await
@@ -844,26 +873,51 @@ async fn drive(
                 })?;
             let tools = ServeToolPort::build(wiring, &project)
                 .map_err(|message| MutationError::from(driver_failure(&message)))?;
-            let lease = ToolLease {
-                actor: "runtime".to_owned(),
-                capabilities: [
-                    Capability::RepositoryRead,
-                    Capability::RepositoryWrite,
-                    Capability::ShellExecute,
-                    Capability::TestsExecute,
-                ]
-                .into_iter()
-                .collect(),
-                programs: wiring.allow_programs.iter().cloned().collect(),
-            };
-            Arc::new(PortExecutor {
-                model: Arc::new(model),
-                tools: Arc::new(tools),
+            Some(PreparedPorts {
+                model,
+                tools,
                 route_id: wiring.route.id().to_owned(),
-                lease,
-                actor: "runtime".to_owned(),
+                lease: ToolLease {
+                    actor: "runtime".to_owned(),
+                    capabilities: [
+                        Capability::RepositoryRead,
+                        Capability::RepositoryWrite,
+                        Capability::ShellExecute,
+                        Capability::TestsExecute,
+                    ]
+                    .into_iter()
+                    .collect(),
+                    programs: wiring.allow_programs.iter().cloned().collect(),
+                },
             })
         }
+        None => None,
+    };
+    Ok(DriveSetup { sealer, ports })
+}
+
+async fn drive(
+    state: &ServeState,
+    execution_id: &str,
+    prepared: PreparedDrive,
+    setup: DriveSetup,
+) -> Result<serde_json::Value, MutationError> {
+    let DriveSetup { sealer, ports } = setup;
+    let ids = Arc::new(crate::commands::UuidIds);
+    let events = state.events.clone();
+    let store_open: StoreOpen = Arc::new(move || event_store(&events));
+
+    // Infallible by construction: everything that could refuse already did, in `prepare_drive`,
+    // before the caller committed its decision. The fixture branch is the only part that needs
+    // `prepared`, and building it cannot fail.
+    let executor: Arc<dyn AsyncNodeExecutor> = match ports {
+        Some(ports) => Arc::new(PortExecutor {
+            model: Arc::new(ports.model),
+            tools: Arc::new(ports.tools),
+            route_id: ports.route_id,
+            lease: ports.lease,
+            actor: "runtime".to_owned(),
+        }),
         None => {
             let fixtures = FixtureExecutor::new(prepared.fixtures.clone());
             Arc::new(FixtureAsyncExecutor::new(fixtures))

@@ -1249,3 +1249,62 @@ fn conformance_rejects_a_v1_root_declared_as_the_v2_validator() {
     write_json(&manifest, &suite);
     assert_binding_rejected(&run());
 }
+
+/// `schema digest` prints the SAME digest the catalog verifier recomputes (the one a
+/// mismatch refuses with GHC002_HASH_MISMATCH) — known-answer against data the repo
+/// already treats as truth: the committed agent schema and its sha256 in the committed
+/// catalog. If the command ever hashes raw bytes instead of the canonical form, this
+/// falls: the committed documents are pretty-printed, so raw bytes != canonical bytes.
+#[test]
+fn digest_prints_the_digest_the_catalog_verifies() {
+    let root = repository_root();
+    let schema_path = root.join("schemas/agent.schema.json");
+    let catalog: Value =
+        serde_json::from_slice(&fs::read(root.join("schemas/catalog.json")).unwrap()).unwrap();
+    let expected = catalog["schemas"]["agent"]["sha256"]
+        .as_str()
+        .expect("the committed catalog records a sha256 for the agent schema");
+
+    let output = command()
+        .args(args(["schema", "digest", "--file", schema_path.to_str().unwrap()]))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let value = output_json(&output);
+    assert_eq!(value["ok"], true, "{value}");
+    assert_eq!(value["command"], "schema.digest", "{value}");
+    assert_eq!(
+        value["data"]["digest"], expected,
+        "the printed digest must equal the digest the catalog verifies: {value}"
+    );
+}
+
+/// The digest is of the CANONICAL form: two documents with different key order and
+/// whitespace but equal content answer the same digest — the property that makes the
+/// command safe to cite in rituals where the file on disk was formatted by a human.
+#[test]
+fn digest_is_invariant_under_key_order_and_formatting() {
+    let directory = TempDir::new().unwrap();
+    let a = directory.path().join("a.json");
+    let b = directory.path().join("b.json");
+    fs::write(&a, "{\"b\":1,\"a\":{\"y\":2,\"x\":3}}").unwrap();
+    fs::write(&b, "{\n  \"a\": {\n    \"x\": 3,\n    \"y\": 2\n  },\n  \"b\": 1\n}").unwrap();
+    let digest_of = |path: &Path| {
+        let output = command()
+            .args(args(["schema", "digest", "--file", path.to_str().unwrap()]))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        output_json(&output)["data"]["digest"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let left = digest_of(&a);
+    let right = digest_of(&b);
+    assert_eq!(
+        left, right,
+        "equal content must digest equally regardless of formatting"
+    );
+    assert!(left.starts_with("sha256:"), "{left}");
+}

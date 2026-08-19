@@ -76,6 +76,7 @@ pub fn run(command: TopLevel) -> Outcome {
             SchemaCommand::Conformance { catalog, fixtures } => {
                 schema::conformance::run(&catalog, &fixtures)
             }
+            SchemaCommand::Digest { file } => schema::digest::run(&file),
             SchemaCommand::View {
                 catalog,
                 schema: name,

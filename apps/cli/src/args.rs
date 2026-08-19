@@ -479,6 +479,10 @@ pub enum SchemaCommand {
         #[arg(long)]
         fixtures: PathBuf,
     },
+    Digest {
+        #[arg(long)]
+        file: PathBuf,
+    },
     View {
         #[arg(long)]
         catalog: PathBuf,

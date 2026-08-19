@@ -120,6 +120,18 @@ pub struct ServeArgs {
     pub route: Option<String>,
     #[arg(long)]
     pub staging: Option<PathBuf>,
+    /// The deployer's own default workspace root for `start`/`resume`, used whenever a request
+    /// omits `"project"` — never required, never part of the real-executor group above. Absent,
+    /// the prior behavior is unchanged: the server's own process working directory. Exists
+    /// because neither `start` nor `resume`'s MCP tool schema exposes a `project` field (issue
+    /// #82) — an operator confined to the MCP surface has no channel to avoid the default
+    /// colliding with `--staging` when the server happens to run from a `--staging` ancestor, so
+    /// the deployer must be able to fix the default once, the same way `--staging` itself is
+    /// fixed once, rather than every caller needing infrastructure knowledge it was never given.
+    /// Meaningful only alongside the real-executor group above (`drive` only ever consults it
+    /// there); given without them, it is accepted but silently unused.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
     /// Append every request and the exact bytes served to this file, as JSON lines.
     ///
     /// Off unless asked for: the recorded bodies carry the operator's own execution data, so

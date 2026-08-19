@@ -248,6 +248,7 @@ fn build_wiring(
             keyring_dir: args.keyring.clone().expect("executor_all guarantees Some"),
             key_id: args.key_id.clone().expect("executor_all guarantees Some"),
             staging: args.staging.clone().expect("executor_all guarantees Some"),
+            project: args.project.clone(),
             tests_runner: args.tests_runner.clone(),
             allow_programs,
             path_prepend: args.path_prepend.clone(),

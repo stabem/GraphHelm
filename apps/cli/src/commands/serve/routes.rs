@@ -823,14 +823,23 @@ async fn drive(
             let model = ServeModelPort::build(wiring)
                 .await
                 .map_err(|message| MutationError::from(driver_failure(&message)))?;
+            // Three-deep fallback (issue #82): the caller's own `"project"` wins when given (no
+            // MCP tool currently exposes this field, but the raw HTTP body always could); absent
+            // that, the deployer's own `--project` default (set once, the same way `--staging`
+            // itself is); only when NEITHER is configured does this fall back to the server
+            // process's own working directory — the default that collides with `--staging`
+            // whenever `serve` happens to run from a `--staging` ancestor, which is exactly what
+            // #82 documents. A deployer who hits that collision fixes it once with `--project`;
+            // nothing changes for a deployment that never had the collision.
             let project = payload
                 .get("project")
                 .and_then(serde_json::Value::as_str)
                 .map(PathBuf::from)
+                .or_else(|| wiring.project.clone())
                 .or_else(|| std::env::current_dir().ok())
                 .ok_or_else(|| {
                     MutationError::from(driver_failure(
-                        "no \"project\" was given and the server's working directory could not be read",
+                        "no \"project\" was given, no --project default is configured, and the server's working directory could not be read",
                     ))
                 })?;
             let tools = ServeToolPort::build(wiring, &project)

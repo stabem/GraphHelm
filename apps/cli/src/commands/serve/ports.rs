@@ -41,6 +41,10 @@ pub(super) struct RuntimeWiring {
     pub(super) keyring_dir: PathBuf,
     pub(super) key_id: String,
     pub(super) staging: PathBuf,
+    /// The deployer's own default for a request's absent `"project"` (issue #82) — `--project`
+    /// at startup, never required. `None` preserves the prior behavior exactly: `drive`'s own
+    /// fallback to the server process's working directory.
+    pub(super) project: Option<PathBuf>,
     pub(super) tests_runner: String,
     pub(super) allow_programs: Vec<String>,
     pub(super) path_prepend: Vec<PathBuf>,

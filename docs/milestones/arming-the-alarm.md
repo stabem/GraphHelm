@@ -206,14 +206,18 @@ rehearsal was executed.
 
 Investigating the store-layout recovery fix (#76/#84) killed two independently-derived traces
 about why an evidence guard passed, both wrong for the same reason: widening the
-recoverable-layout rule to include `blobs/` could never have felled that guard, because
-evidence-reference resolution runs independently of layout classification — an archive that
-seals real evidence refuses on the missing blob file regardless of what the layout rule allows.
-Proving the layout-recoverability rule at all needed the one archive that seals no evidence at
-all. A full-crate run separately caught an existing invariant asserting the opposite for five
-other components; it was split rather than deleted, with the reasoning rewritten in both halves.
-Two plausible traces, both wrong, and a guard that had been green the whole time for a reason
-nobody had actually named until it was run.
+recoverable-layout rule to include `blobs/` could never have felled that guard, because a
+missing `blobs/` dies on TWO INDEPENDENT DEFENCES, neither of which the layout rule controls.
+`classify_layout` already refuses a missing `blobs/` directory outright — it is explicitly
+excluded from the recoverable set. Separately, a `blobs/` directory that is present but missing
+one evidence file dies inside `read_verified_blob`, on the file open, during `load_state`
+(`core/events/src/local.rs:1225` at main `0fb0e66` — the function moved once already this
+milestone; cite the base, not the bare number). Proving the layout-recoverability rule at all
+needed the one archive that seals no evidence at all. A full-crate run separately caught an
+existing invariant asserting the opposite for five other components; it was split rather than
+deleted, with the reasoning rewritten in both halves. Two plausible traces, both wrong, and a
+guard that had been green the whole time for two reasons nobody had actually named until it was
+run.
 
 ## CITE-or-MARK
 

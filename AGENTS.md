@@ -85,6 +85,12 @@ or `tail -50 gate.log`) - that read has no bearing on the exit code you already 
 `gate.ps1` - a genuinely red run reads back as success. This cost two silent false-greens in one
 day before it was named (issue #97).
 
+A branch cut before #100 carries the pre-#100 `Invoke-Stage` (the `& $Body` that swallows a native
+tool's own stdout — issue #97/#98's log-completeness finding) and will keep producing gates with no
+per-test failure text until it rebases onto a #100-or-later `main`, regardless of how the gate is
+invoked. A red gate on such a branch is real; its missing diagnostic text is not evidence of a new
+capture bug — check the branch's base before treating swallowed text as a fresh regression.
+
 The individual commands, if you need to run one in isolation:
 
 ```powershell

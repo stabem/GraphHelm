@@ -2002,3 +2002,50 @@ fn a_gated_nodes_release_is_the_owners_act_and_the_drivers_own_hops_are_not() {
         "the driver's own dispatch hops stay machinery: {outcomes:?}"
     );
 }
+
+/// Issue #89's guard, per `.factory/d-agent-mode-semantics.md`'s ratified Option B: `mode`
+/// governs `decide_mutation`'s verdict ONLY (`core/governor/src/inflight.rs:112-118`, already
+/// covered directly by that crate's own unit tests); dispatch is a separate axis this test
+/// asserts is untouched by it. Nothing in `apps/cli/tests/` previously ran a graph in `manual`
+/// mode at all — every existing dispatch-shaped test used `autopilot` or (once) `supervised` —
+/// so a future change that made `ready_set`/the driver mode-sensitive had nothing here to catch
+/// it. This is that catch: the SAME two-node all-success fixture graph, started fresh under each
+/// of the three modes, must reach the identical terminal state regardless — a sabotage that made
+/// `manual` (or `supervised`) hold dispatch would fail this by leaving a node non-terminal.
+///
+/// Scope, named rather than implied (D's review): this graph never proposes a mutation while
+/// running, so it proves dispatch invariance only in the ABSENCE of an in-flight proposal. A
+/// mode-sensitive dispatch bug that manifests only while a mutation is pending would pass this
+/// unchanged — that case is outside #89's scope, not covered here, and not claimed to be.
+#[test]
+fn dispatch_completes_identically_regardless_of_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixtures = all_success_fixtures(directory.path());
+
+    let mut by_mode = std::collections::BTreeMap::new();
+    for mode in ["autopilot", "supervised", "manual"] {
+        let events = directory.path().join(format!("events-{mode}"));
+        let execution = format!("exec-mode-{mode}");
+        let data = start(&events, &fixtures, mode, &execution);
+        assert_eq!(
+            data["status"], "completed",
+            "{mode}: dispatch must complete this graph exactly as autopilot does — a mode that \
+             holds dispatch would leave this short of completed: {data}"
+        );
+        assert_eq!(
+            data["nodeStateCounts"]["succeeded"], 2,
+            "{mode}: both nodes must have actually run and succeeded, not merely been \
+             approved: {data}"
+        );
+        by_mode.insert(mode, data["nodeStateCounts"].clone());
+    }
+
+    let autopilot_counts = &by_mode["autopilot"];
+    for mode in ["supervised", "manual"] {
+        assert_eq!(
+            &by_mode[mode], autopilot_counts,
+            "{mode}'s dispatch outcome must be byte-identical to autopilot's — any difference \
+             here is dispatch depending on mode, which #89's contract says must never happen"
+        );
+    }
+}

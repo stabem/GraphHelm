@@ -303,7 +303,10 @@
       },
       "additionalProperties": false
     },
-    "executionMode": {"enum": ["autopilot", "supervised", "manual"]},
+    "executionMode": {
+      "description": "D-022's three levels of graph-mutation autonomy, and nothing else. autopilot accepts the Governor's own proposed mutations automatically. supervised holds a proposal until the owner approves it - something is queued, waiting. manual rejects every proposal outright - nothing is queued, nothing waits; the owner changes the graph by other means. An absent mode (reachable only on a stream with no executionStarted yet folded) reads identically to manual - both reject outright. Does NOT hold dispatch - a ready node runs identically in every mode; hold dispatch with pause, not a stricter mode.",
+      "enum": ["autopilot", "supervised", "manual"]
+    },
     "nodeOutcome": {
       "enum": [
         "started", "succeeded", "retryable_failure", "terminal_failure",

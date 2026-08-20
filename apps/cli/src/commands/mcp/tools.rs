@@ -23,7 +23,12 @@ const TOOLS: [ToolSpec; 14] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
-                      graph file, optionally a fixtures file, in the given mode.",
+                      graph file, optionally a fixtures file, in the given mode. Mode governs \
+                      graph-mutation autonomy only (autopilot accepts proposals automatically, \
+                      supervised holds a proposal queued until the owner approves it, manual \
+                      rejects every proposal outright with nothing queued) - it does NOT hold \
+                      dispatch, a ready node runs the same way in every mode; use \"pause\" to \
+                      hold dispatch.",
         schema: start_schema,
     },
     ToolSpec {

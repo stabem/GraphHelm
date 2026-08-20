@@ -168,6 +168,16 @@ pub enum ExecutionCommand {
         events: PathBuf,
         #[arg(long)]
         fixtures: Option<PathBuf>,
+        /// `autopilot`, `supervised`, or `manual` — D-022's three levels of GRAPH-MUTATION
+        /// autonomy, and nothing else. `autopilot` lets the Governor accept its own proposed
+        /// mutations; `supervised` holds a proposal until the owner approves it — something is
+        /// WAITING for you; `manual` rejects every proposal outright — nothing is queued,
+        /// nothing waits, the owner changes the graph by other means. It does NOT hold dispatch:
+        /// a `Ready` node runs identically in every mode (`core/runtime/src/driver.rs` never
+        /// reads this value) — to hold dispatch, use `execution pause`, not a stricter mode.
+        /// (#89: this flag previously had no help text at all, and D-022's own "Manual Graph"
+        /// wording — the qualifier that carries this scope — is absent from every other
+        /// operator-visible surface too.)
         #[arg(long)]
         mode: String,
         #[arg(long)]

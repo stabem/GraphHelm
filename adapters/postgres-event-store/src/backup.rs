@@ -230,6 +230,14 @@ pub enum BackupError {
     InvalidBackup,
     /// Restore target or verification is invalid.
     InvalidRestore,
+    /// A bounded step ran OUT OF TIME (#81). Its own variant and its own CODE because "the
+    /// machine was busy" and "this backup is not trustworthy" have opposite operator
+    /// responses — retry later versus never retry — and before this variant existed the
+    /// elapsed paths scattered across THREE other codes (GHB001 via `Unavailable`, GHB002
+    /// via `InvalidRestore`, GHE006 via `LimitExceeded`), so the operator could not tell a
+    /// slow machine from a corrupt archive. Timing is never laundered into a verdict about
+    /// the data.
+    DeadlineElapsed,
     /// A deterministic public bound was exceeded.
     LimitExceeded,
     /// The configured key provider rejected the operation.
@@ -273,6 +281,10 @@ impl BackupError {
         match self {
             Self::InvalidBackup => "GHB001_BACKUP_INVALID",
             Self::InvalidRestore => "GHB002_RESTORE_INVALID",
+            // Its own code, not a reuse: GHB001 already carries two variants, which is how
+            // "timed out" hid inside "backup invalid" for a milestone. Tests assert at THIS
+            // grain, where the operator reads.
+            Self::DeadlineElapsed => "GHB003_DEADLINE_ELAPSED",
             Self::LimitExceeded => "GHE006_LIMIT_EXCEEDED",
             Self::KeyUnavailable => "GHK001_KEY_UNAVAILABLE",
             Self::Unavailable => "GHB001_BACKUP_INVALID",
@@ -910,7 +922,7 @@ impl PostgresBackupOperator {
             ),
         )
         .await
-        .map_err(|_| BackupError::InvalidBackup)?
+        .map_err(|_| BackupError::DeadlineElapsed)?
     }
 
     async fn new_bounded(
@@ -1031,9 +1043,11 @@ impl PostgresBackupOperator {
         destination: &Path,
         cancelled: Arc<AtomicBool>,
     ) -> Result<BackupReceipt, BackupError> {
+        // #81 item 2: ONE budget for the whole backup; every forward step spends from it.
+        let budget = OperationDeadline::new(self.process_timeout);
         let pg_dump = self
             .pg_dump
-            .verified_for_use(self.process_timeout.min(Duration::from_secs(30)))?;
+            .verified_for_use(budget.step(Duration::from_secs(30)))?;
         let mut owned = OwnedTemporary::for_destination(destination)?;
         let mut transaction = self
             .admin_pool
@@ -1104,11 +1118,11 @@ impl PostgresBackupOperator {
         .map(|migration| hex::encode(Sha256::digest(migration.as_bytes())))
         .collect();
         let state_summary_sha256 = tokio::time::timeout(
-            self.process_timeout.min(Duration::from_secs(30)),
+            budget.step(Duration::from_secs(30)),
             state_summary_connection(&mut transaction),
         )
         .await
-        .map_err(|_| BackupError::LimitExceeded)??;
+        .map_err(|_| BackupError::DeadlineElapsed)??;
         let privilege_summary_sha256 = actual_privileges;
         let source_semantics = database_semantic_contract_in(&mut transaction).await?;
         let mut manifest = BackupManifest::new(
@@ -1149,7 +1163,7 @@ impl PostgresBackupOperator {
             }
         };
         let mut watchdog =
-            ProcessWatchdog::start_with_cancellation(child, self.process_timeout, cancelled)?;
+            ProcessWatchdog::start_with_cancellation(child, budget.remaining(), cancelled)?;
         let stderr_reader = std::thread::spawn(move || read_bounded_output(stderr));
         let encrypted = BackupCodec::new(Arc::clone(&self.key_provider))
             .encrypt(&manifest, stdout, owned.file_mut())
@@ -1213,9 +1227,14 @@ impl PostgresBackupOperator {
         if fresh_target_object_count(&self.admin_pool).await? != 0 {
             return Err(BackupError::InvalidRestore);
         }
+        // #81 item 2: ONE budget for the whole restore; every forward step spends from it.
+        // Cleanup and release are NOT bounded by it (see their own sites): they are
+        // compensation, and starving cleanup because the operation elapsed would leak the
+        // quarantine database exactly when it most needs removing.
+        let budget = OperationDeadline::new(self.process_timeout);
         let pg_restore = self
             .pg_restore
-            .verified_for_use(self.process_timeout.min(Duration::from_secs(30)))?;
+            .verified_for_use(budget.step(Duration::from_secs(30)))?;
         let codec = BackupCodec::new(Arc::clone(&self.key_provider));
         let mut archive_file = File::open(archive).map_err(|_| BackupError::InvalidRestore)?;
         if archive_file
@@ -1272,7 +1291,7 @@ impl PostgresBackupOperator {
         };
         let mut watchdog = match ProcessWatchdog::start_with_cancellation(
             child,
-            self.process_timeout,
+            budget.remaining(),
             Arc::clone(&cancelled),
         ) {
             Ok(watchdog) => watchdog,
@@ -1305,12 +1324,16 @@ impl PostgresBackupOperator {
         );
         let mut cleanup_guard = RestoreCleanupGuard::new(self.clone());
         let acquired = tokio::time::timeout(
-            self.process_timeout.min(Duration::from_secs(30)),
-            self.acquire_target_exclusivity(&restore_application, cleanup_guard.ownership()),
+            budget.step(Duration::from_secs(30)),
+            self.acquire_target_exclusivity(
+                &restore_application,
+                cleanup_guard.ownership(),
+                budget,
+            ),
         )
         .await;
         if let Err(error) = acquired
-            .map_err(|_| BackupError::InvalidRestore)
+            .map_err(|_| BackupError::DeadlineElapsed)
             .and_then(std::convert::identity)
         {
             watchdog.terminate();
@@ -1364,11 +1387,11 @@ impl PostgresBackupOperator {
             self.configure_restored_runtime_role(&verified.manifest().runtime_role)
                 .await?;
             tokio::time::timeout(
-                self.process_timeout.min(Duration::from_secs(30)),
+                budget.step(Duration::from_secs(30)),
                 self.verify_restored_state(verified.manifest()),
             )
             .await
-            .map_err(|_| BackupError::LimitExceeded)??;
+            .map_err(|_| BackupError::DeadlineElapsed)??;
             if target_user_object_count(&self.admin_pool).await? != 0 {
                 return Err(BackupError::InvalidRestore);
             }
@@ -1450,12 +1473,14 @@ impl PostgresBackupOperator {
         &self,
         ownership: &RestoreOwnership,
     ) -> Result<(), BackupError> {
+        // #81: deliberately NOT bounded by the operation budget - cleanup is compensation,
+        // and an exhausted budget must not starve the step that removes the quarantine.
         tokio::time::timeout(
             self.process_timeout.min(Duration::from_secs(30)),
             self.cleanup_failed_restore_bounded(ownership),
         )
         .await
-        .map_err(|_| BackupError::InvalidRestore)?
+        .map_err(|_| BackupError::DeadlineElapsed)?
     }
 
     async fn cleanup_failed_restore_bounded(
@@ -1482,8 +1507,13 @@ impl PostgresBackupOperator {
         &self,
         application: &str,
         ownership: &RestoreOwnership,
+        budget: OperationDeadline,
     ) -> Result<(), BackupError> {
-        let deadline = Instant::now() + self.process_timeout.min(Duration::from_secs(10));
+        // #81, NOT a `tokio::time::timeout` wrapper: this deadline is hand-rolled, so a
+        // grep for the wrapper misses it and the fix has to include it BY HAND. The exit
+        // decision lives in `classify_exclusivity` — a pure function, so the split below
+        // is unit-testable without a database.
+        let deadline = Instant::now() + budget.step(Duration::from_secs(10));
         loop {
             let connected: i64 = sqlx::query_scalar(
                 "SELECT count(*)::bigint FROM pg_stat_activity \
@@ -1494,11 +1524,15 @@ impl PostgresBackupOperator {
             .fetch_one(&self.admin_pool)
             .await
             .map_err(|_| BackupError::InvalidRestore)?;
-            if connected == 1 {
-                break;
-            }
-            if connected > 1 || Instant::now() >= deadline {
-                return Err(BackupError::InvalidRestore);
+            match classify_exclusivity(connected, Instant::now(), deadline) {
+                ExclusivityPoll::Proceed => break,
+                // A rival holds the target: NOT a timing fact — the restore target is
+                // genuinely not exclusively ours, however much time remains. Folding this
+                // into "elapsed" would replace one flattening with another.
+                ExclusivityPoll::Contention => return Err(BackupError::InvalidRestore),
+                // Nobody rivals us and the budget ran out: a timing fact, named as one.
+                ExclusivityPoll::Elapsed => return Err(BackupError::DeadlineElapsed),
+                ExclusivityPoll::Waiting => {}
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1641,12 +1675,14 @@ impl PostgresBackupOperator {
         &self,
         ownership: &RestoreOwnership,
     ) -> Result<(), BackupError> {
+        // #81: same compensation exemption as cleanup - release must run even when the
+        // operation's budget is spent.
         tokio::time::timeout(
             self.process_timeout.min(Duration::from_secs(30)),
             self.release_target_exclusivity_bounded(ownership),
         )
         .await
-        .map_err(|_| BackupError::InvalidRestore)?
+        .map_err(|_| BackupError::DeadlineElapsed)?
     }
 
     async fn release_target_exclusivity_bounded(
@@ -3926,8 +3962,15 @@ impl ProcessWatchdog {
         );
         self.child.take();
         self.finish_inner();
-        if self.timed_out.load(Ordering::Acquire) || self.cancelled.load(Ordering::Acquire) {
+        // #81: these two flags were fused into one value here, and the fusion is exactly
+        // the defect class this issue names — a deliberate cancel and an elapsed deadline
+        // are opposite facts to whoever holds the error. Cancelled stays an availability
+        // fact (someone chose to stop the work); timed_out is a TIMING fact and must say so.
+        // Checked cancel-first: a cancel that also crossed the deadline was still a cancel.
+        if self.cancelled.load(Ordering::Acquire) {
             Err(BackupError::Unavailable)
+        } else if self.timed_out.load(Ordering::Acquire) {
+            Err(BackupError::DeadlineElapsed)
         } else {
             status
         }
@@ -4375,6 +4418,66 @@ struct ProcessResult {
     stderr_truncated: bool,
 }
 
+/// One budget for the whole operation, not a cap per step (#81 item 2). Before this,
+/// eleven independent 30 s caps meant every added step silently added another chance to
+/// fail under load, and the compound probability is exactly the rotating-victim gate
+/// flake the issue documents. Each step now spends from ONE budget; the per-step ceiling
+/// survives only as an anti-hang bound.
+///
+/// `step()` may return ZERO once the budget is spent: a step started after exhaustion
+/// fails immediately with `DeadlineElapsed` instead of waiting out its own private cap.
+#[derive(Clone, Copy)]
+struct OperationDeadline {
+    deadline: Instant,
+}
+
+impl OperationDeadline {
+    fn new(budget: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + budget,
+        }
+    }
+
+    /// The lesser of the operation's remaining budget and a per-step anti-hang ceiling.
+    fn step(&self, ceiling: Duration) -> Duration {
+        self.remaining().min(ceiling)
+    }
+
+    /// Time this operation may still spend.
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+}
+
+/// The exclusivity poll's exit decision (#81, disclosed hazard: this loop is a HAND-ROLLED
+/// deadline, not a `timeout` wrapper). Pure, so the contention/elapsed split is
+/// unit-testable without a database. `Contention` outranks `Elapsed` deliberately: a
+/// contended target at the deadline is still contended, and reporting it as timing would
+/// tell the operator to retry a restore whose target someone else holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExclusivityPoll {
+    /// Exactly our own connection: proceed.
+    Proceed,
+    /// A rival connection holds the target: not a timing fact.
+    Contention,
+    /// Nobody rivals us and the budget ran out: a timing fact.
+    Elapsed,
+    /// Nobody rivals us and there is budget left: poll again.
+    Waiting,
+}
+
+fn classify_exclusivity(connected: i64, now: Instant, deadline: Instant) -> ExclusivityPoll {
+    if connected == 1 {
+        ExclusivityPoll::Proceed
+    } else if connected > 1 {
+        ExclusivityPoll::Contention
+    } else if now >= deadline {
+        ExclusivityPoll::Elapsed
+    } else {
+        ExclusivityPoll::Waiting
+    }
+}
+
 fn run_bounded_process(
     executable: &Path,
     arguments: &[&str],
@@ -4741,13 +4844,108 @@ mod process_tests {
         .unwrap();
         assert!(!nonzero.success);
 
+        // #81, pre-declared fix casualty (sealed P3): this asserted `Unavailable` while
+        // "timed out" hid inside "backup invalid"; a bounded child running out of time is
+        // a TIMING fact and now says so.
         let timed_out = run_bounded_process(
             &executable,
             &arguments,
             &[("GRAPHHELM_FAKE_PROCESS_MODE", "hang")],
             Duration::from_millis(50),
         );
-        assert!(matches!(timed_out, Err(BackupError::Unavailable)));
+        assert!(matches!(timed_out, Err(BackupError::DeadlineElapsed)));
+    }
+
+    /// #81: the exit decision of the hand-rolled exclusivity loop, pinned pure. The
+    /// contention/elapsed split is the half a database test cannot cheaply reach: a rival
+    /// at the deadline is STILL contention (never timing), and an empty target past the
+    /// deadline is timing (never a verdict about the target).
+    #[test]
+    fn exclusivity_classifier_separates_contention_from_elapsed() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(1);
+        // Proceed: exactly our own connection, regardless of the clock.
+        assert_eq!(
+            classify_exclusivity(1, later, now),
+            ExclusivityPoll::Proceed
+        );
+        // Contention outranks elapsed: a rival AT the deadline is still a rival.
+        assert_eq!(
+            classify_exclusivity(2, later, now),
+            ExclusivityPoll::Contention
+        );
+        // Elapsed: nobody rivals us and the budget ran out.
+        assert_eq!(
+            classify_exclusivity(0, later, now),
+            ExclusivityPoll::Elapsed
+        );
+        // Waiting: nobody rivals us and there is budget left.
+        assert_eq!(
+            classify_exclusivity(0, now, later),
+            ExclusivityPoll::Waiting
+        );
+    }
+
+    /// #81 item 2: a step never receives more than the operation has left. The zero case
+    /// is the property that kills the compounding — a step started after exhaustion gets
+    /// ZERO budget and fails fast as `DeadlineElapsed`, instead of enjoying a private cap
+    /// the operation no longer has.
+    #[test]
+    fn a_step_never_outlives_the_operations_budget() {
+        let spent = OperationDeadline {
+            deadline: Instant::now() - Duration::from_secs(1),
+        };
+        assert_eq!(spent.step(Duration::from_secs(30)), Duration::ZERO);
+        assert_eq!(spent.remaining(), Duration::ZERO);
+
+        let fresh = OperationDeadline::new(Duration::from_secs(600));
+        let step = fresh.step(Duration::from_secs(30));
+        assert!(
+            step <= Duration::from_secs(30),
+            "the anti-hang ceiling caps a step even when the operation is rich: {step:?}"
+        );
+        assert!(
+            fresh.step(Duration::from_secs(3600)) <= Duration::from_secs(600),
+            "a step never receives more than the whole operation's budget"
+        );
+    }
+
+    /// #81: a step that ran OUT OF TIME must not be reported with a code the operator
+    /// reads as "this backup is not trustworthy". "The machine was busy" and "this
+    /// archive is corrupt" have opposite responses — retry later versus never retry —
+    /// and today both arrive fused (the M09 gate misdiagnosis this issue exists for).
+    ///
+    /// Asserted at the CODE grain, where the operator reads, for two reasons: two
+    /// variants already share GHB001, so a variant-grain assertion can lie about the
+    /// operator surface; and the code-grain comparison against a string literal is what
+    /// lets this red COMPILE before the variant it demands exists — a variant-grain red
+    /// would be a compile error, which is not a result.
+    ///
+    /// The sibling test above is this red's harness control: it proves (green, today)
+    /// that the hang arrangement genuinely elapses at this bound. If IT fails, the
+    /// arrangement broke — nothing here measured anything.
+    #[test]
+    fn a_bounded_process_that_exceeds_its_deadline_names_elapsed_not_corruption() {
+        let executable = std::env::current_exe().unwrap();
+        let arguments = [
+            "--exact",
+            "backup::process_tests::fake_process_child",
+            "--nocapture",
+        ];
+        let Err(elapsed) = run_bounded_process(
+            &executable,
+            &arguments,
+            &[("GRAPHHELM_FAKE_PROCESS_MODE", "hang")],
+            Duration::from_millis(50),
+        ) else {
+            panic!("a 50ms bound on a hanging child must not succeed");
+        };
+        assert_eq!(
+            elapsed.code(),
+            "GHB003_DEADLINE_ELAPSED",
+            "a bounded child that ran out of time must name TIMING, not arrive under a \
+             code the operator reads as untrustworthy-backup or unavailability"
+        );
     }
 
     #[test]
@@ -4774,7 +4972,12 @@ mod process_tests {
 
         let result = watchdog.finish();
 
-        assert_eq!(result, Err(BackupError::Unavailable));
+        // #81 casualty, UNSEALED (reported as such — the seal's census named only the
+        // run_bounded_process pin): this test pins kill-and-reap, and its error assertion
+        // rode the old fused mapping. A 50 ms watchdog on a hanging child is a deadline
+        // that elapsed. The CANCELLATION test below stays `Unavailable` on purpose — a
+        // deliberate cancel is an availability fact, which is the #81 split itself.
+        assert_eq!(result, Err(BackupError::DeadlineElapsed));
         assert!(!process_is_running(process_id));
     }
 

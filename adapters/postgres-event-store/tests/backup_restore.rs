@@ -2265,7 +2265,13 @@ fn constructor_bounds_reconciliation_catalog_locks() {
             ),
         )
         .await;
-        assert!(matches!(result, Ok(Err(BackupError::InvalidBackup))));
+        // #81 casualty, found by the gate (the seal's census covered src pins and missed
+        // this integration pin — three pins of the old fused mapping existed, not one):
+        // a constructor blocked behind a catalog lock until its 100 ms budget elapsed is
+        // a DEADLINE fact, and this assertion is now the integration-grain guard for the
+        // constructor wrapper's elapsed mapping — the exact site whose flake #19 recorded
+        // as "invalid backup" under load.
+        assert!(matches!(result, Ok(Err(BackupError::DeadlineElapsed))));
         lock.rollback().await.unwrap();
         std::fs::remove_file(passfile).unwrap();
         root_pool.close().await;

@@ -1630,3 +1630,513 @@ fn a_designed_phase3_delay_is_absorbed_by_the_receipt_wait() {
         rung_at.elapsed()
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// #88: the timeout answer consults the receipt — the deadline stops flattening "you were rung
+// and the byte died" into "nothing happened". Guards at receipt grain: exact reason AND exact
+// sequence, never presence. `receiptReadAt` is asserted FIRST in every guard: it proves the
+// deadline read HAPPENED, so no guard can pass vacuously against the old shape (a missing
+// `lastConsumed` key and a null one are indistinguishable to a JSON index — the marker is not).
+// ---------------------------------------------------------------------------------------------
+
+/// Burns a lease by direct store append, naming the arming it captured (None models a
+/// consumption from before `captured_arming` existed). Returns the consumption's sequence.
+#[cfg(windows)]
+fn consume_lease(
+    events: &Path,
+    execution: &str,
+    session: &str,
+    reason: graphhelm_protocols::WakeConsumeReason,
+    captured_arming: Option<u64>,
+) -> u64 {
+    let store = open_store(events);
+    let (stream, _events) = store.read_unique_replay_stream().unwrap();
+    let next = store
+        .next_sequence(&stream.scope, &stream.stream_id)
+        .unwrap();
+    let request = graphhelm_events::PreparedAppend::new(
+        stream.scope.clone(),
+        graphhelm_protocols::OpaqueId::parse(stream.stream_id.clone()).unwrap(),
+        next,
+        vec![graphhelm_protocols::NewEvent::new(
+            graphhelm_protocols::OpaqueId::parse(format!("consume-{next}")).unwrap(),
+            graphhelm_protocols::PersistedActor::new(
+                graphhelm_protocols::PersistedActorType::System,
+                graphhelm_protocols::ActorId::parse("system-wake").unwrap(),
+            ),
+            graphhelm_protocols::Sensitivity::Internal,
+            graphhelm_protocols::EventKind::WakeLeaseConsumed(
+                graphhelm_protocols::WakeLeaseConsumed {
+                    execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                    session_id: graphhelm_protocols::OpaqueId::parse(session).unwrap(),
+                    reason,
+                    captured_arming,
+                },
+            ),
+            vec![],
+            vec![],
+        )],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    store.append_atomic(&request).unwrap();
+    next
+}
+
+/// Arms a lease for a DECOY session — a sequence-spacer between a fixture's arm and its
+/// consume. Exists because sabotage s2 (liveness-instead-of-receipt, synthesizing
+/// `(rung, armed+1)`) survived G1 and G7: their consume sat ADJACENT to the arm, so the
+/// guessed sequence was coincidentally right. One unrelated event between the two makes
+/// `atSequence` unguessable by adjacency for ANY guessing implementation; a decoy-session
+/// wake_lease is the cheapest event the store accepts standalone, and the walk under test
+/// skips other sessions by construction.
+#[cfg(windows)]
+fn arm_decoy(events: &Path, execution: &str, rendezvous_id: &str) {
+    let store = open_store(events);
+    let (stream, _events) = store.read_unique_replay_stream().unwrap();
+    let next = store
+        .next_sequence(&stream.scope, &stream.stream_id)
+        .unwrap();
+    let request = graphhelm_events::PreparedAppend::new(
+        stream.scope.clone(),
+        graphhelm_protocols::OpaqueId::parse(stream.stream_id.clone()).unwrap(),
+        next,
+        vec![graphhelm_protocols::NewEvent::new(
+            graphhelm_protocols::OpaqueId::parse(format!("decoy-{rendezvous_id}")).unwrap(),
+            graphhelm_protocols::PersistedActor::new(
+                graphhelm_protocols::PersistedActorType::Agent,
+                graphhelm_protocols::ActorId::parse("agent-decoy").unwrap(),
+            ),
+            graphhelm_protocols::Sensitivity::Internal,
+            graphhelm_protocols::EventKind::WakeLease(graphhelm_protocols::WakeLease {
+                execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                session_id: graphhelm_protocols::OpaqueId::parse("session-decoy-1").unwrap(),
+                cursor: 1,
+                rendezvous_id: graphhelm_protocols::OpaqueId::parse(rendezvous_id).unwrap(),
+                matures_in_seconds: None,
+            }),
+            vec![],
+            vec![],
+        )],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    store.append_atomic(&request).unwrap();
+}
+
+/// Waits (bounded) for the sidecar's rendezvous to exist — the same condition-wait the
+/// choreography test uses; a fixed sleep would be a timing assumption wearing a step's
+/// clothes.
+#[cfg(windows)]
+fn wait_for_pipe(rendezvous_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let expected = format!("graphhelm-wake-{rendezvous_id}");
+    while !std::fs::read_dir("//./pipe").is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&expected))
+        })
+    }) {
+        assert!(
+            Instant::now() < deadline,
+            "the sidecar never created its rendezvous {expected}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Reaps a wake-wait child and parses the one JSON line it prints: (exit code, envelope).
+#[cfg(windows)]
+fn wake_wait_result(child: Child) -> (Option<i32>, serde_json::Value) {
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value = stdout
+        .lines()
+        .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .unwrap_or_else(|| panic!("no JSON line on stdout: {output:?}"));
+    (output.status.code(), value)
+}
+
+/// G1 (#88): the missed ring. The lease is burned as `rung` while the waiter sleeps and no
+/// byte ever crosses; the deadline answer must say so — exact reason, exact sequence — while
+/// `rung:false` keeps the byte claim honest and the exit code stays 3 (the fallback-read
+/// contract is unchanged; the receipt tells the host the read will find something).
+#[cfg(windows)]
+#[test]
+fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-missed";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(&events, execution, "rvz-88-missed", head(&events), Some(3));
+    let armed_at = head(&events);
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe("rvz-88-missed");
+    // Sequence-spacer: the burn must NOT sit adjacent to the arm, or its sequence is
+    // guessable by `armed + 1` (sabotage s2 proved a guessing implementation survives
+    // an adjacent fixture).
+    arm_decoy(&events, execution, "rvz-88-decoy-missed");
+    let consumed_at = consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        Some(armed_at),
+    );
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "a missed ring is still a timeout: {value}");
+    let data = &value["data"];
+    assert_eq!(
+        data["receiptReadAt"], "deadline-once",
+        "the deadline read happened, and says when it looked: {data}"
+    );
+    assert_eq!(
+        data["rung"], false,
+        "no byte crossed and none is claimed: {data}"
+    );
+    assert_eq!(
+        data["lastConsumed"]["reason"], "rung",
+        "the receipt names the ring the byte lost: {data}"
+    );
+    assert_eq!(
+        data["lastConsumed"]["atSequence"], consumed_at,
+        "the exact burn, not merely 'a burn': {data}"
+    );
+    assert_eq!(data["missedRing"], true, "{data}");
+    assert_eq!(
+        data["laterArmingLive"], false,
+        "nobody re-armed, and the answer must not imply otherwise: {data}"
+    );
+    assert!(
+        data.get("misBurn").is_none(),
+        "an honest burn is not a mis-burn: {data}"
+    );
+}
+
+/// G2 (#88): genuine silence. Nothing happened, and the answer says so at the same grain the
+/// missed-ring case uses — G1 is this guard's positive control (the same machinery
+/// demonstrably CAN report a receipt, so a dead deadline-read cannot fake this pair green in
+/// both directions).
+#[cfg(windows)]
+#[test]
+fn a_silent_deadline_reports_a_silent_receipt_not_just_silence() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-silent";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(&events, execution, "rvz-88-silent", head(&events), Some(1));
+    let started = Instant::now();
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+
+    let (code, value) = wake_wait_result(child);
+    // The deadline never moves for the receipt read: one open, no waiting. The bound is
+    // deliberately loose against machine load (declared bound 1s + spawn + one store
+    // open), but a wait-loop smuggled into the final read blows straight through it —
+    // this is the blade sabotage s4 falls on, not a race to win.
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "the deadline answer arrives promptly — the receipt read never waits: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(code, Some(3), "{value}");
+    let data = &value["data"];
+    assert_eq!(
+        data["receiptReadAt"], "deadline-once",
+        "silence is only reportable if the read happened: {data}"
+    );
+    assert!(
+        data["lastConsumed"].is_null(),
+        "no receipt for this arming: {data}"
+    );
+    assert_eq!(data["missedRing"], false, "{data}");
+    assert_eq!(data["laterArmingLive"], false, "{data}");
+}
+
+/// G3 (#88): the three-worlds split. Burned-and-missed PLUS a later live re-arm — the world
+/// where waking the host into "re-arm" would double-arm, so it gets its own field rather
+/// than flattening into W2. The burn's sequence sits strictly between the two armings'.
+#[cfg(windows)]
+#[test]
+fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-rearm";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(&events, execution, "rvz-88-rearm-a", head(&events), Some(3));
+    let first_arming = head(&events);
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe("rvz-88-rearm-a");
+    let consumed_at = consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        Some(first_arming),
+    );
+    // The host re-arms while the first waiter still sleeps (a distinct rendezvous id keeps
+    // the fixture's idempotency keys apart; the field under test is attribution by ARMING
+    // SEQUENCE, which #74 established precisely because rendezvous ids repeat).
+    arm_lease(&events, execution, "rvz-88-rearm-b", head(&events));
+    let second_arming = head(&events);
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "{value}");
+    let data = &value["data"];
+    assert_eq!(data["receiptReadAt"], "deadline-once", "{data}");
+    assert_eq!(data["missedRing"], true, "the ring was missed: {data}");
+    assert_eq!(
+        data["laterArmingLive"], true,
+        "and someone already re-armed — different world, different move: {data}"
+    );
+    let at = data["lastConsumed"]["atSequence"].as_u64().unwrap();
+    assert_eq!(at, consumed_at, "{data}");
+    assert!(
+        first_arming < at && at < second_arming,
+        "the burn sits between the armings ({first_arming} < {at} < {second_arming}): {data}"
+    );
+}
+
+/// G4 (#88): a previous cycle's receipt never claims a new waiting. The session's history
+/// carries a full arm+burn cycle from before; the fresh arming times out in silence and the
+/// answer must be W1 — attribution is by arming sequence, not by "any receipt exists".
+#[cfg(windows)]
+#[test]
+fn a_previous_cycles_receipt_never_claims_a_new_waiting() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-stale";
+    start_execution(&events, directory.path(), execution);
+    arm_lease(&events, execution, "rvz-88-stale-a", head(&events));
+    let old_arming = head(&events);
+    consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        Some(old_arming),
+    );
+    arm_lease_bounded(&events, execution, "rvz-88-stale-b", head(&events), Some(2));
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "{value}");
+    let data = &value["data"];
+    assert_eq!(data["receiptReadAt"], "deadline-once", "{data}");
+    assert!(
+        data["lastConsumed"].is_null(),
+        "the old cycle's burn is not this waiting's news: {data}"
+    );
+    assert_eq!(data["missedRing"], false, "{data}");
+}
+
+/// G5 (#88): an unreadable store at the deadline stays a TIMEOUT (exit 3, never a refusal —
+/// the wait's verdict was already made and a failed diagnostic read must not rewrite it),
+/// and says "unreadable" as its own value — an unreadable store and a silent receipt are
+/// different worlds. The deletion succeeding at all doubles as proof the sidecar dropped its
+/// store handle before blocking, which is the documented discipline.
+#[cfg(windows)]
+#[test]
+fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-unreadable";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(&events, execution, "rvz-88-unread", head(&events), Some(3));
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe("rvz-88-unread");
+    std::fs::remove_dir_all(&events)
+        .expect("the sidecar dropped its handle before blocking, so the store is deletable");
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(
+        code,
+        Some(3),
+        "a timeout with a broken diagnostic read is still a timeout: {value}"
+    );
+    let data = &value["data"];
+    assert_eq!(data["receiptReadAt"], "deadline-once", "{data}");
+    assert_eq!(
+        data["lastConsumed"], "unreadable",
+        "unreadable is its own value, never null: {data}"
+    );
+    assert_eq!(data["missedRing"], false, "{data}");
+}
+
+/// G6 (#88): a mis-aimed burn — a consumption that destroyed THIS arming's lease while
+/// naming a different one — reports BOTH facts: `lastConsumed` carries the burn (fold
+/// parity: the fold records a receipt for the victim session even on a mis-burn) and
+/// `misBurn` names the arming it was actually aimed at, while `missedRing` stays false —
+/// the ring was never meant for this arming, and calling it missed would send the host
+/// hunting for content that was addressed to a dead capture. The #74 stranded-sleeper
+/// case, seen from the waiter's side, with nothing flattened.
+#[cfg(windows)]
+#[test]
+fn a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-misburn";
+    start_execution(&events, directory.path(), execution);
+    arm_lease(&events, execution, "rvz-88-mis-a", head(&events));
+    let captured_arming = head(&events);
+    arm_lease_bounded(&events, execution, "rvz-88-mis-b", head(&events), Some(3));
+    let live_arming = head(&events);
+    assert!(captured_arming < live_arming);
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe("rvz-88-mis-b");
+    let burned_at = consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        Some(captured_arming),
+    );
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "{value}");
+    let data = &value["data"];
+    assert_eq!(data["receiptReadAt"], "deadline-once", "{data}");
+    assert_eq!(
+        data["lastConsumed"]["atSequence"], burned_at,
+        "the burn that took this lease is reported, mis-aimed or not (fold parity): {data}"
+    );
+    // The WHOLE triple is pinned (C's strike 1): `reason: "rung"` right next to
+    // `missedRing: false` is the exact combination a consumer will misread, so the guard
+    // owns it — the reason is the burn's own, faithfully reported, while missedRing speaks
+    // only for rings aimed at THIS arming; `misBurn` below is what reconciles the two.
+    assert_eq!(
+        data["lastConsumed"]["reason"], "rung",
+        "the burn's own reason is reported faithfully even though the ring was never \
+         this arming's: {data}"
+    );
+    assert_eq!(
+        data["missedRing"], false,
+        "the ring was aimed at a dead capture, never at this arming: {data}"
+    );
+    assert_eq!(
+        data["misBurn"]["atSequence"], burned_at,
+        "the mis-aim is named alongside the burn: {data}"
+    );
+    assert_eq!(
+        data["misBurn"]["capturedArming"], captured_arming,
+        "and it names the arming the burn actually captured: {data}"
+    );
+}
+
+/// G7 (#88, from C's review finding): the projection's receipt map keeps only the LAST
+/// consumption per session, so a full burn/re-arm/burn cycle inside one wait would erase
+/// the first arming's receipt — and a deadline answer read from that map would collapse
+/// the first waiter's missed ring into silence (false W1). The answer must come from the
+/// LOG, which forgets nothing: after a second complete cycle, the first arming's waiter
+/// still reports ITS OWN burn, exactly.
+#[cfg(windows)]
+#[test]
+fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-twocycle";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(&events, execution, "rvz-88-cycle-a", head(&events), Some(4));
+    let first_arming = head(&events);
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe("rvz-88-cycle-a");
+    // Sequence-spacer, same reason as G1's: an adjacent burn is guessable by armed+1.
+    arm_decoy(&events, execution, "rvz-88-decoy-cycle");
+    // Cycle one: MY burn, honest, rung — the byte never crosses.
+    let my_burn = consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        Some(first_arming),
+    );
+    // Cycle two, complete, while the first waiter still sleeps: re-arm and burn THAT.
+    // After this, wake_last_consumed[session] holds the SECOND burn only.
+    arm_lease(&events, execution, "rvz-88-cycle-b", head(&events));
+    let second_arming = head(&events);
+    consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        Some(second_arming),
+    );
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "{value}");
+    let data = &value["data"];
+    assert_eq!(data["receiptReadAt"], "deadline-once", "{data}");
+    assert_eq!(
+        data["lastConsumed"]["atSequence"], my_burn,
+        "the FIRST arming's own burn — not the second cycle's, not silence: {data}"
+    );
+    assert_eq!(
+        data["missedRing"], true,
+        "a rung burn of this arming stays a missed ring no matter how many cycles \
+         followed it: {data}"
+    );
+    assert_eq!(
+        data["laterArmingLive"], false,
+        "the second arming was itself burned, so nothing is live: {data}"
+    );
+    assert!(
+        data.get("misBurn").is_none(),
+        "both burns were honestly aimed: {data}"
+    );
+}
+
+/// G8 (#88, row 4 from C's totality check): the fourth state — this arming's lease burned
+/// `stale_rendezvous`, honestly aimed, while the waiter lived. Neither silence (something
+/// happened to you) nor a missed ring (nobody rang you) nor a mis-aim (the sweep aimed at
+/// YOU and judged your rendezvous dead) — reachable today when a ring lands before the
+/// sidecar's pipe exists. No boolean names it; its identification rule is the reason
+/// strike 1 made readable: `lastConsumed.reason == "stale_rendezvous"` with `misBurn`
+/// absent. This guard pins that triple so row 4 is a named world, not whatever falls out.
+#[cfg(windows)]
+#[test]
+fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-88-stale-alive";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-stale-alive",
+        head(&events),
+        Some(3),
+    );
+    let armed_at = head(&events);
+    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe("rvz-88-stale-alive");
+    let burned_at = consume_lease(
+        &events,
+        execution,
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::StaleRendezvous,
+        Some(armed_at),
+    );
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "{value}");
+    let data = &value["data"];
+    assert_eq!(data["receiptReadAt"], "deadline-once", "{data}");
+    assert_eq!(
+        data["lastConsumed"]["reason"], "stale_rendezvous",
+        "the rejection is named in the burn's own words: {data}"
+    );
+    assert_eq!(data["lastConsumed"]["atSequence"], burned_at, "{data}");
+    assert_eq!(
+        data["missedRing"], false,
+        "a stale burn is not a missed ring — no ring ever carried content for it: {data}"
+    );
+    assert!(
+        data.get("misBurn").is_none(),
+        "the sweep aimed at this arming; being judged stale is not a mis-aim: {data}"
+    );
+    assert_eq!(data["laterArmingLive"], false, "{data}");
+}

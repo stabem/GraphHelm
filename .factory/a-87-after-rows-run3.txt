@@ -1,0 +1,121 @@
+# HEADER arm=after-run3 sha=ea23101 run=23:52:37-23:54:55-0300 free_gb=20 cargo_procs=0-at-start-AND-end design=BLOCKED-not-interleaved window=EXPLICITLY-HELD-BY-J (coordinated gap; J stage-1 complete, results in hand, pre-run message) SAMPLE-OF-RECORD (J confirmed zero invocations 23:50:00 onward, file-evidence; observer's '2 procs ~23:52' sighting resolved mechanically to 23:49:28 by header-file mtime = J's attempt-2, ended 23:50:00)
+ROW size=100 op=open iter=0 wall_us=75164 loads=1
+ROW size=100 op=open iter=1 wall_us=72408 loads=1
+ROW size=100 op=open iter=2 wall_us=72400 loads=1
+ROW size=100 op=open iter=3 wall_us=73061 loads=1
+ROW size=100 op=open iter=4 wall_us=72474 loads=1
+ROW size=100 op=open iter=5 wall_us=79655 loads=1
+ROW size=100 op=open iter=6 wall_us=73001 loads=1
+ROW size=100 op=open iter=7 wall_us=72339 loads=1
+ROW size=100 op=open iter=8 wall_us=72874 loads=1
+ROW size=100 op=open iter=9 wall_us=73849 loads=1
+ROW size=100 op=next_sequence_warm iter=0 wall_us=448 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=1 wall_us=372 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=2 wall_us=327 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=3 wall_us=491 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=4 wall_us=445 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=5 wall_us=433 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=6 wall_us=351 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=7 wall_us=377 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=8 wall_us=395 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=9 wall_us=344 loads=1 head=101
+ROW size=100 op=read_replay_warm iter=0 wall_us=508 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=1 wall_us=465 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=2 wall_us=389 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=3 wall_us=414 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=4 wall_us=358 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=5 wall_us=419 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=6 wall_us=372 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=7 wall_us=390 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=8 wall_us=339 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=9 wall_us=343 loads=1 events=100
+ROW size=100 op=append_warm iter=0 wall_us=7789 loads=1
+ROW size=100 op=append_warm iter=1 wall_us=8385 loads=1
+ROW size=100 op=append_warm iter=2 wall_us=9037 loads=1
+ROW size=100 op=append_warm iter=3 wall_us=7839 loads=1
+ROW size=100 op=append_warm iter=4 wall_us=8013 loads=1
+ROW size=100 op=append_warm iter=5 wall_us=7518 loads=1
+ROW size=100 op=append_warm iter=6 wall_us=7973 loads=1
+ROW size=100 op=append_warm iter=7 wall_us=8289 loads=1
+ROW size=100 op=append_warm iter=8 wall_us=8811 loads=1
+ROW size=100 op=append_warm iter=9 wall_us=8384 loads=1
+ROW size=1000 op=open iter=0 wall_us=1017041 loads=1
+ROW size=1000 op=open iter=1 wall_us=1009966 loads=1
+ROW size=1000 op=open iter=2 wall_us=1005167 loads=1
+ROW size=1000 op=open iter=3 wall_us=985320 loads=1
+ROW size=1000 op=open iter=4 wall_us=1013866 loads=1
+ROW size=1000 op=open iter=5 wall_us=1005289 loads=1
+ROW size=1000 op=open iter=6 wall_us=971848 loads=1
+ROW size=1000 op=open iter=7 wall_us=993517 loads=1
+ROW size=1000 op=open iter=8 wall_us=990365 loads=1
+ROW size=1000 op=open iter=9 wall_us=1000445 loads=1
+ROW size=1000 op=next_sequence_warm iter=0 wall_us=509 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=1 wall_us=581 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=2 wall_us=693 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=3 wall_us=391 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=4 wall_us=333 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=5 wall_us=330 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=6 wall_us=563 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=7 wall_us=438 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=8 wall_us=424 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=9 wall_us=441 loads=1 head=1001
+ROW size=1000 op=read_replay_warm iter=0 wall_us=1982 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=1 wall_us=1653 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=2 wall_us=1699 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=3 wall_us=1210 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=4 wall_us=1777 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=5 wall_us=1602 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=6 wall_us=1401 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=7 wall_us=1379 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=8 wall_us=1566 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=9 wall_us=1128 loads=1 events=1000
+ROW size=1000 op=append_warm iter=0 wall_us=9850 loads=1
+ROW size=1000 op=append_warm iter=1 wall_us=10547 loads=1
+ROW size=1000 op=append_warm iter=2 wall_us=11264 loads=1
+ROW size=1000 op=append_warm iter=3 wall_us=10084 loads=1
+ROW size=1000 op=append_warm iter=4 wall_us=10508 loads=1
+ROW size=1000 op=append_warm iter=5 wall_us=11445 loads=1
+ROW size=1000 op=append_warm iter=6 wall_us=10612 loads=1
+ROW size=1000 op=append_warm iter=7 wall_us=10418 loads=1
+ROW size=1000 op=append_warm iter=8 wall_us=11072 loads=1
+ROW size=1000 op=append_warm iter=9 wall_us=10714 loads=1
+ROW size=5000 op=open iter=0 wall_us=4930504 loads=1
+ROW size=5000 op=open iter=1 wall_us=4841361 loads=1
+ROW size=5000 op=open iter=2 wall_us=4841905 loads=1
+ROW size=5000 op=open iter=3 wall_us=4974764 loads=1
+ROW size=5000 op=open iter=4 wall_us=4931577 loads=1
+ROW size=5000 op=open iter=5 wall_us=4902500 loads=1
+ROW size=5000 op=open iter=6 wall_us=4959046 loads=1
+ROW size=5000 op=open iter=7 wall_us=5081744 loads=1
+ROW size=5000 op=open iter=8 wall_us=6008977 loads=1
+ROW size=5000 op=open iter=9 wall_us=4858175 loads=1
+ROW size=5000 op=next_sequence_warm iter=0 wall_us=677 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=1 wall_us=1007 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=2 wall_us=789 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=3 wall_us=619 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=4 wall_us=601 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=5 wall_us=515 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=6 wall_us=472 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=7 wall_us=447 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=8 wall_us=322 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=9 wall_us=297 loads=1 head=5001
+ROW size=5000 op=read_replay_warm iter=0 wall_us=6617 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=1 wall_us=6555 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=2 wall_us=6275 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=3 wall_us=7012 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=4 wall_us=7798 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=5 wall_us=7911 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=6 wall_us=8064 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=7 wall_us=7309 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=8 wall_us=7489 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=9 wall_us=6263 loads=1 events=5000
+ROW size=5000 op=append_warm iter=0 wall_us=12988 loads=1
+ROW size=5000 op=append_warm iter=1 wall_us=15825 loads=1
+ROW size=5000 op=append_warm iter=2 wall_us=13216 loads=1
+ROW size=5000 op=append_warm iter=3 wall_us=13504 loads=1
+ROW size=5000 op=append_warm iter=4 wall_us=13908 loads=1
+ROW size=5000 op=append_warm iter=5 wall_us=12123 loads=1
+ROW size=5000 op=append_warm iter=6 wall_us=12765 loads=1
+ROW size=5000 op=append_warm iter=7 wall_us=14501 loads=1
+ROW size=5000 op=append_warm iter=8 wall_us=13792 loads=1
+ROW size=5000 op=append_warm iter=9 wall_us=13107 loads=1

@@ -1,0 +1,43 @@
+ABAB storm rate run — arms 07b1243 (PRE) vs 0fb0e66 (POST), rev-list --count = 1
+instrument: byte-identical in both arms, inserted-region sha256 d33e5a35fb6bba66034e8762d369f122
+positive control before the sequence: PRE PASS events=48 (not part of the sealed 20)
+
+STOPPING RULE (L's, adopted 2026-08-20) — RECORDED AFTER LAUNCH, BEFORE ANY OBSERVATION.
+  Look at 10 pairs. MOVED if arms differ by >= 6 of 10. UNMOVED if <= 1 of 10.
+  Otherwise continue to 20: >= 6/20 MOVED, <= 2/20 UNMOVED, else INDETERMINATE.
+
+  PROVENANCE, STATED HONESTLY: the rule arrived from L AFTER this sequence was launched. I
+  adopted it before opening any result, which is the guarantee that matters (peeking is looking
+  and THEN choosing a rule). BUT "I had opened zero outputs" IS A SELF-REPORT AND IS NOT
+  CHECKABLE FROM OUTSIDE. It is recorded as a self-report, not as a fact of the run.
+  NEXT TIME: write the stopping rule to a file and COMMIT IT BEFORE LAUNCHING, so the ordering
+  is durable rather than asserted — same reason the emitter list moved into the issue and the
+  clean line sits beside the gate result.
+
+  THE RULE IS CONSERVATIVE BY CONSTRUCTION, NOT EXACT (L's own correction): the thresholds were
+  chosen for cost, not from a formal error rate, and an interim look inflates false-positive risk
+  in general. A result in the continue band is the rule working, not a failure to decide.
+
+Wed, Aug 19, 2026  9:50:05 PM
+run=1 arm=pre verdict=PASS events_appended=49 secs=18 free_gb=503,9 
+run=1 arm=post verdict=PASS events_appended=69 secs=26 free_gb=503,9 
+run=2 arm=pre verdict=PASS events_appended=47 secs=19 free_gb=503,9 
+run=2 arm=post verdict=PASS events_appended=61 secs=22 free_gb=503,9 
+run=3 arm=pre verdict=PASS events_appended=49 secs=19 free_gb=503,9 
+run=3 arm=post verdict=FAIL events_appended=57 secs=23 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=4 arm=pre verdict=PASS events_appended=51 secs=26 free_gb=503,9 
+run=4 arm=post verdict=FAIL events_appended=60 secs=28 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=5 arm=pre verdict=PASS events_appended=49 secs=25 free_gb=503,9 
+run=5 arm=post verdict=FAIL events_appended=60 secs=25 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=6 arm=pre verdict=PASS events_appended=49 secs=25 free_gb=503,9 
+run=6 arm=post verdict=FAIL events_appended=56 secs=23 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=7 arm=pre verdict=PASS events_appended=51 secs=28 free_gb=503,9 
+run=7 arm=post verdict=PASS events_appended=57 secs=29 free_gb=503,9 
+run=8 arm=pre verdict=PASS events_appended=51 secs=23 free_gb=503,9 
+run=8 arm=post verdict=FAIL events_appended=68 secs=25 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=9 arm=pre verdict=PASS events_appended=50 secs=24 free_gb=503,9 
+run=9 arm=post verdict=FAIL events_appended=62 secs=23 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=10 arm=pre verdict=PASS events_appended=48 secs=22 free_gb=503,9 
+run=10 arm=post verdict=FAIL events_appended=53 secs=21 free_gb=503,9 panicked at apps\cli\tests\api_http.rs:464:34:
+run=11 arm=pre verdict=PASS events_appended=45 secs=24 free_gb=503,9 
+run=11 arm=post verdict=PASS events_appended=59 secs=32 free_gb=503,9 

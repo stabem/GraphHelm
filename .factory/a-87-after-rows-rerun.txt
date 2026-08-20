@@ -1,0 +1,121 @@
+# HEADER arm=after-rerun sha=ea23101 run=23:44:04-23:46:38-0300 free_gb=20 cargo_procs=0 (attested at launch) design=BLOCKED-not-interleaved SAMPLE-OF-RECORD note=J SLOT.lock written 23:44:35, overlap question pending J's answer
+ROW size=100 op=open iter=0 wall_us=79888 loads=1
+ROW size=100 op=open iter=1 wall_us=80871 loads=1
+ROW size=100 op=open iter=2 wall_us=79262 loads=1
+ROW size=100 op=open iter=3 wall_us=77829 loads=1
+ROW size=100 op=open iter=4 wall_us=77349 loads=1
+ROW size=100 op=open iter=5 wall_us=85604 loads=1
+ROW size=100 op=open iter=6 wall_us=83039 loads=1
+ROW size=100 op=open iter=7 wall_us=80514 loads=1
+ROW size=100 op=open iter=8 wall_us=83608 loads=1
+ROW size=100 op=open iter=9 wall_us=74948 loads=1
+ROW size=100 op=next_sequence_warm iter=0 wall_us=483 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=1 wall_us=400 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=2 wall_us=503 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=3 wall_us=382 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=4 wall_us=342 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=5 wall_us=437 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=6 wall_us=497 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=7 wall_us=448 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=8 wall_us=356 loads=1 head=101
+ROW size=100 op=next_sequence_warm iter=9 wall_us=377 loads=1 head=101
+ROW size=100 op=read_replay_warm iter=0 wall_us=649 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=1 wall_us=537 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=2 wall_us=417 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=3 wall_us=430 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=4 wall_us=363 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=5 wall_us=403 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=6 wall_us=429 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=7 wall_us=461 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=8 wall_us=404 loads=1 events=100
+ROW size=100 op=read_replay_warm iter=9 wall_us=518 loads=1 events=100
+ROW size=100 op=append_warm iter=0 wall_us=9927 loads=1
+ROW size=100 op=append_warm iter=1 wall_us=9332 loads=1
+ROW size=100 op=append_warm iter=2 wall_us=9346 loads=1
+ROW size=100 op=append_warm iter=3 wall_us=10221 loads=1
+ROW size=100 op=append_warm iter=4 wall_us=23531 loads=1
+ROW size=100 op=append_warm iter=5 wall_us=12279 loads=1
+ROW size=100 op=append_warm iter=6 wall_us=10857 loads=1
+ROW size=100 op=append_warm iter=7 wall_us=9426 loads=1
+ROW size=100 op=append_warm iter=8 wall_us=9906 loads=1
+ROW size=100 op=append_warm iter=9 wall_us=10523 loads=1
+ROW size=1000 op=open iter=0 wall_us=1021898 loads=1
+ROW size=1000 op=open iter=1 wall_us=990626 loads=1
+ROW size=1000 op=open iter=2 wall_us=975926 loads=1
+ROW size=1000 op=open iter=3 wall_us=1013467 loads=1
+ROW size=1000 op=open iter=4 wall_us=1054528 loads=1
+ROW size=1000 op=open iter=5 wall_us=1043834 loads=1
+ROW size=1000 op=open iter=6 wall_us=1018303 loads=1
+ROW size=1000 op=open iter=7 wall_us=1054392 loads=1
+ROW size=1000 op=open iter=8 wall_us=1057884 loads=1
+ROW size=1000 op=open iter=9 wall_us=1033888 loads=1
+ROW size=1000 op=next_sequence_warm iter=0 wall_us=532 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=1 wall_us=675 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=2 wall_us=482 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=3 wall_us=406 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=4 wall_us=582 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=5 wall_us=645 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=6 wall_us=773 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=7 wall_us=658 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=8 wall_us=467 loads=1 head=1001
+ROW size=1000 op=next_sequence_warm iter=9 wall_us=410 loads=1 head=1001
+ROW size=1000 op=read_replay_warm iter=0 wall_us=1751 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=1 wall_us=1515 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=2 wall_us=1769 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=3 wall_us=1566 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=4 wall_us=1660 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=5 wall_us=1517 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=6 wall_us=1221 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=7 wall_us=1364 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=8 wall_us=1289 loads=1 events=1000
+ROW size=1000 op=read_replay_warm iter=9 wall_us=1324 loads=1 events=1000
+ROW size=1000 op=append_warm iter=0 wall_us=9301 loads=1
+ROW size=1000 op=append_warm iter=1 wall_us=11361 loads=1
+ROW size=1000 op=append_warm iter=2 wall_us=10416 loads=1
+ROW size=1000 op=append_warm iter=3 wall_us=10481 loads=1
+ROW size=1000 op=append_warm iter=4 wall_us=11903 loads=1
+ROW size=1000 op=append_warm iter=5 wall_us=10546 loads=1
+ROW size=1000 op=append_warm iter=6 wall_us=10607 loads=1
+ROW size=1000 op=append_warm iter=7 wall_us=10771 loads=1
+ROW size=1000 op=append_warm iter=8 wall_us=10074 loads=1
+ROW size=1000 op=append_warm iter=9 wall_us=12027 loads=1
+ROW size=5000 op=open iter=0 wall_us=5486453 loads=1
+ROW size=5000 op=open iter=1 wall_us=5102980 loads=1
+ROW size=5000 op=open iter=2 wall_us=4956225 loads=1
+ROW size=5000 op=open iter=3 wall_us=5008718 loads=1
+ROW size=5000 op=open iter=4 wall_us=5376733 loads=1
+ROW size=5000 op=open iter=5 wall_us=5505654 loads=1
+ROW size=5000 op=open iter=6 wall_us=5218288 loads=1
+ROW size=5000 op=open iter=7 wall_us=4982636 loads=1
+ROW size=5000 op=open iter=8 wall_us=5004495 loads=1
+ROW size=5000 op=open iter=9 wall_us=4901057 loads=1
+ROW size=5000 op=next_sequence_warm iter=0 wall_us=377 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=1 wall_us=687 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=2 wall_us=541 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=3 wall_us=494 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=4 wall_us=934 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=5 wall_us=823 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=6 wall_us=639 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=7 wall_us=601 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=8 wall_us=776 loads=1 head=5001
+ROW size=5000 op=next_sequence_warm iter=9 wall_us=621 loads=1 head=5001
+ROW size=5000 op=read_replay_warm iter=0 wall_us=7116 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=1 wall_us=8340 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=2 wall_us=8275 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=3 wall_us=7290 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=4 wall_us=7959 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=5 wall_us=8121 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=6 wall_us=7777 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=7 wall_us=8320 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=8 wall_us=8190 loads=1 events=5000
+ROW size=5000 op=read_replay_warm iter=9 wall_us=6536 loads=1 events=5000
+ROW size=5000 op=append_warm iter=0 wall_us=12430 loads=1
+ROW size=5000 op=append_warm iter=1 wall_us=14753 loads=1
+ROW size=5000 op=append_warm iter=2 wall_us=14022 loads=1
+ROW size=5000 op=append_warm iter=3 wall_us=14637 loads=1
+ROW size=5000 op=append_warm iter=4 wall_us=14072 loads=1
+ROW size=5000 op=append_warm iter=5 wall_us=15476 loads=1
+ROW size=5000 op=append_warm iter=6 wall_us=15113 loads=1
+ROW size=5000 op=append_warm iter=7 wall_us=14560 loads=1
+ROW size=5000 op=append_warm iter=8 wall_us=13440 loads=1
+ROW size=5000 op=append_warm iter=9 wall_us=14832 loads=1

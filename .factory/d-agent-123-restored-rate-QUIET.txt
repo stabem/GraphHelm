@@ -1,0 +1,31 @@
+ABAB restored-rate, QUIET RUN, FINAL BUILD
+arms: PRE 07b1243  vs  FIX = 0fb0e66 + #123 (release half in BOTH drivers, conditional reread, withheldNodes)
+instrument inserted-region sha256 d33e5a35fb6bba66034e8762d369f122 — identical both arms
+slope re-checked ON THIS BUILD: 2 events/round (16 18 20 22 24 26 28 30), not assumed to carry over
+guards green on this build: execution_cli 23/23
+stopping rule (committed BEFORE the first launch, .factory/d-agent-123-guard-split-SEALED.md):
+  MOVED-BACK if arms differ by <=1 of 10 ; NOT RESTORED if >=6 ; INDETERMINATE otherwise
+machine at launch: 0 cargo/rustc/graphhelm processes, D: 505.1 GB free
+NOTHING ELSE RUNS DURING THIS SEQUENCE.
+Wed, Aug 19, 2026 10:34:08 PM
+run=1 arm=pre verdict=FAIL events_appended=50 secs=27 panicked at apps\cli\tests\api_http.rs:464:34:
+run=1 arm=fix verdict=PASS events_appended=46 secs=26 
+run=2 arm=pre verdict=FAIL events_appended=50 secs=25 panicked at apps\cli\tests\api_http.rs:464:34:
+run=2 arm=fix verdict=FAIL events_appended=49 secs=23 panicked at apps\cli\tests\api_http.rs:464:34:
+run=3 arm=pre verdict=FAIL events_appended=45 secs=22 panicked at apps\cli\tests\api_http.rs:464:34:
+run=3 arm=fix verdict=PASS events_appended=46 secs=23 
+run=4 arm=pre verdict=PASS events_appended=50 secs=26 
+run=4 arm=fix verdict=PASS events_appended=43 secs=23 
+run=5 arm=pre verdict=FAIL events_appended=49 secs=23 panicked at apps\cli\tests\api_http.rs:464:34:
+run=5 arm=fix verdict=PASS events_appended=48 secs=21 
+run=6 arm=pre verdict=PASS events_appended=47 secs=17 
+run=6 arm=fix verdict=PASS events_appended=50 secs=18 
+run=7 arm=pre verdict=PASS events_appended=49 secs=18 
+run=7 arm=fix verdict=PASS events_appended=44 secs=17 
+run=8 arm=pre verdict=PASS events_appended=51 secs=19 
+run=8 arm=fix verdict=PASS events_appended=46 secs=16 
+run=9 arm=pre verdict=PASS events_appended=51 secs=19 
+run=9 arm=fix verdict=PASS events_appended=47 secs=17 
+run=10 arm=pre verdict=PASS events_appended=48 secs=18 
+run=10 arm=fix verdict=PASS events_appended=46 secs=18 
+=== DONE ===

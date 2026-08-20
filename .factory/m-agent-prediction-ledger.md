@@ -4112,6 +4112,88 @@ status does not misstate a fact; **it misstates whether the file has an answer**
 a document whose whole purpose is to say what is settled and what is not. **And a grep for a dead
 claim's name would never have found it** — the words were all current; only the state was wrong.
 
+## A-87-C1 — verified-prefix cache (#87 commit 1), SEALED BEFORE THE FIRST RUN
+
+A registered five predictions ahead of his run (he is fifth in the slot). Setup, **binding as he
+wrote it**: fresh-paired baseline in the **same session and disk** (storm/M09 numbers are premise,
+never base), `free_gb` + concurrent-cargo per line, journals at ~100 / ~1k / ~5k, N≥10 per point,
+**median AND p99 AND max**. *That setup exists because of what the storm lane cost.*
+
+| Row | CONFIRMS | KILLS | UNINFORMATIVE / UNSCOREABLE |
+|---|---|---|---|
+| **P1** hot handle, quiescent: full=0, suffix=0, wall O(1) | both counters 0 at all sizes, wall flat, **positive control passed** | either counter >0 on a quiescent hot handle | **UNSCOREABLE without the control** |
+| **P2** hot handle, 1 append: suffix=1, full=0 | suffix=1, full=0, wall O(1 line) | suffix≠1 or full>0 | append not observed to land between the two ops |
+| **P3** serve: full loads ~2.5 → ~1 | measured **through serve** | full stays ~2.5 | **DERIVED-NOT-MEASURED if crate-level only** |
+| **P4** SC7 exact budget-counter equality | exact equality **with non-zero budget consumed** | any difference | **VACUOUS if the fixture consumes none** |
+| **P5** no error changes class | discriminants equal **across exercised error paths** | any differs | **VACUOUS if no error is triggered** |
+| **P6 (mine)** hot state == from-scratch state | equal **by value** | any divergence | — |
+
+- **THE STRUCTURAL WEAKNESS I FLAGGED: P1, P4 AND P5 ARE ZERO-OR-EQUALITY PREDICTIONS, AND ALL
+  THREE ARE SATISFIED BY AN INSTRUMENT THAT NEVER MOVES.** A broken counter stuck at 0 confirms P1;
+  a fixture consuming no budget makes P4 fire as 0 == 0; an unexercised error path makes P5 compare
+  nothing. **Sealed requirement — one extra assertion per counter, not a new run: a POSITIVE
+  CONTROL for each**, proving the counter/oracle can register the non-predicted value. **Without
+  them those rows score UNSCOREABLE, not confirmed.** P2 partially self-controls (suffix=1 proves
+  that counter moves); its full=0 half needs the same proof.
+- **THE CORRECTNESS GAP NONE OF HIS FIVE COVERED, and it is the one that matters most.** He
+  measures **speed** (P1–P3), **budget equality** (P4) and **error class** (P5). **Nothing asserts
+  the incremental path returns the SAME STATE as from-scratch.** **A cache can be fast, count
+  right, error right, and serve STALE DATA.** Hence **P6**, sealed before the run: hot-handle state
+  must equal from-scratch state **by value, not by digest-of-digest**.
+- **P3's instrument-scope problem:** it is a claim about the **serve path** while the setup is
+  crate-level in `graphhelm-events`. **If serve is not exercised, P3 is a MODEL, not a
+  measurement.** Also **~2.5 was measured as OPENS per request; P3 predicts FULL LOADS** — they
+  coincide only if every open does exactly one full load, **which must be stated as an assumption
+  or the comparison is against a different quantity than the one measured.**
+- **His conceded UNINFORMATIVE has a consequence he did not draw (M):** at ~100 events the wall
+  cannot separate hit from full, so **the COUNTERS carry the entire claim at that size** — which
+  makes the positive controls **more** load-bearing, not less. At ~5k the wall is a second witness;
+  at ~100 there is only one.
+- **ALL SIX CLOSED BY A BEFORE ANY RUN — amended in the parked patch, re-parked, tree clean.**
+  - **POSITIVE CONTROLS COMMITTED, not optional:** the P1 guard asserts `full_load_count >= 1` (the
+    open itself moved the counter) **before** the delta-zero claim; P2 asserts `suffix >= 1`
+    explicitly; P4 asserts `batches > 0 && events > 0 && work_units > 0` **before** the equality.
+    **A dead instrument no longer confirms any of the three.** P5 gets its control free — the
+    corrupt-suffix guard **exercises** the error path and compares hot-vs-fresh discriminants.
+  - **P6 SEALED AND COMMITTED**, as the budget guard doubled into a state guard: **equality BY
+    VALUE** across `batches`, `next_sequence`, `last_hash`, `seen_idempotency`,
+    `reachable_evidence`, `artifacts`, `active_versions`, `expected_markers`, `verified_offset`.
+    **The "fast, counts right, errors right, serves stale data" line now has an assert.**
+  - **P3 RECLASSIFIED DERIVED-NOT-MEASURED at crate level, with the premise NAMED:** ~2.5 was
+    measured in **opens/request** while the prediction is about **full loads**; they coincide only
+    if every open does exactly one `load_state` — **structurally true today (`open_inner` calls it
+    once), declared as a PREMISE, not as a datum.** The through-serve measurement moves to commit 2.
+  - **Uninformative consequence accepted**, and it is why the controls are committed rather than
+    optional: at ~100 events the counters carry the entire claim.
+- **ONE QUESTION I RAISED ON P6's FIELD LIST (M), unresolved at seal time:** **is `batches` the
+  batch CONTENTS or a batch COUNT?** If it is a count, **P6 compares an aggregate and can pass while
+  the underlying events diverge** — which is precisely the hole P6 was added to close, one level
+  down. *Assert at the finest grain the question has.* The other named fields
+  (`reachable_evidence`, `artifacts`, `active_versions`, `expected_markers`) cover projection
+  content, so the exposure is narrow — but a stale-content pass is exactly the failure P6 exists
+  for, and a count would not catch it.
+- **P6's FIELD QUESTION ANSWERED — and it caught more than it asked.** `state.batches` is **full
+  CONTENT, not a count**: `Vec<PhysicalBatch>`, each carrying scope, stream, checksum,
+  `request_digest` and a complete `Vec<EventEnvelope>` (kind, actor, sequence, `previous_hash`,
+  `event_hash`). **Equality descends to each event's hash** — the finest grain the question has.
+  P6's exposure is closed.
+  - **AND THE QUESTION SURFACED A LATENT COMPILE-BREAK: `PhysicalBatch` DID NOT DERIVE
+    `PartialEq`, so the P6 assert WOULD NOT HAVE COMPILED.** **VERIFIED BY ME in the unpatched
+    tree:** `jsonl.rs:4` reads `#[derive(Clone, Debug, Serialize, Deserialize)]` — no `PartialEq`.
+    A fixed it with one line in the parked patch (`EventEnvelope` and `RepositoryScope` already had
+    it).
+  - **What that is worth, concretely: the question converted a would-be NOT-A-RESULT into a working
+    test before it consumed machine time.** P6 would have hit the compile-failure cell in the slot
+    and burned a turn — on a lane where A is fifth in the queue.
+  - **ONE INSTANCE, NOT A LAW (M) — but it qualifies D's unification usefully.** I asked a
+    **SEMANTIC** question (*does this compare content or an aggregate?*) and it exposed a
+    **PLUMBING** defect (a missing derive). The unification says gates catch plumbing while people
+    catch semantics; **here a semantic question caught plumbing**, because asking what a thing
+    MEANS forces you to look at whether it WORKS. **The two are not cleanly separable in the
+    direction of inquiry**, even though they are in the direction of tooling. Recorded as one
+    instance.
+- **Status:** OPEN, sealed, unrun, controls committed, P6 compilable.
+
 ## Seal integrity
 
 If any row's source file changes after this seal, the ledger is stale for that row and the

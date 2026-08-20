@@ -1,0 +1,1 @@
+{"description":"Issue #89 landed on main: PR #144 merged as d864b93; lane_89's real-world work succeeded (mode surfaces carry the Graph qualifier).","emittedAt":"2026-08-20T05:05:00Z","evidence":["PR #144 merged @ d864b93, issue #89 closed"],"id":"sig-lane89-merged","severity":"low","source":{"id":"operator-h","type":"user"},"type":"external_work_completed"}

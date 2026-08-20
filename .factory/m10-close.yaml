@@ -1,0 +1,190 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: m10_close_graph_v1
+  name: M10 close, driven as a GraphHelm execution
+  executionId: exec-m10-close
+  version: 1
+  labels:
+    origin: operator_dogfood
+    mode: manual
+spec:
+  entrypoints:
+    - lane_87
+    - lane_88
+    - lane_89
+  nodes:
+    lane_87:
+      type: agent
+      name: "#87 lands: verified prefix stays verified"
+      objective: A Agent's fix for O(history) leaving the request path is merged to main.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Land issue 87 with review and gate green.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Merge evidence is the PR number and merge SHA on main.
+          completionContract:
+            requires:
+              - merge_sha
+          isolationMinimum: tier_1
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - outputSchemaValid: true
+    lane_88:
+      type: agent
+      name: "#88 lands: wake-wait answers from the receipt, not the snapshot"
+      objective: J Agent's fix for the timeout-path stale answer is merged to main.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Land issue 88 with review and gate green.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Merge evidence is the PR number and merge SHA on main.
+          completionContract:
+            requires:
+              - merge_sha
+          isolationMinimum: tier_1
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - outputSchemaValid: true
+    lane_89:
+      type: agent
+      name: "#89 lands: mode surfaces stop over-promising dispatch control"
+      objective: E Agent's fix for the Graph-qualifier drop is merged to main.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Land issue 89 with review and gate green.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Merge evidence is the PR number and merge SHA on main.
+          completionContract:
+            requires:
+              - merge_sha
+          isolationMinimum: tier_1
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - outputSchemaValid: true
+    close_doc:
+      type: agent
+      name: M10 close document
+      objective: Author docs/milestones close doc with cite-or-mark landing claims.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Write the close doc against the three landings' evidence.
+          capabilities:
+            - docs.author
+          inputSchema: schema://ImplementationResult@1
+          outputSchema: schema://ReviewReport@1
+          instructions: Every landing claim names what was checked and when.
+          completionContract:
+            requires:
+              - evidence_linked_findings
+          isolationMinimum: tier_0
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - outputSchemaValid: true
+    evidence_commit:
+      type: tool
+      name: Storm-evidence archival commit
+      objective: The .factory storm measurement records land in a merged doc (issue 120).
+      optionality: required
+      input:
+        schema: schema://ImplementationResult@1
+      output:
+        schema: schema://TestReport@1
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - expression: output.executed > 0
+    changelog:
+      type: tool
+      name: CHANGELOG entry
+      objective: The M10 line exists in CHANGELOG.md on main.
+      optionality: required
+      input:
+        schema: schema://ImplementationResult@1
+      output:
+        schema: schema://TestReport@1
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - expression: output.executed > 0
+    owner_report:
+      type: agent
+      name: Owner report
+      objective: The owner-facing M10 summary, sent after evidence and changelog exist.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Report the milestone in plain language with pointers.
+          capabilities:
+            - docs.author
+          inputSchema: schema://ReviewReport@1
+          outputSchema: schema://ReviewReport@1
+          instructions: Plain words, exact paths, what changed and what it means.
+          completionContract:
+            requires:
+              - evidence_linked_findings
+          isolationMinimum: tier_0
+      timeoutSeconds: 604800
+      completion:
+        requires:
+          - outputSchemaValid: true
+  edges:
+    - id: e87_to_close
+      from: lane_87
+      to: close_doc
+      type: evidence
+    - id: e88_to_close
+      from: lane_88
+      to: close_doc
+      type: evidence
+    - id: e89_to_close
+      from: lane_89
+      to: close_doc
+      type: evidence
+    - id: close_to_evidence
+      from: close_doc
+      to: evidence_commit
+      type: control
+    - id: close_to_changelog
+      from: close_doc
+      to: changelog
+      type: control
+    - id: evidence_to_report
+      from: evidence_commit
+      to: owner_report
+      type: evidence
+    - id: changelog_to_report
+      from: changelog
+      to: owner_report
+      type: evidence
+  budgets:
+    maxNodes: 10
+    maxDepth: 4
+    maxMutations: 6
+    maxRetriesPerNode: 2
+    maxWallClockSeconds: 604800
+    maxApiCostUsd: 0
+    maxParallelModelCalls: 1
+  policies:
+    - policy://workspace/security-baseline@1
+  completion:
+    terminalNodes:
+      - owner_report
+    allowWaivers: true

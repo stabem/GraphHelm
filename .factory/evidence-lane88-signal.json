@@ -1,0 +1,1 @@
+{"description":"Issue #88 landed on main: PR #139 merged as d2ef897; lane_88's real-world work succeeded (wake_wait consults the receipt).","emittedAt":"2026-08-20T04:20:00Z","evidence":["PR #139 merged @ d2ef897, issue #88 closed"],"id":"sig-lane88-merged","severity":"low","source":{"id":"operator-h","type":"user"},"type":"external_work_completed"}

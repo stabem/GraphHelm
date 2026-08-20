@@ -594,6 +594,23 @@ pub(super) async fn pause(
                     );
                 }
                 if std::time::Instant::now() >= deadline {
+                    // #130, the third class — found while #96 split the other two, and
+                    // deliberately NOT split here. This is not a drive failure at all: it is
+                    // `pause` waiting for `execution_paused` and running out of budget, so the
+                    // operator's question is "did my pause take effect?" — and its remedy is a
+                    // third kind, an UNKNOWN rather than a failure, because the pause may still
+                    // record after the budget elapses. A failure says act; an unknown says look.
+                    //
+                    // NOT contradicted by #96: that change scopes `GHCLI016`'s narrowed meaning to
+                    // the start/resume path explicitly, so this site's use stays a pre-existing
+                    // approximation rather than becoming a false statement. Untidy and named, not
+                    // wrong — a distinction I got wrong in #130's own opening and corrected there
+                    // after a reviewer read this constant's doc instead of my summary of it.
+                    //
+                    // Left as-is because it belongs to a different command and a different
+                    // operator story than #96's split, and widening that change to cover it would
+                    // bundle two contracts in one diff. Named here so the next reader finds a
+                    // decision instead of an oversight.
                     return respond_failure(
                         PAUSE_COMMAND,
                         driver_failure(
@@ -782,11 +799,36 @@ fn drive_is_viable_for(state: &ServeState, spec: &graphhelm_protocols::GraphSpec
 /// existing `execution::Failure` surface: a stable code that is not one of `respond_failure`'s
 /// specifically-classified codes, so it falls through to that function's 500 default — "an app
 /// failure with a stable code", never the driver's own internal error text.
+///
+/// #96: this code now means ONE thing on the start/resume path — **the decision committed and the
+/// work then failed**. The operator's hold is GONE and the execution is attended; re-pausing
+/// blindly is wrong. A setup refusal, where nothing committed, answers [`SETUP_FAILURE_CODE`]
+/// instead.
 const DRIVER_FAILURE_CODE: &str = "GHCLI016_DRIVER_FAILURE";
+
+/// #96. A refusal from [`prepare_drive`] — raised BEFORE the start/resume decision commits, so
+/// **nothing was written and the operator's hold is exactly where they left it.** Fix the
+/// environment and retry; you are where you were.
+///
+/// The distinction this carries is not new logic. #83's hoist already made it structural: every
+/// site that raises this runs before `execute_prepared`, and every site that raises
+/// [`DRIVER_FAILURE_CODE`] on this path runs after it. Until now both answered the same value, so
+/// the response destroyed a distinction the code already had — "the call failed" and "your hold
+/// still holds" are one fact to an operator, and one code for both made them two.
+const SETUP_FAILURE_CODE: &str = "GHCLI019_DRIVER_SETUP";
 
 fn driver_failure(message: &str) -> execution::Failure {
     execution::Failure {
         code: DRIVER_FAILURE_CODE,
+        message: message.to_owned(),
+        pointer: "/execution".to_owned(),
+    }
+}
+
+/// Class (a): the drive's setup refused and no decision was committed. See [`SETUP_FAILURE_CODE`].
+fn setup_failure(message: &str) -> execution::Failure {
+    execution::Failure {
+        code: SETUP_FAILURE_CODE,
         message: message.to_owned(),
         pointer: "/execution".to_owned(),
     }
@@ -846,12 +888,12 @@ async fn prepare_drive(
     payload: &serde_json::Value,
 ) -> Result<DriveSetup, MutationError> {
     let sealer = build_sealer(state.sealing.as_deref())
-        .map_err(|message| MutationError::from(driver_failure(&message)))?;
+        .map_err(|message| MutationError::from(setup_failure(&message)))?;
     let ports = match &state.runtime {
         Some(wiring) => {
             let model = ServeModelPort::build(wiring)
                 .await
-                .map_err(|message| MutationError::from(driver_failure(&message)))?;
+                .map_err(|message| MutationError::from(setup_failure(&message)))?;
             // Three-deep fallback (issue #82): the caller's own `"project"` wins when given (no
             // MCP tool currently exposes this field, but the raw HTTP body always could); absent
             // that, the deployer's own `--project` default (set once, the same way `--staging`
@@ -867,12 +909,12 @@ async fn prepare_drive(
                 .or_else(|| wiring.project.clone())
                 .or_else(|| std::env::current_dir().ok())
                 .ok_or_else(|| {
-                    MutationError::from(driver_failure(
+                    MutationError::from(setup_failure(
                         "no \"project\" was given, no --project default is configured, and the server's working directory could not be read",
                     ))
                 })?;
             let tools = ServeToolPort::build(wiring, &project)
-                .map_err(|message| MutationError::from(driver_failure(&message)))?;
+                .map_err(|message| MutationError::from(setup_failure(&message)))?;
             Some(PreparedPorts {
                 model,
                 tools,

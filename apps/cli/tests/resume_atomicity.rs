@@ -4,9 +4,17 @@
 //! resume decision — the `ExecutionResumed` append and the paused-node redispatches — BEFORE the
 //! caller's `drive()` (`apps/cli/src/commands/serve/routes.rs:685`) runs its own setup. That setup
 //! can fail: `build_sealer` alone rejects a missing or malformed `GRAPHHELM_EVENTS_KEY`. When it
-//! does, the operator gets a 500 `GHCLI016_DRIVER_FAILURE` while the store has already recorded the
-//! resume and dropped their pause hold. "The call failed" and "your hold still holds" stop being
-//! the same fact, silently, at exactly the moment someone is leaning on the hold.
+//! did, the operator got a 500 while the store had already recorded the resume and dropped their
+//! pause hold. "The call failed" and "your hold still holds" stop being the same fact, silently, at
+//! exactly the moment someone is leaning on the hold.
+//!
+//! **The code these guards assert changed in #96 and the change is deliberate.** #83 fixed the
+//! ordering, so a setup refusal commits nothing — but the RESPONSE still said
+//! `GHCLI016_DRIVER_FAILURE` for both that and a genuine mid-drive failure, which are opposite
+//! hold-states. #96 splits them: a setup refusal now answers `GHCLI019_DRIVER_SETUP` (nothing
+//! committed, your hold is intact), and `GHCLI016` is left meaning only "the decision committed and
+//! the work then failed". These tests assert the setup class, so they assert the new code; that
+//! they had to change is the point, not an accident.
 //!
 //! The graph is `docs/acceptance/m09-judge-run-2026-08-19/release.yaml` — deliberately not a fresh
 //! fixture. It is the graph the M09 paid run started, paused and resumed over this same API, i.e.
@@ -414,7 +422,7 @@ fn a_resume_whose_drive_setup_fails_leaves_the_operator_hold_intact() {
         "ARRANGEMENT: the drive setup must fail, giving a driver failure: {reply}"
     );
     assert_eq!(
-        reply["diagnostics"][0]["code"], "GHCLI016_DRIVER_FAILURE",
+        reply["diagnostics"][0]["code"], "GHCLI019_DRIVER_SETUP",
         "ARRANGEMENT: the failure must be the driver's setup, not a precondition refusal: {reply}"
     );
 
@@ -439,7 +447,7 @@ fn a_resume_whose_drive_setup_fails_leaves_the_operator_hold_intact() {
         .collect();
     assert!(
         resumed.is_empty(),
-        "a resume refused with GHCLI016 committed ExecutionResumed anyway, so the operator's hold \
+        "a resume refused with GHCLI019 committed ExecutionResumed anyway, so the operator's hold \
          was dropped by a call that answered failure (watermark {watermark}): {resumed:?}"
     );
 }
@@ -629,7 +637,7 @@ fn a_start_whose_drive_setup_fails_commits_no_execution() {
         "ARRANGEMENT: the drive setup must fail: {reply}"
     );
     assert_eq!(
-        reply["diagnostics"][0]["code"], "GHCLI016_DRIVER_FAILURE",
+        reply["diagnostics"][0]["code"], "GHCLI019_DRIVER_SETUP",
         "ARRANGEMENT: must be a driver-setup failure, not a precondition refusal: {reply}"
     );
 
@@ -645,7 +653,7 @@ fn a_start_whose_drive_setup_fails_commits_no_execution() {
         .collect();
     assert!(
         started.is_empty(),
-        "a start refused with GHCLI016 committed ExecutionStarted anyway, leaving an execution \
+        "a start refused with GHCLI019 committed ExecutionStarted anyway, leaving an execution \
          that is started but will never be driven: {started:?}"
     );
 
@@ -721,7 +729,7 @@ fn the_same_idempotency_key_after_a_failed_setup_still_executes() {
     let (retry_status, retry_reply) =
         resume_with_failing_setup(&base, &token, execution, "issue83-same-key");
     assert_eq!(
-        retry_reply["diagnostics"][0]["code"], "GHCLI016_DRIVER_FAILURE",
+        retry_reply["diagnostics"][0]["code"], "GHCLI019_DRIVER_SETUP",
         "the same-key retry must reach the driver setup again — a replayed or conflicted answer \
          means the refused call spent the key it never should have taken: {retry_reply}"
     );

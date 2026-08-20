@@ -1,0 +1,13 @@
+Diff in \\?\F:\github\GraphHelm\.claude\worktrees\f-agent-8dc3ee\tools\acceptance-map\src\lib.rs:371:
+         .filter_map(|entry| {
+             let path = entry.path();
+             (path.extension().is_some_and(|ext| ext == "rs"))
+[31m-                .then(|| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+[0m[32m+                .then(|| {
+[0m[32m+                    path.file_stem()
+[0m[32m+                        .map(|stem| stem.to_string_lossy().into_owned())
+[0m[32m+                })
+[0m                 .flatten()
+         })
+         .filter(|name| !excluded.contains(name))
+EXIT: 1

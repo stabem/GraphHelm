@@ -5,7 +5,7 @@
 //! byte-identical to what the generator emits.
 
 use acceptance_map::{
-    fn_body, generate, load_clauses, repo_root, rust_sources, verify_artifacts,
+    fn_body, gate_cli_suites, generate, load_clauses, repo_root, rust_sources, verify_artifacts,
     verify_demonstration, verify_tracked,
 };
 
@@ -21,6 +21,12 @@ fn acceptance_map_is_grounded() {
         })
         .collect();
     let gate = std::fs::read_to_string(root.join("ci/gate.ps1")).expect("gate.ps1 readable");
+    // #104: since #98, the gate discovers CLI suites from apps/cli/tests/*.rs rather than
+    // naming them as literals - a per-prover `gate.contains("'suite'")` check went
+    // permanently vacuous the day that landed. This recomputes the gate's own suite set
+    // (discovery, minus the gate's own named exclusions) instead of string-matching text
+    // the gate no longer carries.
+    let gate_suites = gate_cli_suites(&root, &gate);
 
     assert_eq!(clauses.clause.len(), 7, "the seven §8 clauses, exactly");
 
@@ -115,8 +121,10 @@ fn acceptance_map_is_grounded() {
                 );
             } else {
                 assert!(
-                    gate.contains(&format!("'{}'", prover.suite)),
-                    "{}: suite {} must be on the gate's CLI suite list",
+                    gate_suites.iter().any(|suite| suite == &prover.suite),
+                    "{}: suite {} must be on the gate's discovered CLI suite list \
+                     (apps/cli/tests/*.rs minus any suite named in gate.ps1's own \
+                     $excludedSuites map) - discovered {gate_suites:?}",
                     clause.id,
                     prover.suite
                 );
@@ -133,6 +141,14 @@ fn acceptance_map_is_grounded() {
     assert!(gate.contains("GREEN - every stage passed"));
     assert!(gate.contains("PostgreSQL ignored matrix"));
     assert!(gate.contains("PostgreSQL matrix under a non-C collation"));
+    // The suite list must stay DISCOVERED, not revert to a hand-maintained literal array
+    // (#98's own fix) - otherwise `gate_cli_suites` above would silently stop describing
+    // what the gate actually runs.
+    assert!(
+        gate.contains("Get-ChildItem") && gate.contains("apps\\cli\\tests"),
+        "the gate must still discover CLI suites from apps/cli/tests/*.rs rather than a \
+         hardcoded list"
+    );
 
     // The refused scope: every citation resolves in the decision register, verbatim.
     let register = std::fs::read_to_string(root.join("docs/DECISION_REGISTER.md"))

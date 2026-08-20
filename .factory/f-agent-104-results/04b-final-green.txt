@@ -1,0 +1,43 @@
+   Compiling acceptance-map v0.1.0 (F:\github\GraphHelm\.claude\worktrees\f-agent-8dc3ee\tools\acceptance-map)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.05s
+     Running unittests src\lib.rs (D:/graphhelm-target-m10\debug\deps\acceptance_map-986b07fa2ee01504.exe)
+
+running 2 tests
+test tests::gate_excluded_suites_parses_a_real_entry_past_the_comment ... ok
+test tests::gate_excluded_suites_ignores_its_own_illustrative_comment ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (D:/graphhelm-target-m10\debug\deps\acceptance_map-dbdfdee2a105faa5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\record_demonstration.rs (D:/graphhelm-target-m10\debug\deps\record_demonstration-52588fe9e42cf731.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\committed_stores.rs (D:/graphhelm-target-m10\debug\deps\committed_stores-823be91ee2fc6d92.exe)
+
+running 1 test
+test every_committed_acceptance_store_opens_and_replays_its_recorded_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests\grounded.rs (D:/graphhelm-target-m10\debug\deps\grounded-2d996b5ffb9890de.exe)
+
+running 1 test
+test acceptance_map_is_grounded ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+   Doc-tests acceptance_map
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXIT: 0

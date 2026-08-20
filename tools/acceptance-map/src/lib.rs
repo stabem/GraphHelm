@@ -311,6 +311,78 @@ pub fn verify_tracked(root: &Path, directory: &str) -> Vec<String> {
     problems
 }
 
+/// Suite names `gate.ps1`'s `$excludedSuites` hashtable names, parsed from the script's own
+/// text (#104: the map's grounding check must read the gate's suite set the way the gate
+/// NOW produces it — discovery, not a literal list — or the two drift apart silently).
+/// Only non-comment lines are matched: the block's own illustrative comment
+/// (`# (none today - add 'suite_name' = 'reason' ...)`) contains the exact `'x' = 'y'`
+/// shape it is describing, and a naive whole-block regex would misread that prose as a
+/// real exclusion.
+#[must_use]
+pub fn gate_excluded_suites(gate_text: &str) -> Vec<String> {
+    let marker = "$excludedSuites = @{";
+    let Some(marker_at) = gate_text.find(marker) else {
+        return Vec::new();
+    };
+    let body_start = marker_at + marker.len();
+    let mut depth = 1_i32;
+    let mut body_end = gate_text.len();
+    for (offset, character) in gate_text[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    body_end = body_start + offset;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut excluded = Vec::new();
+    for line in gate_text[body_start..body_end].lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('\'')
+            && let Some(end) = rest.find('\'')
+        {
+            excluded.push(rest[..end].to_owned());
+        }
+    }
+    excluded
+}
+
+/// The CLI suite set `gate.ps1` actually invokes, computed the same way the gate itself
+/// does since #98: every `apps/cli/tests/*.rs` base name, minus any name the gate's own
+/// `$excludedSuites` map excludes. `gate.ps1` carries no more literal suite names for a
+/// grounding test to string-match against — the surface is now structural, so the check
+/// must be too, or the map and the gate can drift apart with nothing to notice (#104).
+#[must_use]
+pub fn gate_cli_suites(root: &Path, gate_text: &str) -> Vec<String> {
+    let excluded = gate_excluded_suites(gate_text);
+    let tests_dir = root.join("apps/cli/tests");
+    let mut suites: Vec<String> = std::fs::read_dir(&tests_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().is_some_and(|ext| ext == "rs"))
+                .then(|| {
+                    path.file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                })
+                .flatten()
+        })
+        .filter(|name| !excluded.contains(name))
+        .collect();
+    suites.sort();
+    suites
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Refused {
     pub affordance: String,
@@ -444,4 +516,44 @@ pub fn generate(clauses: &Clauses) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pinned against the REAL file, not a synthetic stand-in: `gate.ps1`'s own
+    // `$excludedSuites` comment (`# (none today - add 'suite_name' = 'reason' ...)`) is
+    // exactly the shape a naive parser would misread as a real exclusion. If a future edit
+    // ever makes `gate_excluded_suites` comment-blind, this is the line that would first
+    // start lying — pin it directly rather than trusting a synthetic fixture to still
+    // resemble the file it is supposed to stand in for.
+    #[test]
+    fn gate_excluded_suites_ignores_its_own_illustrative_comment() {
+        let root = repo_root();
+        let gate = std::fs::read_to_string(root.join("ci/gate.ps1")).expect("gate.ps1 readable");
+        assert!(
+            gate.contains("# (none today"),
+            "this test pins against the exact illustrative comment gate.ps1 carries today — \
+             update the pinned text alongside any edit to that comment"
+        );
+        let excluded = gate_excluded_suites(&gate);
+        assert!(
+            !excluded.iter().any(|name| name == "suite_name"),
+            "the comment's illustrative 'suite_name' = 'reason' must not be read as a real \
+             exclusion: {excluded:?}"
+        );
+    }
+
+    #[test]
+    fn gate_excluded_suites_parses_a_real_entry_past_the_comment() {
+        let synthetic = "\
+$excludedSuites = @{
+    # (none today - add 'suite_name' = 'reason' here if one is ever needed)
+    'flaky_suite' = 'quarantined pending #999'
+}
+";
+        let excluded = gate_excluded_suites(synthetic);
+        assert_eq!(excluded, vec!["flaky_suite".to_owned()]);
+    }
 }

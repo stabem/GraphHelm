@@ -36,7 +36,7 @@ const MAX_LOAD_WORK_UNITS: usize = 800_000;
 const GENESIS_HASH: &str =
     "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LoadLimits {
     batches: usize,
     events: usize,
@@ -63,7 +63,7 @@ const DEFAULT_LOAD_LIMITS: LoadLimits = LoadLimits {
     work_units: MAX_LOAD_WORK_UNITS,
 };
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct LoadBudget {
     limits: LoadLimits,
     batches: usize,
@@ -274,8 +274,27 @@ pub struct LocalEventRepository {
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     temp_counter: Arc<AtomicU64>,
+    /// The verified prefix (#87): everything a prior load PROVED about the journal's
+    /// first `verified_offset` bytes, retained so the next load verifies only what is
+    /// new. In-memory only — a crash discards it and the next open replays from zero,
+    /// which is exactly today's behavior. Guarded by the same per-handle serialization
+    /// (`operation_gate` + the journal mutex) every load already runs under; the
+    /// CROSS-PROCESS story is unchanged because the check happens under the same
+    /// per-operation file lock that today's full reload runs under, and every writer
+    /// needs the exclusive lock — an append cannot land between this handle's check
+    /// and its use.
+    verified: Arc<Mutex<Option<VerifiedPrefix>>>,
     #[cfg(test)]
     load_count: Arc<AtomicU64>,
+    #[cfg(test)]
+    full_load_count: Arc<AtomicU64>,
+    #[cfg(test)]
+    suffix_load_count: Arc<AtomicU64>,
+    /// Per-OPERATION-KIND load accounting (design section 2: the metric must name WHICH
+    /// operation paid — one flat bucket made F2-H2 unfalsifiable). Keyed by the calling
+    /// operation's name; value = (full, suffix, hit) counts.
+    #[cfg(test)]
+    loads_by_kind: Arc<Mutex<BTreeMap<&'static str, (u64, u64, u64)>>>,
     #[cfg(test)]
     journal_sync_count: Arc<AtomicU64>,
     failpoint: Option<LocalFailpoint>,
@@ -366,8 +385,15 @@ impl LocalEventRepository {
             clock,
             ids,
             temp_counter: Arc::new(AtomicU64::new(0)),
+            verified: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             load_count: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            full_load_count: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            suffix_load_count: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            loads_by_kind: Arc::new(Mutex::new(BTreeMap::new())),
             #[cfg(test)]
             journal_sync_count: Arc::new(AtomicU64::new(0)),
             failpoint,
@@ -375,7 +401,7 @@ impl LocalEventRepository {
         };
         let recovery = (|| {
             repository.validate_anchors()?;
-            let state = repository.load_state()?;
+            let state = repository.load_state("open")?;
             repository.sync_loaded_journal(&state)?;
             repository.reconcile_orphans(&state)?;
             let published = state
@@ -463,7 +489,7 @@ impl LocalEventRepository {
         &self,
     ) -> Result<(crate::RepositoryStream, Vec<EventEnvelope>), EventRepositoryError> {
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("read_unique_replay_stream")?;
             let mut streams = BTreeMap::new();
             for batch in &state.batches {
                 streams.insert(
@@ -480,9 +506,9 @@ impl LocalEventRepository {
                 .ok_or(EventRepositoryError::StreamSelectionRequired)?;
             let events = state
                 .batches
-                .into_iter()
+                .iter()
                 .filter(|batch| batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events)
+                .flat_map(|batch| batch.events.iter().cloned())
                 .collect::<Vec<_>>();
             if events.len() > MAX_READ_ALL {
                 return Err(EventRepositoryError::LimitExceeded);
@@ -496,7 +522,7 @@ impl LocalEventRepository {
     /// exclusive lock every other read takes; nothing here can write.
     pub fn list_streams(&self) -> Result<Vec<crate::RepositoryStream>, EventRepositoryError> {
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("list_streams")?;
             let mut streams = BTreeMap::new();
             for batch in &state.batches {
                 streams.insert(
@@ -645,7 +671,7 @@ impl LocalEventRepository {
         &self,
         request: &PreparedAppend,
     ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
-        let state = self.load_state()?;
+        let state = self.load_state("append")?;
         self.sync_loaded_journal(&state)?;
         validate_request_preflight(request, &state)?;
         self.validate_reference_availability(request, &state)?;
@@ -1071,23 +1097,136 @@ impl LocalEventRepository {
         Err(EventRepositoryError::Storage)
     }
 
-    fn load_state(&self) -> Result<LoadedState, EventRepositoryError> {
+    /// Loads the journal's state, verifying ONLY what this handle has not already
+    /// proven (#87). The journal is append-only, so the cached verified prefix stays
+    /// true as long as the file's identity is unchanged and its length has not shrunk;
+    /// a longer file means new lines, which are verified chaining from the CACHED
+    /// per-stream hashes and sequence heads — every byte is still verified exactly once
+    /// per handle, from genesis. A shorter file or an unknown cache means a full reload
+    /// from zero, byte-for-byte the pre-#87 behavior (a line-boundary truncation
+    /// reloads as a valid shorter history, exactly as it always has — hardening that is
+    /// a separate, default-OFF decision). The check-to-use window is closed by the
+    /// LOCK, not by timing: this runs under the same per-operation file lock the full
+    /// reload always ran under, and every writer needs the exclusive lock.
+    fn load_state(&self, kind: &'static str) -> Result<Arc<LoadedState>, EventRepositoryError> {
+        // `kind` names WHICH operation is paying for this load (design section 2: never
+        // one flat bucket). It feeds the cfg(test) per-kind accounting only; production
+        // pays one &'static str argument.
+        let _ = kind;
         #[cfg(test)]
         self.load_count.fetch_add(1, Ordering::SeqCst);
         let mut journal = self
             .journal
             .lock()
             .map_err(|_| EventRepositoryError::Storage)?;
-        let bytes = read_bounded_file(&mut journal, MAX_JOURNAL_BYTES)?;
+        let length = journal
+            .metadata()
+            .map_err(|_| EventRepositoryError::Storage)?
+            .len();
+        ensure_inclusive_limit(length, MAX_JOURNAL_BYTES)?;
+        let mut verified = self
+            .verified
+            .lock()
+            .map_err(|_| EventRepositoryError::Storage)?;
+        // The prefix is TAKEN out while working: if suffix verification fails partway,
+        // a half-updated context must not survive as "verified" — the next load runs
+        // the full path and surfaces the same error the full path always surfaced.
+        //
+        // The reuse test below catches replacement (identity) and truncation below the
+        // offset (length); it CANNOT catch an in-place rewrite of already-verified
+        // bytes, and the lock is no answer there — the per-line verification exists for
+        // writers that never take the lock (corruption, rogue processes, bad hardware).
+        // That exposure is bounded by HANDLE LIFETIME, which is milliseconds under
+        // per-operation opens. NAMED TRIGGER (#87): when handles become long-lived (the
+        // serve commit), this trade-off must be revisited or the reuse bounded
+        // (full re-verify every N loads or on a time bound).
+        //
+        // SECOND consequence on the SAME trigger (D's CONV-1 report): the `verified`
+        // mutex below is held across the suffix READ and verification, so the critical
+        // section is O(suffix bytes), not constant. Uncontended by construction while
+        // handles are per-operation; on a long-lived SHARED handle, a handle that fell
+        // far behind pays a long read with the mutex held and every sibling operation
+        // waits — a CONTENTION exposure distinct from the staleness one above, arriving
+        // at the same commit.
+        let reusable = verified.take().filter(|prefix| {
+            prefix.journal_identity == self.journal_identity && prefix.verified_offset <= length
+        });
+        let (mut ctx, offset) = match reusable {
+            Some(prefix) if prefix.verified_offset == length => {
+                let state = prefix.state.clone();
+                *verified = Some(prefix);
+                #[cfg(test)]
+                self.record_load_kind(kind, LoadPath::Hit);
+                return Ok(state);
+            }
+            Some(prefix) => {
+                #[cfg(test)]
+                self.suffix_load_count.fetch_add(1, Ordering::SeqCst);
+                #[cfg(test)]
+                self.record_load_kind(kind, LoadPath::Suffix);
+                let offset = prefix.verified_offset;
+                (VerifyCtx::from_prefix(prefix), offset)
+            }
+            None => {
+                #[cfg(test)]
+                self.full_load_count.fetch_add(1, Ordering::SeqCst);
+                #[cfg(test)]
+                self.record_load_kind(kind, LoadPath::Full);
+                (VerifyCtx::fresh(), 0)
+            }
+        };
+        let bytes = read_bounded_range(&mut journal, offset, length)?;
         if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
             return Err(EventRepositoryError::Integrity);
         }
-        let mut state = LoadedState::default();
-        let mut load_budget = LoadBudget::new(DEFAULT_LOAD_LIMITS);
-        let mut counted_evidence = BTreeSet::new();
-        let mut counted_artifacts = BTreeSet::new();
-        let mut verified_evidence = BTreeMap::<String, EvidenceDigest>::new();
-        let mut verified_evidence_metadata_bytes = 0_u64;
+        self.verify_lines(&bytes, &mut ctx)?;
+        let state = ctx.state.clone();
+        *verified = Some(ctx.into_prefix(self.journal_identity, length));
+        Ok(state)
+    }
+
+    /// Records which operation paid for a load, and through which path (design section
+    /// 2: the metric names the payer, never one flat bucket).
+    #[cfg(test)]
+    fn record_load_kind(&self, kind: &'static str, path: LoadPath) {
+        if let Ok(mut by_kind) = self.loads_by_kind.lock() {
+            let entry = by_kind.entry(kind).or_insert((0, 0, 0));
+            match path {
+                LoadPath::Full => entry.0 += 1,
+                LoadPath::Suffix => entry.1 += 1,
+                LoadPath::Hit => entry.2 += 1,
+            }
+        }
+    }
+
+    /// Verifies `bytes` (whole lines, ending on a newline) into `ctx`, exactly as the
+    /// monolithic load always did — this IS that loop, extracted so a verified prefix
+    /// can resume it mid-journal. Chain heads, sequence heads, budgets and uniqueness
+    /// sets all come from `ctx`, so a suffix is judged against the cached prefix with
+    /// the same blades a full load judges it against genesis.
+    fn verify_lines(
+        &self,
+        bytes: &[u8],
+        ctx: &mut VerifyCtx,
+    ) -> Result<(), EventRepositoryError> {
+        let VerifyCtx {
+            state: shared_state,
+            budget: load_budget,
+            counted_evidence,
+            counted_artifacts,
+            verified_evidence,
+            verified_evidence_metadata_bytes,
+        } = ctx;
+        // Callers drop their Arc at the end of their operation, so this is normally a
+        // refcount-1 in-place mutation; a retained reference costs one clone, never
+        // correctness.
+        //
+        // An auditor looking for the chain head and sequence head in VerifyCtx will not
+        // find them by name: `expected` and `previous_hash` are per-batch locals SEEDED
+        // from `state.next_sequence`/`state.last_hash` and written back at the end of
+        // each batch — they survive a splice through `state`, which is why they need no
+        // ctx field.
+        let state = Arc::make_mut(shared_state);
         for line in bytes
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty())
@@ -1224,14 +1363,14 @@ impl LocalEventRepository {
                     let path = self.blob_path(&batch.scope, reference.evidence_id())?;
                     let sealed = self.read_verified_blob(&path, &batch.scope, reference)?;
                     let digest = evidence_digest(&sealed);
-                    verified_evidence_metadata_bytes = verified_evidence_metadata_bytes
+                    *verified_evidence_metadata_bytes = verified_evidence_metadata_bytes
                         .checked_add(
                             u64::try_from(serialized_len_bounded(&digest, MAX_EVENT_BYTES)?)
                                 .map_err(|_| EventRepositoryError::LimitExceeded)?,
                         )
                         .ok_or(EventRepositoryError::LimitExceeded)?;
                     ensure_inclusive_limit(
-                        verified_evidence_metadata_bytes,
+                        *verified_evidence_metadata_bytes,
                         MAX_REPOSITORY_METADATA_BYTES,
                     )?;
                     verified_evidence.insert(identity, digest.clone());
@@ -1394,7 +1533,7 @@ impl LocalEventRepository {
             }
             state.batches.push(batch);
         }
-        Ok(state)
+        Ok(())
     }
 
     fn verify_blob(
@@ -1636,7 +1775,7 @@ impl EventRepository for LocalEventRepository {
         validate_page_limit(limit)?;
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("read_stream")?;
             let key = stream_key(scope, stream_id)?;
             let head = state
                 .next_sequence
@@ -1658,9 +1797,9 @@ impl EventRepository for LocalEventRepository {
             let start = cursor_start(cursor, scope, stream_id)?;
             let matching = state
                 .batches
-                .into_iter()
+                .iter()
                 .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events)
+                .flat_map(|batch| batch.events.iter().cloned())
                 .filter(|event| event.sequence > start)
                 .take(limit + 1)
                 .collect::<Vec<_>>();
@@ -1689,12 +1828,12 @@ impl EventRepository for LocalEventRepository {
     ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("read_replay_stream")?;
             let events = state
                 .batches
-                .into_iter()
+                .iter()
                 .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events)
+                .flat_map(|batch| batch.events.iter().cloned())
                 .collect::<Vec<_>>();
             if events.len() > MAX_READ_ALL {
                 return Err(EventRepositoryError::LimitExceeded);
@@ -1710,7 +1849,7 @@ impl EventRepository for LocalEventRepository {
     ) -> Result<u64, EventRepositoryError> {
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("next_sequence")?;
             Ok(state
                 .next_sequence
                 .get(&stream_key(scope, stream_id)?)
@@ -1725,7 +1864,7 @@ impl EventRepository for LocalEventRepository {
         evidence_id: &EvidenceId,
     ) -> Result<bool, EventRepositoryError> {
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("evidence_exists")?;
             let path = self.blob_path(scope, evidence_id)?;
             Ok(state.reachable_evidence.contains(&path))
         })
@@ -1737,7 +1876,7 @@ impl EventRepository for LocalEventRepository {
         artifact_id: &ArtifactId,
     ) -> Result<bool, EventRepositoryError> {
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("artifact_exists")?;
             Ok(state
                 .artifacts
                 .contains_key(&artifact_key(scope, artifact_id)?))
@@ -1750,7 +1889,7 @@ impl EventRepository for LocalEventRepository {
         stream_id: &str,
     ) -> Result<Option<ActiveVersion>, EventRepositoryError> {
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("active_version")?;
             Ok(state
                 .active_versions
                 .get(&stream_key(scope, stream_id)?)
@@ -1765,11 +1904,11 @@ impl EventRepository for LocalEventRepository {
         idempotency_key: &OpaqueId,
     ) -> Result<Option<Vec<EventEnvelope>>, EventRepositoryError> {
         self.with_shared_lock(|| {
-            let state = self.load_state()?;
+            let state = self.load_state("committed_events_for_idempotency")?;
             self.sync_loaded_journal(&state)?;
             Ok(state
                 .batches
-                .into_iter()
+                .iter()
                 .find(|batch| {
                     &batch.scope == scope
                         && batch.stream_id == stream_id
@@ -1778,12 +1917,12 @@ impl EventRepository for LocalEventRepository {
                             .iter()
                             .any(|event| event.idempotency_key == *idempotency_key)
                 })
-                .map(|batch| batch.events))
+                .map(|batch| batch.events.clone()))
         })
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct LoadedState {
     batches: Vec<PhysicalBatch>,
     next_sequence: BTreeMap<String, u64>,
@@ -1793,6 +1932,78 @@ struct LoadedState {
     active_versions: BTreeMap<String, ActiveVersion>,
     seen_idempotency: BTreeSet<String>,
     expected_markers: BTreeMap<String, StoredActiveMarker>,
+}
+
+/// Which path a load took, for the per-kind accounting (#87).
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum LoadPath {
+    Full,
+    Suffix,
+    Hit,
+}
+
+/// #87: the verified prefix, retained per handle between loads. Everything here was
+/// proven by the same per-line verification the full path runs; `verified_offset`
+/// advances only past fully verified lines, so it always ends on a newline boundary.
+struct VerifiedPrefix {
+    journal_identity: FileIdentity,
+    verified_offset: u64,
+    state: Arc<LoadedState>,
+    budget: LoadBudget,
+    counted_evidence: BTreeSet<String>,
+    counted_artifacts: BTreeSet<String>,
+    verified_evidence: BTreeMap<String, EvidenceDigest>,
+    verified_evidence_metadata_bytes: u64,
+}
+
+/// The full verification context `verify_lines` mutates — the cache is exactly this,
+/// frozen at a byte offset. Kept separate from `VerifiedPrefix` so a failed suffix
+/// verification can drop a half-mutated context without ever storing it as verified.
+struct VerifyCtx {
+    state: Arc<LoadedState>,
+    budget: LoadBudget,
+    counted_evidence: BTreeSet<String>,
+    counted_artifacts: BTreeSet<String>,
+    verified_evidence: BTreeMap<String, EvidenceDigest>,
+    verified_evidence_metadata_bytes: u64,
+}
+
+impl VerifyCtx {
+    fn fresh() -> Self {
+        Self {
+            state: Arc::new(LoadedState::default()),
+            budget: LoadBudget::new(DEFAULT_LOAD_LIMITS),
+            counted_evidence: BTreeSet::new(),
+            counted_artifacts: BTreeSet::new(),
+            verified_evidence: BTreeMap::new(),
+            verified_evidence_metadata_bytes: 0,
+        }
+    }
+
+    fn from_prefix(prefix: VerifiedPrefix) -> Self {
+        Self {
+            state: prefix.state,
+            budget: prefix.budget,
+            counted_evidence: prefix.counted_evidence,
+            counted_artifacts: prefix.counted_artifacts,
+            verified_evidence: prefix.verified_evidence,
+            verified_evidence_metadata_bytes: prefix.verified_evidence_metadata_bytes,
+        }
+    }
+
+    fn into_prefix(self, journal_identity: FileIdentity, verified_offset: u64) -> VerifiedPrefix {
+        VerifiedPrefix {
+            journal_identity,
+            verified_offset,
+            state: self.state,
+            budget: self.budget,
+            counted_evidence: self.counted_evidence,
+            counted_artifacts: self.counted_artifacts,
+            verified_evidence: self.verified_evidence,
+            verified_evidence_metadata_bytes: self.verified_evidence_metadata_bytes,
+        }
+    }
 }
 
 struct StagedBlob {
@@ -2394,6 +2605,30 @@ fn read_bounded_file(file: &mut File, limit: u64) -> Result<Vec<u8>, EventReposi
     Read::by_ref(file).take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
         return Err(EventRepositoryError::LimitExceeded);
+    }
+    Ok(bytes)
+}
+
+/// Reads `[offset..length)` of the file (#87). The caller has already bounded `length`
+/// by the journal limit and `offset` always sits on a newline boundary, because it only
+/// ever comes from a fully verified prefix. A short read means the file shrank between
+/// the metadata call and this read — impossible under the operation's lock for any
+/// writer using the store API, so it reports as Storage rather than being silently
+/// verified as a shorter suffix.
+fn read_bounded_range(
+    file: &mut File,
+    offset: u64,
+    length: u64,
+) -> Result<Vec<u8>, EventRepositoryError> {
+    let span = length
+        .checked_sub(offset)
+        .ok_or(EventRepositoryError::Storage)?;
+    let capacity = usize::try_from(span).map_err(|_| EventRepositoryError::LimitExceeded)?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.seek(SeekFrom::Start(offset))?;
+    Read::by_ref(file).take(span).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != span {
+        return Err(EventRepositoryError::Storage);
     }
     Ok(bytes)
 }
@@ -4741,7 +4976,7 @@ mod limit_tests {
         repository
             .append_atomic(&artifact_request(1, "producer-1", 'a'))
             .unwrap();
-        let state = repository.load_state().unwrap();
+        let state = repository.load_state("durable_load_rejects_a_divergent_artifact_catalog_entry").unwrap();
         let divergent = artifact_request(2, "producer-2", 'b');
         let events = repository.build_envelopes(&divergent, &state).unwrap();
         let mut batch = PhysicalBatch {
@@ -4811,4 +5046,396 @@ mod limit_tests {
             Err(EventRepositoryError::Integrity)
         ));
     }
+
+    // ------------------------------------------------------------------------------------
+    // #87: the verified-prefix cache. Naming convention: the guard says what the cache
+    // must and must not change. Every "same error as a fresh handle" assertion compares
+    // against an actual fresh open on the same directory, so today's behavior is the
+    // oracle rather than a hand-written expectation.
+    // ------------------------------------------------------------------------------------
+
+    fn wake_scope() -> RepositoryScope {
+        RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse("execution-fixture").unwrap()),
+        )
+    }
+
+    fn wake_append(sequence: u64, key: &str) -> PreparedAppend {
+        let actor = PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("system-test").unwrap(),
+        );
+        PreparedAppend::new(
+            wake_scope(),
+            OpaqueId::parse("stream-1").unwrap(),
+            sequence,
+            vec![NewEvent::new(
+                OpaqueId::parse(key).unwrap(),
+                actor,
+                Sensitivity::Internal,
+                EventKind::WakeLease(graphhelm_protocols::WakeLease {
+                    execution_id: OpaqueId::parse("execution-fixture").unwrap(),
+                    session_id: OpaqueId::parse(format!("session-{sequence}")).unwrap(),
+                    cursor: 1,
+                    rendezvous_id: OpaqueId::parse(format!("rdv-{sequence}")).unwrap(),
+                    matures_in_seconds: None,
+                }),
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
+    fn cache_repository(directory: &std::path::Path) -> LocalEventRepository {
+        LocalEventRepository::open(directory, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap()
+    }
+
+    fn counters(repository: &LocalEventRepository) -> (u64, u64) {
+        (
+            repository.full_load_count.load(Ordering::SeqCst),
+            repository.suffix_load_count.load(Ordering::SeqCst),
+        )
+    }
+
+    #[test]
+    fn a_second_read_reuses_the_verified_prefix_instead_of_reloading() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 2);
+        let warmed = counters(&repository);
+        // POSITIVE CONTROL (M's sealed requirement): a broken counter that always reads
+        // zero must not be able to confirm this guard — the open itself was a full load,
+        // so the full counter has provably MOVED before the zero-delta claim below.
+        assert!(warmed.0 >= 1, "the full counter never moved: {warmed:?}");
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 2);
+        // The second read paid NEITHER a full load NOR a suffix load: pure cache hit.
+        assert_eq!(counters(&repository), warmed);
+        // Per-KIND accounting (design section 2: the metric names WHICH operation
+        // paid). Exact derivation for this scenario: the open paid the one full load;
+        // the append hit the open's cache; the FIRST next_sequence paid one suffix
+        // (verifying the append's line); the second was a pure hit.
+        drop(by_kind_probe(&repository, &scope));
+        let by_kind = repository.loads_by_kind.lock().unwrap();
+        assert_eq!(by_kind.get("open"), Some(&(1, 0, 0)));
+        assert_eq!(by_kind.get("append"), Some(&(0, 0, 1)));
+        // NOTE: per-kind triples are AGGREGATED ACROSS THE SCENARIO, not per call —
+        // (0, 1, 1) is two next_sequence calls summed (the first paid the append's
+        // suffix, the second was a pure hit).
+        assert_eq!(by_kind.get("next_sequence"), Some(&(0, 1, 1)));
+        // Label verification for the read-path stamps (M's L5: an asserted-by-hand
+        // stamp is checked by nothing until a guard exercises it): each op ran exactly
+        // once on the warm, quiescent handle, so each label must show one pure hit.
+        for kind in [
+            "read_stream",
+            "read_replay_stream",
+            "read_unique_replay_stream",
+            "list_streams",
+            "active_version",
+            "evidence_exists",
+            "artifact_exists",
+        ] {
+            assert_eq!(
+                by_kind.get(kind),
+                Some(&(0, 0, 1)),
+                "label {kind} did not record exactly one pure hit"
+            );
+        }
+    }
+
+    /// Exercises each read operation ONCE on a warm handle, so its kind label is
+    /// verified by observation instead of asserted by hand (M's L5).
+    fn by_kind_probe(repository: &LocalEventRepository, scope: &RepositoryScope) {
+        let _ = repository.read_stream(scope, "stream-1", 10, None);
+        let _ = repository.read_replay_stream(scope, "stream-1");
+        let _ = repository.read_unique_replay_stream();
+        let _ = repository.list_streams();
+        let _ = repository.active_version(scope, "stream-1");
+        let _ = repository.evidence_exists(scope, &EvidenceId::parse("evidence-none").unwrap());
+        let _ = EventRepository::artifact_exists(
+            repository,
+            scope,
+            &ArtifactId::parse("artifact-none").unwrap(),
+        );
+    }
+
+    #[test]
+    fn an_append_is_verified_as_a_suffix_never_as_a_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 2);
+        let (full_before, _) = counters(&repository);
+        repository
+            .append_atomic(&wake_append(2, "wake-append-1"))
+            .unwrap();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 3);
+        let (full_after, suffix_after) = counters(&repository);
+        // The appended line was verified by SUFFIX reads only; the full count is frozen.
+        // The suffix counter having MOVED is this guard's positive control: a dead pair
+        // of counters cannot fake the frozen-full claim.
+        assert_eq!(full_after, full_before);
+        assert!(suffix_after >= 1, "the suffix counter never moved");
+    }
+
+    #[test]
+    fn a_rival_handles_append_is_seen_by_the_cached_handle() {
+        let directory = tempfile::tempdir().unwrap();
+        let cached = cache_repository(directory.path());
+        cached.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        assert_eq!(cached.next_sequence(&scope, "stream-1").unwrap(), 2);
+        // A SECOND handle appends — the cross-handle shape the per-request serve uses.
+        let rival = cache_repository(directory.path());
+        rival
+            .append_atomic(&wake_append(2, "wake-rival-1"))
+            .unwrap();
+        // The cached handle's next read must see the rival's append (length grew, the
+        // suffix is verified from the cached chain) — no stale answer, no full reload.
+        let (full_before, suffix_before) = counters(&cached);
+        assert_eq!(cached.next_sequence(&scope, "stream-1").unwrap(), 3);
+        let (full_after, suffix_after) = counters(&cached);
+        assert_eq!(full_after, full_before);
+        assert_eq!(suffix_after, suffix_before + 1);
+    }
+
+    #[test]
+    fn a_corrupt_suffix_fails_the_cached_handle_exactly_as_a_fresh_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 2);
+        let journal = directory.path().join("journal.jsonl");
+        let mut bytes = std::fs::read(&journal).unwrap();
+        bytes.extend_from_slice(b"{\"garbage\":true}\n");
+        std::fs::write(&journal, bytes).unwrap();
+        let cached_error = repository.next_sequence(&scope, "stream-1").unwrap_err();
+        let fresh_error = match LocalEventRepository::open(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("a fresh open must refuse the corrupt journal"),
+        };
+        assert_eq!(
+            std::mem::discriminant(&cached_error),
+            std::mem::discriminant(&fresh_error),
+            "cached: {cached_error:?}, fresh: {fresh_error:?}"
+        );
+    }
+
+    #[test]
+    fn a_chain_break_in_the_suffix_is_judged_against_the_cached_hashes() {
+        // SC6: the suffix verifier must chain from the CACHE. Sabotage the cached
+        // last_hash directly — a LEGITIMATE next append must then fail verification on
+        // the cached handle, proving the chain check reads the cache and not a re-read.
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 2);
+        {
+            // NOTE (D's review): if the cache were ever REMOVED, this test dies here in
+            // SETUP (`expect`), not in its own assertion — a setup-panic red means "the
+            // seam is gone", not "the guard caught the sabotage". Read the panic site.
+            let mut verified = repository.verified.lock().unwrap();
+            let prefix = verified.as_mut().expect("the cache is warm");
+            let state = Arc::make_mut(&mut prefix.state);
+            let key = stream_key(&scope, "stream-1").unwrap();
+            state
+                .last_hash
+                .insert(key, format!("sha256:{}", "e".repeat(64)));
+        }
+        // Append THROUGH A RIVAL handle so the journal itself stays legitimate.
+        let rival = cache_repository(directory.path());
+        rival
+            .append_atomic(&wake_append(2, "wake-chain-1"))
+            .unwrap();
+        assert!(
+            repository.next_sequence(&scope, "stream-1").is_err(),
+            "a suffix verified against a sabotaged cached hash must fail — a pass here \
+             would mean the verifier re-derives the chain instead of using the cache"
+        );
+    }
+
+    #[test]
+    fn a_mid_line_truncation_fails_and_a_line_boundary_truncation_reloads_shorter() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        repository
+            .append_atomic(&wake_append(2, "wake-trunc-1"))
+            .unwrap();
+        let scope = wake_scope();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 3);
+        let journal = directory.path().join("journal.jsonl");
+        let full = std::fs::read(&journal).unwrap();
+        let first_line_end = full.iter().position(|byte| *byte == b'\n').unwrap() + 1;
+
+        // Mid-line truncation: the cached handle must fail, as a fresh one would.
+        std::fs::write(&journal, &full[..full.len() - 3]).unwrap();
+        assert!(repository.next_sequence(&scope, "stream-1").is_err());
+
+        // Line-boundary truncation: EXPECTED GREEN by the #87 ruling — the cached
+        // handle drops its prefix (the file shrank) and reloads the shorter history,
+        // byte-for-byte today's behavior. Hardening this is a separate decision.
+        std::fs::write(&journal, &full[..first_line_end]).unwrap();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 2);
+    }
+
+    #[test]
+    fn prefix_corruption_is_invisible_to_a_warm_handle_and_fatal_to_a_fresh_one() {
+        // SC1, BOTH halves committed: the honest widening (R1) documented as a pair of
+        // assertions instead of hidden. A warm handle does not re-read its verified
+        // prefix, so an in-place corruption of already-verified bytes passes it
+        // (EXPECTED GREEN); the same corruption fails a fresh open exactly as today.
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        repository
+            .append_atomic(&wake_append(2, "wake-prefix-1"))
+            .unwrap();
+        let scope = wake_scope();
+        assert_eq!(repository.next_sequence(&scope, "stream-1").unwrap(), 3);
+        let journal = directory.path().join("journal.jsonl");
+        let mut bytes = std::fs::read(&journal).unwrap();
+        bytes[10] = bytes[10].wrapping_add(1);
+        std::fs::write(&journal, bytes).unwrap();
+        assert_eq!(
+            repository.next_sequence(&scope, "stream-1").unwrap(),
+            3,
+            "EXPECTED GREEN: the warm handle trusts its verified prefix"
+        );
+        assert!(
+            LocalEventRepository::open(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds)
+            )
+            .is_err(),
+            "the fresh open is where prefix corruption is caught, exactly as today"
+        );
+    }
+
+    #[test]
+    fn incremental_budget_accounting_equals_the_from_zero_accounting() {
+        // SC7: limits must be path-independent — the budget a handle accumulated
+        // through suffix loads must equal the budget a fresh handle computes from zero
+        // over the same journal, on EVERY counter.
+        let directory = tempfile::tempdir().unwrap();
+        let incremental = cache_repository(directory.path());
+        incremental.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        for sequence in 2..=6 {
+            assert_eq!(
+                incremental.next_sequence(&scope, "stream-1").unwrap(),
+                sequence
+            );
+            incremental
+                .append_atomic(&wake_append(sequence, &format!("wake-budget-{sequence}")))
+                .unwrap();
+        }
+        assert_eq!(incremental.next_sequence(&scope, "stream-1").unwrap(), 7);
+        let from_zero = cache_repository(directory.path());
+        assert_eq!(from_zero.next_sequence(&scope, "stream-1").unwrap(), 7);
+        let lhs_guard = incremental.verified.lock().unwrap();
+        let rhs_guard = from_zero.verified.lock().unwrap();
+        let lhs_prefix = lhs_guard.as_ref().expect("warm");
+        let rhs_prefix = rhs_guard.as_ref().expect("warm");
+        // P6 (M's sealed cell): the HOT state must equal the from-scratch state BY
+        // VALUE — a cache can be fast, count right, error right, and still serve stale
+        // data; this row is the one that catches that. WHOLE-STRUCT equality (D's
+        // review): a hand-enumerated field list stops protecting the moment someone
+        // adds a field; the derive makes the omission impossible instead of remembered.
+        assert_eq!(*lhs_prefix.state, *rhs_prefix.state);
+        assert_eq!(lhs_prefix.verified_offset, rhs_prefix.verified_offset);
+        let lhs = &lhs_prefix.budget;
+        let rhs = &rhs_prefix.budget;
+        // POSITIVE CONTROL: the equality below is vacuous if the fixture consumed no
+        // budget — prove the counters are non-zero before claiming they are equal.
+        assert!(lhs.batches > 0 && lhs.events > 0 && lhs.work_units > 0);
+        // Whole-struct equality for the same reason as the state compare above; the
+        // tuple enumeration this replaces would have silently exempted a future field.
+        assert_eq!(lhs, rhs);
+    }
+
+    /// #87 measurement harness (run explicitly: `cargo test -p graphhelm-events --lib
+    /// measure_87 -- --ignored --nocapture`). Uses ONLY `load_count` and public ops so
+    /// the IDENTICAL code runs on the baseline tree (which lacks the cache and its
+    /// counters) — the paired before/after comparison is same-harness by construction.
+    /// Prints one row per (size, op, iteration): wall micros + load_state calls.
+    #[test]
+    #[ignore]
+    fn measure_87_paired_rows() {
+        let iterations = 10usize;
+        for size in [100u64, 1000, 5000] {
+            let directory = tempfile::tempdir().unwrap();
+            let build = cache_repository(directory.path());
+            build.append_atomic(&valid_graph_request()).unwrap();
+            let scope = wake_scope();
+            for sequence in 2..=size {
+                build
+                    .append_atomic(&wake_append(sequence, &format!("wake-m-{sequence}")))
+                    .unwrap();
+            }
+            drop(build);
+            // open: cold handle, N iterations
+            for i in 0..iterations {
+                let t = std::time::Instant::now();
+                let repository = cache_repository(directory.path());
+                let wall = t.elapsed().as_micros();
+                let loads = repository.load_count.load(Ordering::SeqCst);
+                println!("ROW size={size} op=open iter={i} wall_us={wall} loads={loads}");
+            }
+            // warm handle: repeated next_sequence
+            let warm = cache_repository(directory.path());
+            let _ = warm.next_sequence(&scope, "stream-1").unwrap();
+            for i in 0..iterations {
+                let before = warm.load_count.load(Ordering::SeqCst);
+                let t = std::time::Instant::now();
+                let head = warm.next_sequence(&scope, "stream-1").unwrap();
+                let wall = t.elapsed().as_micros();
+                let loads = warm.load_count.load(Ordering::SeqCst) - before;
+                println!(
+                    "ROW size={size} op=next_sequence_warm iter={i} wall_us={wall} \
+                     loads={loads} head={head}"
+                );
+            }
+            // warm handle: read_replay_stream
+            for i in 0..iterations {
+                let before = warm.load_count.load(Ordering::SeqCst);
+                let t = std::time::Instant::now();
+                let events = warm.read_replay_stream(&scope, "stream-1").unwrap();
+                let wall = t.elapsed().as_micros();
+                let loads = warm.load_count.load(Ordering::SeqCst) - before;
+                println!(
+                    "ROW size={size} op=read_replay_warm iter={i} wall_us={wall} \
+                     loads={loads} events={}",
+                    events.len()
+                );
+            }
+            // append on the warm handle (mutates: sequence advances per iteration)
+            for i in 0..iterations {
+                let sequence = size + 1 + i as u64;
+                let request = wake_append(sequence, &format!("wake-a-{sequence}"));
+                let before = warm.load_count.load(Ordering::SeqCst);
+                let t = std::time::Instant::now();
+                warm.append_atomic(&request).unwrap();
+                let wall = t.elapsed().as_micros();
+                let loads = warm.load_count.load(Ordering::SeqCst) - before;
+                println!("ROW size={size} op=append_warm iter={i} wall_us={wall} loads={loads}");
+            }
+        }
+    }
 }
+
+

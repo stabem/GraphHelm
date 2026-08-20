@@ -1,7 +1,7 @@
 use graphhelm_protocols::{ArtifactReference, EventEnvelope, RepositoryScope};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PhysicalBatch {
     pub format_version: String,

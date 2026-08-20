@@ -1,0 +1,9 @@
+P0 — unsabotaged gate
+sha AT LAUNCH: f73e03a
+worktree: d-agent-154 (post-reorg)
+CARGO_TARGET_DIR=D:/graphhelm-target-m10
+launched: 2026-08-20T12:09:45Z
+PREDICTION sealed at f73e03a, unchanged — no valid number observed yet, so nothing froze:
+  GREEN, 27 stages, zero red.
+  P0 green does NOT prove the lint is in effect. Only S1 discriminates.
+P0_EXIT=0

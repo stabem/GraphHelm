@@ -7,6 +7,18 @@
 //! count. Determinism is what replay needs from dispatch — the dispatch DECISION is never an
 //! event input, so the policy may evolve, but the same inputs must always yield the same plan.
 
+// Doc ATTACHMENT is otherwise unmeasured in this repo: #101 inserted a new function between
+// `dispatch_plan`'s doc block and `dispatch_plan`, leaving one function undocumented and the other
+// carrying a `# Errors` for an error it cannot return (#154). A green gate, a hand-verified review
+// and a merge all passed over it, correctly — clippy runs the DEFAULT set, where this lint is
+// pedantic and `missing_docs` is allow-by-default.
+//
+// This catches exactly ONE shape: a public `Result`-returning fn IN THIS MODULE losing its
+// `# Errors`, which is the half that actually happened. It does NOT catch the mirror (a stray
+// `# Errors` on a non-`Result` fn) and it does NOT generalise beyond this file. The repo-wide
+// question — crate-level `missing_docs`, or `clippy::pedantic` — is deliberately NOT decided here.
+#![warn(clippy::missing_errors_doc)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,24 +37,6 @@ pub enum DispatchError {
 ///
 /// # Errors
 /// `ZeroParallelism` when `max_parallel` is zero.
-/// `GraphBudgets::max_parallel_model_calls` as the `max_parallel` [`dispatch_plan`] wants.
-///
-/// SEPARATE FROM `dispatch_plan` ON PURPOSE. That function's own doc says the caller owns this
-/// conversion and that it "deliberately takes minimal `usize` inputs" — a recorded decision, and
-/// #101 does not overturn it. What #101 removes is the DUPLICATION: both drivers carried this
-/// exact `match`, byte for byte, so the policy that an absent budget means SERIAL was written
-/// twice and could drift once.
-///
-/// `None => 1` is that policy, not a default: a graph that declares no parallelism budget runs one
-/// node at a time. Stated here so the next reader finds a reason rather than a literal.
-#[must_use]
-pub fn parallel_limit(budgets: &graphhelm_protocols::GraphBudgets) -> usize {
-    match budgets.max_parallel_model_calls {
-        None => 1_usize,
-        Some(value) => usize::try_from(value).unwrap_or(usize::MAX),
-    }
-}
-
 pub fn dispatch_plan(
     ready: &BTreeSet<String>,
     attempts: &BTreeMap<String, u32>,
@@ -58,6 +52,34 @@ pub fn dispatch_plan(
     // A node absent from the map has zero attempts — first attempts always lead.
     ordered.sort_by_key(|node| (attempts.get(*node).copied().unwrap_or(0), (*node).clone()));
     Ok(ordered.into_iter().take(capacity).cloned().collect())
+}
+
+/// Converts `GraphBudgets::max_parallel_model_calls` into the `max_parallel` [`dispatch_plan`]
+/// wants.
+///
+/// SEPARATE FROM `dispatch_plan` ON PURPOSE. That function's own doc says the caller owns this
+/// conversion and that it "deliberately takes minimal `usize` inputs" — a recorded decision, and
+/// #101 does not overturn it. What #101 removes is the DUPLICATION: both drivers carried this
+/// exact `match`, byte for byte, so the policy that an absent budget means SERIAL was written
+/// twice and could drift once.
+///
+/// `None => 1` is that policy, not a default: a graph that declares no parallelism budget runs one
+/// node at a time. Stated here so the next reader finds a reason rather than a literal.
+///
+/// A LIMIT, NOT A MECHANISM — and the two drivers do not agree on the mechanism. This answers
+/// "how many may be in flight", never "does anything actually run at the same time".
+/// `core/runtime/src/driver.rs` spawns the plan into a `JoinSet` and runs nodes concurrently;
+/// `apps/cli/src/commands/execution/driver.rs` walks the plan in a `for` loop and blocks on each
+/// executor call, so the same limit only widens how many nodes one SEQUENTIAL pass may cover.
+/// Written here because #101's dedup removed the signal that used to carry it: two identical
+/// copies accidentally marked "two drivers, check both", and one shared function reads as
+/// unification. The policy is unified. The parallelism is not.
+#[must_use]
+pub fn parallel_limit(budgets: &graphhelm_protocols::GraphBudgets) -> usize {
+    match budgets.max_parallel_model_calls {
+        None => 1_usize,
+        Some(value) => usize::try_from(value).unwrap_or(usize::MAX),
+    }
 }
 
 #[cfg(test)]

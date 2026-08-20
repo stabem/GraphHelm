@@ -1,0 +1,8 @@
+S1 — sabotage: dispatch_plan's # Errors section deleted (2 lines)
+base: f73e03a + sabotage (uncommitted)
+command: the gate's own clippy stage, verbatim from ci/gate.ps1
+2026-08-20T12:46:11Z
+SEALED PREDICTION: RED, naming clippy::missing_errors_doc, on dispatch_plan.
+If GREEN: the guard is decoration and comes OUT of #154 — reported as a failed prediction.
+S1_EXIT=101
+RESTORE_CLIPPY_EXIT=0

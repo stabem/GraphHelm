@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -14,15 +15,115 @@ use serde_json::Value;
 /// Owns the `graphhelm serve` child process and kills it on drop — `Drop::drop` still runs while
 /// a panicking assertion unwinds the test thread, so a failing test never leaks a listening
 /// server into the rest of the suite.
+///
+/// Also owns the two background threads draining the child's stdout AND stderr (#140): past the
+/// one startup line `serve_with` reads synchronously, NOTHING previously read either pipe again —
+/// a server panic under load (the storm test's own shape) died into an OS pipe nobody drained, in
+/// every run alike, regardless of what `ci/gate.ps1`'s own capture does with `cargo test`'s
+/// stdout (#100 fixed a different, outer level; this is a nested child process one level deeper).
+/// `Drop` prints whatever accumulated ONLY when `std::thread::panicking()` — a passing run stays
+/// exactly as quiet as before; a failing one gets the server's own diagnostic instead of a bare
+/// `.unwrap()` with no attribution.
+///
+/// Inert for a quiet server, by construction: after `serve_with` returns, NOTHING on the test's
+/// own measured path (the storm test's HTTP round trips included) ever touches
+/// `stdout_lines`/`stderr_lines` or blocks on either drain thread — they run passively, blocked on
+/// a read syscall, until the child writes something or exits. A run whose server prints nothing
+/// past startup pays no synchronization cost this guard didn't already pay before #140.
 struct ServerGuard {
     child: Child,
+    stdout_lines: Arc<Mutex<Vec<String>>>,
+    stderr_lines: Arc<Mutex<Vec<String>>>,
+    stdout_thread: Option<std::thread::JoinHandle<()>>,
+    stderr_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for ServerGuard {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // NOT `JoinHandle::join()` — that has no timeout, and `Drop` running mid-panic-unwind is
+        // the single worst place to newly introduce an unbounded wait: a stuck drain thread would
+        // turn a clean, reportable test failure into a hung suite instead, silently, on whichever
+        // run first hit it. `wait()` above already guarantees the child's pipes are closed, so
+        // each drain thread's blocked read returns EOF at the kernel level essentially
+        // immediately — this bounded poll is insurance against exactly that "essentially," not a
+        // real wait, and gives up and prints whatever was captured so far rather than hang if a
+        // drain thread is ever stuck for a reason this comment did not anticipate.
+        //
+        // That "essentially immediately" is NOT structural today (L's #141 review, gate 3): it
+        // holds only because the one process spawner reachable under `serve` —
+        // `probe_native_runtime` in `apps/cli/src/commands/gateway/probe.rs:191-193` — sets
+        // `Stdio::null()` on stdin/stdout/stderr for the grandchild it spawns, so nothing inherits
+        // `graphhelm serve`'s own piped handles and holds a write end open past the parent's
+        // death. The day a spawner reachable from `serve` inherits stdio instead, a drain thread
+        // can block past this poll's 200ms cap, and this loop's own bound is what keeps `Drop`
+        // from hanging anyway — but a future spawner change is the trigger to re-examine this.
+        let deadline = Instant::now() + Duration::from_millis(200);
+        let drained_fully = loop {
+            let stdout_done = self
+                .stdout_thread
+                .as_ref()
+                .is_none_or(std::thread::JoinHandle::is_finished);
+            let stderr_done = self
+                .stderr_thread
+                .as_ref()
+                .is_none_or(std::thread::JoinHandle::is_finished);
+            if stdout_done && stderr_done {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        if std::thread::panicking() {
+            let stdout = self
+                .stdout_lines
+                .lock()
+                .map(|lines| lines.join("\n"))
+                .unwrap_or_default();
+            let stderr = self
+                .stderr_lines
+                .lock()
+                .map(|lines| lines.join("\n"))
+                .unwrap_or_default();
+            // A capture the 200ms cap cut short prints in the exact same shape as a complete one
+            // unless said otherwise — a reader has no way to tell a cut-off tail from the
+            // server's actual last word. Named explicitly rather than left to guesswork, the same
+            // distinction discipline the rest of this fix is built on (L's #141 review).
+            let truncation_note = if drained_fully {
+                ""
+            } else {
+                " (capture may be truncated: drain deadline reached)"
+            };
+            eprintln!(
+                "\n---- graphhelm serve stdout, captured (printed because this test panicked){truncation_note} ----\n\
+                 {stdout}\n\
+                 ---- graphhelm serve stderr, captured (printed because this test panicked){truncation_note} ----\n\
+                 {stderr}\n\
+                 ----"
+            );
+        }
     }
+}
+
+/// Spawns a background thread appending every line the pipe produces to a shared, lock-guarded
+/// buffer — the drain `ServerGuard` needs to exist BEFORE the caller starts reading anything, so
+/// nothing written between spawn and the first synchronous read is ever missed.
+fn drain_lines<R: Read + Send + 'static>(
+    pipe: R,
+    lines: Arc<Mutex<Vec<String>>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let reader = BufReader::new(pipe);
+        for line in reader.lines().map_while(Result::ok) {
+            let Ok(mut lines) = lines.lock() else {
+                return;
+            };
+            lines.push(line);
+        }
+    })
 }
 
 /// The token's path: a *sibling* of the events directory (`<events-directory-name>.token` in the
@@ -75,25 +176,54 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
         .spawn()
         .unwrap();
 
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut line = String::new();
-    let read = stdout.read_line(&mut line).unwrap();
-    if read == 0 {
-        // The process exited (or never started) before printing anything on stdout. A clap usage
-        // error (e.g. an unrecognized subcommand) goes to stderr instead, so surface both streams
-        // rather than leaving a bare "assertion failed" — this is the shape the plan's Step 2 RED
-        // observation comes back through.
-        let mut stderr_text = String::new();
-        let _ = child
-            .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut stderr_text);
-        let status = child.wait().unwrap();
-        panic!(
-            "`graphhelm serve` produced no stdout before exiting (status: {status}); stderr:\n{stderr_text}"
-        );
-    }
+    // No race with the startup read below is possible BY OWNERSHIP, not by timing luck:
+    // `.take()` moves each pipe's `ChildStdout`/`ChildStderr` handle out of `child` and into
+    // `drain_lines`'s closure, which is the ONLY code in this file that ever holds either raw
+    // pipe. Every other reader of a line, including the startup-envelope wait immediately below,
+    // goes through `stdout_lines`/`stderr_lines` — the shared, lock-guarded buffer those threads
+    // write into — never through `child.stdout`/`child.stderr` directly again. A second reader of
+    // the raw pipe cannot be written after this point: a repeated `child.stdout.take()` anywhere
+    // else in this file would just observe `None`, because the `Option` was already emptied here.
+    let stdout_lines = Arc::new(Mutex::new(Vec::new()));
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+    let stdout_thread = drain_lines(child.stdout.take().unwrap(), Arc::clone(&stdout_lines));
+    let stderr_thread = drain_lines(child.stderr.take().unwrap(), Arc::clone(&stderr_lines));
+
+    // The process exited (or never started) before printing anything on stdout. A clap usage
+    // error (e.g. an unrecognized subcommand) goes to stderr instead, so surface both streams
+    // rather than leaving a bare "assertion failed" — this is the shape the plan's Step 2 RED
+    // observation comes back through. Also refuses to hang forever if the process neither prints
+    // nor exits (the synchronous `read_line` this replaces had no such bound). Polls the SAME
+    // buffer the drain thread writes into, per the ownership argument above — not `child.stdout`.
+    //
+    // 30s, deliberately generous (L's #141 review, finding 2): this file is the instrument the
+    // storm test's own attribution depends on, and server startup opens the store under a
+    // blocking exclusive lock plus an O(head) load plus an fsync — under the workspace stage's
+    // concurrent-binary convoy, a tight bound here would fire on legitimate slow starts and read
+    // back as a SERVER fault in the very file used to attribute server faults. This bound exists
+    // to catch a genuine hang, not to characterize a normal startup distribution — it stays a
+    // pure hang-catcher, not a performance assertion.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let line = loop {
+        if let Some(line) = stdout_lines.lock().unwrap().first().cloned() {
+            break line;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let stderr_text = stderr_lines.lock().unwrap().join("\n");
+            panic!(
+                "`graphhelm serve` produced no stdout before exiting (status: {status}); stderr:\n{stderr_text}"
+            );
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let stderr_text = stderr_lines.lock().unwrap().join("\n");
+            panic!(
+                "`graphhelm serve` printed nothing on stdout within 30s and never exited; stderr:\n{stderr_text}"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
     let started: Value = serde_json::from_str(line.trim())
         .unwrap_or_else(|error| panic!("the startup line was not valid JSON ({error}): {line:?}"));
     assert_eq!(
@@ -113,7 +243,101 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
     let base = format!("http://{address}");
     wait_for_health(&base);
 
-    (ServerGuard { child }, base, token)
+    (
+        ServerGuard {
+            child,
+            stdout_lines,
+            stderr_lines,
+            stdout_thread: Some(stdout_thread),
+            stderr_thread: Some(stderr_thread),
+        },
+        base,
+        token,
+    )
+}
+
+/// #140's own regression guard, not just its evidence. L's #141 review, finding 1: a scratch
+/// binary outside the repo proves the mechanism ONCE, by hand — it protects nothing, because
+/// deleting the `thread::panicking()` gate or the drain threads in `ServerGuard` leaves every
+/// other test in this suite green (none of them panic AFTER their server has written anything
+/// interesting). "31/31 green" was the easy half by construction.
+///
+/// Proving this from directly inside a normal suite run is impossible — a test that deliberately
+/// panics cannot also be a permanent green-suite member — so this test spawns a SECOND INSTANCE
+/// of the CURRENTLY RUNNING TEST BINARY ITSELF (`std::env::current_exe()`, libtest's own CLI, not
+/// `cargo test`) to run the ignored sabotage test below, and asserts on THAT subprocess's own
+/// captured output. Deliberately NOT `cargo test` as the subprocess: this test binary is already
+/// executing FROM the exact `.exe` `cargo test` would need to rebuild and relink, and Windows
+/// refuses to replace a running executable's file — spawning the already-built binary a second
+/// time is an ordinary, unproblematic operation; asking cargo to relink it out from under itself
+/// is not (observed directly: `LNK1104: cannot open file ...api_http-*.exe` on the first attempt).
+/// This test itself stays green always; it is the subprocess that is designed to fail, on
+/// purpose, every time it runs.
+#[test]
+fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
+    let this_binary = std::env::current_exe().unwrap();
+    let output = Command::new(this_binary)
+        .args(["server_guard_sabotage_ignored", "--exact", "--ignored"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "the ignored sabotage test was supposed to fail (that is the whole point) — exit: {:?}",
+        output.status
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("SERVER-GUARD-140-STDOUT-MARKER"),
+        "the panicking child's stdout marker must reach the failure report, or the drain/print \
+         path has regressed:\n{combined}"
+    );
+    assert!(
+        combined.contains("SERVER-GUARD-140-STDERR-MARKER"),
+        "the panicking child's stderr marker must reach the failure report, or the drain/print \
+         path has regressed:\n{combined}"
+    );
+}
+
+/// Deliberately fails, every time it runs — exists ONLY to be invoked as a subprocess by
+/// `server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report` above, never by a
+/// normal suite run (`#[ignore]` keeps it out of `cargo test`'s default set). Spawns a real child
+/// (`cmd`, not `graphhelm serve` — isolates the `ServerGuard` MECHANISM from this specific
+/// server's own behavior, the same choice the original PR's scratch proof made) that writes
+/// distinct stdout and stderr markers, then panics — proving the drain-and-print-on-panic path
+/// end to end, in the tree, on every gate run.
+#[test]
+#[ignore = "invoked only as a subprocess by \
+            server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report"]
+fn server_guard_sabotage_ignored() {
+    let mut child = Command::new("cmd")
+        .args([
+            "/C",
+            "echo SERVER-GUARD-140-STDOUT-MARKER && echo SERVER-GUARD-140-STDERR-MARKER 1>&2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdout_lines = Arc::new(Mutex::new(Vec::new()));
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+    let stdout_thread = drain_lines(child.stdout.take().unwrap(), Arc::clone(&stdout_lines));
+    let stderr_thread = drain_lines(child.stderr.take().unwrap(), Arc::clone(&stderr_lines));
+    let _guard = ServerGuard {
+        child,
+        stdout_lines,
+        stderr_lines,
+        stdout_thread: Some(stdout_thread),
+        stderr_thread: Some(stderr_thread),
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    panic!(
+        "deliberate failure: proves ServerGuard surfaces a panicking child's captured output \
+         in the failure report"
+    );
 }
 
 /// The token file is written by the server before it prints the startup line, so by the time

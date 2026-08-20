@@ -373,6 +373,10 @@ fn drive(
             spec,
             port_executor(),
             gate_actor(),
+            // #123: this drive releases nothing, so the set is empty and the
+            // releasing actor is never consulted.
+            std::collections::BTreeSet::new(),
+            gate_actor(),
             cancel_rx,
             digest,
         ))

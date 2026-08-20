@@ -7,7 +7,7 @@ use graphhelm_protocols::{
     Sensitivity,
 };
 
-use super::driver::drive_to_quiescence;
+use super::driver::{Release, drive_to_quiescence};
 use super::{
     Failure, PreparedDrive, RecordedOutcome, append_event, execution_state, finish,
     idempotency_key, load_fixtures, owner_actor, record_outcome, render, replay_failure,
@@ -91,8 +91,12 @@ pub(crate) fn execute(
         &prepared.spec,
         &prepared.fixtures,
         &system_actor(),
+        &Release {
+            nodes: &prepared.release,
+            actor: &owner_actor(),
+        },
     )?;
-    Ok(render(
+    let mut data = render(
         &projection,
         // Nothing measured here on purpose: this command reports the mutation it just made,
         // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
@@ -101,7 +105,32 @@ pub(crate) fn execute(
         // Same posture for the instants: a mutation reply publishes null rather than a
         // stillness it never looked for.
         &super::Liveness::default(),
-    ))
+    );
+
+    // #123's REQUIRED MITIGATION, and it is what pays for overloading `Paused` with a second
+    // cause. A node this resume named but the drive could not release stays `Paused` — and the
+    // NEXT pause cannot re-hold it, because pause filters on `Ready | Queued`, so it will never
+    // appear in `heldNodes` again. Without this field the operator would have NO surface anywhere
+    // that mentions the node at all: the resume they just ran silently declined to start it and
+    // said nothing. The state alone cannot carry the distinction between "the owner paused this"
+    // and "its dependencies are still unmet", so the response carries it instead — additive on an
+    // envelope that already exists, costing no schema vocabulary.
+    let withheld: Vec<String> = prepared
+        .release
+        .iter()
+        .filter(|node| {
+            projection.node_states.get(node.as_str()).copied() == Some(NodeState::Paused)
+        })
+        .cloned()
+        .collect();
+    if let serde_json::Value::Object(ref mut map) = data {
+        map.insert("withheldNodes".to_owned(), serde_json::json!(withheld));
+        map.insert(
+            "withheldReason".to_owned(),
+            serde_json::json!("edges_unsatisfied"),
+        );
+    }
+    Ok(data)
 }
 
 /// The decision half of `execute` (Milestone 05d Task 9's `execute_prepared` split): the hash
@@ -239,23 +268,25 @@ pub(crate) fn execute_prepared(
     // Re-checking readiness HERE would also be wrong in the opposite direction: `is_dispatchable`
     // is `Ready`-only, so a `Paused` node is never in `ready_set` by construction, and filtering
     // this list by it would strand every paused node permanently.
+    // #123: NAMED HERE, RELEASED BY THE DRIVE. This used to force-record `Started` for every held
+    // node right now, which is what made #80's gate expensive: a node whose edges are still unmet
+    // went `Paused -> Queued`, the next `pause` re-held it on BARE STATE (`Ready | Queued`,
+    // `pause.rs:124`), the next resume re-started it, and the pair appended two events per round
+    // forever with no terminal state to stop it. Measured on this graph: 2 events/round before
+    // #80's gate, 4 after, and each round costs more than the last because every append lengthens
+    // the journal every open must load.
+    //
+    // Filtering by edges HERE does not work and the reason is timing, not predicate: after an
+    // `approve` the predecessor is `Ready`, not `Succeeded` (`transition.rs:79`), so its edges are
+    // unsatisfied at THIS instant and satisfied only after the drive runs it. A filter here would
+    // leave the node `Paused` with nothing to ever dispatch it — the release would never happen.
+    // So the list travels to the drive, which re-evaluates every pass.
     let paused_nodes: Vec<String> = projection
         .node_states
         .iter()
         .filter(|(_, state)| **state == NodeState::Paused)
         .map(|(node, _)| node.clone())
         .collect();
-    for node in &paused_nodes {
-        record_outcome(
-            &store,
-            &scope,
-            &stream_id,
-            &execution_id,
-            &actor,
-            node,
-            RecordedOutcome::uncaused(NodeOutcome::Started),
-        )?;
-    }
 
     // The resume decision and its Started redispatches are the owner's acts; the drive that
     // follows (sync, in `execute` above, or async over HTTP) is the driver's own bookkeeping and
@@ -266,6 +297,7 @@ pub(crate) fn execute_prepared(
         execution_id,
         spec: version.graph().spec.clone(),
         fixtures,
+        release: paused_nodes.into_iter().collect(),
     })
 }
 

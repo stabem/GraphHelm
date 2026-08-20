@@ -1097,6 +1097,10 @@ fn the_async_driver_reproduces_the_04f_sequencing_on_a_happy_chain() {
             spec,
             executor,
             driver_actor(),
+            // #123: this drive releases nothing, so the set is empty and the
+            // releasing actor is never consulted.
+            std::collections::BTreeSet::new(),
+            driver_actor(),
             cancel_rx,
             None,
         ))
@@ -1192,6 +1196,10 @@ fn max_parallel_dispatches_concurrently_and_respects_the_bound() {
             spec,
             executor,
             driver_actor(),
+            // #123: this drive releases nothing, so the set is empty and the
+            // releasing actor is never consulted.
+            std::collections::BTreeSet::new(),
+            driver_actor(),
             cancel_rx,
             None,
         ));
@@ -1249,6 +1257,10 @@ fn immediate_stop_interrupts_in_flight_work_and_blocks_it() {
             execution_id.clone(),
             spec,
             executor,
+            driver_actor(),
+            // #123: this drive releases nothing, so the set is empty and the
+            // releasing actor is never consulted.
+            std::collections::BTreeSet::new(),
             driver_actor(),
             cancel_rx,
             None,
@@ -1335,6 +1347,10 @@ fn a_cancelled_tool_child_is_actually_dead() {
             execution_id.clone(),
             spec,
             executor,
+            driver_actor(),
+            // #123: this drive releases nothing, so the set is empty and the
+            // releasing actor is never consulted.
+            std::collections::BTreeSet::new(),
             driver_actor(),
             cancel_rx,
             None,

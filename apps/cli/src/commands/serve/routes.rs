@@ -941,6 +941,10 @@ async fn drive(
         prepared.spec,
         executor,
         runtime_actor(),
+        prepared.release,
+        // #123: the release is the OWNER's act even though the driver appends it — the actor is
+        // data on the event, not a property of which loop wrote it.
+        crate::commands::execution::owner_actor(),
         cancel_rx,
         // The certified-or-not-at-all precondition compares fold receipts against the
         // suite THIS binary carries: the digest is computed here because core never

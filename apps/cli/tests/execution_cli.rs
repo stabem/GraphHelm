@@ -32,7 +32,66 @@ fn json(output: &[u8]) -> Value {
 /// finding that made this necessary: in the pre-fix world, running the SAME rewritten script,
 /// `deploy` also enters `Running` exactly once and also ends `Succeeded`, so both the state and the
 /// attempt count are identical either side of the fix. Only the order differs.
+/// Every `NodeOutcomeRecorded` in recorded order as `(node, outcome, next_state, actor_id)`.
+///
+/// #123 needs the ACTOR as well as the order, and it needs it from the raw stream for a reason
+/// worth stating: the node-outcome actor is read by essentially nothing in the product. The
+/// projection fold's `NodeOutcomeRecorded` arm never touches it; attention never reads an actor at
+/// all. Its only consumer is a human reading the stream back — which is exactly why uniform
+/// mis-attribution would break no behaviour and fail no other test, and why a guard is the only
+/// thing anywhere that would notice. A property whose sole consumer is a reader gets a guard
+/// `execution approve --node`, as the existing tests spell it inline.
+fn approve(events: &Path, execution: &str, node: &str) {
+    let output = command()
+        .args([
+            "execution",
+            "approve",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+            "--node",
+            node,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// The stream head, read from `execution status` — the one surface that carries `headSequence`
+/// (`graph replay` does not), so a growth measurement has a source rather than an inference.
+fn status_head(events: &Path, execution: &str) -> Option<u64> {
+    let output = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+        ])
+        .output()
+        .unwrap();
+    json(&output.stdout)["data"]["headSequence"].as_u64()
+}
+
+/// BECAUSE nothing else defends it, not although.
+fn recorded_outcomes_with_actor(events: &Path) -> Vec<(String, String, String, String)> {
+    raw_outcomes(events)
+}
+
 fn recorded_outcomes(events: &Path) -> Vec<(String, String, String)> {
+    raw_outcomes(events)
+        .into_iter()
+        .map(|(node, outcome, next, _actor)| (node, outcome, next))
+        .collect()
+}
+
+fn raw_outcomes(events: &Path) -> Vec<(String, String, String, String)> {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -64,6 +123,7 @@ fn recorded_outcomes(events: &Path) -> Vec<(String, String, String)> {
                 payload.node_id.to_string(),
                 format!("{:?}", payload.outcome),
                 format!("{:?}", payload.next_state),
+                envelope.actor.id().to_string(),
             )),
             _ => None,
         })
@@ -960,11 +1020,17 @@ fn resume_does_not_run_held_work_whose_predecessor_never_finished() {
         "nothing may succeed here: the only node resume touched depends on one that never \
          finished: {resume_data}"
     );
-    assert_eq!(resume_data["nodeStateCounts"]["queued"], 1);
+    // #123 MOVED THIS — the second time this test has moved, for the same reason each time: it
+    // asserts WHERE the held node waits, and the answer got more honest. #80 stopped it being
+    // dispatched (it waited `queued`); #123 stops it being re-queued at all, because a resume that
+    // re-queues a node whose edges are unmet starts a hold/re-hold loop that appends forever. It
+    // now waits HELD, which is what it actually is.
+    assert_eq!(resume_data["nodeStateCounts"]["queued"], 0);
+    assert_eq!(resume_data["nodeStateCounts"]["paused"], 1);
 
     let projection = replay_projection(&events);
     assert_eq!(
-        projection["nodeStates"]["deploy"], "queued",
+        projection["nodeStates"]["deploy"], "paused",
         "deploy is in the retry chain but edge-gated, so it waits rather than running on an \
          input that never arrived"
     );
@@ -1119,10 +1185,12 @@ fn resume_never_redispatches_a_waiting_node() {
     assert_eq!(resume_data["nodeStateCounts"]["waiting_input"], 1);
 
     let projection = replay_projection(&events);
-    // #80: `deploy` was held and re-`Started`, but `implementation` is `WaitingInput`, which does
-    // not satisfy a dependent. It waits in the retry chain instead of running on input that never
-    // arrived. Before the gate this read `succeeded`.
-    assert_eq!(projection["nodeStates"]["deploy"], "queued");
+    // #80 then #123: `implementation` is `WaitingInput`, which does not satisfy a dependent, so
+    // `deploy` neither runs nor is re-queued. Before #80's gate this read `succeeded` — it ran on
+    // an input that never arrived. Between #80 and #123 it read `queued` — held in a retry chain
+    // it could never leave, and re-held by every later pause, which is the churn #123 removes. It
+    // now reads `paused`, the state that matches the fact.
+    assert_eq!(projection["nodeStates"]["deploy"], "paused");
     assert_eq!(projection["nodeAttempts"]["deploy"], 0);
     // Unchanged, and still this test's own point: the WAITING node was never redispatched.
     assert_eq!(projection["nodeStates"]["implementation"], "waiting_input");
@@ -1806,5 +1874,131 @@ fn a_node_without_a_declared_deadline_arrives_absent_never_zero() {
     assert!(
         timeouts.contains_key("map_repository"),
         "a declared deadline must still arrive: {timeouts:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #123: the churn the #80 gate created, and the sovereignty of its release.
+//
+// TRAP GUARDS, WRITTEN BEFORE THE FIX. Two shapes died this way already: a guard whose fixture
+// cannot be constructed is telling you the fix is wrong, and it says so before any code exists.
+// ---------------------------------------------------------------------------
+
+/// #123's defect, measured as a SLOPE rather than a state.
+///
+/// After #80's gate, a node held by `pause` and force-`Started` by `resume` lands `Queued` and
+/// stays there — correctly, its edges are unmet. But `pause` filters on BARE STATE
+/// (`Ready | Queued`, `pause.rs:124`), so the next pause re-holds it, the next resume re-starts
+/// it, and the pair appends two events per round forever with no terminal state to stop it.
+/// Measured on this exact graph: 2 events/round before the gate, 4 after — and the storm's own
+/// runs append ~22% more, with each round costing more than the last because every append
+/// lengthens the journal that every open must load.
+///
+/// The fix is not "append less": it is that a resume must not re-queue a node whose dependencies
+/// are still unmet. This asserts the CONSEQUENCE (the loop stops) rather than the mechanism, so it
+/// survives any implementation that genuinely stops it.
+#[test]
+fn repeated_pause_resume_does_not_churn_a_node_whose_edges_are_unmet() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure"}),
+    );
+    start(&events, &fixtures, "supervised", "exec_churn");
+
+    let mut heads = Vec::new();
+    for _ in 0..4 {
+        pause(&events, "exec_churn");
+        resume(&events, &fixtures, "exec_churn");
+        heads.push(status_head(&events, "exec_churn").expect("status carries a head sequence"));
+    }
+
+    let steps: Vec<u64> = heads.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(
+        steps.iter().all(|step| *step <= 2),
+        "each pause+resume round on a gated node must append at most the pause/resume pair's own \
+         two events; a larger step means the node is being re-queued and re-held forever: \
+         heads={heads:?} steps={steps:?}"
+    );
+
+    let projection = replay_projection(&events);
+    assert_eq!(
+        projection["nodeStates"]["deploy"], "paused",
+        "a node whose edges are still unmet stays HELD rather than being re-queued: {projection}"
+    );
+    assert_eq!(projection["nodeAttempts"]["deploy"], 0);
+}
+
+/// L's condition 2, both halves in one assertion: the RELEASE is the owner's act, the driver's
+/// ordinary hops are not — and the release happens at the right TIME.
+///
+/// This guard is the only thing anywhere that would notice uniform mis-attribution. The
+/// node-outcome actor is read by essentially nothing in the product: the projection fold's
+/// `NodeOutcomeRecorded` arm never touches it and attention never reads an actor at all. Its only
+/// consumer is a human reading the stream back. A property whose sole consumer is a reader gets a
+/// guard BECAUSE nothing else defends it, not although.
+#[test]
+fn a_gated_nodes_release_is_the_owners_act_and_the_drivers_own_hops_are_not() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let failing = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure"}),
+    );
+    start(&events, &failing, "supervised", "exec_release_actor");
+    pause(&events, "exec_release_actor");
+    approve(&events, "exec_release_actor", "implementation");
+    let fixed = write_json(
+        directory.path(),
+        "fixed.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "success", "deploy": "success"}}),
+    );
+    resume(&events, &fixed, "exec_release_actor");
+
+    let outcomes = recorded_outcomes_with_actor(&events);
+    let implementation_succeeded = outcomes
+        .iter()
+        .position(|(node, _, next, _)| node == "implementation" && next == "Succeeded")
+        .expect("implementation must succeed in this story");
+    let (release_at, release_actor) = outcomes
+        .iter()
+        .enumerate()
+        .find_map(|(index, (node, outcome, next, actor))| {
+            (node == "deploy" && outcome == "Started" && next == "Queued")
+                .then(|| (index, actor.clone()))
+        })
+        .expect("deploy must be released into the retry chain exactly once");
+
+    // TIMING: the release cannot precede the success that satisfies the edge.
+    assert!(
+        release_at > implementation_succeeded,
+        "deploy was released at {release_at}, before implementation succeeded at \
+         {implementation_succeeded}: {outcomes:?}"
+    );
+    // HALF ONE: the release is the OWNER's act — D-019 sovereignty, not machinery.
+    assert_eq!(
+        release_actor, "owner-cli",
+        "releasing a held node is the owner's decision and the log must say so: {outcomes:?}"
+    );
+    // HALF TWO, in the same assertion set so the split is tested rather than assumed: an ORDINARY
+    // driver hop in the SAME drive stays the system's. Without this, passing the owner's actor to
+    // every hop would satisfy half one while making the whole log wrong.
+    // LAST, not first — and this is not a detail. `find` returns `implementation`'s hop from the
+    // START drive, which is system-attributed no matter what `resume` does, so the assertion would
+    // hold on a build where every resume hop is wrongly owner-attributed. The sabotage L required
+    // (pass the owner's actor to every hop) caught exactly that: the guard passed 23/23 while
+    // attribution was uniformly wrong. `rev()` picks the hop from the RESUME drive, which is the
+    // one under test.
+    let ordinary_hop = outcomes
+        .iter()
+        .rev()
+        .find(|(node, outcome, next, _)| {
+            node == "implementation" && outcome == "Started" && next == "Running"
+        })
+        .expect("the resume drive must have dispatched implementation itself");
+    assert_eq!(
+        ordinary_hop.3, "system-cli",
+        "the driver's own dispatch hops stay machinery: {outcomes:?}"
     );
 }

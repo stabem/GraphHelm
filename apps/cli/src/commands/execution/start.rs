@@ -7,7 +7,7 @@ use graphhelm_protocols::{
     OpaqueId, PersistedActor, ProjectId, RepositoryScope, Sensitivity, WireHash, WorkspaceId,
 };
 
-use super::driver::drive_to_quiescence;
+use super::driver::{Release, drive_to_quiescence};
 use super::{
     Failure, PROJECT, PreparedDrive, WORKSPACE, argument, execution_state, finish, idempotency_key,
     load_fixtures, render, replay_failure, repository_failure,
@@ -101,6 +101,10 @@ pub(crate) fn execute(
         &prepared.spec,
         &prepared.fixtures,
         &super::system_actor(),
+        &Release {
+            nodes: &std::collections::BTreeSet::new(),
+            actor: &super::owner_actor(),
+        },
     )?;
 
     Ok(render(
@@ -246,6 +250,8 @@ pub(crate) fn execute_prepared(
         execution_id: stream_id,
         spec: version.graph().spec.clone(),
         fixtures,
+        // `start` holds nothing, so it has nothing to release.
+        release: std::collections::BTreeSet::new(),
     })
 }
 

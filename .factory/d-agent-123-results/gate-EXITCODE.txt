@@ -1,0 +1,8 @@
+GATE_EXIT=1 at d2ed5e9
+PROVENANCE CORRECTION: this file says "at d2ed5e9" and that is WRONG. The exit code was written
+when the background command finished, and `git rev-parse HEAD` at that moment had already moved on
+to d2ed5e9. THE GATE ACTUALLY RAN ON f114d37 — the build before the runtime-test arity fix and the
+Release struct, which is exactly why clippy failed. Citing a base by reading HEAD at report time
+instead of capturing it at launch time is the same error as citing a line against the wrong
+checkout. Gate 2 captures its sha the same way and inherits the same flaw; treat gate2's stated sha
+as "HEAD when the file was written", and the authoritative build is the one named in this note.

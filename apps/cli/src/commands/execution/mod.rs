@@ -60,6 +60,9 @@ pub(crate) struct PreparedDrive {
     pub(crate) execution_id: OpaqueId,
     pub(crate) spec: GraphSpec,
     pub(crate) fixtures: SimulationFixtures,
+    /// #123: the nodes this resume held, to be released by the DRIVE at the first pass where
+    /// their edges allow — not force-started at decision time, which is a moment too early.
+    pub(crate) release: std::collections::BTreeSet<String>,
 }
 
 /// A redaction-safe operator failure — see `commands::events`'s identical pattern. Only a stable

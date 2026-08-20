@@ -28,8 +28,29 @@ use graphhelm_simulation::{FixtureExecutor, SimulationFixtures};
 use super::{Failure, RecordedOutcome, execution_state, replay_failure, repository_failure};
 use crate::commands::UuidIds;
 
+/// The nodes a `resume` held and the actor whose decision releasing them is.
+///
+/// One parameter rather than two loose ones: they are meaningless apart — a set with no actor
+/// cannot be attributed, and an actor with no set releases nothing — and clippy's argument-count
+/// lint was right that the pair wanted a name.
+pub(super) struct Release<'a> {
+    pub(super) nodes: &'a BTreeSet<String>,
+    /// The OWNER's, deliberately not the `actor` the drive runs under: releasing work the owner
+    /// paused is the owner's act, every ordinary hop is machinery.
+    pub(super) actor: &'a PersistedActor,
+}
+
 /// Drives a started execution to quiescence: completion, blocked, waiting, or paused. Used by
 /// `start` and (in a later task) `resume`.
+///
+/// #123 adds the RELEASE half. `resume` no longer force-`Started`s the nodes a pause held; it
+/// hands them here as `release`, and this loop lets each one go at the first pass where its edges
+/// actually allow it. Timing is the whole point: a resume decides BEFORE the drive, and the edges
+/// it would test are satisfied only AFTER — so the evaluation has to live in the loop that
+/// repeats. `release_actor` is the OWNER's, deliberately different from `actor`: releasing work
+/// the owner paused is the owner's act (D-019), while every ordinary hop below stays machinery.
+/// Two actors, threaded rather than swapped — passing the owner's wholesale would silently make
+/// every retry of every unrelated node read as an owner decision.
 pub(super) fn drive_to_quiescence(
     store: &LocalEventRepository,
     scope: &RepositoryScope,
@@ -37,6 +58,7 @@ pub(super) fn drive_to_quiescence(
     spec: &GraphSpec,
     fixtures: &SimulationFixtures,
     actor: &PersistedActor,
+    release: &Release<'_>,
 ) -> Result<ExecutionProjection, Failure> {
     let stream_id = OpaqueId::parse(stream)
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
@@ -54,6 +76,46 @@ pub(super) fn drive_to_quiescence(
         approve_untouched(store, scope, &stream_id, &execution_id, spec, actor)?;
 
         let projection = reread(store, scope, stream)?;
+
+        // THE RELEASE, before candidates are computed so a released node is dispatchable on this
+        // same pass. Three conditions, and the third is not belt-and-braces: an ORDINARY (non
+        // -immediate) pause does NOT stop an in-flight drive — the serve route signals the
+        // driver's cancel channel only when `mode == "immediate"` (`serve/routes.rs:579`), and
+        // this sync loop has no channel at all. So without re-reading the aggregate we would
+        // release a node the operator paused while this drive was still running.
+        let mut released_any = false;
+        for node in release.nodes {
+            let held =
+                projection.node_states.get(node.as_str()).copied() == Some(NodeState::Paused);
+            let execution_paused = projection.simulation_status == Some(SimulationStatus::Paused);
+            if held
+                && !execution_paused
+                && graphhelm_execution::edges_satisfied(spec, &projection.node_states, node)
+            {
+                record_outcome(
+                    store,
+                    scope,
+                    &stream_id,
+                    &execution_id,
+                    release.actor,
+                    node,
+                    RecordedOutcome::uncaused(NodeOutcome::Started),
+                )?;
+                released_any = true;
+            }
+        }
+        // Re-read ONLY when a release actually appended. Unconditional here would put a full
+        // O(head) `read_replay_stream` + `replay` on EVERY pass of EVERY execution — the
+        // overwhelming majority of which release nothing — which is the exact cost term this fix
+        // exists to remove. It would also silently widen behaviour: the loop would start observing
+        // concurrent external appends mid-pass, where before it computed candidates from the
+        // projection it already held. Neither was asked for.
+        let projection = if released_any {
+            reread(store, scope, stream)?
+        } else {
+            projection
+        };
+
         // The ready set plus the retry-pending `Queued` nodes, both edge-gated by the ONE rule in
         // `graphhelm_execution::ready`. This used to be an inline union here — `ready_set` chained
         // with a bare `state == Queued` filter — and that filter is the #80 defect: a node sitting

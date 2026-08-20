@@ -426,6 +426,11 @@ pub async fn drive_to_quiescence_async(
     spec: GraphSpec,
     executor: Arc<dyn AsyncNodeExecutor>,
     actor: PersistedActor,
+    // #123: the nodes a `resume` held, released here at the first pass where their edges allow.
+    // `release_actor` is the OWNER's, deliberately separate from `actor` — releasing work the
+    // owner paused is the owner's act, while every ordinary hop below stays machinery.
+    release: BTreeSet<String>,
+    release_actor: PersistedActor,
     mut cancel: tokio::sync::watch::Receiver<bool>,
     current_suite_digest: Option<String>,
 ) -> Result<ExecutionProjection, DriverError> {
@@ -468,6 +473,49 @@ pub async fn drive_to_quiescence_async(
         }
 
         let projection = reread_async(&store_open, &scope, &stream).await?;
+
+        // #123's RELEASE. Three conditions, and the third is load-bearing rather than defensive:
+        // an ORDINARY pause does not stop an in-flight drive — the cancel channel above is
+        // signalled only for `mode: immediate` (`serve/routes.rs:579`) — so without re-reading the
+        // aggregate every pass we would release a node the operator paused while this drive ran.
+        // A node paused MID-drive is safe by construction: it is not in `release`, which was fixed
+        // when the resume handed it over.
+        let mut released_any = false;
+        for node in &release {
+            let held =
+                projection.node_states.get(node.as_str()).copied() == Some(NodeState::Paused);
+            let execution_paused = projection.simulation_status == Some(SimulationStatus::Paused);
+            if held
+                && !execution_paused
+                && graphhelm_execution::edges_satisfied(&spec, &projection.node_states, node)
+            {
+                write_outcome(
+                    &store_open,
+                    &sealer,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &execution_id,
+                    &release_actor,
+                    node.clone(),
+                    bare(NodeOutcome::Started),
+                )
+                .await?;
+                released_any = true;
+            }
+        }
+        // Re-read ONLY when a release actually appended. Unconditional here would put a full
+        // O(head) `read_replay_stream` + `replay` on EVERY pass of EVERY execution — the
+        // overwhelming majority of which release nothing — which is the exact cost term this fix
+        // exists to remove. It would also silently widen behaviour: the loop would start observing
+        // concurrent external appends mid-pass, where before it computed candidates from the
+        // projection it already held. Neither was asked for.
+        let projection = if released_any {
+            reread_async(&store_open, &scope, &stream).await?
+        } else {
+            projection
+        };
+
         // The union (ready + retry-pending) lives in `dispatch_candidates` rather than here, so
         // the edge rule reaches BOTH halves from one implementation. It used to be built inline,
         // with the retry-pending half a bare `state == Queued` filter — which is how a node whose

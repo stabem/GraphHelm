@@ -1,0 +1,1 @@
+GATE_EXIT=1 at d2ed5e9 via ci/gate-main.ps1, no pipe, no trailing element

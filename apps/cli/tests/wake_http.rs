@@ -1007,6 +1007,10 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
         // Arm with NO pipe: the stale path makes the ring instantaneous, which is the
         // tightest race window. Pipe-first ordering is irrelevant here on purpose.
         arm_lease(&events, execution, &format!("rdv-race-{round}"), 1);
+        // Which arming this round IS — read back from the store, never derived by
+        // arithmetic (a guard whose expected value can be derived without doing the
+        // work is not a guard).
+        let arming = head(&events);
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let posts: Vec<_> = (0..2)
@@ -1034,8 +1038,51 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
             assert_eq!(status, 200, "the mutation itself always lands: {reply}");
         }
 
-        // Give the fire-and-forget sweeps a moment to finish their follow-up appends.
-        std::thread::sleep(std::time::Duration::from_millis(600));
+        // #118: wait for the CONDITION — this round's arming consumed — not the schedule.
+        // The 600ms sleep this replaces was a timing assumption wearing a step's clothes,
+        // and it could not fail when the sweep consumed NOTHING: the close doc measured
+        // this guard green with the recorder deleted, because its oracles (`ok == true`
+        // per round, `consumed <= armed` overall) are satisfied by a component that never
+        // writes. The bounded wait is the presence half that was missing: a recorder that
+        // consumes nothing now fails HERE, at the first round, by name.
+        let settle = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if consumption_ledger(&events)
+                .iter()
+                .any(|(victim, _, _)| *victim == arming)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < settle,
+                "round {round}: the arming at #{arming} was never consumed — a sweep that \
+                 consumes nothing is exactly what the old sleep-plus-aggregate oracle \
+                 could not see"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        // #118: per-round identity at receipt grain. EXACTLY one consumption took this
+        // round's arming, and that consumption NAMES it (captured == victim) — the #74
+        // discriminator asserted per consumption instead of trusted. The aggregate
+        // inequality below cannot see a compensating redistribution (round N consumed
+        // twice, round M never: 15 <= 15 still holds — two failures that cancel inside a
+        // satisfied aggregate); per-arming counts catch both ends independently.
+        let mine: Vec<(u64, u64, Option<u64>)> = consumption_ledger(&events)
+            .into_iter()
+            .filter(|(victim, _, _)| *victim == arming)
+            .collect();
+        assert_eq!(
+            mine.len(),
+            1,
+            "round {round}: the arming at #{arming} is consumed EXACTLY once: {mine:?}"
+        );
+        assert_eq!(
+            mine[0].2,
+            Some(arming),
+            "round {round}: the consumption at #{} names the arming it took: {mine:?}",
+            mine[0].1
+        );
 
         // The oracle: the stream still replays, and this round's lease was consumed
         // exactly once. A double-consume poisons every future replay — the live failure.
@@ -1083,6 +1130,85 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
         consumed <= armed,
         "never more consumptions than armings ({consumed} > {armed})"
     );
+
+    // #118: the finer belt — per-ARMING identity over the whole run, from the same
+    // journal. Every one of the fifteen armings has exactly one ledger entry and every
+    // entry names its victim. The aggregate above is kept (it costs nothing and still
+    // owns the illegal-double world via the fold), but the headline moved here: this is
+    // the assertion the recorder-dead and key-smear worlds cannot pass, and the one a
+    // compensating redistribution cannot cancel inside.
+    let ledger = consumption_ledger(&events);
+    let mut per_arming: std::collections::BTreeMap<u64, usize> = std::collections::BTreeMap::new();
+    for (victim, consumed_at, captured) in &ledger {
+        *per_arming.entry(*victim).or_insert(0) += 1;
+        assert_eq!(
+            *captured,
+            Some(*victim),
+            "the consumption at #{consumed_at} names the arming it took"
+        );
+    }
+    assert_eq!(
+        per_arming.len(),
+        15,
+        "fifteen armings, fifteen victims in the ledger: {per_arming:?}"
+    );
+    for (arming, count) in &per_arming {
+        assert_eq!(
+            *count, 1,
+            "the arming at #{arming} was consumed exactly once: {per_arming:?}"
+        );
+    }
+}
+
+/// #118's instrument: an ordered walk of the raw journal pairing each consumption with
+/// the arming it took — the fold's own victim rule (a burn takes whatever lease is live
+/// when it lands), applied test-side to the bytes on disk. Returns
+/// (victim_arming, consumption_sequence, captured_arming) in journal order.
+///
+/// The walk exists because the projection's receipt maps are LAST-PER-SESSION (the #88
+/// named cause, main 20fbf9e's precedent in-tree): an arming-scoped question walks the
+/// log the maps cannot erase. Reimplemented here rather than shared with the product's
+/// walk (`wake_wait.rs`) per this workspace's no-shared-lib convention for test binaries.
+fn consumption_ledger(events: &Path) -> Vec<(u64, u64, Option<u64>)> {
+    let journal = std::fs::read_to_string(events.join("journal.jsonl")).expect("journal readable");
+    let mut live: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let mut ledger = Vec::new();
+    for line in journal.lines().filter(|line| !line.trim().is_empty()) {
+        // A line that fails to parse is a TORN final line — an append in flight under
+        // the 50ms poll this walk serves. SKIP it: it is complete on the next poll, so
+        // skipping costs nothing, while unwrapping would make the anti-flake instrument
+        // its own flake — and a JSON parse panic reads as "the test is broken", which is
+        // how assertions get deleted instead of investigated (C's #118 strike). With
+        // torn lines skipped, the victim `expect` below keeps its "cannot happen"
+        // meaning: a complete, replayable journal cannot consume an unarmed lease.
+        let Ok(batch) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        for event in batch["events"].as_array().into_iter().flatten() {
+            let sequence = event["sequence"].as_u64().expect("envelope sequence");
+            match event["kind"]["type"].as_str() {
+                Some("wake_lease") => {
+                    let session = event["kind"]["data"]["sessionId"]
+                        .as_str()
+                        .expect("wake_lease carries a sessionId")
+                        .to_owned();
+                    live.insert(session, sequence);
+                }
+                Some("wake_lease_consumed") => {
+                    let session = event["kind"]["data"]["sessionId"]
+                        .as_str()
+                        .expect("wake_lease_consumed carries a sessionId");
+                    let victim = live
+                        .remove(session)
+                        .expect("a replayable journal cannot consume an unarmed lease");
+                    let captured = event["kind"]["data"]["capturedArming"].as_u64();
+                    ledger.push((victim, sequence, captured));
+                }
+                _ => {}
+            }
+        }
+    }
+    ledger
 }
 
 /// M08, from the judge's finding: `wake_arm` answered with a number the ring never

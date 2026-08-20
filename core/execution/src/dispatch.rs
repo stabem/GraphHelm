@@ -25,6 +25,24 @@ pub enum DispatchError {
 ///
 /// # Errors
 /// `ZeroParallelism` when `max_parallel` is zero.
+/// `GraphBudgets::max_parallel_model_calls` as the `max_parallel` [`dispatch_plan`] wants.
+///
+/// SEPARATE FROM `dispatch_plan` ON PURPOSE. That function's own doc says the caller owns this
+/// conversion and that it "deliberately takes minimal `usize` inputs" — a recorded decision, and
+/// #101 does not overturn it. What #101 removes is the DUPLICATION: both drivers carried this
+/// exact `match`, byte for byte, so the policy that an absent budget means SERIAL was written
+/// twice and could drift once.
+///
+/// `None => 1` is that policy, not a default: a graph that declares no parallelism budget runs one
+/// node at a time. Stated here so the next reader finds a reason rather than a literal.
+#[must_use]
+pub fn parallel_limit(budgets: &graphhelm_protocols::GraphBudgets) -> usize {
+    match budgets.max_parallel_model_calls {
+        None => 1_usize,
+        Some(value) => usize::try_from(value).unwrap_or(usize::MAX),
+    }
+}
+
 pub fn dispatch_plan(
     ready: &BTreeSet<String>,
     attempts: &BTreeMap<String, u32>,

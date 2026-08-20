@@ -1,0 +1,5 @@
+gate script: ci/gate-main.ps1 from origin/main cf2d417, sha256 e8a50edbc21bc0f2
+sha AT LAUNCH (not at report time — the defect I hit on #123): a39e5a1
+branch head: a39e5a1 Merge remote-tracking branch 'origin/main' into issue-101-hoist-duplicated-dispatch-policy
+2026-08-20T07:17:33Z
+GATE_EXIT=0

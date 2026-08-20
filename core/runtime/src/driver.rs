@@ -438,10 +438,7 @@ pub async fn drive_to_quiescence_async(
         tokio::task::JoinSet::new();
     let mut in_flight_nodes: BTreeSet<String> = BTreeSet::new();
     let mut refused: BTreeSet<String> = BTreeSet::new();
-    let max_parallel = match spec.budgets.max_parallel_model_calls {
-        None => 1_usize,
-        Some(value) => usize::try_from(value).unwrap_or(usize::MAX),
-    };
+    let max_parallel = graphhelm_execution::parallel_limit(&spec.budgets);
 
     let cancelled = loop {
         if *cancel.borrow() {

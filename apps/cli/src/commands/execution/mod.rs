@@ -407,20 +407,12 @@ pub(super) fn record_outcome_with_key(
     Ok(next_state)
 }
 
-/// A node in one of these states will never be revisited by the driver; `cancel` is the only
-/// other command that needs to tell terminal from non-terminal, so this mirrors — rather than
-/// widens the visibility of — `driver.rs`'s private copy, keeping this task's diff inside the
-/// files it owns.
-pub(super) const fn is_terminal(state: NodeState) -> bool {
-    matches!(
-        state,
-        NodeState::Succeeded
-            | NodeState::Failed
-            | NodeState::Waived
-            | NodeState::Skipped
-            | NodeState::Cancelled
-    )
-}
+/// The ONE terminality predicate, re-exported from `graphhelm_execution` (#101).
+///
+/// This used to be a hand-copy that MIRRORED `driver.rs`'s private copy rather than widening its
+/// visibility — a deliberate, honestly-recorded trade that left three identical bodies where a new
+/// terminal state would have needed three edits and would have failed silently on two.
+pub(super) use graphhelm_execution::is_terminal;
 
 /// The wire label for an aggregate `SimulationStatus`, matching
 /// `graphhelm_protocols::SimulationStatus`'s own snake_case wire vocabulary. `None` reads as

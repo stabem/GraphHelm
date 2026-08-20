@@ -138,10 +138,7 @@ pub(super) fn drive_to_quiescence(
             .values()
             .filter(|state| **state == NodeState::Running)
             .count();
-        let max_parallel = match spec.budgets.max_parallel_model_calls {
-            None => 1_usize,
-            Some(value) => usize::try_from(value).unwrap_or(usize::MAX),
-        };
+        let max_parallel = graphhelm_execution::parallel_limit(&spec.budgets);
         let plan = dispatch_plan(
             &candidates,
             &projection.node_attempts,
@@ -372,19 +369,6 @@ fn approve_untouched(
     Ok(())
 }
 
-/// A node in one of these states will never be revisited by this driver; the execution is done
-/// with it either way.
-fn is_terminal(state: NodeState) -> bool {
-    matches!(
-        state,
-        NodeState::Succeeded
-            | NodeState::Failed
-            | NodeState::Waived
-            | NodeState::Skipped
-            | NodeState::Cancelled
-    )
-}
-
 /// A terminal state that counts toward overall success rather than failure.
 fn is_success_like(state: NodeState) -> bool {
     matches!(
@@ -416,7 +400,7 @@ fn complete_if_quiesced(
         projection
             .node_states
             .get(node)
-            .is_some_and(|state| is_terminal(*state))
+            .is_some_and(|state| graphhelm_execution::is_terminal(*state))
     });
     if !all_terminal {
         return Ok(());

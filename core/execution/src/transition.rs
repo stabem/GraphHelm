@@ -34,7 +34,22 @@ pub trait NodeExecutor {
     fn execute(&self, node_id: &str, attempt: u32) -> Result<NodeOutcome, ExecutionError>;
 }
 
-const fn is_terminal(state: NodeState) -> bool {
+/// A node in one of these states will never be revisited: the execution is done with it either
+/// way.
+///
+/// PUBLIC AS OF #101, and the widening is the point. Three identical copies of this predicate
+/// existed — here, `apps/cli/.../driver.rs` and `apps/cli/.../mod.rs` — and `mod.rs`'s own comment
+/// recorded the trade honestly: it "mirrors — rather than widens the visibility of — driver.rs's
+/// private copy, keeping this task's diff inside the files it owns". That was a reasonable local
+/// call and it left a defect nobody would notice: adding one terminal state to `NodeState` needed
+/// THREE edits, and editing two of three fails silently — the copies agree today and would simply
+/// stop agreeing, with no test anywhere comparing them.
+///
+/// This copy is the authority because it is the one `apply_transition` short-circuits on: if these
+/// ever disagreed, this is the one that decides what the STATE MACHINE does, and the others would
+/// merely be describing it wrongly.
+#[must_use]
+pub const fn is_terminal(state: NodeState) -> bool {
     matches!(
         state,
         NodeState::Succeeded

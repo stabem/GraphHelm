@@ -273,10 +273,20 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
 /// is not (observed directly: `LNK1104: cannot open file ...api_http-*.exe` on the first attempt).
 /// This test itself stays green always; it is the subprocess that is designed to fail, on
 /// purpose, every time it runs.
+///
+/// Sets [`SABOTAGE_CONFIRM_ENV`] on that subprocess — the ONLY thing that arms the sabotage
+/// below. `#[ignore]` in this repo does not mean "never runs automatically": `ci/postgres.ps1`
+/// invokes `cargo test --workspace ... -- --ignored`, sweeping up EVERY ignored test across the
+/// whole workspace into both PostgreSQL gate stages. Without this env-var gate, the sabotage
+/// panicked unconditionally there too, on every gate run touching this file (caught on main by
+/// C's full gate, not at #141's own review — the suite-level evidence that landed it never ran
+/// `--ignored`). The env var is the one signal that distinguishes "the guard invoked me on
+/// purpose" from "some blanket `--ignored` sweep swept me up."
 #[test]
 fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     let this_binary = std::env::current_exe().unwrap();
     let output = Command::new(this_binary)
+        .env(SABOTAGE_CONFIRM_ENV, "1")
         .args(["server_guard_sabotage_ignored", "--exact", "--ignored"])
         .output()
         .unwrap();
@@ -302,17 +312,30 @@ fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     );
 }
 
-/// Deliberately fails, every time it runs — exists ONLY to be invoked as a subprocess by
-/// `server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report` above, never by a
-/// normal suite run (`#[ignore]` keeps it out of `cargo test`'s default set). Spawns a real child
-/// (`cmd`, not `graphhelm serve` — isolates the `ServerGuard` MECHANISM from this specific
-/// server's own behavior, the same choice the original PR's scratch proof made) that writes
-/// distinct stdout and stderr markers, then panics — proving the drain-and-print-on-panic path
-/// end to end, in the tree, on every gate run.
+/// The marker distinguishing a deliberate invocation (by the guard above, which sets this before
+/// spawning) from a blanket `--ignored` sweep (`ci/postgres.ps1`'s matrices, or a human running
+/// `cargo test -- --ignored` directly) — the only signal `server_guard_sabotage_ignored` checks
+/// before deciding whether to actually sabotage anything.
+const SABOTAGE_CONFIRM_ENV: &str = "SERVER_GUARD_SABOTAGE_CONFIRM";
+
+/// Fails, but ONLY when deliberately invoked — exists to be run as a subprocess by
+/// `server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report` above via
+/// [`SABOTAGE_CONFIRM_ENV`]. `#[ignore]` alone does NOT keep this out of every automatic run: in
+/// this repo `--ignored` is a real, frequently-invoked matrix (`ci/postgres.ps1` runs every
+/// ignored test workspace-wide, twice), so an unconditional panic here reds both PostgreSQL gate
+/// stages on any tree containing it — the env-var check below is load-bearing, not decoration.
+/// Absent the marker, this returns immediately: a normal, silent pass, indistinguishable from any
+/// other ignored test a blanket sweep happens to run. With it, spawns a real child (`cmd`, not
+/// `graphhelm serve` — isolates the `ServerGuard` MECHANISM from this specific server's own
+/// behavior, the same choice the original PR's scratch proof made) that writes distinct stdout
+/// and stderr markers, then panics — proving the drain-and-print-on-panic path end to end.
 #[test]
 #[ignore = "invoked only as a subprocess by \
             server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report"]
 fn server_guard_sabotage_ignored() {
+    if std::env::var(SABOTAGE_CONFIRM_ENV).is_err() {
+        return;
+    }
     let mut child = Command::new("cmd")
         .args([
             "/C",

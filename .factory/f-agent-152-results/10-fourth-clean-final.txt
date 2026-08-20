@@ -1,0 +1,43 @@
+=== fourth and final slot-start clean, 2026-08-20T10:53:57Z ===
+     Removed 548 files, 309.1MiB total
+EXIT: 0
+     Removed 668 files, 201.8MiB total
+EXIT: 0
+     Removed 1212 files, 433.8MiB total
+EXIT: 0
+     Removed 972 files, 333.2MiB total
+EXIT: 0
+     Removed 230 files, 62.7MiB total
+EXIT: 0
+     Removed 2254 files, 1.5GiB total
+EXIT: 0
+     Removed 1222 files, 515.9MiB total
+EXIT: 0
+     Removed 420 files, 130.3MiB total
+EXIT: 0
+     Removed 1440 files, 324.6MiB total
+EXIT: 0
+     Removed 390 files, 58.7MiB total
+EXIT: 0
+     Removed 1323 files, 420.0MiB total
+EXIT: 0
+     Removed 557 files, 89.6MiB total
+EXIT: 0
+     Removed 828 files, 140.8MiB total
+EXIT: 0
+     Removed 1793 files, 1.1GiB total
+EXIT: 0
+     Removed 847 files, 206.9MiB total
+EXIT: 0
+     Removed 700 files, 91.7MiB total
+EXIT: 0
+     Removed 4601 files, 2.3GiB total
+EXIT: 0
+     Removed 434 files, 323.6MiB total
+EXIT: 0
+     Removed 503 files, 68.5MiB total
+EXIT: 0
+     Removed 393 files, 48.3MiB total
+EXIT: 0
+     Removed 290 files, 26.4MiB total
+EXIT: 0

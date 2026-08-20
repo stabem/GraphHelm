@@ -21,6 +21,7 @@ members = [
   "tools/acceptance-map",
   "core/quality",
   "tools/pathogens",
+  "tools/ci-canary",
 ]
 
 [workspace.package]

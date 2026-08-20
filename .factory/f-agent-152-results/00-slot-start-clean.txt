@@ -1,0 +1,64 @@
+=== slot-start clean, 2026-08-20T08:35:09Z ===
+--- cargo clean -p graphhelm-protocols ---
+     Removed 548 files, 309.1MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-schema ---
+     Removed 668 files, 201.8MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-schema-evolution ---
+     Removed 1212 files, 433.8MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-graph ---
+     Removed 972 files, 333.2MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-policy ---
+     Removed 230 files, 62.7MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-events ---
+     Removed 2254 files, 1.5GiB total
+EXIT: 0
+--- cargo clean -p graphhelm-governor ---
+     Removed 1222 files, 515.9MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-simulation ---
+     Removed 420 files, 130.3MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-execution ---
+     Removed 1437 files, 324.2MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-gateway ---
+     Removed 390 files, 58.7MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-runtime ---
+     Removed 1323 files, 420.1MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-tool-broker ---
+     Removed 557 files, 89.6MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-sealed-key-provider ---
+     Removed 828 files, 140.8MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-postgres-event-store ---
+     Removed 1793 files, 1.1GiB total
+EXIT: 0
+--- cargo clean -p graphhelm-model-gateway ---
+     Removed 847 files, 206.9MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-tool-host ---
+     Removed 700 files, 91.7MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-cli ---
+     Removed 4625 files, 2.3GiB total
+EXIT: 0
+--- cargo clean -p acceptance-map ---
+     Removed 434 files, 323.6MiB total
+EXIT: 0
+--- cargo clean -p graphhelm-quality ---
+     Removed 503 files, 68.5MiB total
+EXIT: 0
+--- cargo clean -p pathogens ---
+     Removed 393 files, 48.3MiB total
+EXIT: 0
+--- cargo clean -p ci-canary ---
+     Removed 0 files
+EXIT: 0

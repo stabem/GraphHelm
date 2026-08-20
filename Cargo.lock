@@ -361,6 +361,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ci-canary"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "cipher"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -294,7 +294,11 @@ pub struct LocalEventRepository {
     /// operation paid — one flat bucket made F2-H2 unfalsifiable). Keyed by the calling
     /// operation's name; value = (full, suffix, hit) counts.
     #[cfg(test)]
-    loads_by_kind: Arc<Mutex<BTreeMap<&'static str, (u64, u64, u64)>>>,
+    loads_by_kind: Arc<Mutex<LoadsByKind>>,
+    /// #143: counts opens that completed on the SHARED fast path (clean store, no
+    /// recovery writes) — the observable the readers-wait-for-readers guard needs.
+    #[cfg(test)]
+    shared_fast_open_count: Arc<AtomicU64>,
     #[cfg(test)]
     journal_sync_count: Arc<AtomicU64>,
     failpoint: Option<LocalFailpoint>,
@@ -345,8 +349,19 @@ impl LocalEventRepository {
         let root_handle = ensure_root_path(&root)?;
         let root_identity = file_identity(&root_handle)?;
         lock_root_exclusive(&root_handle)?;
-        let lock = match initialize_root_locked(&root, &root_handle) {
-            Ok(lock) => lock,
+        // #143: a COMPLETE layout first tries the SHARED fast path — eight concurrent
+        // clean opens must not wait on each other (the readers-wait-for-readers guard).
+        // Anything less than provably-clean falls back to the exclusive path below,
+        // byte-for-byte today's recovery.
+        let (lock, shared_open) = match initialize_root_shared_fast(&root, &root_handle) {
+            Ok(Some(lock)) => (lock, true),
+            Ok(None) => match initialize_root_locked(&root, &root_handle) {
+                Ok(lock) => (lock, false),
+                Err(error) => {
+                    let _ = unlock_root(&root_handle);
+                    return Err(error);
+                }
+            },
             Err(error) => {
                 let _ = unlock_root(&root_handle);
                 return Err(error);
@@ -395,6 +410,8 @@ impl LocalEventRepository {
             #[cfg(test)]
             loads_by_kind: Arc::new(Mutex::new(BTreeMap::new())),
             #[cfg(test)]
+            shared_fast_open_count: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
             journal_sync_count: Arc::new(AtomicU64::new(0)),
             failpoint,
             schemas,
@@ -402,8 +419,6 @@ impl LocalEventRepository {
         let recovery = (|| {
             repository.validate_anchors()?;
             let state = repository.load_state("open")?;
-            repository.sync_loaded_journal(&state)?;
-            repository.reconcile_orphans(&state)?;
             let published = state
                 .batches
                 .iter()
@@ -411,6 +426,59 @@ impl LocalEventRepository {
                 .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
                 .cloned()
                 .collect::<Vec<_>>();
+            // The journal sync happens exactly ONCE per open, on whichever branch runs
+            // (the resync-once contract a recovery guard pins): after the read-only
+            // clean checks on the fast path, or inside the redo on the upgrade path,
+            // or before recovery on the plain exclusive path — always before any
+            // recovery write and always before open returns.
+            if shared_open {
+                // The clean checks are READ-ONLY mirrors of what recovery would write:
+                // nothing to reconcile, nothing to republish -> nothing needs the
+                // exclusive lock, and concurrent clean opens proceed in parallel.
+                if repository.plan_reconcile(&state)?.is_noop()
+                    && repository.active_markers_clean(&published)?
+                {
+                    repository.sync_loaded_journal(&state)?;
+                    #[cfg(test)]
+                    repository
+                        .shared_fast_open_count
+                        .fetch_add(1, Ordering::SeqCst);
+                    return Ok(());
+                }
+                // UPGRADE: release shared, take exclusive, and REDO from scratch —
+                // another process may have acted in the gap, so the cache is dropped
+                // and the world re-read; correctness equals a fresh exclusive open.
+                {
+                    let lock = repository
+                        .lock
+                        .lock()
+                        .map_err(|_| EventRepositoryError::Storage)?;
+                    FileExt::unlock(&*lock).map_err(|_| EventRepositoryError::Storage)?;
+                    lock.lock_exclusive()
+                        .map_err(|_| EventRepositoryError::Storage)?;
+                }
+                // D's finding (a): the Complete verdict predates this lock — re-run
+                // the same post-lock repair a fresh exclusive open would.
+                repair_layout_locked(&repository.root, &repository.root_handle)?;
+                *repository
+                    .verified
+                    .lock()
+                    .map_err(|_| EventRepositoryError::Storage)? = None;
+                repository.validate_anchors()?;
+                let state = repository.load_state("open")?;
+                repository.sync_loaded_journal(&state)?;
+                let published = state
+                    .batches
+                    .iter()
+                    .flat_map(|batch| &batch.events)
+                    .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                repository.reconcile_orphans(&state)?;
+                return repository.publish_active_marker(&published, false);
+            }
+            repository.sync_loaded_journal(&state)?;
+            repository.reconcile_orphans(&state)?;
             repository.publish_active_marker(&published, false)
         })();
         let named_unlock = {
@@ -1083,6 +1151,52 @@ impl LocalEventRepository {
         Ok(())
     }
 
+    /// Read-only mirror (#143) of `publish_active_marker`'s match check: true when every
+    /// published version's marker already exists with the exact canonical bytes (directly
+    /// or under a repair name). A miss answers false; the exclusive path republishes.
+    fn active_markers_clean(
+        &self,
+        envelopes: &[EventEnvelope],
+    ) -> Result<bool, EventRepositoryError> {
+        let mut budget =
+            DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
+        for envelope in envelopes {
+            let EventKind::GraphVersionPublished(payload) = &envelope.kind else {
+                continue;
+            };
+            let stream_name = object_key(&envelope.scope, envelope.stream_id.as_str())?;
+            let directory = self.root.join("active").join(&stream_name);
+            let Ok(directory_handle) =
+                open_child_directory(&self.active_handle, &self.root.join("active"), &stream_name)
+            else {
+                return Ok(false);
+            };
+            let marker = StoredActiveMarker {
+                format_version: FORMAT_VERSION.into(),
+                scope: envelope.scope.clone(),
+                stream_id: envelope.stream_id.to_string(),
+                number: payload.version.number(),
+                semantic_hash: payload.version.semantic_hash().to_string(),
+                sequence: envelope.sequence,
+                event_hash: envelope.event_hash.to_string(),
+            };
+            let bytes = canonical_bytes(&marker)?;
+            let marker_name = format!("{}.json", envelope.sequence);
+            if derived_marker_matches(&directory_handle, &directory, &marker_name, &bytes) {
+                continue;
+            }
+            let digest = sha256_hex(&bytes);
+            let index = derived_marker_index(&directory_handle, &directory, &mut budget)?;
+            let indexed = index.get(&digest).is_some_and(|name| {
+                derived_marker_matches(&directory_handle, &directory, name, &bytes)
+            });
+            if !indexed {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn create_unique_temp(&self, prefix: &str) -> Result<(String, File), EventRepositoryError> {
         for _ in 0..=MAX_REPOSITORY_ENTRIES {
             let counter = self.temp_counter.fetch_add(1, Ordering::SeqCst);
@@ -1204,11 +1318,7 @@ impl LocalEventRepository {
     /// can resume it mid-journal. Chain heads, sequence heads, budgets and uniqueness
     /// sets all come from `ctx`, so a suffix is judged against the cached prefix with
     /// the same blades a full load judges it against genesis.
-    fn verify_lines(
-        &self,
-        bytes: &[u8],
-        ctx: &mut VerifyCtx,
-    ) -> Result<(), EventRepositoryError> {
+    fn verify_lines(&self, bytes: &[u8], ctx: &mut VerifyCtx) -> Result<(), EventRepositoryError> {
         let VerifyCtx {
             state: shared_state,
             budget: load_budget,
@@ -1594,7 +1704,18 @@ impl LocalEventRepository {
         stored.to_sealed()
     }
 
+    /// Recovery, unchanged in behavior (#143 split it in two so the shared fast path
+    /// can ask the REAL planner whether there is anything to do, instead of mirroring
+    /// its rules and drifting): plan (read-only scans, refusals included), then apply.
     fn reconcile_orphans(&self, state: &LoadedState) -> Result<(), EventRepositoryError> {
+        let plan = self.plan_reconcile(state)?;
+        self.apply_reconcile(plan)
+    }
+
+    /// The scan half: every rule reconcile enforces runs here — foreign names refuse,
+    /// orphans and stale temps are PLANNED for deletion, the active tree is validated —
+    /// and nothing is written. `is_noop` on the result is the fast path's clean check.
+    fn plan_reconcile(&self, state: &LoadedState) -> Result<ReconcilePlan, EventRepositoryError> {
         let mut directory_budget =
             DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
         let mut delete_blobs = Vec::new();
@@ -1718,7 +1839,15 @@ impl LocalEventRepository {
                 Ok(())
             },
         )?;
-        for planned in delete_blobs {
+        Ok(ReconcilePlan {
+            delete_blobs,
+            delete_temps,
+        })
+    }
+
+    /// The write half of recovery: exclusively-locked callers only.
+    fn apply_reconcile(&self, plan: ReconcilePlan) -> Result<(), EventRepositoryError> {
+        for planned in plan.delete_blobs {
             remove_reconciled_file(
                 &self.blobs_handle,
                 &self.root.join("blobs"),
@@ -1726,7 +1855,7 @@ impl LocalEventRepository {
                 planned.file,
             )?;
         }
-        for planned in delete_temps {
+        for planned in plan.delete_temps {
             remove_reconciled_file(
                 &self.temp_handle,
                 &self.root.join(".tmp"),
@@ -1934,6 +2063,10 @@ struct LoadedState {
     expected_markers: BTreeMap<String, StoredActiveMarker>,
 }
 
+/// Per-kind load accounting map (#87): operation name -> (full, suffix, hit) counts.
+#[cfg(test)]
+type LoadsByKind = BTreeMap<&'static str, (u64, u64, u64)>;
+
 /// Which path a load took, for the per-kind accounting (#87).
 #[cfg(test)]
 #[derive(Clone, Copy)]
@@ -2016,6 +2149,19 @@ struct StagedBlob {
 struct PlannedDelete {
     name: String,
     file: File,
+}
+
+/// What recovery would write (#143): produced read-only by `plan_reconcile`; empty
+/// means a clean store and the shared fast path may keep its lock.
+struct ReconcilePlan {
+    delete_blobs: Vec<PlannedDelete>,
+    delete_temps: Vec<PlannedDelete>,
+}
+
+impl ReconcilePlan {
+    fn is_noop(&self) -> bool {
+        self.delete_blobs.is_empty() && self.delete_temps.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2360,6 +2506,33 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
     Ok(LayoutState::RecognizedPartial)
 }
 
+/// #143: the shared fast path's acquisition — ONLY a layout already Complete with an
+/// existing lock file qualifies; everything else answers None and the caller runs the
+/// exclusive bootstrap exactly as before. Re-classifies under the shared lock (the same
+/// pure classifier, so the check still means something).
+fn initialize_root_shared_fast(
+    root: &Path,
+    root_handle: &File,
+) -> Result<Option<File>, EventRepositoryError> {
+    if classify_layout(root, root_handle)? != LayoutState::Complete {
+        return Ok(None);
+    }
+    if !collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
+        .contains("repository.lock")
+    {
+        return Ok(None);
+    }
+    let lock = open_child_file(root_handle, root, "repository.lock", true, false)?;
+    if FileExt::lock_shared(&lock).is_err() {
+        return Err(EventRepositoryError::Storage);
+    }
+    if classify_layout(root, root_handle)? != LayoutState::Complete {
+        let _ = FileExt::unlock(&lock);
+        return Ok(None);
+    }
+    Ok(Some(lock))
+}
+
 fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, EventRepositoryError> {
     let initial = classify_layout(root, root_handle)?;
     let lock_present = collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
@@ -2375,8 +2548,19 @@ fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, Event
     lock.lock_exclusive()
         .map_err(|_| EventRepositoryError::Storage)?;
 
+    repair_layout_locked(root, root_handle)?;
+    Ok(lock)
+}
+
+/// The post-lock repair half of `initialize_root_locked`, callable by anyone HOLDING the
+/// exclusive lock (#143 review, D's finding (a)): the upgrade path re-runs this after
+/// re-acquiring exclusive, because its Complete verdict was confirmed under a lock it no
+/// longer holds — re-classifying under the NEW lock is what the other two acquisition
+/// paths already pay for, and "correctness equals a fresh exclusive open" is only true
+/// if the redo does too.
+fn repair_layout_locked(root: &Path, root_handle: &File) -> Result<(), EventRepositoryError> {
     match classify_layout(root, root_handle)? {
-        LayoutState::Complete => return Ok(lock),
+        LayoutState::Complete => return Ok(()),
         // Create ONLY what is missing, and nothing else. The partial path below rewrites
         // `format.json` and may create `journal.jsonl`; doing that to a recognized repository
         // would write file bytes into an archive that asked for two empty directories, and an
@@ -2391,7 +2575,7 @@ fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, Event
             if classify_layout(root, root_handle)? != LayoutState::Complete {
                 return Err(EventRepositoryError::Integrity);
             }
-            return Ok(lock);
+            return Ok(());
         }
         LayoutState::RecognizedPartial => {}
     }
@@ -2411,7 +2595,7 @@ fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, Event
     if classify_layout(root, root_handle)? != LayoutState::Complete {
         return Err(EventRepositoryError::Integrity);
     }
-    Ok(lock)
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -4976,7 +5160,9 @@ mod limit_tests {
         repository
             .append_atomic(&artifact_request(1, "producer-1", 'a'))
             .unwrap();
-        let state = repository.load_state("durable_load_rejects_a_divergent_artifact_catalog_entry").unwrap();
+        let state = repository
+            .load_state("durable_load_rejects_a_divergent_artifact_catalog_entry")
+            .unwrap();
         let divergent = artifact_request(2, "producer-2", 'b');
         let events = repository.build_envelopes(&divergent, &state).unwrap();
         let mut batch = PhysicalBatch {
@@ -5121,7 +5307,7 @@ mod limit_tests {
         // paid). Exact derivation for this scenario: the open paid the one full load;
         // the append hit the open's cache; the FIRST next_sequence paid one suffix
         // (verifying the append's line); the second was a pure hit.
-        drop(by_kind_probe(&repository, &scope));
+        by_kind_probe(&repository, &scope);
         let by_kind = repository.loads_by_kind.lock().unwrap();
         assert_eq!(by_kind.get("open"), Some(&(1, 0, 0)));
         assert_eq!(by_kind.get("append"), Some(&(0, 0, 1)));
@@ -5316,12 +5502,8 @@ mod limit_tests {
             "EXPECTED GREEN: the warm handle trusts its verified prefix"
         );
         assert!(
-            LocalEventRepository::open(
-                directory.path(),
-                Arc::new(FixedClock),
-                Arc::new(FixedIds)
-            )
-            .is_err(),
+            LocalEventRepository::open(directory.path(), Arc::new(FixedClock), Arc::new(FixedIds))
+                .is_err(),
             "the fresh open is where prefix corruption is caught, exactly as today"
         );
     }
@@ -5436,6 +5618,61 @@ mod limit_tests {
             }
         }
     }
+
+    // --------------------------------------------------------------------------------
+    // #143: the shared fast path for clean opens (readers must not wait for readers).
+    // --------------------------------------------------------------------------------
+
+    #[test]
+    fn a_clean_store_opens_on_the_shared_fast_path() {
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let bootstrap = cache_repository(directory.path());
+            bootstrap.append_atomic(&valid_graph_request()).unwrap();
+            // The bootstrap open created the layout (exclusive by necessity).
+            assert_eq!(bootstrap.shared_fast_open_count.load(Ordering::SeqCst), 0);
+        }
+        let reopened = cache_repository(directory.path());
+        assert_eq!(
+            reopened.shared_fast_open_count.load(Ordering::SeqCst),
+            1,
+            "a complete, clean store must open on the shared fast path"
+        );
+        // And the fast path still produced a fully usable, correct view.
+        assert_eq!(
+            reopened.next_sequence(&wake_scope(), "stream-1").unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_missing_marker_forces_the_exclusive_upgrade_and_is_republished() {
+        let directory = tempfile::tempdir().unwrap();
+        let scope = wake_scope();
+        {
+            let bootstrap = cache_repository(directory.path());
+            bootstrap.append_atomic(&valid_graph_request()).unwrap();
+        }
+        let stream_name = object_key(&scope, "stream-1").unwrap();
+        let marker = directory
+            .path()
+            .join("active")
+            .join(&stream_name)
+            .join("1.json");
+        assert!(marker.exists(), "the publish left a marker to delete");
+        std::fs::remove_file(&marker).unwrap();
+
+        let reopened = cache_repository(directory.path());
+        // Dirty store: the fast path must have DECLINED (counter untouched) and the
+        // exclusive upgrade republished the marker exactly as today's recovery does.
+        assert_eq!(
+            reopened.shared_fast_open_count.load(Ordering::SeqCst),
+            0,
+            "a store with recovery work must not count as a fast open"
+        );
+        assert!(
+            marker.exists(),
+            "the upgrade path must republish the missing marker"
+        );
+    }
 }
-
-

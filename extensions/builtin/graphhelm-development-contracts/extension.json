@@ -60,7 +60,7 @@
           "id": "schema/development-envelope",
           "kind": "schema",
           "path": "schemas/development-envelope.schema.json",
-          "sha256": "sha256:3485102f371c553a005de6c71a72ebf4082561594ef1fa9a09f30dadf7355cf1",
+          "sha256": "sha256:22c22aa76146c2ec90716e7a1f416ee8766f148788a35160afb48b06ff9c9f48",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -152,6 +152,33 @@
           "kind": "fixture",
           "path": "fixtures/contracts/invalid/size-id-over-max-length.json",
           "sha256": "sha256:7d16b63980c0639e1cdd22923cf17ddc34385dd16eb5cd085549bfd604a0a0d5",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "policy/context-utilization",
+          "kind": "policy",
+          "path": "policies/context-utilization.yaml",
+          "sha256": "sha256:fa79eb407c544f8acf406979b53783930132700bddcb5b3c1636bb8cdff7d11b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/context-utilization-policy.schema.json"
+        },
+        {
+          "id": "schema/context-utilization-policy",
+          "kind": "schema",
+          "path": "schemas/context-utilization-policy.schema.json",
+          "sha256": "sha256:ea197f59df5cfffe793e52c745966c07bbcd88e96742bb0a3035397cbadefe81",
           "effects": [],
           "permissions": [],
           "requires": {

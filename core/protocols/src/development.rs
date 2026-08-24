@@ -97,6 +97,12 @@ wire_vocabulary! {
         DigestMismatch => "digest_mismatch",
         NegativeClaimUnverified => "negative_claim_unverified",
         IndexStale => "index_stale",
+        // Required context could not be assembled within the budget (#222). Deliberately NOT
+        // folded into cardinality_violation: nothing is malformed here, the evidence simply does
+        // not fit, and the operator response is an expansion request rather than a correction.
+        // Folding two causes with opposite responses into one code is the flattening this
+        // milestone hunts.
+        ContextBudgetInsufficient => "context_budget_insufficient",
     }
 }
 

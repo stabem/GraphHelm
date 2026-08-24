@@ -9,6 +9,8 @@
 //! decision rule stays where Milestone 04 proved it: `next_state` comes from
 //! `apply_transition`, and the driver never invents an outcome.
 
+pub mod context_accounting;
+pub mod context_compiler;
 pub mod classify;
 pub mod driver;
 pub mod evidence;

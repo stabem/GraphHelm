@@ -1,0 +1,33 @@
+# Context utilization policy (#222).
+#
+# This version string is a CACHE KEY DIMENSION. Changing anything below changes the verdict a
+# capsule receives without changing the capsule, so an entry cached under an older policy must not
+# be served. Bump `version` in the same commit as any change here.
+version: "1.0.0"
+
+# Sections whose items are REQUIRED evidence. A required item may never be dropped to fit a token
+# target: the refusal is context_budget_insufficient plus an expansion request, never a quiet
+# removal that lets the budget appear satisfied.
+requiredSections:
+  - projectKernel
+  - task
+  - node
+  - evidence
+
+# Sections whose items are optional context. Dropping these to fit a budget is legitimate and is
+# recorded, not silent.
+optionalSections:
+  - dependencyOutputs
+  - agentExperience
+
+# What a receipt must carry for a utilization number to be reportable at all.
+reporting:
+  # A capsule that was compiled and never executed against reports notExecuted, never a zero ratio.
+  # Utilization is a property of having been USED, not of having been BUILT.
+  requireExecutionBeforeRatio: true
+  # A cost the runtime cannot observe is recorded as unavailable with a reason. Never as 0: a
+  # measured zero may be summed, an unavailable one must stop a cheap-success claim.
+  unavailableIsNotZero: true
+  # Every measured field names the component that observed it, and that component is never the
+  # accounting module, which records numbers rather than observing them.
+  measuredFieldsNameTheirProducer: true

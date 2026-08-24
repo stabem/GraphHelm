@@ -53,7 +53,8 @@
         "cardinality_violation",
         "digest_mismatch",
         "negative_claim_unverified",
-        "index_stale"
+        "index_stale",
+        "context_budget_insufficient"
       ]
     },
     "coverageState": {

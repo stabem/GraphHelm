@@ -15,11 +15,11 @@ use pathogens::{UselessnessMode, suite};
 fn only_the_interaction_cost_pair_carries_a_trace() {
     for specimen in suite() {
         let is_interaction_cost = matches!(
-            specimen.mode,
+            specimen.axis,
             UselessnessMode::ExpensiveButCorrect | UselessnessMode::DumpedButUnanswered
         );
         assert_eq!(
-            specimen.deliverable.interaction.is_some(),
+            specimen.evidence.interaction.is_some(),
             is_interaction_cost,
             "{}: only the interaction-cost pair may carry a trace — a trace on one of the \
              original ten moves the suite digest by changing the mold, not by growing the \
@@ -33,7 +33,7 @@ fn only_the_interaction_cost_pair_carries_a_trace() {
 fn an_absent_trace_serializes_to_nothing_at_all() {
     let ten: Vec<_> = suite()
         .into_iter()
-        .filter(|specimen| specimen.deliverable.interaction.is_none())
+        .filter(|specimen| specimen.evidence.interaction.is_none())
         .collect();
     // Bound, with a message that stays true if the suite grows: a thirteenth specimen
     // WITHOUT a trace is legitimate, and the old wording ("the original ten") would have

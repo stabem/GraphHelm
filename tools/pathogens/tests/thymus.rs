@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use pathogens::{
     CandidateGate, Deliverable, DiffSummary, Specimen, UselessnessMode, certification_is_current,
-    certify, correctness_battery, is_useless_on_its_axis, paired_trivial_gate,
+    certify, correctness_battery, is_defeated_on_its_axis, paired_trivial_gate,
     reject_everything_gate, suite, suite_digest,
 };
 
@@ -34,7 +34,7 @@ fn the_suite_holds_twelve_specimens_one_per_mode() {
         12,
         "the suite is TWELVE specimens: the original ten plus the interaction-cost pair \n         (M08). The count is pinned so growing the suite is a deliberate edit, never a drift"
     );
-    let modes: BTreeSet<_> = bred.iter().map(|specimen| specimen.mode).collect();
+    let modes: BTreeSet<_> = bred.iter().map(|specimen| specimen.axis).collect();
     assert_eq!(modes.len(), 12, "one specimen per uselessness mode");
     let ids: BTreeSet<_> = bred.iter().map(|specimen| specimen.id.clone()).collect();
     assert_eq!(ids.len(), 12, "specimen ids are distinct");
@@ -44,7 +44,7 @@ fn the_suite_holds_twelve_specimens_one_per_mode() {
 fn every_specimen_is_green_by_the_correctness_battery() {
     let battery = correctness_battery();
     for specimen in suite() {
-        let verdict = battery.evaluate(&specimen.deliverable);
+        let verdict = battery.evaluate(&specimen.evidence);
         assert!(
             verdict.passed,
             "specimen {} must look fine to naive correctness checks, findings: {:?}",
@@ -54,10 +54,10 @@ fn every_specimen_is_green_by_the_correctness_battery() {
 }
 
 #[test]
-fn every_specimen_is_useless_on_its_axis() {
+fn every_specimen_is_defeated_on_its_axis() {
     for specimen in suite() {
         assert!(
-            is_useless_on_its_axis(&specimen),
+            is_defeated_on_its_axis(&specimen),
             "specimen {} lost its uselessness — a weakened pathogen",
             specimen.id
         );
@@ -67,8 +67,8 @@ fn every_specimen_is_useless_on_its_axis() {
 #[test]
 fn each_specimen_fools_its_paired_plausible_gate() {
     for specimen in suite() {
-        let gate = paired_trivial_gate(specimen.mode);
-        let verdict = gate.evaluate(&specimen.deliverable);
+        let gate = paired_trivial_gate(specimen.axis);
+        let verdict = gate.evaluate(&specimen.evidence);
         assert!(
             verdict.passed,
             "specimen {} no longer fools {} — its fooling power is gone",
@@ -87,7 +87,7 @@ fn every_paired_trivial_gate_fails_certification_citing_its_specimen() {
             .expect_err("a plausible-but-blind gate must never be certified");
         let expected = bred
             .iter()
-            .find(|specimen| specimen.mode == mode)
+            .find(|specimen| specimen.axis == mode)
             .expect("one specimen per mode")
             .id
             .clone();
@@ -149,8 +149,8 @@ fn growing_the_suite_voids_old_certifications() {
     let mut grown = bred.clone();
     let eleventh = Specimen {
         id: "eleventh-escape".to_owned(),
-        mode: UselessnessMode::BlankScreen,
-        deliverable: Deliverable {
+        axis: UselessnessMode::BlankScreen,
+        evidence: Deliverable {
             claims: Vec::new(),
             html: String::new(),
             reachable_ids: BTreeSet::new(),

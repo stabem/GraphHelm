@@ -11,6 +11,8 @@
 
 pub mod subject;
 
+pub mod jpd;
+
 use std::collections::BTreeSet;
 
 use serde::Serialize;
@@ -151,14 +153,22 @@ pub enum UselessnessMode {
 /// One pathogen: a deliverable that is green by correctness measures and useless by
 /// construction, bred to fool a specific plausible gate.
 #[derive(Clone, Debug, Serialize)]
-pub struct Specimen {
+pub struct Specimen<E, A> {
     /// Stable id, part of the canonical digest.
     pub id: String,
     /// The axis this specimen defeats.
-    pub mode: UselessnessMode,
-    /// The deliverable a candidate gate is shown.
-    pub deliverable: Deliverable,
+    ///
+    /// Generic alongside the evidence, and deliberately so: a JPD failure axis and a UI
+    /// uselessness axis are different KINDS of thing. Folding both into one closed enum would
+    /// give every exhaustive match over it arms it cannot mean, and that failure is silent
+    /// because the enum still compiles everywhere.
+    pub axis: A,
+    /// The evidence a candidate gate is shown.
+    pub evidence: E,
 }
+
+/// The geometry suite's instantiation — what every existing call site means by `Specimen`.
+pub type GeometrySpecimen = Specimen<Deliverable, UselessnessMode>;
 
 /// A candidate gate's verdict over one deliverable — the same refusal-with-findings
 /// shape the `GateVerdict` kind carries on the wire: a refusal always carries findings.
@@ -187,11 +197,39 @@ impl Verdict {
 }
 
 /// Anything that wants to gate deliverables and must first survive the thymus.
+/// Anything that gates EVIDENCE of some kind and must first survive the thymus.
+///
+/// The generic trait, and the one `certify` speaks. `Deliverable` is one instantiation;
+/// typed JPD artifacts are another.
+pub trait EvidenceGate<E> {
+    /// The gate's stable id — what `GateCertified` names.
+    fn id(&self) -> &str;
+    /// Evaluate one piece of evidence.
+    fn evaluate(&self, evidence: &E) -> Verdict;
+}
+
+/// The geometry-facing spelling, kept EXACTLY as it was.
+///
+/// This is a bridge, not a second oracle: there is still one `certify` and one certification
+/// rule. Keeping this shape means every existing geometry gate compiles untouched, which is
+/// what lets the harness change land WITHOUT dragging its consumers into the same branch —
+/// M06's binding decision 5 forbids the judge and the judged travelling together, and a
+/// signature change that forces its consumers to move is exactly that collision.
 pub trait CandidateGate {
     /// The gate's stable id — what `GateCertified` names.
     fn id(&self) -> &str;
     /// Evaluate one deliverable.
     fn evaluate(&self, deliverable: &Deliverable) -> Verdict;
+}
+
+impl<G: CandidateGate + ?Sized> EvidenceGate<Deliverable> for G {
+    fn id(&self) -> &str {
+        CandidateGate::id(self)
+    }
+
+    fn evaluate(&self, deliverable: &Deliverable) -> Verdict {
+        CandidateGate::evaluate(self, deliverable)
+    }
 }
 
 /// The thymus receipt: this gate rejected every specimen of the digested suite.
@@ -216,7 +254,7 @@ pub struct CertificationRefusal {
 
 /// The bred suite: exactly ten specimens, one per uselessness mode, deterministic.
 #[must_use]
-pub fn suite() -> Vec<Specimen> {
+pub fn suite() -> Vec<GeometrySpecimen> {
     vec![
         dead_feature(),
         unreachable_ui(),
@@ -235,11 +273,11 @@ pub fn suite() -> Vec<Specimen> {
 
 /// Right, in six calls, where one would do — the shape the blind judge complained about
 /// while calling the surface correct. Every correctness measure we own passes it.
-fn expensive_but_correct() -> Specimen {
+fn expensive_but_correct() -> GeometrySpecimen {
     Specimen {
         id: "expensive-but-correct".to_owned(),
-        mode: UselessnessMode::ExpensiveButCorrect,
-        deliverable: Deliverable {
+        axis: UselessnessMode::ExpensiveButCorrect,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Sleep answer".to_owned(),
                 element_id: Some("status".to_owned()),
@@ -270,11 +308,11 @@ fn expensive_but_correct() -> Specimen {
 
 /// The mirror: one call, everything inside, nothing answered. This is what a lone call
 /// counter teaches a system to build, which is why the two enter together.
-fn dumped_but_unanswered() -> Specimen {
+fn dumped_but_unanswered() -> GeometrySpecimen {
     Specimen {
         id: "dumped-but-unanswered".to_owned(),
-        mode: UselessnessMode::DumpedButUnanswered,
-        deliverable: Deliverable {
+        axis: UselessnessMode::DumpedButUnanswered,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Sleep answer".to_owned(),
                 element_id: Some("status".to_owned()),
@@ -307,7 +345,7 @@ fn call(tool: &str, payload_bytes: u64, answered: bool) -> InteractionCall {
 /// Canonical digest of a suite: sha256 over the canonical JSON of the specimen list,
 /// rendered in the `WireHash` wire shape (`sha256:<64 hex>`).
 #[must_use]
-pub fn suite_digest(suite: &[Specimen]) -> String {
+pub fn suite_digest<E: Serialize, A: Serialize>(suite: &[Specimen<E, A>]) -> String {
     let canonical =
         serde_json::to_string(suite).expect("specimens are plain data and always serialize");
     format!("sha256:{}", hex::encode(Sha256::digest(canonical)))
@@ -317,13 +355,18 @@ pub fn suite_digest(suite: &[Specimen]) -> String {
 ///
 /// # Errors
 /// [`CertificationRefusal`] naming every specimen the gate passed.
-pub fn certify(
-    gate: &dyn CandidateGate,
-    suite: &[Specimen],
-) -> Result<Certification, CertificationRefusal> {
+pub fn certify<E, A, G>(
+    gate: &G,
+    suite: &[Specimen<E, A>],
+) -> Result<Certification, CertificationRefusal>
+where
+    G: EvidenceGate<E> + ?Sized,
+    E: Serialize,
+    A: Serialize,
+{
     let fooled_by: Vec<String> = suite
         .iter()
-        .filter(|specimen| gate.evaluate(&specimen.deliverable).passed)
+        .filter(|specimen| gate.evaluate(&specimen.evidence).passed)
         .map(|specimen| specimen.id.clone())
         .collect();
     if fooled_by.is_empty() {
@@ -343,7 +386,10 @@ pub fn certify(
 /// Whether a recorded certification still binds against the current suite. Growing the
 /// suite changes the digest, so old immunity dies by comparison, never by cleanup.
 #[must_use]
-pub fn certification_is_current(recorded_digest: &str, current_suite: &[Specimen]) -> bool {
+pub fn certification_is_current<E: Serialize, A: Serialize>(
+    recorded_digest: &str,
+    current_suite: &[Specimen<E, A>],
+) -> bool {
     recorded_digest == suite_digest(current_suite)
 }
 
@@ -485,12 +531,26 @@ impl CandidateGate for FnGate {
     }
 }
 
-/// Structural uselessness check per mode — the fixture-integrity half of the thymus:
-/// a specimen that stops being useless on its axis is a weakened pathogen.
-#[must_use]
-pub fn is_useless_on_its_axis(specimen: &Specimen) -> bool {
-    let d = &specimen.deliverable;
-    match specimen.mode {
+/// An axis is not a label. It is a claim that some evidence defeats a gate in a particular
+/// way, and the axis is the only thing that can check that claim.
+///
+/// Generic because the check must generalise WITH the harness. Before this trait existed the
+/// integrity check was typed to geometry, so making the harness generic silently dropped it for
+/// every other evidence type — and **nothing went red**: `certify` still worked, `fooled_by`
+/// still named what slipped, the suite still certified, and no one checked the specimens
+/// defeated anything. A specimen that defeats nothing certifies a gate that caught nothing.
+/// (Found by N in cross-review of #211.)
+///
+/// A new axis for a new evidence type cannot be added without answering "what does defeated
+/// mean here", because this trait will not let it.
+pub trait FailureAxis<E> {
+    /// Whether this specimen's evidence is genuinely defeated on the axis it names.
+    fn is_defeated_by(&self, evidence: &E) -> bool;
+}
+
+impl FailureAxis<Deliverable> for UselessnessMode {
+    fn is_defeated_by(&self, d: &Deliverable) -> bool {
+        match self {
         // Useless on the interaction axis: the answer arrives, but the asking is the cost.
         UselessnessMode::ExpensiveButCorrect => d.interaction.as_ref().is_some_and(|trace| {
             trace.calls.len() as u64 > trace.budget_calls
@@ -550,6 +610,15 @@ pub fn is_useless_on_its_axis(specimen: &Specimen) -> bool {
             })
         }),
     }
+    }
+}
+
+/// Whether a specimen is genuinely defeated on the axis it claims — fixture integrity, not
+/// gate behaviour. A suite of specimens that defeat nothing certifies gates for catching
+/// nothing, and the digest cannot see the difference: it notices CHANGE, never QUALITY.
+#[must_use]
+pub fn is_defeated_on_its_axis<E, A: FailureAxis<E>>(specimen: &Specimen<E, A>) -> bool {
+    specimen.axis.is_defeated_by(&specimen.evidence)
 }
 
 fn green_tests() -> Vec<TestCase> {
@@ -582,11 +651,11 @@ fn asserted_journey(feature: &str) -> Vec<JourneyStep> {
     ]
 }
 
-fn dead_feature() -> Specimen {
+fn dead_feature() -> GeometrySpecimen {
     Specimen {
         id: "dead-feature".to_owned(),
-        mode: UselessnessMode::DeadFeature,
-        deliverable: Deliverable {
+        axis: UselessnessMode::DeadFeature,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Export".to_owned(),
                 element_id: Some("btn-export".to_owned()),
@@ -603,11 +672,11 @@ fn dead_feature() -> Specimen {
     }
 }
 
-fn unreachable_ui() -> Specimen {
+fn unreachable_ui() -> GeometrySpecimen {
     Specimen {
         id: "unreachable-ui".to_owned(),
-        mode: UselessnessMode::UnreachableUi,
-        deliverable: Deliverable {
+        axis: UselessnessMode::UnreachableUi,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Export".to_owned(),
                 element_id: Some("btn-export".to_owned()),
@@ -624,11 +693,11 @@ fn unreachable_ui() -> Specimen {
     }
 }
 
-fn tautological_journey() -> Specimen {
+fn tautological_journey() -> GeometrySpecimen {
     Specimen {
         id: "tautological-journey".to_owned(),
-        mode: UselessnessMode::TautologicalJourney,
-        deliverable: Deliverable {
+        axis: UselessnessMode::TautologicalJourney,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Export".to_owned(),
                 element_id: Some("btn-export".to_owned()),
@@ -656,11 +725,11 @@ fn tautological_journey() -> Specimen {
     }
 }
 
-fn blank_screen() -> Specimen {
+fn blank_screen() -> GeometrySpecimen {
     Specimen {
         id: "blank-screen".to_owned(),
-        mode: UselessnessMode::BlankScreen,
-        deliverable: Deliverable {
+        axis: UselessnessMode::BlankScreen,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Dashboard".to_owned(),
                 element_id: Some("view-dashboard".to_owned()),
@@ -677,11 +746,11 @@ fn blank_screen() -> Specimen {
     }
 }
 
-fn orphan_view() -> Specimen {
+fn orphan_view() -> GeometrySpecimen {
     Specimen {
         id: "orphan-view".to_owned(),
-        mode: UselessnessMode::OrphanView,
-        deliverable: Deliverable {
+        axis: UselessnessMode::OrphanView,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Report".to_owned(),
                 element_id: Some("view-report".to_owned()),
@@ -700,11 +769,11 @@ fn orphan_view() -> Specimen {
     }
 }
 
-fn gutted_assertion() -> Specimen {
+fn gutted_assertion() -> GeometrySpecimen {
     Specimen {
         id: "gutted-assertion".to_owned(),
-        mode: UselessnessMode::GuttedAssertion,
-        deliverable: Deliverable {
+        axis: UselessnessMode::GuttedAssertion,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Export".to_owned(),
                 element_id: Some("btn-export".to_owned()),
@@ -725,11 +794,11 @@ fn gutted_assertion() -> Specimen {
     }
 }
 
-fn happy_path_only() -> Specimen {
+fn happy_path_only() -> GeometrySpecimen {
     Specimen {
         id: "happy-path-only".to_owned(),
-        mode: UselessnessMode::HappyPathOnly,
-        deliverable: Deliverable {
+        axis: UselessnessMode::HappyPathOnly,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Export".to_owned(),
                 element_id: Some("btn-export".to_owned()),
@@ -750,11 +819,11 @@ fn happy_path_only() -> Specimen {
     }
 }
 
-fn spec_claim_without_artifact() -> Specimen {
+fn spec_claim_without_artifact() -> GeometrySpecimen {
     Specimen {
         id: "spec-claim-without-artifact".to_owned(),
-        mode: UselessnessMode::SpecClaimWithoutArtifact,
-        deliverable: Deliverable {
+        axis: UselessnessMode::SpecClaimWithoutArtifact,
+        evidence: Deliverable {
             claims: vec![
                 Claim {
                     feature: "Export".to_owned(),
@@ -778,11 +847,11 @@ fn spec_claim_without_artifact() -> Specimen {
     }
 }
 
-fn minimal_diff_no_behavior() -> Specimen {
+fn minimal_diff_no_behavior() -> GeometrySpecimen {
     Specimen {
         id: "minimal-diff-no-behavior".to_owned(),
-        mode: UselessnessMode::MinimalDiffNoBehavior,
-        deliverable: Deliverable {
+        axis: UselessnessMode::MinimalDiffNoBehavior,
+        evidence: Deliverable {
             claims: vec![Claim {
                 feature: "Export".to_owned(),
                 element_id: Some("btn-export".to_owned()),
@@ -802,11 +871,11 @@ fn minimal_diff_no_behavior() -> Specimen {
     }
 }
 
-fn label_swapped_ui() -> Specimen {
+fn label_swapped_ui() -> GeometrySpecimen {
     Specimen {
         id: "label-swapped-ui".to_owned(),
-        mode: UselessnessMode::LabelSwappedUi,
-        deliverable: Deliverable {
+        axis: UselessnessMode::LabelSwappedUi,
+        evidence: Deliverable {
             claims: vec![
                 Claim {
                     feature: "Export".to_owned(),

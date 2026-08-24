@@ -1,0 +1,24 @@
+Isolated door-check, updated per the orchestrator's ED-16 adjudication: structural check (drive +
+name pattern + explicit not-inside-this-worktree), never a single fixed instance. Extracted
+verbatim from the working tree, $repositoryRoot's $PSScriptRoot dependency patched to read
+$env:FAKE_REPO_ROOT so the worktree-collision edge case could be tested without ever pointing at
+a real path. Run as CHILD powershell.exe -File processes only.
+
+[D:/graphhelm-target-f166 (per-lane, normal)]                              EXIT=0
+[D:/graphhelm-target-m10 (old shared literal, still matches)]              EXIT=0
+[D:\graphhelm-target-a160 (backslash)]                                     EXIT=0
+[D:/graphhelm-target-k162/ (trailing slash)]                               EXIT=0
+[D:/GRAPHHELM-TARGET-B170 (case)]                                          EXIT=0
+[F:/wrong (worktree-adjacent drive)]                                       EXIT=1
+[D:/graphhelm-slot (D: but wrong shape)]                                   EXIT=1
+[D:/graphhelm-target- (empty lane)]                                        EXIT=1
+[D:/graphhelm-target (no dash)]                                            EXIT=1
+[(unset)]                                                                  EXIT=1
+[EDGE: fake repo root ITSELF matches the pattern, target EQUALS it]        EXIT=1  (correctly refused)
+[EDGE: normal repo root, target is an unrelated sibling lane]              EXIT=0  (correctly passed)
+
+The edge case matters because the primary drive+pattern check alone cannot distinguish a
+worktree that happens to be checked out at a path shaped like D:/graphhelm-target-<lane> from a
+legitimate target dir - the explicit repositoryRoot comparison catches that structurally, by
+comparing against the ACTUAL worktree this invocation is running from, not by trusting the drive
+letter as a permanent fact about where worktrees live.

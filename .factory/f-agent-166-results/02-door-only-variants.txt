@@ -1,0 +1,27 @@
+Isolated door-check, same method L used: extracted verbatim (lines 82-131 of a5adb16's ci/gate.ps1,
+`git show a5adb16 -- | sed -n '82,131p'`), trimmed before any $repositoryRoot/Push-Location/cargo
+line, run as a CHILD powershell.exe -File process per case (never the full gate.ps1, never touches
+the real shared target dir).
+
+[D:/graphhelm-target-m10 (exact)]           EXIT=0
+[D:\graphhelm-target-m10 (backslash)]       EXIT=0
+[D:/graphhelm-target-m10/ (trailing slash)] EXIT=0
+[D:/GRAPHHELM-TARGET-M10 (case)]            EXIT=0
+[F:/wrong]                                  EXIT=1
+[(unset)]                                   EXIT=1
+
+Confirms L's own table independently, same six cells, same result. This is the door only - does not
+reach Push-Location, the canary, or any stage; the positive full-gate run still needs the slot.
+
+NEAR-MISS, recorded honestly: before building this isolated harness, I first tried confirming the
+case-insensitive-pass cell by running the REAL ./ci/gate.ps1 with
+CARGO_TARGET_DIR='D:/GRAPHHELM-TARGET-M10' - which normalizes to the SAME physical directory as the
+shared slot on NTFS, so the door correctly let it through and the script proceeded toward the real
+gate while A held the slot (SLOT.lock: A Agent, #160, RUNNING). The PowerShell tool call timed out
+at 2 minutes; checked `tasklist`/`Get-CimInstance Win32_Process` for orphaned cargo/rustc/powershell
+processes afterward - none traced back to my session (all cargo/rustc chained to A's own gate.ps1
+process, PID 92960, started 12:22:44 local, matching A's SLOT.lock timestamp to the second).
+Cross-checked tools/ci-canary/src/nonce.rs's mtime (15:21:33Z) against A's SLOT.lock update
+(15:22:44Z) - the nonce was last written by A, before my case-3 attempt, meaning my run never
+reached Write-CanaryNonce before the tool killed it. No evidence of contamination. Not repeating
+that method - the isolated extraction above is how this cell should have been tested from the start.

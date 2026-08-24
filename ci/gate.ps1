@@ -12,12 +12,14 @@
     passed - verified directly by running the exit-code logic against a forced failure and a clean
     pass (see the PR that closed https://github.com/stabem/GraphHelm/issues/97).
 
-    ONE EXCEPTION TO "every stage runs regardless" (#152): the contamination canary runs FIRST and
-    aborts the whole gate immediately on failure, before any other stage executes. A contaminated
-    build environment (a shared CARGO_TARGET_DIR serving a stale binary from another worktree or
-    commit instead of rebuilding) makes every other stage's result meaningless - there is nothing
-    to gain by running 26 more stages against a build nobody can trust, and doing so would bury the
-    one finding that actually matters under noise from its downstream symptoms.
+    ONE EXCEPTION TO "every stage runs regardless" (#152): the contamination canary is the first
+    STAGE and aborts the whole gate immediately on failure, before any other stage executes. A
+    contaminated build environment (a shared CARGO_TARGET_DIR serving a stale binary from another
+    worktree or commit instead of rebuilding) makes every other stage's result meaningless - there
+    is nothing to gain by running 26 more stages against a build nobody can trust, and doing so
+    would bury the one finding that actually matters under noise from its downstream symptoms.
+    (The TARGET-DIR REFUSAL below runs even earlier than the canary - it is a precondition on the
+    whole script, not a stage, and is not counted among the 26.)
 
     THE SAFE PATTERN, when you need to check the exit code: redirect the run to a file, check the
     exit code of THAT SAME COMMAND immediately, then read the file separately - never pipe the
@@ -53,6 +55,18 @@
     SLOT.lock at start and end. A GREEN report with no well-formed manifest is RED by rule: the
     manifest failing to write is itself gate-failing, not a warning.
 
+    TARGET-DIR REFUSAL (#166): the gate REFUSES to run at all unless `$env:CARGO_TARGET_DIR` is
+    set to a per-lane target dir on D: matching `D:/graphhelm-target-<lane>` (ED-10) - a named,
+    legible refusal before any stage runs, not a warning to remember. The disk-fullness decree
+    this mechanizes was previously discipline only, and depending on every agent remembering,
+    every session, on every command, is exactly the shape that already failed once (F: hit 100%
+    from worktree-local builds). The door checks a PATTERN, not one shared literal - the single
+    shared dir this originally required was retired for gate runs (ED-10, cross-lane
+    contamination) before this ever merged, and the invariant the door protects (never
+    worktree-local, never on F:) generalises to per-lane dirs cleanly. Isolated target dirs remain
+    fully legitimate for individual cargo commands run directly, outside this script, during
+    out-of-slot verification.
+
 .PARAMETER SkipPostgres
     Skips the ignored PostgreSQL matrix. Use only when a change cannot touch persistence, and say so
     when reporting the result - a gate run without it is not a full gate.
@@ -74,7 +88,136 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+# Computed early, before the door below, so the door can check "not inside THIS worktree"
+# structurally rather than guessing from a drive letter alone - a drive letter is itself an
+# instance, not a type, and the orchestrator's #166 adjudication (ED-16) named that explicitly:
+# the door's job is to reject target dirs by TYPE (undefined, inside a worktree, on F:), never to
+# fix one instance, because the instance is exactly the part this factory keeps changing.
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+
+# #166: the target-dir decree turns from discipline into mechanism here - the thing that must
+# not happen (a full gate run building worktree-local, or against some other isolated dir) stops
+# being POSSIBLE, rather than depending on every agent remembering, every session, on every
+# command. Half the factory once built worktree-local on F: while half built shared on D: with
+# nobody having enumerated per session; the failure mode is SILENT until the disk fills, and then
+# LNK1180 link failures read as five FAILED stages - HARNESS-BROKE masquerading as test-red.
+#
+# PATTERN, not one literal - amended before this ever merged, caught by H reading this branch
+# against ED-10 (D:/graphhelm-slot/ENV-DECISIONS.md): the ORIGINAL version of this check demanded
+# the exact single shared dir `D:/graphhelm-target-m10`. That dir is RETIRED for gate runs (ED-10:
+# a shared dir across lanes produced a `cargo test` GREEN and then `cargo build` failing on a type
+# it had just compiled against - cross-lane contamination the canary alone did not fully close).
+# The convention moved to ONE TARGET DIR PER LANE, `D:/graphhelm-target-<lane>`, before this PR's
+# merge could land - a hardcoded single literal would have refused every lane that followed the
+# newer, safer convention. The INVARIANT this door protects was never "the one shared dir
+# specifically" - it was always "never worktree-local, never on F:" (the actual disk-fullness
+# cause). That invariant generalises cleanly to per-lane dirs; the literal did not, and got
+# updated instead of the invariant.
+#
+# gate.ps1 is the SLOT-HOLDER's tool specifically. Running the FULL gate against a worktree-local
+# or F:-resident dir leaves build waste on the drive that has none to spare (the exact
+# disk-fullness failure mode above). Isolated dirs for INDIVIDUAL cargo commands run OUTSIDE
+# gate.ps1, for out-of-slot verification, stay entirely legitimate - exactly the pattern #152's
+# own slot-free work used throughout, correctly. This check is stricter than "any cargo command
+# anywhere" on purpose: it is the full gate's own gate, not a blanket rule for every invocation of
+# cargo on this machine.
+#
+# Refuses BEFORE any other setup, before Push-Location, before the canary - the trap-guard
+# requirement (#166's own issue text): the refusal must be legible in the log as a NAMED reason,
+# not just a nonzero exit code, because an exit code alone cannot separate "refused at the door"
+# from "ran and failed" (the same distinction #97 existed to draw for the gate's own exit code).
+$targetDirPattern = '^D:/graphhelm-target-[^/]+$'
+$actualTargetDir = $env:CARGO_TARGET_DIR
+if (-not $actualTargetDir) {
+    Write-Host '[gate] REFUSED: CARGO_TARGET_DIR is not set.' -ForegroundColor Red
+    Write-Host '[gate] The full gate must run against a per-lane target dir on D:, never the' -ForegroundColor Red
+    Write-Host '[gate] worktree-local default - the mechanized form of the target-dir decree' -ForegroundColor Red
+    Write-Host '[gate] (#166, per-lane convention ED-10). Set it explicitly and rerun, e.g.:' -ForegroundColor Red
+    Write-Host "[gate]     `$env:CARGO_TARGET_DIR = 'D:/graphhelm-target-<lane>'" -ForegroundColor Red
+    exit 1
+}
+# -match is case-INSENSITIVE by default in PowerShell (`-cmatch` is the case-sensitive form) -
+# left as-is deliberately, not by accident of which operator got typed: this path lives on an NTFS
+# volume, where 'D:/graphhelm-target-f166' and 'D:/GraphHelm-Target-F166' are the SAME directory
+# on disk, so rejecting a differently-cased spelling of an identical path would be a false
+# refusal, not a stricter one.
+#
+# WHY case is tolerated and nothing wider is: not generosity in the comparator - the disk does not
+# distinguish it, so a caller who spells the path with different casing is not pointing at a
+# LOOKALIKE dir, they are pointing at the SAME directory, bytes and all. Anyone verifying this
+# door by running the actual full gate (rather than testing the check in isolation) is not
+# exercising an edge case in isolation - they are running a real gate against a real target dir,
+# possibly contending with whoever else is building there. (Caught live during #166's own review,
+# back when this compared against the one shared dir: a differently-cased alias let the door pass
+# correctly, and the script went on to build for real while another agent's gate was mid-run
+# there. No target-dir tolerance is a safe thing to poke at by running this script for real - test
+# the door in isolation, e.g. by extracting just this check into its own process.)
+$normalizedActual = $actualTargetDir.TrimEnd('/', '\').Replace('\', '/')
+if ($normalizedActual -notmatch $targetDirPattern) {
+    Write-Host "[gate] REFUSED: CARGO_TARGET_DIR is '$actualTargetDir', not a per-lane target dir" -ForegroundColor Red
+    Write-Host "[gate] on D: (expected shape: D:/graphhelm-target-<lane>, ED-10). The full gate is" -ForegroundColor Red
+    Write-Host '[gate] the slot-holder''s tool - running it worktree-local or on F: leaves build' -ForegroundColor Red
+    Write-Host '[gate] waste on a drive that has none to spare (#166). Isolated dirs for individual' -ForegroundColor Red
+    Write-Host '[gate] cargo commands stay legitimate run OUTSIDE gate.ps1, out-of-slot (#152''s own' -ForegroundColor Red
+    Write-Host '[gate] pattern) - not for the full gate itself. Set it explicitly and rerun, e.g.:' -ForegroundColor Red
+    Write-Host "[gate]     `$env:CARGO_TARGET_DIR = 'D:/graphhelm-target-<lane>'" -ForegroundColor Red
+    exit 1
+}
+# NAMED EXCLUSION, not a side effect of the regex: `^D:/graphhelm-target-[^/]+$` would otherwise
+# happily accept `D:/graphhelm-target-m10` itself - the exact dir ED-10 retires for gate runs
+# (cross-lane contamination). The pattern's job is to enforce SHAPE (residual gap named by H,
+# confirmed by the orchestrator: a regex can fail by accepting what it should refuse, not only by
+# rejecting what it should accept - the failure mode differs from the exact-match check this
+# replaced). Closing it by name here rather than leaving "the pattern happens to still allow the
+# retired value" as an unstated side effect: the day two agents both reach for the old, familiar
+# name out of habit, they share a dir again, which is the exact thing ED-10 exists to prevent.
+#
+# THIS IS A HAND-MAINTAINED LIST, one entry today, and the orchestrator named the tension
+# honestly rather than let it surface unexplained in a month: it is the same instance-vs-type
+# problem ED-16 raised, now on the negative side. The NEXT retired dir has to be added here by
+# hand, or this check goes quietly stale - incomplete, not visibly wrong, exactly the failure
+# shape ED-16 warned about.
+#
+# CONSIDERED AND DECLINED: a derived check reading a tombstone marker (a file whose first line is
+# "RETIRED PATH" or similar) inside the candidate dir, which would cover future retirements
+# without an edit here. Declined for now, not because it is a bad idea: it moves this door from a
+# pure SPELLING question (does the string match a shape? - fully deterministic, testable in
+# isolation as every check above was) to a WORLD question (does a file exist right now, what does
+# it contain right now? - can fail from a missing file, a race, a permission error, none of which
+# a string comparison can). That tombstone convention also is not yet an established, documented
+# contract of its own (ED-16's own file happens to be shaped that way for this one retirement,
+# not a general "how a target dir gets retired" protocol) - coupling the gate's own door to an
+# incidental naming choice from an unrelated saga (the SLOT.lock relocation) would be borrowing
+# stability from something that has not been asked to provide it yet. If retirements become
+# frequent enough that a hand-maintained list is the actual pain point, revisit this decision with
+# a stabilized tombstone convention behind it - not before.
+if ($normalizedActual -eq 'D:/graphhelm-target-m10') {
+    Write-Host "[gate] REFUSED: CARGO_TARGET_DIR is 'D:/graphhelm-target-m10' - retired for gate" -ForegroundColor Red
+    Write-Host '[gate] runs (ED-10: shared dir across lanes produced a `cargo test` GREEN and then a' -ForegroundColor Red
+    Write-Host '[gate] `cargo build` failing on a type it had just compiled against). Pick a per-lane' -ForegroundColor Red
+    Write-Host '[gate] name instead, e.g.:' -ForegroundColor Red
+    Write-Host "[gate]     `$env:CARGO_TARGET_DIR = 'D:/graphhelm-target-<lane>'" -ForegroundColor Red
+    exit 1
+}
+# Structural, not coincidental: the drive-letter check above already excludes THIS machine's
+# current worktree layout (every worktree lives under F:), but a drive letter is an instance fact
+# about today's disk layout, not a guarantee. Checking directly against $repositoryRoot - the
+# worktree this very invocation of gate.ps1 is running from - is the type-level version of "not
+# worktree-local" the door is actually supposed to enforce, independent of which drive happens to
+# hold worktrees today. Scope: this worktree specifically, not every worktree on the machine -
+# pointing at ANOTHER agent's worktree is a different, much stranger misconfiguration than the
+# one this door exists to catch (an agent building inside its own worktree).
+$normalizedRepoRoot = $repositoryRoot.TrimEnd('/', '\').Replace('\', '/')
+if ($normalizedActual.StartsWith("$normalizedRepoRoot/", [System.StringComparison]::OrdinalIgnoreCase) -or
+    $normalizedActual.Equals($normalizedRepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Host "[gate] REFUSED: CARGO_TARGET_DIR '$actualTargetDir' is inside this worktree" -ForegroundColor Red
+    Write-Host "[gate] ($repositoryRoot). A per-lane dir must sit OUTSIDE any worktree (ED-10) -" -ForegroundColor Red
+    Write-Host '[gate] worktree-local is the exact disk-fullness failure mode this door exists to' -ForegroundColor Red
+    Write-Host '[gate] prevent (#166). Set it explicitly and rerun, e.g.:' -ForegroundColor Red
+    Write-Host "[gate]     `$env:CARGO_TARGET_DIR = 'D:/graphhelm-target-<lane>'" -ForegroundColor Red
+    exit 1
+}
+
 $toolchain = '+1.97.1'
 $failed = @()
 $stageRecords = New-Object System.Collections.Generic.List[object]
@@ -189,9 +332,10 @@ function Write-CanaryNonce {
 # CARGO_TARGET_DIR (no shared target dir in play) there is no lock to read at all, and that absence
 # is itself recorded rather than treated as an error.
 function Read-SlotLockSnapshot {
-    if (-not $env:CARGO_TARGET_DIR) {
-        return [ordered]@{ present = $false; reason = 'CARGO_TARGET_DIR not set' }
-    }
+    # No "CARGO_TARGET_DIR not set" branch: every call site in this script runs after the
+    # TARGET-DIR REFUSAL check above, which exits the whole script before this function can ever
+    # be reached with an unset or wrong CARGO_TARGET_DIR (#166 review, L: dead code documenting a
+    # state the script itself no longer permits).
     $lockPath = Join-Path $env:CARGO_TARGET_DIR 'SLOT.lock'
     if (-not (Test-Path -LiteralPath $lockPath)) {
         return [ordered]@{ present = $false; reason = 'no SLOT.lock at CARGO_TARGET_DIR'; targetDir = $env:CARGO_TARGET_DIR }

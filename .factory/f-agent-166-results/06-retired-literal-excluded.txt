@@ -1,0 +1,30 @@
+Isolated door-check, updated per H's residual finding (confirmed by the orchestrator: a regex can
+fail by ACCEPTING what it should refuse, not only by rejecting what it should accept - a
+different failure mode than the exact-match check this whole fix started from). The pattern
+`^D:/graphhelm-target-[^/]+$` would otherwise silently keep accepting the one dir ED-10 retired
+for gate runs, D:/graphhelm-target-m10, as an unstated side effect. Named exclusion added. Run as
+CHILD powershell.exe -File processes only, never against a real target dir.
+
+[D:/graphhelm-target-f166 (per-lane, normal)]                       EXIT=0
+[D:/graphhelm-target-m10 (RETIRED literal)]                         EXIT=1  <- was 0 before this fix
+[D:/GRAPHHELM-TARGET-M10 (retired, different case)]                 EXIT=1
+[D:\graphhelm-target-m10\ (retired, backslash + trailing slash)]    EXIT=1
+[D:\graphhelm-target-a160 (backslash, valid lane)]                  EXIT=0
+[D:/graphhelm-target-k162/ (trailing slash, valid lane)]             EXIT=0
+[D:/GRAPHHELM-TARGET-B170 (case, valid lane)]                       EXIT=0
+[F:/wrong]                                                          EXIT=1
+[D:/graphhelm-slot (wrong shape)]                                   EXIT=1
+[D:/graphhelm-target- (empty lane)]                                 EXIT=1
+[D:/graphhelm-target (no dash)]                                     EXIT=1
+[(unset)]                                                           EXIT=1
+[EDGE: fake repo root matches pattern, target equals it]            EXIT=1
+[EDGE: normal repo root, unrelated sibling lane]                    EXIT=0
+
+The exclusion applies to the retired literal under all three existing tolerances (case, backslash,
+trailing slash) since it compares the already-normalized string - a caller cannot dodge the
+exclusion by respelling the retired path.
+
+Supersedes the "D:/graphhelm-target-m10 (old shared literal, still matches)] EXIT=0" line in
+05-structural-not-instance.txt, which was correct when written and is now the documented BEFORE
+state this fix closes - not corrected there, left as the historical record of what the door
+accepted before this exclusion.

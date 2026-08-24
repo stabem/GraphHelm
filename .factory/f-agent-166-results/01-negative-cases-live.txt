@@ -1,0 +1,22 @@
+=== CASE 1: CARGO_TARGET_DIR unset ===
+
+[gate] REFUSED: CARGO_TARGET_DIR is not set.
+[gate] The full gate must run against the shared slot dir (D:/graphhelm-target-m10),
+[gate] never the worktree-local default - the mechanized form of the target-dir
+[gate] decree (#166). Set it explicitly and rerun:
+[gate]     $env:CARGO_TARGET_DIR = 'D:/graphhelm-target-m10'
+
+exit code: 1
+
+=== CASE 2: CARGO_TARGET_DIR set to a WRONG path ===
+
+[gate] REFUSED: CARGO_TARGET_DIR is 'F:/some/other/dir', not the shared slot dir
+[gate] 'D:/graphhelm-target-m10'. The full gate is the slot-holder's tool - running it
+[gate] against anything else either leaves worktree-local build waste behind or
+[gate] pays a full cold rebuild for no reason, defeating the slot queue's warm-cache
+[gate] sharing (#166). Isolated dirs stay legitimate for individual cargo commands
+[gate] run OUTSIDE gate.ps1 during out-of-slot verification (#152's own pattern) -
+[gate] not for the full gate itself. Set it explicitly and rerun:
+[gate]     $env:CARGO_TARGET_DIR = 'D:/graphhelm-target-m10'
+
+exit code: 1

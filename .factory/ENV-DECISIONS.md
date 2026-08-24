@@ -960,3 +960,27 @@ outside the slot**, under the same discipline: window declared in `check-activit
 compete with a declared gate run. The trigger was `schema digest` for the catalog pin: it is
 build+run, not check, and K refused to stretch ED-5 himself — **asking instead of stretching is
 what makes the extension safe to grant.**
+
+---
+
+## ED-18 — NO CODE PR MERGES WITHOUT A CHECK OF THE MERGE RESULT (Orchestrator, after main broke)
+
+**Instance:** `origin/main` at `d796076` fails `cargo check --workspace --all-targets` — E0004
+non-exhaustive match in the schema-evolution conformance target, because #193 added two `EventKind`
+variants and main's existing `wire_name()` match does not name them. Libs compile; test targets do
+not. **Both branches were green; main is the combination no gate ever saw.** Second instance of the
+same structural hole in two days (K's contract collision was the first): *intra-branch parity is an
+intra-branch claim; nobody had an instrument pointed at the INTEGRATION result.*
+
+**Rule: a PR that touches code does not merge until `cargo check --workspace --all-targets` has
+been run on the MERGE RESULT (current main + branch), under check-tier discipline (ED-5/ED-17 —
+isolated dir, window declared, claim bounded to "type-checks against <main-sha>+<branch-sha>").**
+Docs-only and .factory-only PRs are exempt. The orchestrator does not merge without this line in
+the PR or a report naming it.
+
+
+> **APPEND RULE, learned from this entry's own journey:** ED-18 was written on the
+> orchestrator's board branch and was UNREADABLE from main for half a day while a rule cited it
+> as binding — the committed-vs-reachable defect, on the registry itself, second instance. From
+> now on every new ED is appended on a branch off main and merged the same hour. A rule a
+> reviewer cannot read by the reader's path is not yet a rule.

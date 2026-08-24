@@ -1,0 +1,11 @@
+{
+  "policyVersion": "1.0.0",
+  "states": ["provisional", "published"],
+  "transitions": ["publish"],
+  "allowed": [
+    {
+      "from": "provisional",
+      "transition": "publish"
+    }
+  ]
+}

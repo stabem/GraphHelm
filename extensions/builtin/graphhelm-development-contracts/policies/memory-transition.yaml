@@ -1,0 +1,32 @@
+# Governed memory transitions (#220).
+#
+# Only the VERDICT is written here. The matrix that exercises it is derived from the two
+# vocabularies below, so a tuple nobody thought about is still visited; every tuple absent from
+# `allowed` refuses WITHOUT changing its predecessor.
+#
+# Withdrawal closes USE, never the record: `withdrawn` stays auditable and leaves the default view.
+policyVersion: "1.0.0"
+
+states:
+  - provisional
+  - published
+  - superseded
+  - withdrawn
+
+transitions:
+  - publish
+  - supersede
+  - withdraw
+
+allowed:
+  - from: provisional
+    transition: publish
+    to: published
+
+  - from: published
+    transition: supersede
+    to: superseded
+
+  - from: published
+    transition: withdraw
+    to: withdrawn

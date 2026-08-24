@@ -1,0 +1,12 @@
+{
+  "policyVersion": "1.0.0",
+  "orderedChecks": [
+    {
+      "id": "project-opted-in",
+      "refusesWith": "opt_in_absent",
+      "runsBeforeFirstTouch": true,
+      "runsAfterTheFactToo": true
+    }
+  ],
+  "refusalCodes": ["opt_in_absent"]
+}

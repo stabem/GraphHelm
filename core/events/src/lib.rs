@@ -8,6 +8,7 @@ mod jsonl;
 mod key;
 mod limits;
 mod local;
+mod memory;
 mod projection;
 mod repository;
 mod retention;
@@ -30,6 +31,7 @@ pub use key::{
     WrapKeyRequest, WrappedKey,
 };
 pub use local::{LocalEventRepository, LocalFailpoint, journal_line_roundtrips};
+pub use memory::{append_memory_refusal, memory_journal_is_clean};
 pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
     MAX_PROJECTION_NODES, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,

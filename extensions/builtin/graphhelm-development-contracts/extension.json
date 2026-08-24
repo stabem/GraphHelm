@@ -265,6 +265,112 @@
           },
           "family": "development-contracts",
           "schema": "schemas/retrieval-admission-policy.schema.json"
+        },
+        {
+          "id": "policy/memory-admission",
+          "kind": "policy",
+          "path": "policies/memory-admission.yaml",
+          "sha256": "sha256:c9854c942761c55d13f56ed9e44ffcf96697cc71bb9c70c4614afe870f096696",
+          "schema": "schemas/memory-admission.schema.json",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "policy/memory-transition",
+          "kind": "policy",
+          "path": "policies/memory-transition.yaml",
+          "sha256": "sha256:9de92a611f0c7552c9d17777ac4276c5ee398d980387e7bf43138674e9b53476",
+          "schema": "schemas/memory-transition.schema.json",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "schema/memory-admission",
+          "kind": "schema",
+          "path": "schemas/memory-admission.schema.json",
+          "sha256": "sha256:0c1d76e5767eb0bd91bd82bde54587ab99fdf049ebd70aa1a9637aa130e3162b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "schema/memory-transition",
+          "kind": "schema",
+          "path": "schemas/memory-transition.schema.json",
+          "sha256": "sha256:58abeef85e25d90e98d154596a1d46b4f08046e54b2d5998b1aab13b242bf20a",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/memory-valid-admission-minimal",
+          "kind": "fixture",
+          "path": "fixtures/memory/valid/admission-minimal.json",
+          "sha256": "sha256:37414bbea9b745f2a261cebc9c9d0491a0e0880bead62910099faf8425d724fb",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/memory-invalid-admission-refusal-code-outside-the-closed-set",
+          "kind": "fixture",
+          "path": "fixtures/memory/invalid/admission-refusal-code-outside-the-closed-set.json",
+          "sha256": "sha256:dea430bb93987e70a15222c33c1846eeb5bcff939ea2a4e1255c56e38858d9cd",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/memory-invalid-admission-unknown-field",
+          "kind": "fixture",
+          "path": "fixtures/memory/invalid/admission-unknown-field.json",
+          "sha256": "sha256:f679761e5f9c22939bb73628385284a96e747fbd3bd2e422ea4f78fd3cb19ca5",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/memory-invalid-transition-tuple-missing-its-target",
+          "kind": "fixture",
+          "path": "fixtures/memory/invalid/transition-tuple-missing-its-target.json",
+          "sha256": "sha256:d4aa1982fd1b45c7518aa5ea9e016a57599cfad26aae2b899149811fdae6da70",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
         }
       ]
     },

@@ -249,7 +249,6 @@ fn a_skill_that_writes_instead_of_proposing_is_refused() {
     );
 }
 
-
 /// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **removing the
 /// digest check over declared contribution content.**
 ///

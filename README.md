@@ -25,8 +25,8 @@ tab — measured, in a probe run against this README.
   cryptographic erasure, and verified restore.
 * **Execution**: start a graph, drive it, pause, resume, approve, cancel — offline via
   fixtures, or against a real model gateway and a brokered tool sandbox.
-* **The one-glance answer**: `attention` says `needs_you`, `can_sleep` or `unknown`, with the
-  reason and the node named, and time on the surface.
+* **The one-glance answer**: `attention` says `needs_you`, `can_sleep`, `unknown` or
+  `calmed_by_amendment`, with the reason and the node named, and time on the surface.
 * **A read-only monitor**, an HTTP API, and an **MCP server** exposing the same operations to a
   chat client.
 * **A quality gate** that refuses to certify itself against a suite of deliberately useless

@@ -60,17 +60,23 @@ Real output, trimmed to the part that matters:
 
 ## The answer to the question
 
-**`attention` is the field.** It has exactly three values:
+**`attention` is the field.** It has exactly four values:
 
 | value | meaning |
 |---|---|
 | `needs_you` | something named is waiting on a human — `attentionReasons` says what and which node |
 | `can_sleep` | nothing is waiting, and everything in flight was actually CHECKED |
 | `unknown` | work is in flight whose silence could not be judged — not an alarm, and not an all-clear |
+| `calmed_by_amendment` | calm, and the calm is one YOU bought: a budget you declared is what makes the quiet legitimate |
 
 `unknown` is a real answer, not a failure. It appears when a node is running and nobody
 declared how long it may stay quiet, and it carries the remedy: which node, which declaration
 is missing, and the operation that supplies it.
+
+`calmed_by_amendment` is what that remedy produces. Apply the declaration `unknown` asks for, and
+the next answer is calm — but calm resting on your number rather than on one the graph declared, so
+it says which nodes and stays distinguishable from a plain `can_sleep`. **Anything scripting this
+field must handle it**: it is the value on the far side of the documented fix.
 
 Ask again at any time, against the same directory:
 
@@ -86,6 +92,11 @@ cargo run --locked -p graphhelm-cli -- execution status --events /tmp/qs/events 
 ```bash
 cargo run --locked -q -p graphhelm-cli --   execution status --events /tmp/qs/events --execution demo | jq -r .data.attention
 ```
+
+**Give that value a default branch.** The four above are what this version emits; the set is
+allowed to grow, and a `case` with no fallback treats a new answer as whichever branch it falls
+through to. Treat anything you do not recognise as **not** an all-clear — that is the safe
+direction, and it is the whole reason this field is not a boolean.
 
 Nothing above puts a `graphhelm` binary on your PATH, and a cron job should not run `cargo`.
 After a build, the binary is at `target/debug/graphhelm` (`.exe` on Windows) — use that path, or

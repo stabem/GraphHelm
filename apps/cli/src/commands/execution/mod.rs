@@ -624,7 +624,13 @@ const ALL_NODE_STATES: [NodeState; 16] = [
 /// instead of recomputed: `core/execution`'s `attention` owns the predicate (M07 F1), so
 /// this list and `attentionReasons` can never disagree. The shape is unchanged, which is
 /// why every test that pinned it stays green untouched.
-/// The verdict word an operator reads: `needs_you`, `unknown`, `can_sleep`.
+/// The verdict word an operator reads: `needs_you`, `unknown`, `calmed_by_amendment`, `can_sleep`.
+///
+/// This list is the WIRE CONTRACT, not a summary of it. `QUICKSTART.md` tells operators to script
+/// `jq -r .data.attention` and states there is no exit-code convention, so a value emitted here and
+/// absent from that document lands in a `case` statement we do not control. The set is asserted
+/// equal to the documented one by `apps/cli/tests/attention_tag_domain.rs`; adding an arm without
+/// adding a row fails that test rather than widening the wire in silence.
 fn verdict_tag(verdict: &graphhelm_execution::Verdict) -> &'static str {
     match verdict {
         graphhelm_execution::Verdict::NeedsYou { .. } => "needs_you",

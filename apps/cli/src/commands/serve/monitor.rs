@@ -77,10 +77,16 @@ fn untriaged(answer: &Attention) -> Vec<String> {
 /// The sleep question in the words an operator needs at 3am, from the same value the API
 /// answers with. Each reason names its node, so the header is actionable rather than a mood.
 fn attention_line(answer: &Attention) -> String {
-    // Three answers, and the middle one is the reason this stopped being a boolean: a page
-    // that printed "can sleep" while the API admitted it had not judged the silence was the
+    // FOUR answers, and `unknown` is the reason this stopped being a boolean: a page that
+    // printed "can sleep" while the API admitted it had not judged the silence was the
     // judge's critical finding. False calm reads worse than a false alarm, because nobody
     // scrolls past an all-clear.
+    //
+    // This comment said "Three" while the match below had four arms — the same prose-behind-code
+    // drift #189 found in `QUICKSTART.md`, on a second surface. The BEHAVIOUR here was already
+    // right; only the sentence was stale. Note that the tag guard in
+    // `apps/cli/tests/attention_tag_domain.rs` reads `verdict_tag`'s literals and CANNOT see this
+    // function: it emits sentences, not tags. A fifth verdict must be given an arm here by hand.
     match &answer.verdict {
         graphhelm_execution::Verdict::CanSleep => {
             return "can sleep — nothing is waiting on you".to_owned();

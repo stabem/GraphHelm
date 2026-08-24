@@ -1,0 +1,17 @@
+{
+  "apiVersion": "p50.dev/development/v1alpha1",
+  "kind": "CodeRule",
+  "metadata": {
+    "id": "code-rule-1",
+    "artifactVersion": "1.0.0",
+    "scope": {
+      "workspaceId": "workspace-1"
+    }
+  },
+  "producer": "graphhelm-development-contracts",
+  "producerVersion": "0.1.0",
+  "spec": {
+    "statement": "prefer the house newtypes over a parallel vocabulary"
+  },
+  "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

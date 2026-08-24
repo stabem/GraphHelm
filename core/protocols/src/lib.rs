@@ -1,6 +1,7 @@
 //! Stable GraphHelm wire contracts.
 
 mod actor;
+mod development;
 mod diagnostic;
 mod draft;
 mod event;
@@ -11,6 +12,7 @@ mod projection;
 mod simulation;
 
 pub use actor::*;
+pub use development::*;
 pub use diagnostic::*;
 pub use draft::*;
 pub use event::*;

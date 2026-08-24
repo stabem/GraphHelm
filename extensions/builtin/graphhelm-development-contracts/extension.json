@@ -1,0 +1,174 @@
+{
+  "apiVersion": "p50.dev/v1",
+  "kind": "Extension",
+  "metadata": {
+    "id": "graphhelm-development-contracts",
+    "version": "0.1.0",
+    "publisher": "GraphHelm",
+    "source": {
+      "repository": "https://github.com/stabem/GraphHelm"
+    }
+  },
+  "spec": {
+    "type": "skill-package",
+    "capabilities": [
+      "schema.development-contracts"
+    ],
+    "permissions": {
+      "filesystem": {
+        "package": "read",
+        "workspaceArtifacts": "proposal-write"
+      },
+      "network": {
+        "external": false,
+        "loopbackRuntimeApi": true
+      },
+      "runtime": {
+        "read": true,
+        "mutations": [],
+        "ownerConfirmationRequired": []
+      },
+      "secrets": {
+        "artifactValues": false,
+        "tokenFile": false
+      }
+    },
+    "contracts": {
+      "formatVersion": "1.0.0",
+      "activation": "explicit",
+      "composition": "atomic",
+      "publication": "governor-only",
+      "entryFamilies": [
+        "development-contracts"
+      ],
+      "artifactFlowFormat": "p50.dev/jpd/artifact-flow/v1",
+      "artifactFlows": [
+        {
+          "family": "development-contracts",
+          "inputs": [
+            "task:scope"
+          ],
+          "outputs": [
+            "schema:development-envelope"
+          ]
+        }
+      ],
+      "missingCapabilityResult": "refuse",
+      "hostViews": [],
+      "contributions": [
+        {
+          "id": "schema/development-envelope",
+          "kind": "schema",
+          "path": "schemas/development-envelope.schema.json",
+          "sha256": "sha256:3485102f371c553a005de6c71a72ebf4082561594ef1fa9a09f30dadf7355cf1",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/invalid-digest-not-a-wire-hash",
+          "kind": "fixture",
+          "path": "fixtures/contracts/invalid/digest-not-a-wire-hash.json",
+          "sha256": "sha256:95435d644c61254ae6730b931760ae5490d33c4ccf40d97ae8e098667815b835",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/invalid-kind-outside-the-closed-set",
+          "kind": "fixture",
+          "path": "fixtures/contracts/invalid/kind-outside-the-closed-set.json",
+          "sha256": "sha256:b4c9a9c0f5ee8f7914c0ee776507440f153fd1edd84731a3787fb90a82a7bafd",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/invalid-scope-missing-project",
+          "kind": "fixture",
+          "path": "fixtures/contracts/invalid/scope-missing-project.json",
+          "sha256": "sha256:cee9a9d632105ba0d536cba1c3f3af9d7b13d66009ffdee08080b5599dd23e28",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/invalid-unknown-major",
+          "kind": "fixture",
+          "path": "fixtures/contracts/invalid/unknown-major.json",
+          "sha256": "sha256:05a562b25a427f8f3a059804f41f3763f5b23e609cd90ce4a1077276ce82841f",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/valid-code-rule-minimal",
+          "kind": "fixture",
+          "path": "fixtures/contracts/valid/code-rule-minimal.json",
+          "sha256": "sha256:b5bb731dba8b47a8e6292b56a1489e49ae28cf8e022069b6cf7995175d2ae5ff",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/invalid-cardinality-too-many-bindings",
+          "kind": "fixture",
+          "path": "fixtures/contracts/invalid/cardinality-too-many-bindings.json",
+          "sha256": "sha256:535e537825b0c560a50231374984e385ba356c29d214694f6688c8bb9e05d36e",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/invalid-size-id-over-max-length",
+          "kind": "fixture",
+          "path": "fixtures/contracts/invalid/size-id-over-max-length.json",
+          "sha256": "sha256:7d16b63980c0639e1cdd22923cf17ddc34385dd16eb5cd085549bfd604a0a0d5",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        }
+      ]
+    },
+    "runtime": {
+      "kind": "data",
+      "isolationMinimum": "tier_0"
+    },
+    "compatibility": {
+      "graphhelmApi": "1.0.0",
+      "wireIdentifiers": "1.0.0"
+    }
+  }
+}

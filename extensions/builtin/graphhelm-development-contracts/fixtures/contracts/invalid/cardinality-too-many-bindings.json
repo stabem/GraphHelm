@@ -1,0 +1,1060 @@
+{
+  "apiVersion": "p50.dev/development/v1alpha1",
+  "kind": "CodeRule",
+  "metadata": {
+    "id": "code-rule-1",
+    "artifactVersion": "1.0.0",
+    "scope": {
+      "workspaceId": "workspace-1",
+      "projectId": "project-1"
+    }
+  },
+  "producer": "graphhelm-development-contracts",
+  "producerVersion": "0.1.0",
+  "spec": {
+    "statement": "prefer the house newtypes over a parallel vocabulary"
+  },
+  "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "bindings": [
+    {
+      "artifactId": "bound-0",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-1",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-2",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-3",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-4",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-5",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-6",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-7",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-8",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-9",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-10",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-11",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-12",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-13",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-14",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-15",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-16",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-17",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-18",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-19",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-20",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-21",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-22",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-23",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-24",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-25",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-26",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-27",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-28",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-29",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-30",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-31",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-32",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-33",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-34",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-35",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-36",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-37",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-38",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-39",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-40",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-41",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-42",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-43",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-44",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-45",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-46",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-47",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-48",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-49",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-50",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-51",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-52",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-53",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-54",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-55",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-56",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-57",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-58",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-59",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-60",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-61",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-62",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-63",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    },
+    {
+      "artifactId": "bound-64",
+      "schemaId": "https://p50.dev/schemas/journey-contract.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": {
+        "workspaceId": "workspace-1",
+        "projectId": "project-1"
+      },
+      "producer": "graphhelm-development-contracts",
+      "snapshots": {
+        "repoSnapshot": "snapshot-g",
+        "indexGeneration": "snapshot-g"
+      }
+    }
+  ]
+}

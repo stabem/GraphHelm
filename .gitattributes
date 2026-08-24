@@ -6,5 +6,9 @@
 extensions/builtin/graphhelm-jpd/*.json text eol=lf
 extensions/builtin/graphhelm-jpd/**/*.json text eol=lf
 extensions/builtin/graphhelm-jpd/**/*.md text eol=lf
+# Same reason, same mechanism: this package's digests bind raw contribution bytes, and without
+# this rule a Windows checkout rewrites them and GHEX005_DIGEST fails for every contribution.
+extensions/builtin/graphhelm-development-contracts/*.json text eol=lf
+extensions/builtin/graphhelm-development-contracts/**/*.json text eol=lf
 # M06 demonstrations: recorded artifacts commit byte-exact (checksummed).
 docs/acceptance/demos/** -text

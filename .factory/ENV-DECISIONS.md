@@ -997,6 +997,57 @@ Working forms: `MSYS_NO_PATHCONV=1 git show "origin/main:.factory/ENV-DECISIONS.
 
 ---
 
+## ED-18, LINT AMENDMENT (J): `cargo check` does not run clippy, so a merge can land a red stage the check cannot see
+
+**Instance:** `origin/main` at `8486524` — the #209 squash, mine — fails the house clippy bar.
+`cargo clippy -p graphhelm-events --all-targets --locked -- -D warnings` exits **101** with
+`empty_line_after_doc_comments` at `core/events/tests/execution_projection.rs:1850`. ED-18 was
+satisfied and did not catch it: **`cargo check` does not run clippy.** The check-tier claim
+("type-checks against `<main>`+`<branch>`") was true and insufficient. Second time in one day that a
+merge landed a red stage the check-tier instrument cannot see.
+
+**Rule, amending ED-18: the merge-result verification must ALSO run
+`cargo clippy -p <each crate the branch touches> --all-targets --locked -- -D warnings`**, under the
+same check-tier discipline (isolated dir, window declared, claim bounded to the two shas).
+Whole-workspace clippy is better where affordable; per-crate over the touched crates is the floor.
+Docs-only and `.factory`-only PRs stay exempt.
+
+### The root cause outlives the lint, because the lint was only the DETECTOR
+
+The orphan comment was **not created by the merge**. Traced:
+
+```
+44936b7 (#193, mine)   the doc is born ALREADY orphaned, above `identity_registered`,
+                       describing a helper that returns the batch PLUS a sequence — a shape
+                       `parked_batch()` has never had; it returned `Vec<NewEvent>` from birth
+8932641 (#244)         lane 1 DELETES the orphan doc, keeps the function
+2ae37e2 (my branch)    still carries it — the branch predates that cleanup
+8486524 (#209 merge)   I resolved that hunk as `ours` and RESURRECTED it
+```
+
+In that conflict hunk `ours` had three lines and `theirs` had **zero**, and I read zero as *"main
+has no opinion here"*. **It is not. An empty `theirs` against a non-empty `ours` means main's
+opinion is DELETE.**
+
+**And this is why the merge's own loss-check missed it.** #209 carried an explicit both-directions
+check — "nothing of main's lost, nothing of the branch's lost" — verified by symbol **presence**:
+the `EventKind` set, `ClearanceOutcome`, every `proof_kinds` site, the `clearance_registry` union.
+**A presence check cannot see a resurrected deletion.** It asks *"is X still there?"*, and X being
+there **is** the defect. Deletion is invisible to every instrument pointed at presence.
+
+So a merge-loss check has two halves, and only one is usually armed:
+
+| half | question | instrument |
+|---|---|---|
+| additions | did anything main ADDED go missing? | presence — usually armed |
+| **deletions** | **did anything main DELETED come back?** | **absence — usually not** |
+
+The second half is read by diffing the merge result against main over the files both sides touched,
+and inspecting every hunk where the branch **reintroduces** text main removed. `git diff
+<main>..<merge-result>` restricted to those paths shows them as additions the branch did not author.
+
+---
+
 ## ED-19 — `git stash` IS ONE SHARED STACK FOR THE WHOLE REPOSITORY, ACROSS ALL WORKTREES (from F's near-incident)
 
 Measured live: a reflex `git stash` + `pop` while switching branches brought back **another

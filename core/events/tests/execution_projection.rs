@@ -1846,9 +1846,6 @@ fn a_refusal_reaches_the_timeline_with_its_reason_and_leaves_the_node_parked() {
 // sequences, captured as the list is built.
 // =================================================================================================
 
-/// The parked arrangement as NewEvents (not yet appended) plus the sequence the parking outcome
-/// will occupy, so a caller keeps adding to the SAME batch.
-
 fn identity_registered(key: &str, identity: &str, fingerprint: &str) -> NewEvent {
     event(
         key,

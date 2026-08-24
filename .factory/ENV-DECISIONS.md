@@ -1051,3 +1051,211 @@ also defines, ask which one wins — the answer is very often the flag, not the 
 change by eye. The tell is proportion: real formatting touches some lines (here 31 insertions / 27
 deletions across three files, with the CR byte count moving with the line count); an EOL rewrite
 touches every line in the file.
+
+---
+
+## ED-22 — THE SLOT CLAIM IS READ-THEN-WRITE, SO THE WINNER CANNOT SEE WHO IT OVERWROTE (found by M; surfaced on A's claim, caused by the read-then-write shape of the protocol)
+
+**Measured, 2026-08-24.** A read `SLOT.lock`, saw `FREE | released by D | 10:54:28Z`, and wrote its
+own `HELD` line at `10:55:15Z`. M had claimed the slot in between. **M's claim was destroyed and A
+never knew.** M found it and recorded the cause with the exact time:
+`10:55:53Z | M | END (NO RUN — CLAIM LOST) | my claim was overwritten by A at 10:55:15Z`.
+
+**Cost, corrected by M and stated at its real size: zero work.** A first draft of this entry said
+"one run that never happened, about three minutes". M struck that — the run was not lost, only
+deferred, and observed later in the same cycle. **What was destroyed was a claim, not work.** The
+smaller number is the honest one, and the argument does not need the larger: a mechanism that can
+silently destroy a claim is worth fixing at zero damage, because the damage is a function of what
+the victim happened to be doing.
+
+**A had followed the protocol completely** — including the re-read-after-write and the
+tasklist-after-write that M itself had proposed and the Orchestrator adopted the same hour.
+
+### Why the existing check could not catch it, and this is the load-bearing half
+
+The re-read confirms **your own write landed**. It shows you **your own text** — which is exactly
+what it would show if you had just destroyed someone else's claim. `SLOT.lock` has no history; last
+writer wins; the winner reads its own line and concludes all is well.
+
+**The asymmetry decides the design: the winner never discovers it. Only the victim does** — and
+only if the victim reads again. That is not luck about who is attentive; **it is the only direction
+in which this defect is observable at all.** A check whose green does not distinguish "went fine"
+from "I destroyed another lane's work" is not a check.
+
+### The rule
+
+**1. Every claim line MUST carry what the writer observed immediately before writing** (in force
+from 2026-08-24T12:35Z):
+
+    prev-seen: <state> | <owner> | <ts>
+
+e.g. `prev-seen: FREE | D | 10:54:28Z @ read 10:55:12Z`.
+
+**The instant of the READ is part of the record, not decoration** (M's addition). The two cases —
+"I overwrote you" and "you overwrote me" — are distinguished *only* by the order of two instants.
+Without the read time the line records what was seen but not when, and cannot settle which write
+arrived first. The content alone is not enough.
+
+**Stated weakness, because an unwritten weakness is read as strength:** this rule catches nothing
+if the agent doing the overwriting also forgets the line. A rule that depends on the person making
+the mistake remembering to comply is weak. **Empirical evidence from the same day, M's own:** M
+released the slot and forgot to notify A, one hour after M had itself explained notification to A.
+The rule is still worth having — it is the only net that exists while rule 2 is unresolved, and
+`prev-seen` **reconstructs** a destroyed claim, which an atomic claim never does; atomicity only
+prevents. But nobody should rest on it.
+
+This does not prevent the race. It makes the overwrite
+**detectable by a third party** instead of only by the victim, and it makes the destroyed claim
+**reconstructable** from the line that destroyed it. It costs one line.
+
+**2. The claim itself must become atomic** — an operation that either creates or fails, with no
+read step to race against.
+
+**THE ATOMICITY IS A PROPERTY OF THE CALLER, NOT OF WINDOWS. Do not write this rule as an OS
+claim.** An earlier draft of this entry said "`mkdir ... ` is atomic on Windows". That sentence is
+false as written, and dangerous because it licenses *any* caller — including `ci/gate.ps1`, which
+is PowerShell.
+
+**Measured, same volume, by two agents. Every number below is a shared-path race with a
+distinct-path positive control alongside it:**
+
+    git-bash `mkdir`, 50 racers, SAME path             -> 1 winner, 49 losers
+    git-bash `mkdir`, 5 rounds of 30                   -> 1 winner every round
+
+    PowerShell, 40 racers x 5 rounds, SAME path:
+      New-Item -ItemType Directory                     -> winners: 1, 3, 1, 26, 1   NOT USABLE
+      [IO.Directory]::CreateDirectory                  -> winners: 40,40,40,40,40   NOT USABLE
+      [IO.File]::Open(p,'CreateNew','Write','None')    -> winners:  1, 1, 1, 1, 1   USABLE
+
+    POSITIVE CONTROL, distinct path per racer, ALL of the above -> every racer wins, every round
+    SEQUENTIAL New-Item over an existing directory              -> FAILED (IOException)
+
+**Read the middle two rows together — they are the point of this rule.** `New-Item` and
+`CreateDirectory` both create, both "work" when you try them by hand, and neither can be used.
+`New-Item` **fails sequentially but not under race**, which is a real check-then-create window: the
+mechanism proposed to fix read-then-write *contains* read-then-write. `CreateDirectory` is worse and
+quieter — **it never fails on an existing directory, so it cannot express a claim at all**, and it
+hands the lock to every caller, every time, while looking like it succeeded.
+
+**Why this nearly shipped:** three of the five `New-Item` rounds returned exactly **1 winner**.
+Anyone implementing it in the gate and trying it by hand two or three times sees one winner each
+time and **confirms the wrong conclusion**. The failure is mostly invisible — the same property that
+made the original incident take so long to surface.
+
+**So the rule names the CALL, never the intent.** "Create a directory atomically" is not a
+specification; `[IO.File]::Open(path,'CreateNew','Write','None')` is. `CreateNew` maps onto the
+kernel's `CREATE_NEW`, which resolves in one step, and the loser learns immediately, with a specific
+error: `The file '...\HELD.lock' already exists.`
+
+**The shape changes with the primitive, and this is not a mechanical translation.** `CreateNew`
+creates a **file**, not a directory. So the claim becomes `HELD.lock`, and the details no longer go
+"inside the directory afterwards" — **the winner writes them into the file itself, through the
+handle it already holds**, which is strictly better: the claim and its contents become one
+operation instead of two, removing a second window between claiming and describing.
+
+**Explicitly NOT measured, and not to be assumed from the above:** what happens when a process dies
+with the lock file created (the stale-lock case), behaviour on network volumes, and behaviour across
+a machine restart. Rule 2 is implementable today for the local volume; **stale-lock recovery is
+undefined and must be designed before this replaces rule 1 rather than joining it.**
+Whoever fails **knows at that instant that they lost**, rather than discovering three minutes later
+that they won by running someone over. This changes the mechanism rather than asking for more care.
+
+**More reading does not fix this.** Every read-then-write has this window; more reads only narrow
+it, and narrowing is what already failed here — the gap was under a second.
+
+**The two rules are complements, not alternatives** (M). `mkdir` **prevents**; `prev-seen`
+**leaves a trail**. The trail is still needed after the atomic claim exists, because the transition
+between the two mechanisms — and any place where somebody writes the file by hand — keeps the
+window open. **One without the other leaves half: one prevents without explaining, the other
+explains without preventing.**
+
+**A SEQUENTIAL PROBE DOES NOT QUALIFY A CALLER, AND MUST NOT BE USED AS ONE.** An earlier draft of
+this entry offered one as corroboration: `mkdir PROBE.d` succeeds, the second identical call fails,
+therefore create-or-fail. **That is a precondition of atomicity, not evidence of it** — a weaker
+question with an easier answer, and it was wrong to present it as a second method agreeing with the
+first.
+
+**The probe is proved non-diagnostic by a measurement inside this very entry.** `New-Item
+-ItemType Directory` **passes** it — measured above, it fails over an existing directory — and then
+hands the same path to **26 winners** under race. **The probe returns "create-or-fail confirmed" for
+the primitive this entry rejects.** Anyone using it to qualify their own caller would see it pass
+and conclude the opposite of the table.
+
+**Only the parallel test with a positive control discriminates.** Every candidate passes
+sequentially; that is exactly why sequential results cannot separate them. Caught by M in review,
+and it is this entry's own thesis pointed back at it: **a check whose green does not distinguish the
+safe case from the broken one is not a check.**
+
+### What is NOT retired, stated so nobody drops it
+
+**The re-read-after-write stays in the protocol.** It catches a real and different failure: a write
+that never landed (wrong path, permissions, a full disk). The two halves are:
+
+- **re-read after write** — sees *lost writes*. Blind to *overwrites*.
+- **atomic claim + `prev-seen`** — sees *overwrites*. Says nothing about whether your own write
+  landed.
+
+Neither substitutes for the other, and dropping the first while adopting the second would trade one
+blind spot for another.
+
+### A THIRD failure mode neither rule addresses: the file does not notify (found by M, same day)
+
+Hours after the incident above, the mirror image happened. M released the slot at `12:37:07Z` and
+wrote `next: A` into the line. **A did not know, and sat waiting for a signal that had already
+fired** — roughly half an hour of an already-delayed run, lost to nothing.
+
+- The first incident was **two writes with no coordination**.
+- This one was **one write that nobody read**.
+
+**`SLOT.lock` does not notify.** A release wakes no one; only a message wakes someone. **The atomic
+claim does not fix this half** — with `mkdir`, M would have removed `HELD.d` and A would still be
+sitting there, because nothing wakes you when a directory disappears.
+
+**Rule: releasing the slot is not finished until the next holder has been TOLD.** If the release
+line names a successor, message that agent; if it does not, the release is only an invitation to
+whoever happens to look. Polling the file is the waiter's fallback, not the releaser's substitute
+for telling them.
+
+Stated here rather than in its own entry because it is the same object failing for the opposite
+reason, and separating them would let a reader fix one and think the mechanism was sound.
+
+### A FOURTH, same family: a load guard that counts process NAMES reports silence on a saturated machine
+
+**Measured the same afternoon.** A's "is the machine quiet?" guard counted `cargo.exe` and
+`rustc.exe`. M's race harness went into a fork-storm of roughly **160 `bash.exe`** processes. A's
+guard read **zero** and released a long experiment onto the machine; measured CPU at that moment
+was **100%**. The experiment's phase (a) requires runs with nothing else on the machine, so the
+whole run was void and was discarded rather than published.
+
+**The guard counted what it expected to compete with, not what competes.** It is the same error as
+`SLOT.lock` recording possession rather than turn: **the instrument measures a proxy that usually
+correlates with the thing, and reports confidently when the correlation breaks.**
+
+**A FIFTH, found in the wreckage of the same run: killing the supervisor does not kill the writers.**
+
+A stopped the contaminated experiment through the harness and wrote a `VOID` line at `12:54:39Z`.
+**The script survived as an orphan and wrote its own `END | flake experiment done` at `12:58:41Z`** —
+four minutes after the run had been declared dead. The shared log was left with a success line
+following an annulment, and **the success line is the one a later reader believes**, because the log
+records what was written, not what was intended.
+
+**The log cannot distinguish "ran and finished" from "was killed and the corpse wrote".** Generalised
+(M): **any process still holding the path to a shared log keeps the right to write to it after you
+have declared it dead. The end-of-run signal must come from the WRITER, not from whoever ordered the
+stop.** A supervisor's kill is a request; the line in the file is the fact.
+
+**Two duties follow.** First, after killing a run, **read the log again later** — the correction must
+outlive the corpse's line, and a `CORRECTION` line naming the false entry by timestamp is what does
+it. Second, **do not delete a voided artifact.** It was renamed to `-VOID-contaminated` and given a
+header instead, because **a voided run that is deleted is indistinguishable from a run that never
+happened**, and someone will eventually re-derive those numbers and trust them.
+
+**Rule: a contention guard measures LOAD, not process names.** On this machine:
+
+    powershell -NoProfile -Command "(Get-CimInstance Win32_Processor |
+      Measure-Object -Property LoadPercentage -Average).Average"
+
+A name-based count may stay **as an addition** — it says *who* is competing, which is useful for the
+log — but it must never be the gate condition. **And a run that started under contention is VOID,
+not merely noisy:** it gets an END line saying so and its numbers are discarded, because a
+contaminated run left unlabelled is read later as data.

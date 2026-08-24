@@ -178,7 +178,16 @@ pub(crate) fn execute(
     let inputs = graphhelm_execution::AttentionInputs {
         node_silence_seconds: super::node_silence_seconds(&history, chrono::Utc::now()),
         silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
-        at_sequence: Some(history.last().map_or(0, |event| event.sequence)),
+        // `None` when the history is empty: no vantage point rather than a claim to have
+        // looked at sequence zero. Shared with `status` so the two cannot drift.
+        //
+        // DO NOT INLINE THIS BACK to `Some(history.last().map_or(0, …))`. The guard for it lives
+        // in `mod.rs`'s tests and calls the helper directly, so it CANNOT SEE THIS LINE: inlining
+        // the old spelling here leaves every test green. What protects this call site is this
+        // comment, and nothing else. (On this path the history also carries the amendment appended
+        // a few lines above, so the empty case is unreachable HERE — which is exactly why a
+        // regression here would go unnoticed.)
+        at_sequence: super::at_sequence(&history),
     };
     Ok(render(
         &projection,

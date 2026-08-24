@@ -584,6 +584,32 @@ pub(crate) fn node_silence_seconds(
         .collect()
 }
 
+/// Where a surface was looking, or the honest statement that there was nothing to look at.
+///
+/// One expression for two call sites (`status`, `amend`) so the two agree BY CONSTRUCTION
+/// rather than by each remembering. Both used to spell `history.last().map_or(0, …)` inline and
+/// wrap it in `Some`, which turns an EMPTY history into `Some(0)` — a claim to have looked, at a
+/// sequence that cannot exist, since streams open at 1. `AttentionInputs::at_sequence` documents
+/// the opposite in its own words: `None` means this surface did not report where it looked,
+/// "instead of writing a zero that would read like sequence zero".
+///
+/// `serve::monitor` already declines to invent a vantage point and says so at the site. This is
+/// the same posture, made unforgettable: `Option::map` propagates the absence, and the only way
+/// back to the old behaviour is to write the zero on purpose.
+///
+/// NOT a general "head sequence" helper. The wire's `headSequence` is a different field with a
+/// different contract and keeps its own SHAPE — zero for an empty history — re-derived from this
+/// helper at the boundary, where `status` declares the flattening rather than carrying it inward.
+///
+/// **The tests below call this helper DIRECTLY and therefore cannot see its call sites.** Reverting
+/// a caller to the old inline `Some(history.last().map_or(0, …))` leaves every test green. Each call
+/// site carries a comment saying so. That placement buys attention, not enforcement, and the
+/// difference is stated because pretending otherwise is how a guard gets trusted for work it does
+/// not do.
+pub(crate) fn at_sequence(events: &[EventEnvelope]) -> Option<u64> {
+    events.last().map(|event| event.sequence)
+}
+
 /// Per-state node counts, keyed by the same wire vocabulary the projection itself uses.
 fn state_counts(node_states: &BTreeMap<String, NodeState>) -> BTreeMap<&'static str, u64> {
     // F2: every lifecycle state is a bucket, zero-filled. An omitted key reads as "no such
@@ -788,4 +814,73 @@ pub(super) fn render(
         // surface computed. That is what `lastEventAt` will publish; an elapsed number is a
         // moving fact wearing a value's clothes.
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use graphhelm_protocols::{
+        ActorId, EventHash, EventKind, ExecutionId, NewEvent, NodeOutcome, NodeOutcomeRecorded,
+        OpaqueId, PersistedActor, PersistedActorType, PersistedTimestamp, ProjectId,
+        RepositoryScope, Sensitivity, WorkspaceId,
+    };
+
+    const GENESIS: &str = "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3";
+
+    fn event_at(sequence: u64) -> EventEnvelope {
+        EventEnvelope::new(
+            OpaqueId::parse(format!("event-{sequence}")).unwrap(),
+            RepositoryScope::new(
+                WorkspaceId::parse("workspace-1").unwrap(),
+                ProjectId::parse("project-1").unwrap(),
+                Some(ExecutionId::parse("exec-at-sequence").unwrap()),
+            ),
+            OpaqueId::parse("stream-1").unwrap(),
+            sequence,
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap())
+                .unwrap(),
+            NewEvent::new(
+                OpaqueId::parse(format!("request-{sequence}")).unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::Agent,
+                    ActorId::parse("agent-fixture".to_owned()).unwrap(),
+                ),
+                Sensitivity::Internal,
+                EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                    execution_id: OpaqueId::parse("exec-at-sequence").unwrap(),
+                    node_id: OpaqueId::parse("implement".to_owned()).unwrap(),
+                    outcome: NodeOutcome::Succeeded,
+                    next_state: NodeState::Succeeded,
+                    reason: None,
+                }),
+                vec![],
+                vec![],
+            ),
+            EventHash::parse(GENESIS).unwrap(),
+            EventHash::parse(GENESIS).unwrap(),
+        )
+    }
+
+    /// The guard this module exists for: an empty history has NO vantage point, and the
+    /// absence must survive as `None`. The defect being locked out is `map_or(0, …)` wrapped
+    /// in `Some`, which answers "I looked, at sequence zero" — a legal-looking value standing
+    /// in for an absence, in a field whose own doc forbids exactly that.
+    #[test]
+    fn an_empty_history_reports_no_vantage_point_rather_than_sequence_zero() {
+        assert_eq!(
+            at_sequence(&[]),
+            None,
+            "an empty history must report NO vantage point; Some(0) claims one at a sequence \
+             streams never issue"
+        );
+    }
+
+    /// The positive control. Without it the assertion above is satisfied by a function that
+    /// answers `None` unconditionally, which would measure nothing at all.
+    #[test]
+    fn a_non_empty_history_reports_the_head_it_actually_read() {
+        assert_eq!(at_sequence(&[event_at(1)]), Some(1));
+        assert_eq!(at_sequence(&[event_at(1), event_at(7)]), Some(7));
+    }
 }

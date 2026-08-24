@@ -30,7 +30,11 @@ pub(crate) fn execute(
     let (scope, stream, history) = resolve_stream(&store, execution)?;
     let projection = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
-    let head_sequence = history.last().map_or(0, |event| event.sequence);
+    // DO NOT INLINE THIS BACK to `Some(history.last().map_or(0, …))`. The guard for it lives in
+    // `mod.rs`'s tests and calls the helper directly, so it CANNOT SEE THIS LINE: inlining the old
+    // spelling here leaves every test green. What protects this call site is this comment, and
+    // nothing else.
+    let at_sequence = super::at_sequence(&history);
     // The read surface is the one that CAN measure: it is holding the history. It supplies
     // the subtraction; the budget stays empty until a surface can see the manifest that
     // declares it, and an unbudgeted node comes back as unevaluated rather than as calm.
@@ -40,11 +44,17 @@ pub(crate) fn execute(
         // they never reached the seam at all, so every node in flight came back unevaluated
         // and the verdict was PERMANENTLY unknown -- honest, and useless.
         silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
-        // Where this read was looking, so a remedy can be placed in the history later.
-        at_sequence: Some(head_sequence),
+        // Where this read was looking, so a remedy can be placed in the history later. `None`
+        // when there was nothing to look at: an empty history has no vantage point, and
+        // `Some(0)` would claim one at a sequence streams never issue.
+        at_sequence,
     };
     let mut value = render(&projection, &inputs, &super::Liveness::measured(&history));
-    value["headSequence"] = serde_json::json!(head_sequence);
+    // The WIRE field keeps its existing shape on purpose, zero and all: `headSequence` is a
+    // different contract from `at_sequence`, read by clients that already treat 0 as "nothing
+    // yet", and widening it to null is a wire change that needs its own justification. The
+    // flattening is left here DECLARED rather than silently carried into the seam.
+    value["headSequence"] = serde_json::json!(at_sequence.unwrap_or(0));
     Ok(value)
 }
 

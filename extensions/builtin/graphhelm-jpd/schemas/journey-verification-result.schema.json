@@ -1,0 +1,2076 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-verification-result.schema.json",
+  "title": "GraphHelm JPD Journey Verification Result",
+  "type": "object",
+  "required": [
+    "verificationId",
+    "journeyRunId",
+    "contractId",
+    "contractDigest",
+    "verifiedAt",
+    "authority",
+    "bindings",
+    "obligations",
+    "retry",
+    "disagreements",
+    "gate",
+    "proposedResultStatus"
+  ],
+  "properties": {
+    "verificationId": {
+      "$ref": "#/$defs/id"
+    },
+    "journeyRunId": {
+      "$ref": "#/$defs/id"
+    },
+    "contractId": {
+      "$ref": "#/$defs/id"
+    },
+    "contractDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "verifiedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "authority": {
+      "$ref": "#/$defs/candidateAuthority"
+    },
+    "bindings": {
+      "$ref": "#/$defs/bindings"
+    },
+    "obligations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/obligationResult"
+      }
+    },
+    "retry": {
+      "type": "object",
+      "required": [
+        "retryChainRef",
+        "outcomeClassification",
+        "lineageValidation",
+        "classification",
+        "firstFailurePreserved"
+      ],
+      "properties": {
+        "retryChainRef": {
+          "$ref": "#/$defs/artifactDigestBinding"
+        },
+        "outcomeClassification": {
+          "$ref": "#/$defs/outcomeClassOrNull"
+        },
+        "lineageValidation": {
+          "$ref": "#/$defs/lineageValidation"
+        },
+        "classification": {
+          "$ref": "#/$defs/classification"
+        },
+        "firstFailurePreserved": {
+          "type": "boolean"
+        },
+        "waiver": {
+          "$ref": "#/$defs/retryWaiverBinding"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "classification": {
+                "properties": {
+                  "status": {
+                    "const": "evaluated"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "outcomeClassification": {
+                "enum": [
+                  "first_pass_success",
+                  "recovered_success"
+                ]
+              }
+            },
+            "required": [
+              "classification",
+              "outcomeClassification"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "waiver"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "disagreements": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/disagreement"
+      }
+    },
+    "gate": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/gateResult"
+        },
+        {
+          "$ref": "#/$defs/gateCapabilityMissing"
+        }
+      ]
+    },
+    "proposedResultStatus": {
+      "enum": [
+        "proven",
+        "accepted_with_waiver",
+        "unresolved"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "classification": {
+                "properties": {
+                  "status": {
+                    "const": "capability_missing"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "classification"
+            ]
+          }
+        },
+        "required": [
+          "retry"
+        ]
+      },
+      "then": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "outcomeClassification": {
+                "type": "null"
+              }
+            }
+          },
+          "proposedResultStatus": {
+            "enum": [
+              "accepted_with_waiver",
+              "unresolved"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "classification": {
+                "properties": {
+                  "status": {
+                    "const": "evaluated"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "classification"
+            ]
+          }
+        },
+        "required": [
+          "retry"
+        ]
+      },
+      "then": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "outcomeClassification": {
+                "$ref": "#/$defs/outcomeClass"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gate": {
+            "properties": {
+              "status": {
+                "const": "evaluated"
+              },
+              "result": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "status",
+              "result"
+            ]
+          }
+        },
+        "required": [
+          "gate"
+        ]
+      },
+      "then": {
+        "properties": {
+          "proposedResultStatus": {
+            "enum": [
+              "proven",
+              "accepted_with_waiver",
+              "unresolved"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gate": {
+            "properties": {
+              "status": {
+                "const": "evaluated"
+              },
+              "result": {
+                "const": "rejected"
+              }
+            },
+            "required": [
+              "status",
+              "result"
+            ]
+          }
+        },
+        "required": [
+          "gate"
+        ]
+      },
+      "then": {
+        "properties": {
+          "proposedResultStatus": {
+            "enum": [
+              "accepted_with_waiver",
+              "unresolved"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gate": {
+            "properties": {
+              "status": {
+                "const": "capability_missing"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "gate"
+        ]
+      },
+      "then": {
+        "properties": {
+          "proposedResultStatus": {
+            "enum": [
+              "accepted_with_waiver",
+              "unresolved"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "outcomeClassification": {
+                "const": "first_pass_success"
+              }
+            },
+            "required": [
+              "outcomeClassification"
+            ]
+          }
+        },
+        "required": [
+          "retry"
+        ]
+      },
+      "then": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "firstFailurePreserved": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "outcomeClassification": {
+                "enum": [
+                  "recovered_success",
+                  "flaky_pass",
+                  "unresolved_failure"
+                ]
+              }
+            },
+            "required": [
+              "outcomeClassification"
+            ]
+          }
+        },
+        "required": [
+          "retry"
+        ]
+      },
+      "then": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "firstFailurePreserved": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "proposedResultStatus": {
+            "const": "proven"
+          }
+        },
+        "required": [
+          "proposedResultStatus"
+        ]
+      },
+      "then": {
+        "properties": {
+          "obligations": {
+            "items": {
+              "properties": {
+                "status": {
+                  "const": "satisfied"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            }
+          },
+          "bindings": {
+            "properties": {
+              "council": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "status": {
+                        "const": "not_applicable"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "status": {
+                        "const": "executed"
+                      },
+                      "result": {
+                        "properties": {
+                          "status": {
+                            "const": "completed"
+                          },
+                          "claims": {
+                            "properties": {
+                              "items": {
+                                "items": {
+                                  "properties": {
+                                    "status": {
+                                      "enum": [
+                                        "accepted",
+                                        "rejected",
+                                        "falsified"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "status"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "items"
+                            ]
+                          },
+                          "dissent": {
+                            "properties": {
+                              "items": {
+                                "items": {
+                                  "properties": {
+                                    "status": {
+                                      "const": "resolved"
+                                    }
+                                  },
+                                  "required": [
+                                    "status"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "items"
+                            ]
+                          },
+                          "decision": {
+                            "properties": {
+                              "status": {
+                                "const": "recommended"
+                              },
+                              "unresolvedDissentIds": {
+                                "maxItems": 0
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "unresolvedDissentIds"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "claims",
+                          "dissent",
+                          "decision"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "result"
+                    ]
+                  }
+                ]
+              },
+              "observers": {
+                "items": {
+                  "properties": {
+                    "evidenceFresh": {
+                      "const": true
+                    }
+                  },
+                   "required": [
+                     "evidenceFresh"
+                   ],
+                   "not": {
+                     "required": [
+                       "waiver"
+                     ]
+                   }
+                 }
+               }
+             }
+          },
+          "disagreements": {
+            "items": {
+              "properties": {
+                "status": {
+                  "const": "resolved"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "not": {
+                "required": [
+                  "waiver"
+                ]
+              }
+            }
+          },
+          "retry": {
+            "properties": {
+              "classification": {
+                "properties": {
+                  "status": {
+                    "const": "evaluated"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "outcomeClassification": {
+                "enum": [
+                  "first_pass_success",
+                  "recovered_success"
+                ]
+              }
+            },
+            "required": [
+              "classification",
+              "outcomeClassification"
+            ],
+            "not": {
+              "required": [
+                "waiver"
+              ]
+            }
+          },
+          "gate": {
+            "properties": {
+              "status": {
+                "const": "evaluated"
+              },
+              "result": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "status",
+              "result"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "proposedResultStatus": {
+            "const": "accepted_with_waiver"
+          }
+        },
+        "required": [
+          "proposedResultStatus"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "obligations": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "status": {
+                          "const": "satisfied"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "waiver"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "disagreements": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "status": {
+                          "const": "resolved"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "waiver"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "gate": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "status": {
+                        "const": "evaluated"
+                      },
+                      "result": {
+                        "const": "accepted"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "result"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "waiver"
+                    ]
+                  }
+                ]
+              },
+              "bindings": {
+                "properties": {
+                  "observers": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "evidenceFresh": {
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "evidenceFresh"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "waiver"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "retry": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "classification": {
+                        "properties": {
+                          "status": {
+                            "const": "evaluated"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      },
+                      "outcomeClassification": {
+                        "enum": [
+                          "first_pass_success",
+                          "recovered_success"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "classification",
+                      "outcomeClassification"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "waiver"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "obligations": {
+                    "contains": {
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "failed",
+                            "observer_missing"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "obligations"
+                ]
+              },
+              {
+                "properties": {
+                  "disagreements": {
+                    "contains": {
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "observer_missing",
+                            "unresolved"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "disagreements"
+                ]
+              },
+              {
+                "properties": {
+                  "gate": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "status": {
+                            "const": "capability_missing"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "result": {
+                            "const": "rejected"
+                          }
+                        },
+                        "required": [
+                          "result"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "gate"
+                ]
+              },
+              {
+                "properties": {
+                  "bindings": {
+                    "properties": {
+                      "observers": {
+                        "contains": {
+                          "properties": {
+                            "evidenceFresh": {
+                              "const": false
+                            }
+                          },
+                          "required": [
+                            "evidenceFresh"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "observers"
+                    ]
+                  }
+                },
+                "required": [
+                  "bindings"
+                ]
+              },
+              {
+                "properties": {
+                  "retry": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "classification": {
+                            "properties": {
+                              "status": {
+                                "const": "capability_missing"
+                              }
+                            },
+                            "required": [
+                              "status"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "classification"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "outcomeClassification": {
+                            "enum": [
+                              "flaky_pass",
+                              "unresolved_failure"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "outcomeClassification"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "retry"
+                ]
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "proposedResultStatus": {
+            "const": "accepted_with_waiver"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "retry": {
+            "properties": {
+              "outcomeClassification": {
+                "enum": [
+                  "flaky_pass",
+                  "unresolved_failure"
+                ]
+              }
+            },
+            "required": [
+              "outcomeClassification"
+            ]
+          }
+        },
+        "required": [
+          "retry"
+        ]
+      },
+      "then": {
+        "properties": {
+          "proposedResultStatus": {
+            "enum": [
+              "accepted_with_waiver",
+              "unresolved"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "candidateAuthority": {
+      "type": "object",
+      "required": [
+        "status",
+        "validation"
+      ],
+      "properties": {
+        "status": {
+          "const": "candidate"
+        },
+        "validation": {
+          "type": "object",
+          "required": [
+            "status",
+            "code",
+            "missingCapability",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "const": "capability_missing"
+            },
+            "code": {
+              "const": "JPD_VALIDATOR_MISSING"
+            },
+            "missingCapability": {
+              "const": "jpd.registered-deterministic-validator"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "opaqueReferenceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "failureKind": {
+      "enum": [
+        "logical_quality",
+        "structural_impossibility"
+      ]
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "artifactDigestBinding": {
+      "type": "object",
+      "required": [
+        "referenceId",
+        "contentDigest"
+      ],
+      "properties": {
+        "referenceId": {
+          "$ref": "#/$defs/opaqueReferenceId"
+        },
+        "contentDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceReference": {
+      "type": "object",
+      "required": [
+        "evidenceId",
+        "contentSha256",
+        "ciphertextSha256"
+      ],
+      "properties": {
+        "evidenceId": {
+          "$ref": "#/$defs/opaqueReferenceId"
+        },
+        "contentSha256": {
+          "$ref": "#/$defs/rawSha256"
+        },
+        "ciphertextSha256": {
+          "$ref": "#/$defs/rawSha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evaluatorReceipt": {
+      "type": "object",
+      "required": [
+        "evaluatorId",
+        "evaluatorVersion",
+        "inputDigest",
+        "receipt"
+      ],
+      "properties": {
+        "evaluatorId": {
+          "$ref": "#/$defs/id"
+        },
+        "evaluatorVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 32
+        },
+        "inputDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "receipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "waiverValidationReceipt": {
+      "type": "object",
+      "required": [
+        "evaluatorId",
+        "evaluatorVersion",
+        "inputDigest",
+        "evaluatedAt",
+        "effectiveThrough",
+        "activeAtVerification",
+        "receipt"
+      ],
+      "properties": {
+        "evaluatorId": {
+          "$ref": "#/$defs/id"
+        },
+        "evaluatorVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 32
+        },
+        "inputDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "evaluatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "effectiveThrough": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activeAtVerification": {
+          "const": true
+        },
+        "receipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "idRefs": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "outcomeClass": {
+      "enum": [
+        "first_pass_success",
+        "recovered_success",
+        "flaky_pass",
+        "unresolved_failure"
+      ]
+    },
+    "outcomeClassOrNull": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/outcomeClass"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "classification": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "evaluator"
+          ],
+          "properties": {
+            "status": {
+              "const": "evaluated"
+            },
+            "evaluator": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/evaluatorReceipt"
+                },
+                {
+                  "properties": {
+                    "evaluatorId": {
+                      "const": "graphhelm-jpd/retry-classifier"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "refusal"
+          ],
+          "properties": {
+            "status": {
+              "const": "capability_missing"
+            },
+            "refusal": {
+              "type": "object",
+              "required": [
+                "code",
+                "missingCapability",
+                "reason"
+              ],
+              "properties": {
+                "code": {
+                  "const": "RETRY_CLASSIFIER_MISSING"
+                },
+                "missingCapability": {
+                  "const": "graphhelm-jpd/retry-classifier"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "lineageValidation": {
+      "type": "object",
+      "required": [
+        "status",
+        "result",
+        "evaluator"
+      ],
+      "properties": {
+        "status": {
+          "const": "evaluated"
+        },
+        "result": {
+          "const": "valid"
+        },
+        "evaluator": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/evaluatorReceipt"
+            },
+            {
+              "properties": {
+                "evaluatorId": {
+                  "const": "graphhelm-jpd/retry-lineage-validator"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "object",
+      "required": [
+        "graph",
+        "council",
+        "code",
+        "configuration",
+        "fixtures",
+        "observers"
+      ],
+      "properties": {
+        "graph": {
+          "type": "object",
+          "required": [
+            "graphId",
+            "version",
+            "semanticHash"
+          ],
+          "properties": {
+            "graphId": {
+              "$ref": "#/$defs/opaqueReferenceId"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "semanticHash": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "additionalProperties": false
+        },
+        "council": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "status",
+                "councilRunId",
+                "resultRef",
+                "result",
+                "claimInventoryDigest",
+                "dissentInventoryDigest",
+                "bindingValidation"
+              ],
+              "properties": {
+                "status": {
+                  "const": "executed"
+                },
+                "councilRunId": {
+                  "$ref": "#/$defs/id"
+                },
+                "resultRef": {
+                  "$ref": "#/$defs/artifactDigestBinding"
+                },
+                "result": {
+                  "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/council-result.schema.json"
+                },
+                "claimInventoryDigest": {
+                  "$ref": "#/$defs/digest"
+                },
+                "dissentInventoryDigest": {
+                  "$ref": "#/$defs/digest"
+                },
+                "bindingValidation": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "code",
+                    "missingCapability",
+                    "reason"
+                  ],
+                  "properties": {
+                    "status": {
+                      "const": "capability_missing"
+                    },
+                    "code": {
+                      "const": "COUNCIL_BINDING_VALIDATOR_MISSING"
+                    },
+                    "missingCapability": {
+                      "const": "jpd.registered-deterministic-council-binding-validator"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "status",
+                "reason"
+              ],
+              "properties": {
+                "status": {
+                  "const": "not_applicable"
+                },
+                "reason": {
+                  "const": "direct_tier"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "code": {
+          "type": "object",
+          "required": [
+            "repository",
+            "revision",
+            "revisionAlgorithm",
+            "dirty",
+            "snapshotDigest"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+            },
+            "revisionAlgorithm": {
+              "enum": [
+                "git-sha1",
+                "git-sha256"
+              ]
+            },
+            "dirty": {
+              "type": "boolean"
+            },
+            "snapshotDigest": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "revisionAlgorithm": {
+                    "const": "git-sha1"
+                  }
+                },
+                "required": [
+                  "revisionAlgorithm"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "revision": {
+                    "pattern": "^[a-f0-9]{40}$"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "revision": {
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "configuration": {
+          "type": "object",
+          "required": [
+            "digest",
+            "environment"
+          ],
+          "properties": {
+            "digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "environment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "additionalProperties": false
+        },
+        "fixtures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "fixtureId",
+              "digest"
+            ],
+            "properties": {
+              "fixtureId": {
+                "$ref": "#/$defs/id"
+              },
+              "digest": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "observers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "observerId",
+              "version",
+              "configurationDigest",
+              "environmentDigest",
+              "capabilityReceipt",
+              "evidenceFresh"
+            ],
+            "properties": {
+              "observerId": {
+                "$ref": "#/$defs/id"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "maxLength": 32
+              },
+              "configurationDigest": {
+                "$ref": "#/$defs/digest"
+              },
+              "environmentDigest": {
+                "$ref": "#/$defs/digest"
+              },
+              "capabilityReceipt": {
+                "$ref": "#/$defs/evidenceReference"
+              },
+              "evidenceFresh": {
+                "type": "boolean"
+              },
+              "waiver": {
+                "$ref": "#/$defs/observerWaiverBinding"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "evidenceFresh": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "evidenceFresh"
+                  ]
+                },
+                "then": {
+                  "not": {
+                    "required": [
+                      "waiver"
+                    ]
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "obligationResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "obligationId",
+            "promiseId",
+            "status",
+            "evidenceRefs"
+          ],
+          "properties": {
+            "obligationId": {
+              "$ref": "#/$defs/id"
+            },
+            "promiseId": {
+              "$ref": "#/$defs/id"
+            },
+            "status": {
+              "const": "satisfied"
+            },
+            "evidenceRefs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/evidenceReference"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "obligationId",
+            "promiseId",
+            "status",
+            "evidenceRefs",
+            "failureKind",
+            "refusal"
+          ],
+          "properties": {
+            "obligationId": {
+              "$ref": "#/$defs/id"
+            },
+            "promiseId": {
+              "$ref": "#/$defs/id"
+            },
+            "status": {
+              "const": "observer_missing"
+            },
+            "failureKind": {
+              "const": "logical_quality"
+            },
+            "evidenceRefs": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "refusal": {
+              "type": "object",
+              "required": [
+                "code",
+                "missingCapability",
+                "reason"
+              ],
+              "properties": {
+                "code": {
+                  "const": "OBSERVER_MISSING"
+                },
+                "missingCapability": {
+                  "$ref": "#/$defs/id"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                }
+              },
+              "additionalProperties": false
+            },
+            "waiver": {
+              "$ref": "#/$defs/obligationWaiverBinding"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "obligationId",
+            "promiseId",
+            "status",
+            "evidenceRefs",
+            "failureKind",
+            "failure"
+          ],
+          "properties": {
+            "obligationId": {
+              "$ref": "#/$defs/id"
+            },
+            "promiseId": {
+              "$ref": "#/$defs/id"
+            },
+            "status": {
+              "const": "failed"
+            },
+            "failureKind": {
+              "$ref": "#/$defs/failureKind"
+            },
+            "evidenceRefs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/evidenceReference"
+              }
+            },
+            "failure": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "waiver": {
+              "$ref": "#/$defs/obligationWaiverBinding"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "failureKind": {
+                    "const": "structural_impossibility"
+                  }
+                },
+                "required": [
+                  "failureKind"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "waiver"
+                  ]
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "disagreement": {
+      "type": "object",
+      "required": [
+        "disagreementId",
+        "status",
+        "resolution",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "disagreementId": {
+          "$ref": "#/$defs/id"
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "unresolved",
+            "observer_missing"
+          ]
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        },
+        "failureKind": {
+          "$ref": "#/$defs/failureKind"
+        },
+        "resolutionEvaluation": {
+          "$ref": "#/$defs/evaluatorReceipt"
+        },
+        "waiver": {
+          "$ref": "#/$defs/disagreementWaiverBinding"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "resolved"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "resolutionEvaluation"
+            ],
+            "properties": {
+              "evidenceRefs": {
+                "minItems": 1
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "failureKind"
+                  ]
+                },
+                {
+                  "required": [
+                    "waiver"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "failureKind"
+            ],
+            "not": {
+              "required": [
+                "resolutionEvaluation"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "failureKind": {
+                "const": "structural_impossibility"
+              }
+            },
+            "required": [
+              "failureKind"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "waiver"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "waiverCoverage": {
+      "type": "object",
+      "required": [
+        "verificationId",
+        "blockerKind",
+        "blockerId",
+        "blockerDigest"
+      ],
+      "properties": {
+        "verificationId": {
+          "$ref": "#/$defs/id"
+        },
+        "blockerKind": {
+          "enum": [
+            "retry",
+            "observer",
+            "obligation",
+            "disagreement",
+            "gate"
+          ]
+        },
+        "blockerId": {
+          "$ref": "#/$defs/id"
+        },
+        "blockerDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "waiverBinding": {
+      "type": "object",
+      "required": [
+        "waiverRef",
+        "waiverSchema",
+        "reasonPresent",
+        "coverage",
+        "validation"
+      ],
+      "properties": {
+        "waiverRef": {
+          "$ref": "#/$defs/artifactDigestBinding"
+        },
+        "waiverSchema": {
+          "const": "https://p50.dev/schemas/policy-waiver.schema.json"
+        },
+        "reasonPresent": {
+          "const": true
+        },
+        "coverage": {
+          "$ref": "#/$defs/waiverCoverage"
+        },
+        "validation": {
+          "$ref": "#/$defs/waiverValidationReceipt"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retryWaiverBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/waiverBinding"
+        },
+        {
+          "properties": {
+            "coverage": {
+              "properties": {
+                "blockerKind": {
+                  "const": "retry"
+                }
+              },
+              "required": [
+                "blockerKind"
+              ]
+            }
+          },
+          "required": [
+            "coverage"
+          ]
+        }
+      ]
+    },
+    "observerWaiverBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/waiverBinding"
+        },
+        {
+          "properties": {
+            "coverage": {
+              "properties": {
+                "blockerKind": {
+                  "const": "observer"
+                }
+              },
+              "required": [
+                "blockerKind"
+              ]
+            }
+          },
+          "required": [
+            "coverage"
+          ]
+        }
+      ]
+    },
+    "obligationWaiverBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/waiverBinding"
+        },
+        {
+          "properties": {
+            "coverage": {
+              "properties": {
+                "blockerKind": {
+                  "const": "obligation"
+                }
+              },
+              "required": [
+                "blockerKind"
+              ]
+            }
+          },
+          "required": [
+            "coverage"
+          ]
+        }
+      ]
+    },
+    "disagreementWaiverBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/waiverBinding"
+        },
+        {
+          "properties": {
+            "coverage": {
+              "properties": {
+                "blockerKind": {
+                  "const": "disagreement"
+                }
+              },
+              "required": [
+                "blockerKind"
+              ]
+            }
+          },
+          "required": [
+            "coverage"
+          ]
+        }
+      ]
+    },
+    "gateWaiverBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/waiverBinding"
+        },
+        {
+          "properties": {
+            "coverage": {
+              "properties": {
+                "blockerKind": {
+                  "const": "gate"
+                }
+              },
+              "required": [
+                "blockerKind"
+              ]
+            }
+          },
+          "required": [
+            "coverage"
+          ]
+        }
+      ]
+    },
+    "gateResult": {
+      "type": "object",
+      "required": [
+        "status",
+        "result",
+        "policyIds",
+        "evidenceDigest",
+        "evaluator"
+      ],
+      "properties": {
+        "status": {
+          "const": "evaluated"
+        },
+        "result": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "policyIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "evidenceDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "evaluator": {
+          "$ref": "#/$defs/evaluatorReceipt"
+        },
+        "failureKind": {
+          "$ref": "#/$defs/failureKind"
+        },
+        "waiver": {
+          "$ref": "#/$defs/gateWaiverBinding"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "failureKind"
+                  ]
+                },
+                {
+                  "required": [
+                    "waiver"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "failureKind"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "failureKind": {
+                "const": "structural_impossibility"
+              }
+            },
+            "required": [
+              "failureKind"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "waiver"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "gateCapabilityMissing": {
+      "type": "object",
+      "required": [
+        "status",
+        "failureKind",
+        "refusal"
+      ],
+      "properties": {
+        "status": {
+          "const": "capability_missing"
+        },
+        "failureKind": {
+          "const": "logical_quality"
+        },
+        "refusal": {
+          "type": "object",
+          "required": [
+            "code",
+            "missingCapability",
+            "reason"
+          ],
+          "properties": {
+            "code": {
+              "const": "GATE_CAPABILITY_MISSING"
+            },
+            "missingCapability": {
+              "$ref": "#/$defs/id"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "additionalProperties": false
+        },
+        "waiver": {
+          "$ref": "#/$defs/gateWaiverBinding"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

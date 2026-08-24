@@ -262,7 +262,7 @@ fn an_invalid_actor_is_refused_with_ghcli015() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Task 5: the ten tools — one live serve, one MCP process wired to it.
+// The fourteen tools — one live serve, one MCP process wired to it.
 // ---------------------------------------------------------------------------------------------
 
 use std::io::{BufRead, BufReader, Read as IoRead, Write as IoWrite};
@@ -1354,10 +1354,22 @@ fn the_packaging_is_valid_and_names_only_real_tools() {
     assert!(toml_text.contains("command = \"graphhelm\""));
     assert!(toml_text.contains("--token-file"));
 
-    // Every tool a skill names exists in the Task 5 table; the credential-refusal sentence
+    // Every tool a skill names exists in the current closed table; the credential-refusal sentence
     // is present verbatim in operate-execution; both READMEs carry the deletability sentence.
     let table = [
-        "start", "status", "events", "signal", "approve", "pause", "resume", "cancel", "routes",
+        "start",
+        "status",
+        "events",
+        "signal",
+        "approve",
+        "pause",
+        "resume",
+        "cancel",
+        "routes",
+        "wake_arm",
+        "wake_status",
+        "amend_budget",
+        "wake_wait",
         "probe",
     ];
     for skill in ["operate-execution", "observe-agents"] {

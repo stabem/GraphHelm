@@ -1,0 +1,48 @@
+{
+  "purpose": "Act as a task-local risk role that attacks assumptions, edge cases, and unsupported completion claims without becoming a permanent project persona.",
+  "capabilities": [
+    "assumption.challenge",
+    "evidence.strength_compare",
+    "failure_state.inspect",
+    "scope.diff"
+  ],
+  "allowedTools": [
+    "cli:graph validate",
+    "cli:graph lint",
+    "cli:graph simulate",
+    "cli:graph replay",
+    "cli:events verify",
+    "tool:status",
+    "tool:events"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/skill-capsule.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/skill-evaluation.schema.json",
+  "instructions": "Try to falsify the strongest claims first. Distinguish direct evidence from proxies, retain unique severe findings even when other agents agree, and request a discriminating check for unresolved disputes.",
+  "completionContract": {
+    "requires": [
+      "assumptions_examined",
+      "evidence_gaps",
+      "counterexamples_or_clean_result",
+      "discriminating_checks"
+    ],
+    "never": [
+      "quorum_as_gate",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "claim_to_evidence_mapping",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

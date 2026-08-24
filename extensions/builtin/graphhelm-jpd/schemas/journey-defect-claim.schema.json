@@ -1,0 +1,772 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-defect-claim.schema.json",
+  "title": "GraphHelm JPD Journey Defect Claim",
+  "type": "object",
+  "required": [
+    "claimId",
+    "contractId",
+    "reporter",
+    "reporterRole",
+    "stepId",
+    "severity",
+    "statement",
+    "expectedState",
+    "observedState",
+    "semanticTrace",
+    "evidence",
+    "reproduction",
+    "status"
+  ],
+  "properties": {
+    "claimId": {
+      "$ref": "#/$defs/id"
+    },
+    "contractId": {
+      "$ref": "#/$defs/id"
+    },
+    "regressionObligationId": {
+      "$ref": "#/$defs/id"
+    },
+    "reporter": {
+      "$ref": "#/$defs/reporterParticipant"
+    },
+    "reporterRole": {
+      "enum": [
+        "defect-hunter",
+        "idea-generator",
+        "adversarial-critic",
+        "evidence-advocate",
+        "accessibility-user",
+        "recovery-operator",
+        "disagreement-resolver"
+      ]
+    },
+    "stepId": {
+      "$ref": "#/$defs/id"
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "statement": {
+      "$ref": "#/$defs/text"
+    },
+    "expectedState": {
+      "$ref": "#/$defs/text"
+    },
+    "observedState": {
+      "$ref": "#/$defs/text"
+    },
+    "semanticTrace": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/semanticAction"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "reproduction": {
+      "type": "object",
+      "required": [
+        "preconditions",
+        "attempts",
+        "environmentDigest"
+      ],
+      "properties": {
+        "preconditions": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "attempts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reproductionAttempt"
+          }
+        },
+        "environmentDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "enum": [
+        "proposed",
+        "confirmed",
+        "falsified",
+        "unresolved"
+      ]
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "reviewerRole",
+        "reviewer",
+        "identityDistinctValidation",
+        "method",
+        "result",
+        "evidenceRefs",
+        "residualUncertainty"
+      ],
+      "properties": {
+        "reviewerRole": {
+          "const": "evidence-advocate"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/reviewerParticipant"
+        },
+        "identityDistinctValidation": {
+          "$ref": "#/$defs/identityDistinctValidation"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "result": {
+          "enum": [
+            "confirmed",
+            "falsified",
+            "unresolved"
+          ]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        },
+        "residualUncertainty": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "missingFact": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "status": {
+              "const": "proposed"
+            }
+          },
+          "not": {
+            "required": [
+              "review"
+            ]
+          }
+        },
+        {
+          "required": [
+            "review",
+            "regressionObligationId"
+          ],
+          "properties": {
+            "status": {
+              "const": "confirmed"
+            },
+            "reproduction": {
+              "properties": {
+                "attempts": {
+                  "contains": {
+                    "type": "object",
+                    "required": [
+                      "result"
+                    ],
+                    "properties": {
+                      "result": {
+                        "const": "reproduced"
+                      }
+                    }
+                  },
+                  "minContains": 1
+                }
+              }
+            },
+            "review": {
+              "properties": {
+                "result": {
+                  "const": "confirmed"
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "review"
+          ],
+          "properties": {
+            "status": {
+              "const": "falsified"
+            },
+            "review": {
+              "properties": {
+                "result": {
+                  "const": "falsified"
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "review"
+          ],
+          "properties": {
+            "status": {
+              "const": "unresolved"
+            },
+            "review": {
+              "required": [
+                "missingFact"
+              ],
+              "properties": {
+                "result": {
+                  "const": "unresolved"
+                },
+                "residualUncertainty": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "actorIdentity": {
+      "type": "object",
+      "required": [
+        "type",
+        "id"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "owner",
+            "human",
+            "agent",
+            "system"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runAuthority": {
+      "type": "object",
+      "required": [
+        "kind",
+        "scope",
+        "grantRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "task_local_advisory"
+        },
+        "scope": {
+          "enum": [
+            "journey-defect.report",
+            "journey-defect.review"
+          ]
+        },
+        "grantRef": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runBinding": {
+      "type": "object",
+      "required": [
+        "runId",
+        "authority"
+      ],
+      "properties": {
+        "runId": {
+          "$ref": "#/$defs/id"
+        },
+        "authority": {
+          "$ref": "#/$defs/runAuthority"
+        }
+      },
+      "additionalProperties": false
+    },
+    "participant": {
+      "type": "object",
+      "required": [
+        "actor",
+        "run"
+      ],
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/actorIdentity"
+        },
+        "run": {
+          "$ref": "#/$defs/runBinding"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reporterParticipant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/participant"
+        },
+        {
+          "properties": {
+            "run": {
+              "properties": {
+                "authority": {
+                  "properties": {
+                    "scope": {
+                      "const": "journey-defect.report"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "reviewerParticipant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/participant"
+        },
+        {
+          "properties": {
+            "run": {
+              "properties": {
+                "authority": {
+                  "properties": {
+                    "scope": {
+                      "const": "journey-defect.review"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "candidateAuthority": {
+      "type": "object",
+      "required": [
+        "status",
+        "validation"
+      ],
+      "properties": {
+        "status": {
+          "const": "candidate"
+        },
+        "validation": {
+          "type": "object",
+          "required": [
+            "status",
+            "code",
+            "missingCapability",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "const": "capability_missing"
+            },
+            "code": {
+              "const": "JPD_VALIDATOR_MISSING"
+            },
+            "missingCapability": {
+              "const": "jpd.registered-deterministic-validator"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "identityDistinctInput": {
+      "type": "object",
+      "required": [
+        "participantOrder",
+        "actorIds",
+        "runIds",
+        "runAuthorityRefs"
+      ],
+      "properties": {
+        "participantOrder": {
+          "const": [
+            "reporter",
+            "reviewer"
+          ]
+        },
+        "actorIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ],
+          "items": false
+        },
+        "runIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ],
+          "items": false
+        },
+        "runAuthorityRefs": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/evidenceReference"
+            },
+            {
+              "$ref": "#/$defs/evidenceReference"
+            }
+          ],
+          "items": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "identityDistinctValidation": {
+      "type": "object",
+      "required": [
+        "evaluatorId",
+        "evaluatorVersion",
+        "input",
+        "inputDigest",
+        "proposedResult",
+        "authority"
+      ],
+      "properties": {
+        "evaluatorId": {
+          "const": "graphhelm-jpd/participant-identity-distinct-validator"
+        },
+        "evaluatorVersion": {
+          "const": "0.1.0"
+        },
+        "input": {
+          "$ref": "#/$defs/identityDistinctInput"
+        },
+        "inputDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "proposedResult": {
+          "const": "distinct"
+        },
+        "authority": {
+          "$ref": "#/$defs/candidateAuthority"
+        }
+      },
+      "additionalProperties": false
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "opaqueReferenceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "evidenceReference": {
+      "type": "object",
+      "required": [
+        "evidenceId",
+        "contentSha256",
+        "ciphertextSha256"
+      ],
+      "properties": {
+        "evidenceId": {
+          "$ref": "#/$defs/opaqueReferenceId"
+        },
+        "contentSha256": {
+          "$ref": "#/$defs/rawSha256"
+        },
+        "ciphertextSha256": {
+          "$ref": "#/$defs/rawSha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reproductionAttempt": {
+      "type": "object",
+      "required": [
+        "attemptId",
+        "result",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "attemptId": {
+          "$ref": "#/$defs/id"
+        },
+        "result": {
+          "enum": [
+            "reproduced",
+            "not_reproduced",
+            "inconclusive"
+          ]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        },
+        "notes": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "strategy",
+        "value"
+      ],
+      "properties": {
+        "strategy": {
+          "enum": [
+            "accessible_role",
+            "label",
+            "accessible_name",
+            "visible_text",
+            "stable_product_id",
+            "coordinate"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "coordinates": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          },
+          "additionalProperties": false
+        },
+        "geometryClaim": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "strategy": {
+                "const": "coordinate"
+              }
+            },
+            "required": [
+              "strategy"
+            ]
+          },
+          "then": {
+            "required": [
+              "coordinates",
+              "geometryClaim"
+            ],
+            "properties": {
+              "geometryClaim": {
+                "const": true
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "geometryClaim": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "coordinates"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "semanticAction": {
+      "type": "object",
+      "required": [
+        "kind",
+        "target"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "navigate",
+            "activate",
+            "enter_text",
+            "select",
+            "upload",
+            "download",
+            "wait_for",
+            "inspect",
+            "submit",
+            "recover",
+            "approve"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "input": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "evidenceId",
+        "kind",
+        "digest",
+        "observerId",
+        "capturedAt",
+        "fresh"
+      ],
+      "properties": {
+        "evidenceId": {
+          "$ref": "#/$defs/opaqueReferenceId"
+        },
+        "kind": {
+          "enum": [
+            "process_exit",
+            "http_acceptance",
+            "queue_receipt",
+            "durable_readback",
+            "provider_delivery_receipt",
+            "dom_semantic_snapshot",
+            "accessibility_tree",
+            "visual_capture",
+            "interaction_trace",
+            "event_chain_verification",
+            "operator_attestation"
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "observerId": {
+          "$ref": "#/$defs/id"
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "fresh": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

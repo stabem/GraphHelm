@@ -1,0 +1,225 @@
+apiVersion: p50.dev/jpd/v1
+kind: ObserverCatalog
+metadata:
+  id: graphhelm-jpd/observer-catalog
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  selectionRequiresFreshCapabilityReceipt: true
+  observerSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/observer-capability.schema.json
+  observers:
+    - observerId: graphhelm-cli-graph-contract
+      capabilityId: graph.document-contract
+      version: 1.0.0
+      surface: cli
+      availability: declared
+      facts:
+        - schema_valid
+        - semantic_lint_clean
+        - canonical_hash_computed
+      evidenceKinds:
+        - process_exit
+        - structured_cli_result
+      trust: first_party_deterministic
+      effects:
+        - read_only
+      commands:
+        - graphhelm graph validate <file>
+        - graphhelm graph lint <file>
+        - graphhelm graph hash <file>
+      freshness:
+        class: immutable_by_input
+        maxAgeSeconds: 0
+        absenceWindowSeconds: null
+      custody:
+        producer: graphhelm-cli
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: false
+      environmentBindingRequired: false
+      limitations:
+        - Proves the checked graph document, not user-interface rendering or external effects.
+    - observerId: graphhelm-cli-simulation-replay
+      capabilityId: graph.simulation-replay
+      version: 1.0.0
+      surface: cli
+      availability: declared
+      facts:
+        - deterministic_simulation_completed
+        - projection_replayed
+      evidenceKinds:
+        - process_exit
+        - structured_cli_result
+        - event_chain_verification
+      trust: first_party_deterministic
+      effects:
+        - read_only
+        - local_artifact_write
+      commands:
+        - graphhelm graph simulate <file> --fixtures <fixtures> --events <events>
+        - graphhelm graph replay --events <events>
+      freshness:
+        class: immutable_by_input
+        maxAgeSeconds: 0
+        absenceWindowSeconds: null
+      custody:
+        producer: graphhelm-cli
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: true
+      environmentBindingRequired: false
+      limitations:
+        - Simulation is effect-free and proves only the graph plus supplied fixtures.
+    - observerId: graphhelm-cli-event-verifier
+      capabilityId: events.integrity-verification
+      version: 1.0.0
+      surface: cli
+      availability: declared
+      facts:
+        - event_history_intact
+      evidenceKinds:
+        - process_exit
+        - structured_cli_result
+        - event_chain_verification
+      trust: first_party_deterministic
+      effects:
+        - read_only
+      commands:
+        - graphhelm events verify --repository <repository> --workspace <workspace> --project <project> --execution <execution> --stream <stream> --start <start> --max-events <max-events>
+      freshness:
+        class: snapshot_closed
+        maxAgeSeconds: 0
+        absenceWindowSeconds: null
+      custody:
+        producer: graphhelm-cli
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: false
+      environmentBindingRequired: false
+      limitations:
+        - Proves integrity only when a bounded scope, stream, start sequence, and maximum event count are supplied; format-only verification is insufficient.
+        - Does not prove the truth of external effects.
+    - observerId: graphhelm-cli-execution-status
+      capabilityId: runtime.execution-read
+      version: 1.0.0
+      surface: cli
+      availability: requires_probe
+      facts:
+        - execution_status_observed
+        - execution_events_observed
+      evidenceKinds:
+        - runtime_projection
+        - runtime_event_tail
+      trust: first_party_instrumented
+      effects:
+        - runtime_read
+      commands:
+        - graphhelm execution status --events <events> --execution <execution>
+        - graphhelm graph replay --events <events>
+      freshness:
+        class: drifting
+        maxAgeSeconds: 10
+        absenceWindowSeconds: 10
+      custody:
+        producer: graphhelm-cli
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: true
+      environmentBindingRequired: true
+      limitations:
+        - Status is a projection and must be bound to the selected scope, stream, and event head.
+    - observerId: graphhelm-mcp-execution-read
+      capabilityId: runtime.execution-read
+      version: 1.0.0
+      surface: mcp
+      availability: requires_probe
+      facts:
+        - execution_status_observed
+        - execution_events_observed
+      evidenceKinds:
+        - runtime_projection
+        - runtime_event_tail
+      trust: first_party_instrumented
+      effects:
+        - runtime_read
+      commands:
+        - status
+        - events
+        - wake_status
+      freshness:
+        class: drifting
+        maxAgeSeconds: 10
+        absenceWindowSeconds: 10
+      custody:
+        producer: graphhelm-mcp
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: true
+      environmentBindingRequired: true
+      limitations:
+        - Requires the loopback Public Runtime API, actor identity, and token configured outside chat.
+        - A wake notification proves only that the log moved; callers must read events for content.
+    - observerId: graphhelm-mcp-gateway-read
+      capabilityId: gateway.route-readiness
+      version: 1.0.0
+      surface: mcp
+      availability: requires_probe
+      facts:
+        - gateway_routes_observed
+        - gateway_route_locally_ready
+      evidenceKinds:
+        - runtime_projection
+        - gateway_probe
+      trust: first_party_instrumented
+      effects:
+        - runtime_read
+      commands:
+        - routes
+        - probe
+      freshness:
+        class: drifting
+        maxAgeSeconds: 10
+        absenceWindowSeconds: 10
+      custody:
+        producer: graphhelm-mcp
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: true
+      environmentBindingRequired: true
+      limitations:
+        - The quota-free probe checks only local route configuration and credential or CLI availability; it does not contact a provider.
+        - Local route readiness does not prove provider reachability, the complete user journey, or downstream delivery.
+    - observerId: graphhelm-browser-user-journey
+      capabilityId: browser.semantic-journey
+      version: 1.0.0
+      surface: browser
+      availability: unsupported_by_bundle
+      unavailableReason: The initial JPD bundle does not include or simulate a browser engine. Install and explicitly activate a compatible observer before claiming rendered, visual, keyboard, focus, or operability facts.
+      facts:
+        - content_rendered
+        - control_operable
+        - focus_order_valid
+        - visual_state_perceivable
+      evidenceKinds:
+        - dom_semantic_snapshot
+        - accessibility_tree
+        - visual_capture
+        - interaction_trace
+      trust: first_party_instrumented
+      effects:
+        - external_read
+      commands: []
+      freshness:
+        class: drifting
+        maxAgeSeconds: 0
+        absenceWindowSeconds: null
+      custody:
+        producer: unavailable
+        digestAlgorithm: sha256
+        ordered: true
+      configurationDigestRequired: true
+      environmentBindingRequired: true
+      limitations:
+        - HTTP acceptance, DOM source, and screenshots from unrelated tools are rejected as substitutes for an installed semantic journey observer.

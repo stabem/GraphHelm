@@ -1,0 +1,16 @@
+{
+  "nodeOutcomes": {
+    "contract_journey": "success",
+    "compile_observations": "success",
+    "defect_hunter": "success",
+    "idea_generator": "success",
+    "adversarial_critic": "success",
+    "evidence_advocate": "success",
+    "accessibility_user": "success",
+    "recovery_operator": "success",
+    "resolve_disagreement": "success",
+    "verify_journey": "success",
+    "deterministic_gate": "success"
+  },
+  "conditions": {}
+}

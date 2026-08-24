@@ -24,6 +24,7 @@
 ## Harness and graph
 
 - [Dynamic harness](harness/HARNESS_SPEC.md)
+- [Journey-Proven Development](harness/JOURNEY_PROVEN_DEVELOPMENT.md)
 - [Graph Engineer guide](graph-engineer/GRAPH_ENGINEER_GUIDE.md)
 - [Graph DSL](graph-engineer/GRAPH_DSL_SPEC.md)
 

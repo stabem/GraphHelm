@@ -86,10 +86,17 @@ The gate that ties Living Documentation to executable proof:
 - the scenario set is therefore derived from the docs at gate time: documenting a new business
   rule *forces* its test into existence, and deleting a rule retires its scenarios explicitly.
 
+Each scenario also declares the user promise and the observation used to prove it. A green lower-
+level test is sufficient only when it observes that promise directly. Loading, error, recovery,
+focus, navigation, delivery, and external-effect states require their own adequate observers when
+the contract names them. Missing capability is reported as `OBSERVER_MISSING`; it is never converted
+to a skipped green gate.
+
 ## 5. Dynamic gate selection
 
-The change profile decides the gate set — the Task Profiler / Policy Engine pattern applied to
-the pipeline itself:
+The gate set is the deterministic union of the mandatory change-profile gates and the compiled
+journey's observation obligations, risks, and effects. The Task Profiler / Policy Engine applies
+both inputs to the pipeline:
 
 | Change profile | Gate set |
 |---|---|
@@ -100,10 +107,10 @@ the pipeline itself:
 | CLI/API surface | 1–8, 9 affected, 11 always |
 | deploy configuration | 1, 7, 8, post-deploy verify rehearsal |
 
-Selection is deterministic from the diff's paths and recorded with the gate report. Skipped
-gates are named in the report — a skip is a decision, never an absence. Escalation is one-way: a
-profile can add gates mid-run (a docs-only change that turns out to touch a schema example
-re-profiles upward), never drop them.
+Selection and its inputs are recorded with the gate report. Journey obligations may add a proof
+method or refuse an inadequate one; they never remove a gate required by paths or change profile.
+Skipped gates are named in the report — a skip is a decision, never an absence. Escalation is
+one-way: either input may add gates mid-run, never drop them.
 
 ## 6. Anti-regression discipline
 

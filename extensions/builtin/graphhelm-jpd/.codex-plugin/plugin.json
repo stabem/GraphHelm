@@ -1,0 +1,33 @@
+{
+  "id": "graphhelm-jpd",
+  "name": "graphhelm-jpd",
+  "version": "0.1.0",
+  "description": "Journey-Proven Development entry skills using GraphHelm public CLI/MCP contracts and schema-bound local advisory artifacts.",
+  "skills": "skills",
+  "mcpServers": ".mcp.json",
+  "author": {
+    "name": "GraphHelm"
+  },
+  "repository": "https://github.com/stabem/GraphHelm",
+  "license": "MIT",
+  "keywords": [
+    "graphhelm",
+    "journey-testing",
+    "skills",
+    "evidence"
+  ],
+  "interface": {
+    "displayName": "GraphHelm JPD",
+    "shortDescription": "Plan and verify changes from observable user journeys.",
+    "longDescription": "Eight adaptive entry skills compile user promises into evidence obligations, challenge plans, preserve retry history, and verify the strongest result supported by GraphHelm public surfaces and schema-bound local advisory artifacts.",
+    "developerName": "GraphHelm",
+    "category": "Developer Tools",
+    "capabilities": [
+      "skills",
+      "mcp"
+    ],
+    "defaultPrompt": [
+      "Use the smallest GraphHelm JPD skill family that can prove the requested user journey."
+    ]
+  }
+}

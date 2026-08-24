@@ -12,19 +12,20 @@ fn main() {
     let cli = match args::Cli::try_parse_from(&arguments) {
         Ok(cli) => cli,
         Err(error)
-            if schema_invocation(&arguments)
+            if structured_invocation(&arguments).is_some()
                 && !matches!(
                     error.kind(),
                     ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
                 ) =>
         {
+            let command = structured_invocation(&arguments).expect("matched above");
             let outcome = output::Outcome::domain(
-                "schema",
+                command,
                 vec![Diagnostic::error(
                     "GHCLI001_ARGUMENT_INVALID",
-                    "schema command arguments are invalid",
+                    format!("{command} command arguments are invalid"),
                     "/arguments",
-                    "schema-cli",
+                    format!("{command}-cli"),
                 )],
             );
             output::print(&outcome.output, pretty_requested(&arguments));
@@ -37,12 +38,16 @@ fn main() {
     std::process::exit(outcome.exit_code);
 }
 
-fn schema_invocation(arguments: &[OsString]) -> bool {
+fn structured_invocation(arguments: &[OsString]) -> Option<&'static str> {
     arguments
         .iter()
         .skip(1)
         .find(|argument| argument.as_os_str() != OsStr::new("--pretty"))
-        .is_some_and(|argument| argument == "schema")
+        .and_then(|argument| match argument.to_string_lossy().as_ref() {
+            "schema" => Some("schema"),
+            "extension" => Some("extension"),
+            _ => None,
+        })
 }
 
 fn pretty_requested(arguments: &[OsString]) -> bool {

@@ -1,0 +1,51 @@
+{
+  "purpose": "Act as a task-local resolution role that isolates conflicting claims and requests discriminating evidence without becoming a permanent adjudicator persona.",
+  "capabilities": [
+    "claim.conflict_isolate",
+    "evidence.compare",
+    "test.discriminating_select",
+    "residual_uncertainty.record"
+  ],
+  "allowedTools": [
+    "cli:graph validate",
+    "cli:graph lint",
+    "cli:graph simulate",
+    "cli:graph replay",
+    "cli:events verify",
+    "tool:status",
+    "tool:events",
+    "tool:probe"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/skill-evaluation.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/council-result.schema.json",
+  "instructions": "Resolve disagreements with the cheapest evidence that can distinguish the claims. Produce a candidate CouncilResult that binds the complete participant, claim, dissent, and decision inventories to their source digests. Do not vote. Preserve unresolved dissent, retain unique severe findings, and leave deterministic gates to policy and the Graph Governor.",
+  "completionContract": {
+    "requires": [
+      "conflicting_claims",
+      "evidence_for_each_side",
+      "discriminating_check_or_residual_uncertainty",
+      "complete_participant_claim_and_dissent_inventories",
+      "candidate_only_authority",
+      "non_voting_resolution"
+    ],
+    "never": [
+      "majority_vote_as_truth",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "two_sided_claim_evidence",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

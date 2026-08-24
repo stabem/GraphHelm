@@ -1,0 +1,96 @@
+{
+  "journeyRunId": "journey-run/issue-210/invalid",
+  "rootAttemptId": "attempt/issue-210/root",
+  "rootAttempt": {
+    "attemptId": "attempt/issue-210/root",
+    "ordinal": 1,
+    "retryOf": null,
+    "causeTag": "initial_attempt",
+    "result": "failed",
+    "startedAt": "2026-08-22T13:00:00Z",
+    "endedAt": "2026-08-22T13:00:02Z",
+    "inputDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "evidenceRefs": [
+      {
+        "evidenceId": "evidence.root-failure",
+        "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "ciphertextSha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      }
+    ]
+  },
+  "retries": [
+    {
+      "attemptId": "attempt/issue-210/orphan",
+      "ordinal": 2,
+      "causeTag": "unexplained",
+      "result": "succeeded",
+      "startedAt": "2026-08-22T13:01:00Z",
+      "endedAt": "2026-08-22T13:01:01Z",
+      "inputDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "evidenceRefs": [
+        {
+          "evidenceId": "evidence.orphan-success",
+          "contentSha256": "1313131313131313131313131313131313131313131313131313131313131313",
+          "ciphertextSha256": "1414141414141414141414141414141414141414141414141414141414141414"
+        }
+      ],
+      "evidenceDelta": {
+        "added": [
+          {
+            "evidenceId": "evidence.orphan-success",
+            "contentSha256": "1313131313131313131313131313131313131313131313131313131313131313",
+            "ciphertextSha256": "1414141414141414141414141414141414141414141414141414141414141414"
+          }
+        ],
+        "removed": [],
+        "materialChange": false
+      }
+    }
+  ],
+  "lineageComplete": true,
+  "firstFailure": {
+    "attemptId": "attempt/issue-210/root",
+    "evidenceRefs": [
+      {
+        "evidenceId": "evidence.root-failure",
+        "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "ciphertextSha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      }
+    ],
+    "summary": "The root attempt failed, but the supposed retry omits retryOf and is therefore orphaned."
+  },
+  "successfulAttemptId": "attempt/issue-210/orphan",
+  "lineageValidation": {
+    "status": "evaluated",
+    "result": "invalid",
+    "evaluator": {
+      "evaluatorId": "graphhelm-jpd/retry-lineage-validator",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:9393939393939393939393939393939393939393939393939393939393939393",
+      "receipt": {
+        "evidenceId": "evidence.retry-lineage.issue-210.invalid",
+        "contentSha256": "9494949494949494949494949494949494949494949494949494949494949494",
+        "ciphertextSha256": "9595959595959595959595959595959595959595959595959595959595959595"
+      }
+    }
+  },
+  "outcomeClass": "flaky_pass",
+  "classification": {
+    "status": "evaluated",
+    "evaluator": {
+      "evaluatorId": "graphhelm-jpd/retry-classifier",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:1515151515151515151515151515151515151515151515151515151515151515",
+      "receipt": {
+        "evidenceId": "evidence.retry-classification.issue-210.invalid",
+        "contentSha256": "1616161616161616161616161616161616161616161616161616161616161616",
+        "ciphertextSha256": "1717171717171717171717171717171717171717171717171717171717171717"
+      }
+    }
+  },
+  "classificationBasis": [
+    "later_attempt_succeeded",
+    "unexplained_cause",
+    "first_failure_preserved"
+  ]
+}

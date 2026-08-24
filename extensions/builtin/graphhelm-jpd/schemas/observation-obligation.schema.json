@@ -1,0 +1,1309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/observation-obligation.schema.json",
+  "title": "GraphHelm JPD Observation Obligation",
+  "type": "object",
+  "required": [
+    "obligationId",
+    "contractId",
+    "contractDigest",
+    "promiseId",
+    "fact",
+    "requiredEvidenceKinds",
+    "observerRequirements",
+    "resolution"
+  ],
+  "properties": {
+    "obligationId": {
+      "$ref": "#/$defs/id"
+    },
+    "contractId": {
+      "$ref": "#/$defs/id"
+    },
+    "contractDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "promiseId": {
+      "$ref": "#/$defs/id"
+    },
+    "fact": {
+      "enum": [
+        "command_completed",
+        "request_accepted",
+        "state_persisted",
+        "message_delivered",
+        "content_rendered",
+        "control_operable",
+        "recovery_safe",
+        "event_history_intact"
+      ]
+    },
+    "requiredEvidenceKinds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidenceKind"
+      }
+    },
+    "observerRequirements": {
+      "type": "object",
+      "required": [
+        "capability",
+        "minimumTrust",
+        "maxAgeSeconds",
+        "absenceWindowSeconds"
+      ],
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/id"
+        },
+        "minimumTrust": {
+          "enum": [
+            "first_party_deterministic",
+            "first_party_instrumented",
+            "third_party_receipt",
+            "visual_capture",
+            "operator_attestation"
+          ]
+        },
+        "maxAgeSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        },
+        "absenceWindowSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolution": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/matched"
+        },
+        {
+          "$ref": "#/$defs/capabilityMissing"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "process_exit"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "process_exit"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "http_acceptance"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "http_acceptance"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "queue_receipt"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "queue_receipt"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "durable_readback"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "durable_readback"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "provider_delivery_receipt"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "provider_delivery_receipt"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "dom_semantic_snapshot"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "dom_semantic_snapshot"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "accessibility_tree"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "accessibility_tree"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "visual_capture"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "visual_capture"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "interaction_trace"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "interaction_trace"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "event_chain_verification"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "event_chain_verification"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiredEvidenceKinds": {
+            "contains": {
+              "const": "operator_attestation"
+            }
+          },
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "matchedEvidence": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "evidenceKind": {
+                      "const": "operator_attestation"
+                    }
+                  },
+                  "required": [
+                    "evidenceKind"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "matchedEvidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resolution": {
+            "properties": {
+              "status": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/trustCompatibilityCase"
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "opaqueReferenceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "maxLength": 32
+    },
+    "unixSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "trust": {
+      "enum": [
+        "first_party_deterministic",
+        "first_party_instrumented",
+        "third_party_receipt",
+        "visual_capture",
+        "operator_attestation"
+      ]
+    },
+    "trustCompatibilityCase": {
+      "oneOf": [
+        {
+          "properties": {
+            "observerRequirements": {
+              "properties": {
+                "minimumTrust": {
+                  "const": "first_party_deterministic"
+                }
+              }
+            },
+            "resolution": {
+              "properties": {
+                "observedTrust": {
+                  "const": "first_party_deterministic"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "observerRequirements": {
+              "properties": {
+                "minimumTrust": {
+                  "const": "first_party_instrumented"
+                }
+              }
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "fact": {
+                  "const": "message_delivered"
+                },
+                "resolution": {
+                  "properties": {
+                    "observedTrust": {
+                      "const": "first_party_instrumented"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "fact": {
+                  "enum": [
+                    "command_completed",
+                    "request_accepted",
+                    "state_persisted",
+                    "content_rendered",
+                    "control_operable",
+                    "recovery_safe",
+                    "event_history_intact"
+                  ]
+                },
+                "resolution": {
+                  "properties": {
+                    "observedTrust": {
+                      "enum": [
+                        "first_party_deterministic",
+                        "first_party_instrumented"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "properties": {
+            "observerRequirements": {
+              "properties": {
+                "minimumTrust": {
+                  "const": "third_party_receipt"
+                }
+              }
+            },
+            "resolution": {
+              "properties": {
+                "observedTrust": {
+                  "const": "third_party_receipt"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "observerRequirements": {
+              "properties": {
+                "minimumTrust": {
+                  "const": "visual_capture"
+                }
+              }
+            },
+            "resolution": {
+              "properties": {
+                "observedTrust": {
+                  "const": "visual_capture"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "observerRequirements": {
+              "properties": {
+                "minimumTrust": {
+                  "const": "operator_attestation"
+                }
+              }
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "fact": {
+                  "enum": [
+                    "command_completed",
+                    "state_persisted",
+                    "control_operable",
+                    "recovery_safe",
+                    "event_history_intact"
+                  ]
+                },
+                "resolution": {
+                  "properties": {
+                    "observedTrust": {
+                      "enum": [
+                        "first_party_deterministic",
+                        "first_party_instrumented",
+                        "operator_attestation"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "fact": {
+                  "const": "request_accepted"
+                },
+                "resolution": {
+                  "properties": {
+                    "observedTrust": {
+                      "enum": [
+                        "first_party_deterministic",
+                        "first_party_instrumented",
+                        "third_party_receipt",
+                        "operator_attestation"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "fact": {
+                  "const": "message_delivered"
+                },
+                "resolution": {
+                  "properties": {
+                    "observedTrust": {
+                      "enum": [
+                        "third_party_receipt",
+                        "operator_attestation"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "fact": {
+                  "const": "content_rendered"
+                },
+                "resolution": {
+                  "properties": {
+                    "observedTrust": {
+                      "enum": [
+                        "first_party_deterministic",
+                        "first_party_instrumented",
+                        "visual_capture",
+                        "operator_attestation"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "catalogBinding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "catalogId",
+        "catalogVersion",
+        "catalogDigest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "observer_catalog"
+        },
+        "catalogId": {
+          "$ref": "#/$defs/id"
+        },
+        "catalogVersion": {
+          "$ref": "#/$defs/semver"
+        },
+        "catalogDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilityBinding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "capabilityId",
+        "observerId",
+        "observerVersion",
+        "capabilityDigest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "observer_capability"
+        },
+        "capabilityId": {
+          "$ref": "#/$defs/id"
+        },
+        "observerId": {
+          "$ref": "#/$defs/id"
+        },
+        "observerVersion": {
+          "$ref": "#/$defs/semver"
+        },
+        "capabilityDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceReference": {
+      "type": "object",
+      "required": [
+        "evidenceId",
+        "contentSha256",
+        "ciphertextSha256"
+      ],
+      "properties": {
+        "evidenceId": {
+          "$ref": "#/$defs/opaqueReferenceId"
+        },
+        "contentSha256": {
+          "$ref": "#/$defs/rawSha256"
+        },
+        "ciphertextSha256": {
+          "$ref": "#/$defs/rawSha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timedEvidenceReference": {
+      "type": "object",
+      "required": [
+        "capturedAtUnixSeconds",
+        "receipt"
+      ],
+      "properties": {
+        "capturedAtUnixSeconds": {
+          "$ref": "#/$defs/unixSeconds"
+        },
+        "receipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceKind": {
+      "enum": [
+        "process_exit",
+        "http_acceptance",
+        "queue_receipt",
+        "durable_readback",
+        "provider_delivery_receipt",
+        "dom_semantic_snapshot",
+        "accessibility_tree",
+        "visual_capture",
+        "interaction_trace",
+        "event_chain_verification",
+        "operator_attestation"
+      ]
+    },
+    "matchedEvidenceItem": {
+      "type": "object",
+      "required": [
+        "evidenceKind",
+        "capturedAtUnixSeconds",
+        "receipt"
+      ],
+      "properties": {
+        "evidenceKind": {
+          "$ref": "#/$defs/evidenceKind"
+        },
+        "capturedAtUnixSeconds": {
+          "$ref": "#/$defs/unixSeconds"
+        },
+        "receipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "absenceWindow": {
+      "type": "object",
+      "required": [
+        "startedAtUnixSeconds",
+        "endedAtUnixSeconds",
+        "observedDurationSeconds",
+        "verificationReceipt"
+      ],
+      "properties": {
+        "startedAtUnixSeconds": {
+          "$ref": "#/$defs/unixSeconds"
+        },
+        "endedAtUnixSeconds": {
+          "$ref": "#/$defs/unixSeconds"
+        },
+        "observedDurationSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "verificationReceipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "freshnessEvaluation": {
+      "type": "object",
+      "required": [
+        "clock",
+        "evaluatedAtUnixSeconds",
+        "maximumObservedAgeSeconds",
+        "requiredMaxAgeSeconds",
+        "requiredAbsenceWindowSeconds",
+        "absenceWindow",
+        "result"
+      ],
+      "properties": {
+        "clock": {
+          "const": "unix_seconds"
+        },
+        "evaluatedAtUnixSeconds": {
+          "$ref": "#/$defs/unixSeconds"
+        },
+        "maximumObservedAgeSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        },
+        "requiredMaxAgeSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        },
+        "requiredAbsenceWindowSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "absenceWindow": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/absenceWindow"
+            }
+          ]
+        },
+        "result": {
+          "const": "satisfied"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "requiredAbsenceWindowSeconds": {
+              "const": null
+            },
+            "absenceWindow": {
+              "const": null
+            }
+          }
+        },
+        {
+          "properties": {
+            "requiredAbsenceWindowSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "absenceWindow": {
+              "$ref": "#/$defs/absenceWindow"
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "matched": {
+      "type": "object",
+      "required": [
+        "status",
+        "catalogBinding",
+        "capabilityBinding",
+        "configurationDigest",
+        "environmentDigest",
+        "observedTrust",
+        "trustCompatibilityCandidate",
+        "capabilityReceipt",
+        "matchedEvidence",
+        "freshnessEvaluation",
+        "evidenceMatchEvaluation"
+      ],
+      "properties": {
+        "status": {
+          "const": "matched"
+        },
+        "catalogBinding": {
+          "$ref": "#/$defs/catalogBinding"
+        },
+        "capabilityBinding": {
+          "$ref": "#/$defs/capabilityBinding"
+        },
+        "configurationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "environmentDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "observedTrust": {
+          "$ref": "#/$defs/trust"
+        },
+        "trustCompatibilityCandidate": {
+          "$ref": "#/$defs/trustCompatibilityCandidate"
+        },
+        "capabilityReceipt": {
+          "$ref": "#/$defs/timedEvidenceReference"
+        },
+        "matchedEvidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/matchedEvidenceItem"
+          }
+        },
+        "freshnessEvaluation": {
+          "$ref": "#/$defs/freshnessEvaluation"
+        },
+        "evidenceMatchEvaluation": {
+          "$ref": "#/$defs/evidenceMatchEvaluation"
+        }
+      },
+      "additionalProperties": false
+    },
+    "trustCompatibilityCandidate": {
+      "type": "object",
+      "required": [
+        "authority",
+        "latticeBinding",
+        "relationId",
+        "relationVersion",
+        "decision",
+        "inputDigest",
+        "receipt"
+      ],
+      "properties": {
+        "authority": {
+          "const": "candidate"
+        },
+        "latticeBinding": {
+          "type": "object",
+          "required": [
+            "latticeId",
+            "latticeVersion",
+            "latticeDigest"
+          ],
+          "properties": {
+            "latticeId": {
+              "const": "graphhelm-jpd/evidence-strength-lattice"
+            },
+            "latticeVersion": {
+              "const": "1.0.0"
+            },
+            "latticeDigest": {
+              "const": "sha256:d1aa1ccfd7fa32be662230098cc1c513fd9edee79c569b2e0ca8aa383c6c5531"
+            }
+          },
+          "additionalProperties": false
+        },
+        "relationId": {
+          "const": "graphhelm-jpd/trust-compatibility"
+        },
+        "relationVersion": {
+          "const": "1.0.0"
+        },
+        "decision": {
+          "const": "compatible_candidate"
+        },
+        "inputDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "receipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceMatchEvaluation": {
+      "type": "object",
+      "required": [
+        "evaluatorId",
+        "evaluatorVersion",
+        "evaluationSemantics",
+        "inputDigest",
+        "receipt"
+      ],
+      "properties": {
+        "evaluatorId": {
+          "$ref": "#/$defs/id"
+        },
+        "evaluatorVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 32
+        },
+        "evaluationSemantics": {
+          "const": "registered_deterministic"
+        },
+        "inputDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "receipt": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilityMissing": {
+      "type": "object",
+      "required": [
+        "status",
+        "authority",
+        "resultStatus",
+        "refusal"
+      ],
+      "properties": {
+        "status": {
+          "const": "capability_missing"
+        },
+        "authority": {
+          "const": "advisory"
+        },
+        "resultStatus": {
+          "const": "unresolved"
+        },
+        "refusal": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/observerMissingRefusal"
+            },
+            {
+              "$ref": "#/$defs/evidenceMatchEvaluatorMissingRefusal"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observerMissingRefusal": {
+      "description": "A vocabulary this wire ADMITS, not a code path this repository PRODUCES. Nothing in core/ or apps/ emits OBSERVER_MISSING - the producer is an agent following a SKILL.md, deciding that a required capability is absent and writing this shape by hand. The schema's job stops at pinning what a valid refusal looks like once one is written; it cannot cause one to be written. A reader who finds this definition, its fixture (fixtures/positive/missing-observer-refusal.json), and no .rs file emitting the code should conclude the system PERMITS the refusal to be expressed, not that the system refuses on its own - the legal-versus-produced distinction this repository has paid for before, landing here on the PR's own headline feature.",
+      "type": "object",
+      "required": [
+        "code",
+        "missingCapability",
+        "reason",
+        "weakerProxiesRejected"
+      ],
+      "properties": {
+        "code": {
+          "const": "OBSERVER_MISSING"
+        },
+        "missingCapability": {
+          "$ref": "#/$defs/id"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "weakerProxiesRejected": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceKind"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceMatchEvaluatorMissingRefusal": {
+      "type": "object",
+      "required": [
+        "code",
+        "missingCapability",
+        "reason"
+      ],
+      "properties": {
+        "code": {
+          "const": "EVIDENCE_MATCH_EVALUATOR_MISSING"
+        },
+        "missingCapability": {
+          "$ref": "#/$defs/id"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

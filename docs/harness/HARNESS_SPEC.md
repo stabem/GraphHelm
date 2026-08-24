@@ -675,6 +675,17 @@ requirement never changes, only the order and the spend.
 
 The method can change, the requirement cannot. Example: security review can be covered by a scanner + reviewer or by two specialized reviewers, depending on context.
 
+### 21.4 Observation obligations
+
+Journey-Proven Development compiles each user promise into typed observation obligations before it
+selects gate methods. The obligation names the fact, required evidence type and strength, observer,
+freshness window, and failure/recovery behavior. A method may be replaced only by one that proves an
+equivalent or stronger fact.
+
+If the installed capability catalog cannot observe the promised fact, harness compilation refuses
+with `OBSERVER_MISSING`. An HTTP acceptance response cannot satisfy delivery, rendering, focus,
+operability, or user-perception obligations. Agent agreement cannot satisfy any missing observation.
+
 ## 22. Reducing confirmation bias
 
 ### 22.1 Rules
@@ -700,6 +711,11 @@ When reviewers disagree:
 4. use a third arbiter only if necessary;
 5. preserve the disagreement if unresolved;
 6. mark the conclusion with uncertainty.
+
+Persona selection is risk-driven and bounded. The council may include a defect hunter, ideator,
+critic, advocate, accessibility user, recovery operator, or resolver. These are temporary agent
+definitions, not a mandatory panel. A unique severe counterexample remains open even when every
+other agent agrees with the implementation.
 
 ## 23. Completion Engine
 

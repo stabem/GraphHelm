@@ -1,4 +1,4 @@
-//! The ten tools (Task 5): a static table mapping 1:1 onto Public Runtime API requests —
+//! The fourteen tools: a static table over Public Runtime API requests and the local wake wait —
 //! each description names the API call it maps to (§6 parity in the tool's own metadata),
 //! every input schema is closed (`additionalProperties: false`), and no credential tool
 //! exists by design (rule 5; §6 "no secret through chat" — omission is the enforcement, the

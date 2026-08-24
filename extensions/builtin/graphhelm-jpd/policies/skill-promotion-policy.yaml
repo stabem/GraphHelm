@@ -1,0 +1,144 @@
+apiVersion: p50.dev/jpd/v1
+kind: SkillPromotionPolicyContract
+metadata:
+  id: graphhelm-jpd/skill-promotion
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  inputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/skill-promotion-policy.schema.json#evaluation-input
+  outputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/skill-promotion-policy.schema.json#evaluation-output
+  evaluationOrder: collect_all_denials_then_action_precedence
+  thresholds:
+    minimumDistinctSuccessfulRuns: 3
+    minimumEvidenceCoverage: 0.95
+    minimumGeneralizationScore: 0.70
+    minimumErrorReduction: 0.10
+    maximumTokenOverheadRatio: 1.50
+    maximumUnresolvedHighOrCriticalClaims: 0
+  actionPrecedence:
+    - resolve_counterexample
+    - refresh_evidence
+    - reduce_token_cost
+    - gather_more_evidence
+  denyWhen:
+    - id: insufficient-distinct-successful-runs
+      predicate:
+        kind: distinct_filtered_count
+        collection: runSamples
+        distinctBy: journeyRunId
+        where:
+          field: result
+          operator: in
+          values:
+            - first_pass_success
+            - recovered_success
+        compare:
+          operator: less_than
+          thresholdRef: minimumDistinctSuccessfulRuns
+      onDeny:
+        reasonCode: INSUFFICIENT_SUCCESSFUL_RUNS
+        requiredAction: gather_more_evidence
+    - id: insufficient-evidence-coverage
+      predicate:
+        kind: numeric_compare
+        field: aggregates.evidenceCoverage
+        operator: less_than
+        thresholdRef: minimumEvidenceCoverage
+      onDeny:
+        reasonCode: INSUFFICIENT_EVIDENCE_COVERAGE
+        requiredAction: gather_more_evidence
+    - id: insufficient-generalization
+      predicate:
+        kind: numeric_compare
+        field: aggregates.generalizationScore
+        operator: less_than
+        thresholdRef: minimumGeneralizationScore
+      onDeny:
+        reasonCode: INSUFFICIENT_GENERALIZATION
+        requiredAction: gather_more_evidence
+    - id: insufficient-error-reduction
+      predicate:
+        kind: numeric_compare
+        field: aggregates.errorReduction
+        operator: less_than
+        thresholdRef: minimumErrorReduction
+      onDeny:
+        reasonCode: INSUFFICIENT_ERROR_REDUCTION
+        requiredAction: gather_more_evidence
+    - id: stale-required-evidence
+      predicate:
+        kind: boolean_compare
+        field: aggregates.allEvidenceFresh
+        operator: equals
+        value: false
+      onDeny:
+        reasonCode: STALE_REQUIRED_EVIDENCE
+        requiredAction: refresh_evidence
+    - id: material-counterexample-remains
+      predicate:
+        kind: filtered_count
+        collection: counterexamples
+        whereAll:
+          - field: severity
+            operator: in
+            values:
+              - high
+              - critical
+          - field: status
+            operator: in
+            values:
+              - confirmed
+              - unresolved
+        compare:
+          operator: greater_than
+          thresholdRef: maximumUnresolvedHighOrCriticalClaims
+      onDeny:
+        reasonCode: UNRESOLVED_MATERIAL_COUNTEREXAMPLE
+        requiredAction: resolve_counterexample
+    - id: first-failure-provenance-missing
+      predicate:
+        kind: any_item_matches
+        collection: runSamples
+        whereAll:
+          - field: result
+            operator: in
+            values:
+              - recovered_success
+              - flaky_pass
+              - unresolved_failure
+          - field: firstFailurePreserved
+            operator: equals
+            value: false
+      onDeny:
+        reasonCode: FIRST_FAILURE_PROVENANCE_MISSING
+        requiredAction: gather_more_evidence
+    - id: token-overhead-exceeded
+      predicate:
+        kind: numeric_compare
+        field: aggregates.tokenOverheadRatio
+        operator: greater_than
+        thresholdRef: maximumTokenOverheadRatio
+      onDeny:
+        reasonCode: TOKEN_OVERHEAD_EXCEEDED
+        requiredAction: reduce_token_cost
+    - id: required-observer-capability-missing
+      predicate:
+        kind: array_not_empty
+        field: missingObserverCapabilityIds
+      onDeny:
+        reasonCode: OBSERVER_MISSING
+        requiredAction: gather_more_evidence
+  onPass:
+    action: propose_promotion
+    targetScope: project
+    activation: false
+    requiredPublisher: graph_governor
+  onFail:
+    action: keep_task_capsule
+    activation: false
+  nonNormativeDescriptions:
+    - Evaluation can create a proposal but cannot publish or activate a skill.
+    - Only the Graph Governor may publish the immutable project-skill version.
+    - A promoted skill keeps the evidence digests and source revision that justified promotion.

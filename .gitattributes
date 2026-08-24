@@ -2,5 +2,9 @@
 *.toml text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+# Extension package digests bind raw contribution bytes. Keep text resources stable on Windows.
+extensions/builtin/graphhelm-jpd/*.json text eol=lf
+extensions/builtin/graphhelm-jpd/**/*.json text eol=lf
+extensions/builtin/graphhelm-jpd/**/*.md text eol=lf
 # M06 demonstrations: recorded artifacts commit byte-exact (checksummed).
 docs/acceptance/demos/** -text

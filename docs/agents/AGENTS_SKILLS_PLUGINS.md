@@ -260,6 +260,26 @@ Skill score uses:
 - freshness;
 - reviewer agreement.
 
+### 10.5 Journey-Proven Development entry families
+
+The built-in `graphhelm-jpd` extension exposes eight entry skills: journey contract, observation
+compilation, plan council, defect bounty, skill synthesis, skill evaluation, retry provenance, and
+journey verification. They are discoverable families, not a fixed sequence. A future activated
+loader and Task Profiler must select only the smallest subset justified by the promise, risk, and
+missing evidence.
+
+Agent personas, schemas, policies, evaluators, observers, graphs, and fixtures remain separate
+contribution kinds. They do not become extra skills merely to inflate a catalog. A contribution is
+split when it has a distinct contract, effect, permission, lifecycle, or evidence responsibility.
+The built-in package version 0.1.0 contains 53 such contributions while keeping only eight
+user-facing selection points.
+
+A generated skill begins as a task-local immutable Skill Capsule. Issue #210 validates the packaged
+capsule schema and containing extension, not emitted capsule instances, and ships no install,
+activation, or publication path. Instances remain advisory until a registered validator returns a
+receipt. In the future registry lifecycle, repeated evidence may justify a promotion proposal, but
+only the Graph Governor may publish the new Project Skill version.
+
 ## 11. Tools
 
 ### 11.1 Tool categories
@@ -408,6 +428,25 @@ Flow:
 8. record event.
 
 ### 12.5 Update
+
+An update resolves a new immutable version, validates its full inventory, compares permissions and
+capabilities with the active version, and requires new approval for any increase. The future loader
+must switch versions atomically, keep the previous good version active when replacement validation
+fails, and reverse registrations when a version unloads. Issue #210 does not implement this loader.
+
+### 12.6 One composition path
+
+An installable bundle mounts ordinary `Extension` contributions. GraphHelm does not add a second
+repository-plugin or skill-plugin wrapper with its own installation, cache, manifest, or version
+rules. Package resolution owns source, immutable version, dependencies, and lock state; the
+Extension manifest owns explicit composition and configuration.
+
+Discovery does not activate a package. Activation remains explicit. Issue #210 delivers validation
+and a data bundle only; it does not claim to install or activate extensions.
+
+A host-specific Skill or MCP file is a thin adapter. It may call only declared public CLI, MCP, or
+HTTP contracts, and deleting it loses convenience only. It cannot import Runtime internals or
+publish an operational graph mutation.
 
 Never auto-expand permissions. If a new version requests additional access, confirmation is required.
 

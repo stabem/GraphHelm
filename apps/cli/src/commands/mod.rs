@@ -1,6 +1,7 @@
 mod draft;
 mod events;
 mod execution;
+mod extension;
 mod gateway;
 mod hash;
 mod lint;
@@ -23,8 +24,8 @@ use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
-    CredentialCommand, DraftCommand, EventsCommand, ExecutionCommand, GatewayCommand, GraphCommand,
-    QualityCommand, SchemaCommand, ToolCommand, TopLevel,
+    CredentialCommand, DraftCommand, EventsCommand, ExecutionCommand, ExtensionCommand,
+    GatewayCommand, GraphCommand, QualityCommand, SchemaCommand, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -81,6 +82,9 @@ pub fn run(command: TopLevel) -> Outcome {
                 catalog,
                 schema: name,
             } => schema::view::run(&catalog, &name),
+        },
+        TopLevel::Extension(extension_args) => match extension_args.command {
+            ExtensionCommand::Validate { package } => extension::run(&package),
         },
         TopLevel::Events(events) => match events.command {
             EventsCommand::Verify {

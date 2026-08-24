@@ -1,0 +1,179 @@
+{
+  "claimId": "claim/install-button-double-activation",
+  "contractId": "journey/issue-210-extension-install",
+  "regressionObligationId": "obligation/install-button-single-flight",
+  "reporter": {
+    "actor": {
+      "type": "agent",
+      "id": "agent/defect-hunter"
+    },
+    "run": {
+      "runId": "run/issue-210/defect-hunter/1",
+      "authority": {
+        "kind": "task_local_advisory",
+        "scope": "journey-defect.report",
+        "grantRef": {
+          "evidenceId": "authority.defect-report.run-1",
+          "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "ciphertextSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    }
+  },
+  "reporterRole": "defect-hunter",
+  "stepId": "step/install-extension",
+  "severity": "high",
+  "statement": "Two rapid semantic activations enqueue two installation attempts while the control should be disabled during the first request.",
+  "expectedState": "After the first activation, the Install control becomes disabled and one installation request remains in flight.",
+  "observedState": "The control remained operable long enough for a second activation and two requests were recorded.",
+  "semanticTrace": [
+    {
+      "kind": "navigate",
+      "target": {
+        "strategy": "stable_product_id",
+        "value": "extensions/graphhelm-jpd"
+      }
+    },
+    {
+      "kind": "activate",
+      "target": {
+        "strategy": "accessible_role",
+        "value": "Install GraphHelm JPD",
+        "role": "button"
+      }
+    },
+    {
+      "kind": "activate",
+      "target": {
+        "strategy": "accessible_role",
+        "value": "Install GraphHelm JPD",
+        "role": "button"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "evidenceId": "evidence.double-activation-trace",
+      "kind": "interaction_trace",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "observerId": "browser-semantic-observer/test-fixture",
+      "capturedAt": "2026-08-22T14:00:00Z",
+      "fresh": true
+    }
+  ],
+  "reproduction": {
+    "preconditions": [
+      "The extension is not installed.",
+      "The installation endpoint is delayed for 500 milliseconds."
+    ],
+    "attempts": [
+      {
+        "attemptId": "attempt/double-activation/1",
+        "result": "reproduced",
+        "evidenceRefs": [
+          {
+            "evidenceId": "evidence.double-activation-trace",
+            "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "ciphertextSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ]
+      },
+      {
+        "attemptId": "attempt/double-activation/2",
+        "result": "reproduced",
+        "evidenceRefs": [
+          {
+            "evidenceId": "evidence.double-activation-trace",
+            "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "ciphertextSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ]
+      },
+      {
+        "attemptId": "attempt/double-activation/3",
+        "result": "reproduced",
+        "evidenceRefs": [
+          {
+            "evidenceId": "evidence.double-activation-trace",
+            "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "ciphertextSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ]
+      }
+    ],
+    "environmentDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "status": "confirmed",
+  "review": {
+    "reviewerRole": "evidence-advocate",
+    "reviewer": {
+      "actor": {
+        "type": "agent",
+        "id": "agent/evidence-advocate"
+      },
+      "run": {
+        "runId": "run/issue-210/evidence-advocate/1",
+        "authority": {
+          "kind": "task_local_advisory",
+          "scope": "journey-defect.review",
+          "grantRef": {
+            "evidenceId": "authority.defect-review.run-1",
+            "contentSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "ciphertextSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        }
+      }
+    },
+    "identityDistinctValidation": {
+      "evaluatorId": "graphhelm-jpd/participant-identity-distinct-validator",
+      "evaluatorVersion": "0.1.0",
+      "input": {
+        "participantOrder": [
+          "reporter",
+          "reviewer"
+        ],
+        "actorIds": [
+          "agent/defect-hunter",
+          "agent/evidence-advocate"
+        ],
+        "runIds": [
+          "run/issue-210/defect-hunter/1",
+          "run/issue-210/evidence-advocate/1"
+        ],
+        "runAuthorityRefs": [
+          {
+            "evidenceId": "authority.defect-report.run-1",
+            "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "ciphertextSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "evidenceId": "authority.defect-review.run-1",
+            "contentSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "ciphertextSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        ]
+      },
+      "inputDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "proposedResult": "distinct",
+      "authority": {
+        "status": "candidate",
+        "validation": {
+          "status": "capability_missing",
+          "code": "JPD_VALIDATOR_MISSING",
+          "missingCapability": "jpd.registered-deterministic-validator",
+          "reason": "This package carries the deterministic comparison input, but only a future registered validator can cross-bind it to authenticated actor and run receipts."
+        }
+      }
+    },
+    "method": "Repeat the trace with a single activation, then with two semantic activations while comparing request ids.",
+    "result": "confirmed",
+    "evidenceRefs": [
+      {
+        "evidenceId": "evidence.double-activation-trace",
+        "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "ciphertextSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ],
+    "residualUncertainty": []
+  }
+}

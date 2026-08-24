@@ -8,15 +8,16 @@ surface as a product: the layering, the operator skill catalog, the multi-agent 
 and the onboarding flows. The Milestone 05e plan implements the contract layer; the skills
 arrive with it and grow after it.
 
-The rule above every section: **the chat surface is never a second path.** Anything a skill or
-tool below does maps to public Runtime API calls the CLI can make identically. A skill is
-choreography over the API, never a private capability.
+The rule above every section: **the chat surface is never a second Runtime path.** Every Runtime
+read, mutation, or privileged capability used by a skill maps to public Runtime API calls the CLI
+can make identically. Local advisory artifact authoring follows checked-in schemas and skill
+instructions; it creates no Runtime authority and is not a private operational capability.
 
 ## 2. Layering
 
 | Layer | What it is | What it may contain |
 |---|---|---|
-| MCP server | THE contract (D-039): tools mapping 1:1 onto Runtime API requests; stateless — no store handle, no driver, notifications from the events tail | protocol adaptation only |
+| MCP server | Public Runtime API adapters plus the local CLI-parity `wake_wait` helper; stateless — no store handle or driver, with notifications derived from the events tail | protocol adaptation and bounded local waiting only |
 | Claude Code plugin | packaging: the MCP server registration plus the operator skills below | skills, slash-commands, docs |
 | Codex configuration | packaging: MCP registration for Codex | configuration only |
 
@@ -25,12 +26,13 @@ defect; the test is deleting the wrapper and losing nothing but convenience.
 
 ## 3. MCP tool vocabulary (the 05e base)
 
-One tool per Runtime API operation, same names as the CLI's `execution` family: `start`,
-`status`, `events` (paged tail), `signal`, `approve`, `pause` (graceful and immediate),
-`resume`, `cancel` — plus `routes`/`probe` over the gateway surface and, when Living
-Documentation lands its API, `rules` (read) and `document-impact` (report). Every mutating tool
-carries the three mutation headers (idempotency key, actor, actor type) and optional
-`If-Match`; the MCP layer generates idempotency keys per logical act, never per retry.
+The current server exposes fourteen tools: `start`, `status`, `events` (paged tail), `signal`,
+`approve`, `pause` (graceful and immediate), `resume`, `cancel`, `routes`, `wake_arm`,
+`wake_status`, `amend_budget`, `wake_wait`, and `probe`. Thirteen adapt public Runtime API
+operations. `wake_wait` is the one bounded local helper and preserves CLI parity. Every mutating
+tool carries the three mutation headers (idempotency key, actor, actor type) and optional
+`If-Match`; the MCP layer generates idempotency keys per logical act, never per retry. Future Living
+Documentation tools remain out of this current vocabulary until their public API exists.
 
 ## 4. Operator skill catalog
 
@@ -109,6 +111,19 @@ set it selects, run the full tier on the VPS, deploy on green, run post-deploy v
 — and on red, stop with the failing gate's evidence, never "deploy anyway" without the
 explicit waiver path (D-019, recorded).
 
+### 4.9 Journey-Proven Development bundle
+
+The optional built-in `graphhelm-jpd` data extension adds eight entry skills: `journey-contract`,
+`observation-compiler`, `plan-council`, `defect-bounty`, `skill-synthesizer`, `skill-evaluator`,
+`retry-provenance`, and `journey-verifier`.
+
+Runtime reads, mutations, and privileged capabilities obey the same deletion and parity rule as the
+operator skills. Local advisory artifacts are reproducible from the published package schemas and
+instructions; they are not represented as Runtime operations that do not exist. MCP is preferred
+when the chat is attached to a Runtime; the CLI is the local/offline path. A skill never switches
+surfaces after an uncertain mutation. Browser behavior requires an independently installed observer
+capability; without it the skill returns `OBSERVER_MISSING`, not a guessed success.
+
 ## 5. Multi-agent choreography
 
 The rules that let N chats work one project without torn state — all inherited from 05a's
@@ -125,8 +140,9 @@ contract, restated here as operator-facing behavior:
 
 ## 6. Constraints
 
-- **Parity (D-039):** every skill action must be reproducible as documented CLI/API calls; the
-  skill's own docs name them.
+- **Parity (D-039):** every Runtime read, mutation, and privileged skill capability must be
+  reproducible as documented CLI/API calls. Local advisory authoring is reproducible from published
+  schemas and instructions and grants no Runtime authority.
 - **Statelessness (§6.4):** the MCP server holds no store handle and no driver.
 - **No secret through chat:** credential values travel only through the broker's stdin/env
   paths; a skill that receives a pasted secret refuses and instructs, and never echoes it back.
@@ -139,7 +155,8 @@ contract, restated here as operator-facing behavior:
 
 ## 7. Acceptance criteria
 
-- deleting the plugin and using only the CLI loses no capability, only convenience;
+- deleting the plugin loses no Runtime or privileged capability; advisory local artifacts remain
+  reproducible from the published schemas and instructions;
 - two chat sessions on one project observe each other's acts through `events` alone, fully
   attributed, and resolve a mutation race through a 409 + retry;
 - both onboarding skills produce a running first execution and at least one rule document
@@ -147,4 +164,4 @@ contract, restated here as operator-facing behavior:
 - a shared transcript exists as sealed Evidence referenced from its execution, and no event
   payload contains transcript text;
 - a pasted credential in chat is refused and never echoed;
-- every skill's documentation names the API/CLI calls it choreographs.
+- every skill's documentation names each API/CLI call it actually choreographs.

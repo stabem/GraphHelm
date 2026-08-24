@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain-input.schema.json",
+  "title": "GraphHelm JPD Structurally Validated Retry Classification Input",
+  "type": "object",
+  "required": [
+    "journeyRunId",
+    "rootAttemptId",
+    "rootAttempt",
+    "retries",
+    "lineageComplete",
+    "firstFailure",
+    "successfulAttemptId",
+    "lineageValidation"
+  ],
+  "properties": {
+    "journeyRunId": {
+      "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/id"
+    },
+    "rootAttemptId": {
+      "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/id"
+    },
+    "rootAttempt": {
+      "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/rootAttempt"
+    },
+    "retries": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/retryAttempt"
+      }
+    },
+    "lineageComplete": {
+      "const": true
+    },
+    "firstFailure": {
+      "anyOf": [
+        {
+          "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/preservedFailure"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "successfulAttemptId": {
+      "anyOf": [
+        {
+          "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lineageValidation": {
+      "$ref": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json#/$defs/lineageValidation"
+    }
+  },
+  "additionalProperties": false
+}

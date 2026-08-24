@@ -1,0 +1,33 @@
+apiVersion: p50.dev/jpd/v1
+kind: RetryLineageValidationPolicyContract
+metadata:
+  id: graphhelm-jpd/retry-lineage-validation
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  inputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/retry-lineage-input.schema.json
+  outputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain-input.schema.json
+  outputField: lineageValidation
+  evaluationOrder: all_checks_required
+  requiredChecks:
+    - root_attempt_id_matches
+    - attempt_ids_unique
+    - ordinals_contiguous
+    - retry_edges_adjacent
+    - retry_edges_acyclic
+    - timestamps_monotonic
+    - successful_attempt_exists_and_succeeded
+    - first_failure_matches_root
+    - evidence_deltas_digest_bound
+  success:
+    status: evaluated
+    result: valid
+    evaluatorId: graphhelm-jpd/retry-lineage-validator
+  refusal:
+    code: RETRY_LINEAGE_INVALID
+    failureKind: structural_impossibility
+    waivable: false
+  nonNormativeDescriptions:
+    purpose: Validate the complete retry structure before any outcome classification is attempted.

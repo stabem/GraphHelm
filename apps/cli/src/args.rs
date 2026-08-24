@@ -19,6 +19,8 @@ pub struct Cli {
 pub enum TopLevel {
     Graph(GraphArgs),
     Schema(SchemaArgs),
+    /// Extension package operations. Validation is offline and never installs or activates.
+    Extension(ExtensionArgs),
     Events(EventsArgs),
     Execution(ExecutionArgs),
     Gateway(GatewayArgs),
@@ -35,6 +37,18 @@ pub enum TopLevel {
     WakeWait(WakeWaitArgs),
     /// Quality-gate operations: the thymus ritual and the certification stamp.
     Quality(QualityArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ExtensionArgs {
+    #[command(subcommand)]
+    pub command: ExtensionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExtensionCommand {
+    /// Validates extension.json and every declared contribution in a local package directory.
+    Validate { package: PathBuf },
 }
 
 #[derive(Debug, Args)]

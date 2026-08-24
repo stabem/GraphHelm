@@ -1096,10 +1096,16 @@ name = "graphhelm-schema"
 version = "0.1.0"
 dependencies = [
  "graphhelm-protocols",
+ "hex",
  "jsonschema",
+ "libc",
+ "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2 0.11.0",
  "thiserror",
+ "unsafe-libyaml",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -69,12 +69,20 @@ Do not silently resolve a real contradiction. Record it in an ADR or RFC with ev
 11. Secrets never appear in Graph DSL, context capsules, artifacts, logs, fixtures, or exported execution manifests.
 12. No code in this milestone may access the Docker socket, production infrastructure, model accounts, browser sessions, or real credentials.
 13. Do not add a paid model fallback. Subscription exhaustion pauses execution until the user explicitly changes route.
-14. Use test-driven development, small focused modules, atomic commits, and evidence-backed completion.
+14. Historical Foundation work used test-driven development. Current work follows D-041 and
+    ADR-027: start from the user journey and select the smallest adequate proof method for each
+    typed obligation. Focused tests remain available, but TDD is not universal.
 15. Do not commit placeholders such as `TODO`, `TBD`, empty handlers, fake success paths, or unimplemented public methods.
 
 ## Required engineering workflow
 
-Use the installed Superpowers workflow where available. The expected sequence is:
+D-041 and ADR-027 supersede the historical Superpowers sequence below. Current agents use the
+`graphhelm-jpd` extension adaptively: compile journey promises and risks, select the smallest relevant
+entry families, and require deterministic evidence before completion. No fixed skill sequence is
+mandatory.
+
+The following sequence is retained only as the historical Foundation workflow and must not be used
+as current authority:
 
 ```text
 writing-plans

@@ -1,0 +1,54 @@
+{
+  "purpose": "Act as a task-local recovery risk role that exercises failure and safe recovery without becoming a permanent operations persona.",
+  "capabilities": [
+    "journey.exercise_recovery",
+    "retry.lineage_verify",
+    "partial_failure.inspect",
+    "side_effect.detect"
+  ],
+  "allowedTools": [
+    "cli:graph simulate",
+    "cli:graph replay",
+    "cli:events verify",
+    "tool:status",
+    "tool:events",
+    "tool:pause",
+    "tool:resume",
+    "tool:cancel"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate_unapproved",
+    "execution.immediate_pause_without_explicit_owner_decision",
+    "execution.cancel_without_explicit_owner_decision"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json",
+  "instructions": "Exercise only authorized recovery actions. Before `tool:pause` with `mode: immediate` or `tool:cancel`, require an explicit owner decision bound to the active execution and requested action. Preserve the root attempt, every retry edge, cause tag, evidence delta, and every known partial effect; an immediate pause or cancellation is not rollback. A later green result never rewrites the first failure. Stop safely when effects are unknown.",
+  "completionContract": {
+    "requires": [
+      "root_attempt",
+      "retry_lineage",
+      "cause_tags",
+      "evidence_deltas",
+      "outcome_class",
+      "explicit_bound_owner_decision_for_immediate_pause_cancel_or_continue",
+      "partial_effects_preserved"
+    ],
+    "never": [
+      "failure_laundering",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "ordered_attempt_evidence",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

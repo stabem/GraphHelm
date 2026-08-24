@@ -1,0 +1,81 @@
+apiVersion: p50.dev/jpd/v1
+kind: CouncilSelectionPolicyContract
+metadata:
+  id: graphhelm-jpd/council-selection
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  inputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/council-selection-policy.schema.json#evaluation-input
+  outputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/council-selection-policy.schema.json#evaluation-output
+  evaluationOrder: baseline_then_risk_then_dynamic_then_deduplicate
+  availableRoles:
+    - defect-hunter
+    - idea-generator
+    - adversarial-critic
+    - evidence-advocate
+    - accessibility-user
+    - recovery-operator
+    - disagreement-resolver
+  baselineByTier:
+    direct: []
+    deliberative:
+      - defect-hunter
+      - evidence-advocate
+    adversarial:
+      - defect-hunter
+      - adversarial-critic
+      - evidence-advocate
+      - recovery-operator
+  additionsByRiskSignal:
+    accessibility:
+      - accessibility-user
+    ambiguous_behavior:
+      - idea-generator
+      - disagreement-resolver
+    concurrency:
+      - adversarial-critic
+      - recovery-operator
+    critical_ux:
+      - accessibility-user
+      - defect-hunter
+    external_delivery:
+      - evidence-advocate
+      - recovery-operator
+    recovery:
+      - recovery-operator
+    security:
+      - adversarial-critic
+      - defect-hunter
+  dynamicRules:
+    - id: material-claim-conflict
+      predicate:
+        field: materialClaimConflictCount
+        operator: greater_than
+        value: 0
+      addRoles:
+        - disagreement-resolver
+    - id: no-materially-different-alternative
+      predicate:
+        field: materiallyDifferentAlternativeExists
+        operator: equals
+        value: false
+      addRoles:
+        - idea-generator
+    - id: unfalsified-defect-claim
+      predicate:
+        field: unfalsifiedDefectClaimCount
+        operator: greater_than
+        value: 0
+      addRoles:
+        - evidence-advocate
+  limits:
+    maximumConcurrentRoles: 7
+    deduplicateRoles: true
+    deduplicateCorrelatedEvidenceSources: true
+  nonNormativeDescriptions:
+    - Roles exist only for the current risk scope and end with the task.
+    - A unique high or critical finding survives regardless of council majority.
+    - A vote, quorum, or role count never satisfies an observation obligation.
+    - The resolver requests discriminating evidence instead of averaging opinions.

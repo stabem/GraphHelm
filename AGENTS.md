@@ -26,7 +26,7 @@ All documentation in this repository — every file under `docs/`, `README.md`, 
 - Only the Graph Governor may publish operational graph mutations. Agents emit typed signals and proposals.
 - Graph Versions are immutable, canonicalizable, hashable, monotonically versioned, and linked to predecessors.
 - Operational edits are transactional Graph Drafts. UI-only layout changes never create an operational Graph Version or alter the semantic hash.
-- Owner overrides may waive logical quality obligations, but must preserve actor, reason, acknowledged risks, graph versions, waiver, and accurate result status. Structural impossibility is never waivable.
+- New owner overrides may waive logical quality obligations, but must preserve actor, reason, acknowledged risks, graph versions, waiver, and accurate result status. Legacy persisted waivers may decode without a reason under ADR-022; they cannot be reused to author a new override. Structural impossibility is never waivable.
 - The Event Store is append-only. Projections are disposable and must be rebuildable from events; historical evidence is never rewritten by a projection or Dreams.
 - The Policy Engine has no dependency on an LLM, prompt, provider SDK, model runtime, network, or browser.
 - Core modules depend on interfaces, never concrete adapters. Circular crate dependencies are forbidden.
@@ -114,10 +114,13 @@ cargo +1.97.1 run --locked -p graphhelm-cli -- graph replay --events target/grap
 
 All commands must work on Windows PowerShell. Core crates must also compile and test on Linux in CI. Tests may not require internet access, Docker, credentials, provider accounts, browser sessions, or production infrastructure.
 
-## Test-driven development
+## Journey-Proven Development
 
-- Use RED -> GREEN -> REFACTOR for every behavior change. Write the smallest focused failing test first and run it to observe the expected failure before implementation.
-- Keep unit tests beside the owning module. Put cross-crate behavior in integration tests and user-visible contracts in CLI smoke tests.
+- Start from the complete user journey and compile each promise into an observable obligation. Select the smallest proof method strong enough for that obligation and risk; do not apply one universal testing ritual.
+- Use RED -> GREEN -> REFACTOR when a focused automated test is the best proof for the behavior. Preserve unit, property, integration, concurrency, CLI, and browser tests where each observes the correct boundary. Browser journey proof runs only in an explicitly observer-enabled validation environment; the committed offline gate remains browser-session-free and otherwise reports `OBSERVER_MISSING`.
+- If a promised behavior has no adequate observer, stop with `OBSERVER_MISSING`. Never treat a proxy such as HTTP acceptance as proof of delivery or rendering.
+- Keep every retry linked to its initial attempt and evidence delta. A later green result never erases an earlier red result or becomes first-pass success.
+- Keep unit tests beside the owning module. Put cross-crate behavior in integration tests and user-visible contracts in CLI or journey smoke tests.
 - Use fixed clock and ID implementations in tests. Assertions must not depend on wall-clock time, randomness, filesystem ordering, map insertion order, locale, or platform path separators.
 - Stable diagnostics contain `code`, severity, JSON Pointer (or equivalent stable path), concise message, and source file. Tests assert codes and paths, not prose alone.
 - Add property tests where they materially cover canonicalization, immutability, or replay. Keep generators bounded and deterministic under the committed proptest regression seed.

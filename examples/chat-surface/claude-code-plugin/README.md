@@ -9,7 +9,7 @@ server and ships the first two operator skills (`operate-execution`, `observe-ag
    The server writes its bearer token beside the events directory (`<dir>.token`).
 2. Point `GRAPHHELM_TOKEN_FILE` at that token file (or edit `.mcp.json`'s `--token-file`
    argument directly). The token value never travels via argv or chat.
-3. Install the plugin; the `graphhelm` MCP server appears with its ten tools.
+3. Install the plugin; the `graphhelm` MCP server appears with its fourteen tools.
 
 ## Deletability (CHAT_SURFACE_SPEC §7)
 

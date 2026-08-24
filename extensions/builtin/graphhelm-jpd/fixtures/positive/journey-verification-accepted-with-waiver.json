@@ -1,0 +1,425 @@
+{
+  "verificationId": "verification/issue-210/waived",
+  "journeyRunId": "journey-run/issue-210/waived",
+  "contractId": "journey/issue-210-extension-bundle",
+  "contractDigest": "sha256:1313131313131313131313131313131313131313131313131313131313131313",
+  "verifiedAt": "2026-08-22T16:20:00Z",
+  "authority": {
+    "status": "candidate",
+    "validation": {
+      "status": "capability_missing",
+      "code": "JPD_VALIDATOR_MISSING",
+      "missingCapability": "jpd.registered-deterministic-validator",
+      "reason": "No registered deterministic JPD validator is available in extension version 0.1.0."
+    }
+  },
+  "bindings": {
+    "graph": {
+      "graphId": "issue_210_jpd_self_validation_v1",
+      "version": 1,
+      "semanticHash": "sha256:1212121212121212121212121212121212121212121212121212121212121212"
+    },
+    "council": {
+      "status": "executed",
+      "councilRunId": "council-run/issue-210/waived",
+      "resultRef": {
+        "referenceId": "council-result.issue-210.waived",
+        "contentDigest": "sha256:9494949494949494949494949494949494949494949494949494949494949494"
+      },
+      "result": {
+        "resultId": "council-result/issue-210/waived",
+        "councilRunId": "council-run/issue-210/waived",
+        "journeyRunId": "journey-run/issue-210/waived",
+        "contractId": "journey/issue-210-extension-bundle",
+        "createdAt": "2026-08-22T16:18:00Z",
+        "status": "completed",
+        "authority": {
+          "status": "candidate",
+          "validation": {
+            "status": "capability_missing",
+            "code": "COUNCIL_RESULT_VALIDATOR_MISSING",
+            "missingCapability": "jpd.registered-deterministic-council-validator",
+            "reason": "No registered deterministic council-result validator is available in extension version 0.1.0."
+          },
+          "mayDecideGate": false,
+          "mayPublishGraph": false
+        },
+        "selection": {
+          "status": "advisory",
+          "assuranceTier": "deliberative",
+          "policyRef": {
+            "referenceId": "policy.graphhelm-jpd.council-selection",
+            "contentDigest": "sha256:9090909090909090909090909090909090909090909090909090909090909090"
+          },
+          "inputDigest": "sha256:9191919191919191919191919191919191919191919191919191919191919191",
+          "selectedRoles": [
+            "defect-hunter",
+            "evidence-advocate"
+          ],
+          "evaluation": {
+            "status": "capability_missing",
+            "code": "COUNCIL_SELECTION_EVALUATOR_MISSING",
+            "missingCapability": "jpd.registered-deterministic-council-selector",
+            "reason": "The selection follows the declarative policy but has no registered deterministic evaluator receipt."
+          }
+        },
+        "participants": {
+          "completeness": "complete",
+          "participantCount": 2,
+          "inventoryDigest": "sha256:9292929292929292929292929292929292929292929292929292929292929292",
+          "items": [
+            {
+              "identity": {
+                "participantId": "participant/issue-210/defect-hunter",
+                "role": "defect-hunter",
+                "agentDefinitionRef": {
+                  "referenceId": "agent.graphhelm-jpd.defect-hunter",
+                  "contentDigest": "sha256:a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+                }
+              },
+              "run": {
+                "runId": "participant-run/issue-210/defect-hunter",
+                "status": "completed",
+                "authority": {
+                  "kind": "task_local_advisory",
+                  "grantRef": {
+                    "referenceId": "grant.issue-210.council",
+                    "contentDigest": "sha256:a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
+                  },
+                  "taskScopeDigest": "sha256:a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+                  "mayDecideGate": false,
+                  "mayPublishGraph": false
+                },
+                "model": {
+                  "provider": "example-provider",
+                  "modelId": "example-model",
+                  "modelVersion": "2026-08-22"
+                },
+                "promptDigest": "sha256:a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+                "contextCapsuleDigest": "sha256:a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+                "capabilitySetDigest": "sha256:a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+                "inputDigest": "sha256:a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8",
+                "outputRef": {
+                  "referenceId": "participant-output.issue-210.defect-hunter",
+                  "contentDigest": "sha256:a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9"
+                }
+              }
+            },
+            {
+              "identity": {
+                "participantId": "participant/issue-210/evidence-advocate",
+                "role": "evidence-advocate",
+                "agentDefinitionRef": {
+                  "referenceId": "agent.graphhelm-jpd.evidence-advocate",
+                  "contentDigest": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+                }
+              },
+              "run": {
+                "runId": "participant-run/issue-210/evidence-advocate",
+                "status": "completed",
+                "authority": {
+                  "kind": "task_local_advisory",
+                  "grantRef": {
+                    "referenceId": "grant.issue-210.council",
+                    "contentDigest": "sha256:a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
+                  },
+                  "taskScopeDigest": "sha256:a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+                  "mayDecideGate": false,
+                  "mayPublishGraph": false
+                },
+                "model": {
+                  "provider": "example-provider",
+                  "modelId": "example-model",
+                  "modelVersion": "2026-08-22"
+                },
+                "promptDigest": "sha256:b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
+                "contextCapsuleDigest": "sha256:b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
+                "capabilitySetDigest": "sha256:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
+                "inputDigest": "sha256:b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8",
+                "outputRef": {
+                  "referenceId": "participant-output.issue-210.evidence-advocate",
+                  "contentDigest": "sha256:b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9"
+                }
+              }
+            }
+          ]
+        },
+        "lineage": {
+          "contractDigest": "sha256:1313131313131313131313131313131313131313131313131313131313131313",
+          "selectionInputDigest": "sha256:9191919191919191919191919191919191919191919191919191919191919191",
+          "participantInventoryDigest": "sha256:9292929292929292929292929292929292929292929292929292929292929292",
+          "normalizationInputDigest": "sha256:9393939393939393939393939393939393939393939393939393939393939393",
+          "decisionInputDigest": "sha256:9797979797979797979797979797979797979797979797979797979797979797",
+          "canonicalization": "rfc8785-json",
+          "digestAlgorithm": "sha256"
+        },
+        "claims": {
+          "completeness": {
+            "status": "complete",
+            "includesEveryParticipantOutput": true,
+            "preservesRejectedAndFalsified": true
+          },
+          "itemCount": 1,
+          "inventoryDigest": "sha256:9595959595959595959595959595959595959595959595959595959595959595",
+          "sourceParticipantInventoryDigest": "sha256:9292929292929292929292929292929292929292929292929292929292929292",
+          "items": [
+            {
+              "claimId": "claim/issue-210/browser-proof",
+              "kind": "objection",
+              "originParticipantId": "participant/issue-210/defect-hunter",
+              "sourceRef": {
+                "referenceId": "participant-output.issue-210.defect-hunter",
+                "contentDigest": "sha256:a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9"
+              },
+              "normalizedClaimDigest": "sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "status": "unresolved",
+              "severity": "high",
+              "statementDigest": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+              "evidenceRefs": []
+            }
+          ]
+        },
+        "dissent": {
+          "completeness": {
+            "status": "complete",
+            "includesResolved": true,
+            "includesUnresolved": true
+          },
+          "itemCount": 1,
+          "inventoryDigest": "sha256:9696969696969696969696969696969696969696969696969696969696969696",
+          "sourceClaimInventoryDigest": "sha256:9595959595959595959595959595959595959595959595959595959595959595",
+          "items": [
+            {
+              "dissentId": "dissent/issue-210/browser-proof",
+              "kind": "evidence_gap",
+              "participantIds": [
+                "participant/issue-210/defect-hunter",
+                "participant/issue-210/evidence-advocate"
+              ],
+              "claimIds": [
+                "claim/issue-210/browser-proof"
+              ],
+              "statementDigest": "sha256:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4",
+              "status": "unresolved",
+              "evidenceRefs": [],
+              "discriminatingObservation": "Install a browser semantic observer and replay the complete user journey."
+            }
+          ]
+        },
+        "decision": {
+          "status": "recommended_with_dissent",
+          "authority": "advisory_only",
+          "mayDecideGate": false,
+          "claimInventoryDigest": "sha256:9595959595959595959595959595959595959595959595959595959595959595",
+          "dissentInventoryDigest": "sha256:9696969696969696969696969696969696969696969696969696969696969696",
+          "decisionInputDigest": "sha256:9797979797979797979797979797979797979797979797979797979797979797",
+          "selectedClaimIds": [],
+          "rejectedClaimIds": [],
+          "unresolvedDissentIds": [
+            "dissent/issue-210/browser-proof"
+          ],
+          "rationaleDigest": "sha256:c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
+          "evidenceRefs": []
+        }
+      },
+      "claimInventoryDigest": "sha256:9595959595959595959595959595959595959595959595959595959595959595",
+      "dissentInventoryDigest": "sha256:9696969696969696969696969696969696969696969696969696969696969696",
+      "bindingValidation": {
+        "status": "capability_missing",
+        "code": "COUNCIL_BINDING_VALIDATOR_MISSING",
+        "missingCapability": "jpd.registered-deterministic-council-binding-validator",
+        "reason": "Schema validation requires the result and digests but cannot authenticate or recompute their equality."
+      }
+    },
+    "code": {
+      "repository": "stabem/GraphHelm",
+      "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "revisionAlgorithm": "git-sha1",
+      "dirty": false,
+      "snapshotDigest": "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+    },
+    "configuration": {
+      "digest": "sha256:2323232323232323232323232323232323232323232323232323232323232323",
+      "environment": "offline-test"
+    },
+    "fixtures": [
+      {
+        "fixtureId": "fixture/jpd-self-validation",
+        "digest": "sha256:3434343434343434343434343434343434343434343434343434343434343434"
+      }
+    ],
+    "observers": [
+      {
+        "observerId": "graphhelm-cli-graph-contract",
+        "version": "1.0.0",
+        "configurationDigest": "sha256:4545454545454545454545454545454545454545454545454545454545454545",
+        "environmentDigest": "sha256:5656565656565656565656565656565656565656565656565656565656565656",
+        "capabilityReceipt": {
+          "evidenceId": "evidence.observer-capability.graphhelm-cli-waived",
+          "contentSha256": "5757575757575757575757575757575757575757575757575757575757575757",
+          "ciphertextSha256": "5858585858585858585858585858585858585858585858585858585858585858"
+        },
+        "evidenceFresh": true
+      }
+    ]
+  },
+  "obligations": [
+    {
+      "obligationId": "obligation/browser-operability",
+      "promiseId": "promise/install-control-operable",
+      "status": "observer_missing",
+      "failureKind": "logical_quality",
+      "evidenceRefs": [],
+      "refusal": {
+        "code": "OBSERVER_MISSING",
+        "missingCapability": "browser.semantic-journey",
+        "reason": "No browser observer is installed in the initial bundle."
+      },
+      "waiver": {
+        "waiverRef": {
+          "referenceId": "policy-waiver.issue-210.browser-obligation",
+          "contentDigest": "sha256:6060606060606060606060606060606060606060606060606060606060606060"
+        },
+        "waiverSchema": "https://p50.dev/schemas/policy-waiver.schema.json",
+        "reasonPresent": true,
+        "coverage": {
+          "verificationId": "verification/issue-210/waived",
+          "blockerKind": "obligation",
+          "blockerId": "obligation/browser-operability",
+          "blockerDigest": "sha256:5151515151515151515151515151515151515151515151515151515151515151"
+        },
+        "validation": {
+          "evaluatorId": "graphhelm/policy-waiver-resolver",
+          "evaluatorVersion": "1.0.0",
+          "inputDigest": "sha256:6161616161616161616161616161616161616161616161616161616161616161",
+          "evaluatedAt": "2026-08-22T16:19:59Z",
+          "effectiveThrough": "2026-08-23T16:20:00Z",
+          "activeAtVerification": true,
+          "receipt": {
+            "evidenceId": "evidence.waiver-validation.browser-obligation",
+            "contentSha256": "6262626262626262626262626262626262626262626262626262626262626262",
+            "ciphertextSha256": "6363636363636363636363636363636363636363636363636363636363636363"
+          }
+        }
+      }
+    }
+  ],
+  "retry": {
+    "retryChainRef": {
+      "referenceId": "retry-chain.issue-210.waived",
+      "contentDigest": "sha256:5959595959595959595959595959595959595959595959595959595959595959"
+    },
+    "outcomeClassification": "recovered_success",
+    "lineageValidation": {
+      "status": "evaluated",
+      "result": "valid",
+      "evaluator": {
+        "evaluatorId": "graphhelm-jpd/retry-lineage-validator",
+        "evaluatorVersion": "1.0.0",
+        "inputDigest": "sha256:7979797979797979797979797979797979797979797979797979797979797979",
+        "receipt": {
+          "evidenceId": "evidence.retry-lineage.issue-210.waived",
+          "contentSha256": "8080808080808080808080808080808080808080808080808080808080808080",
+          "ciphertextSha256": "8181818181818181818181818181818181818181818181818181818181818181"
+        }
+      }
+    },
+    "classification": {
+      "status": "evaluated",
+      "evaluator": {
+        "evaluatorId": "graphhelm-jpd/retry-classifier",
+        "evaluatorVersion": "1.0.0",
+        "inputDigest": "sha256:6464646464646464646464646464646464646464646464646464646464646464",
+        "receipt": {
+          "evidenceId": "evidence.retry-classification.issue-210.waived",
+          "contentSha256": "6565656565656565656565656565656565656565656565656565656565656565",
+          "ciphertextSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      }
+    },
+    "firstFailurePreserved": true
+  },
+  "disagreements": [
+    {
+      "disagreementId": "disagreement/browser-proof",
+      "status": "observer_missing",
+      "failureKind": "logical_quality",
+      "resolution": "The browser fact remains unproven; the owner may accept the risk but cannot relabel it as proven.",
+      "evidenceRefs": [],
+      "waiver": {
+        "waiverRef": {
+          "referenceId": "policy-waiver.issue-210.browser-disagreement",
+          "contentDigest": "sha256:6767676767676767676767676767676767676767676767676767676767676767"
+        },
+        "waiverSchema": "https://p50.dev/schemas/policy-waiver.schema.json",
+        "reasonPresent": true,
+        "coverage": {
+          "verificationId": "verification/issue-210/waived",
+          "blockerKind": "disagreement",
+          "blockerId": "disagreement/browser-proof",
+          "blockerDigest": "sha256:5252525252525252525252525252525252525252525252525252525252525252"
+        },
+        "validation": {
+          "evaluatorId": "graphhelm/policy-waiver-resolver",
+          "evaluatorVersion": "1.0.0",
+          "inputDigest": "sha256:6868686868686868686868686868686868686868686868686868686868686868",
+          "evaluatedAt": "2026-08-22T16:19:59Z",
+          "effectiveThrough": "2026-08-23T16:20:00Z",
+          "activeAtVerification": true,
+          "receipt": {
+            "evidenceId": "evidence.waiver-validation.browser-disagreement",
+            "contentSha256": "6969696969696969696969696969696969696969696969696969696969696969",
+            "ciphertextSha256": "7070707070707070707070707070707070707070707070707070707070707070"
+          }
+        }
+      }
+    }
+  ],
+  "gate": {
+    "status": "evaluated",
+    "result": "rejected",
+    "failureKind": "logical_quality",
+    "policyIds": [
+      "graphhelm-jpd/assurance-tier"
+    ],
+    "evidenceDigest": "sha256:7171717171717171717171717171717171717171717171717171717171717171",
+    "evaluator": {
+      "evaluatorId": "graphhelm-jpd/assurance-gate",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:7272727272727272727272727272727272727272727272727272727272727272",
+      "receipt": {
+        "evidenceId": "evidence.gate.issue-210.waived",
+        "contentSha256": "7373737373737373737373737373737373737373737373737373737373737373",
+        "ciphertextSha256": "7474747474747474747474747474747474747474747474747474747474747474"
+      }
+    },
+    "waiver": {
+      "waiverRef": {
+        "referenceId": "policy-waiver.issue-210.rejected-gate",
+        "contentDigest": "sha256:7575757575757575757575757575757575757575757575757575757575757575"
+      },
+      "waiverSchema": "https://p50.dev/schemas/policy-waiver.schema.json",
+      "reasonPresent": true,
+      "coverage": {
+        "verificationId": "verification/issue-210/waived",
+        "blockerKind": "gate",
+        "blockerId": "gate/graphhelm-jpd-assurance-tier",
+        "blockerDigest": "sha256:5353535353535353535353535353535353535353535353535353535353535353"
+      },
+      "validation": {
+        "evaluatorId": "graphhelm/policy-waiver-resolver",
+        "evaluatorVersion": "1.0.0",
+        "inputDigest": "sha256:7676767676767676767676767676767676767676767676767676767676767676",
+        "evaluatedAt": "2026-08-22T16:19:59Z",
+        "effectiveThrough": "2026-08-23T16:20:00Z",
+        "activeAtVerification": true,
+        "receipt": {
+          "evidenceId": "evidence.waiver-validation.rejected-gate",
+          "contentSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "ciphertextSha256": "7878787878787878787878787878787878787878787878787878787878787878"
+        }
+      }
+    }
+  },
+  "proposedResultStatus": "accepted_with_waiver"
+}

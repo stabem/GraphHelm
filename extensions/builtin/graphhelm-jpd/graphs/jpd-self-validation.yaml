@@ -1,0 +1,276 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: issue_210_jpd_self_validation_v1
+  name: Exercise issue 210 JPD contracts
+  executionId: issue_210_jpd_self_validation
+  version: 1
+  labels:
+    origin: issue-210
+    scope: task-specific
+    reusable: "false"
+    effects: offline-only
+    validation: contract-level-dogfood
+spec:
+  entrypoints:
+    - contract_journey
+  nodes:
+    contract_journey:
+      type: tool
+      name: Contract the issue 210 journey
+      objective: Materialize the task-specific user journey and failure states as a bounded contract.
+      optionality: required
+      output:
+        schema: https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json
+      completion:
+        requires:
+          - outputSchemaValid
+      timeoutSeconds: 120
+    compile_observations:
+      type: evaluator
+      name: Compile observation obligations
+      objective: Validate the declarative observation contract and record that matching remains advisory until a registered evaluator runs it.
+      optionality: required
+      input:
+        schema: https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json
+      output:
+        schema: https://p50.dev/extensions/graphhelm-jpd/schemas/observation-obligation.schema.json
+      completion:
+        requires:
+          - obligationContractStructurallyValid
+          - registeredEvaluatorOrAdvisoryStatusRecorded
+      timeoutSeconds: 120
+    defect_hunter:
+      type: agent
+      name: Hunt extension-package defects
+      objective: Find the shortest reproducible counterexample in the issue 210 bundle.
+      optionality: required
+      agent:
+        ref: extension://graphhelm-jpd/agent/defect-hunter
+      completion:
+        requires:
+          - evidenceLinkedResult
+      timeoutSeconds: 300
+    idea_generator:
+      type: agent
+      name: Challenge the package composition
+      objective: Find a materially simpler or safer task-scoped resource composition for issue 210.
+      optionality: recommended
+      agent:
+        ref: extension://graphhelm-jpd/agent/idea-generator
+      completion:
+        requires:
+          - boundedAlternatives
+      timeoutSeconds: 300
+    adversarial_critic:
+      type: agent
+      name: Attack unsupported completion claims
+      objective: Identify proxies, missing bounds, and evidence gaps in the issue 210 bundle.
+      optionality: required
+      agent:
+        ref: extension://graphhelm-jpd/agent/adversarial-critic
+      completion:
+        requires:
+          - evidenceGapReport
+      timeoutSeconds: 300
+    evidence_advocate:
+      type: agent
+      name: Falsify reported package defects
+      objective: Test the strongest supported case for the issue 210 bundle while preserving contrary evidence.
+      optionality: required
+      agent:
+        ref: extension://graphhelm-jpd/agent/evidence-advocate
+      completion:
+        requires:
+          - typedClaimDispositions
+      timeoutSeconds: 300
+    accessibility_user:
+      type: agent
+      name: Inspect accessibility observability
+      objective: Verify that inaccessible or unavailable browser observations become typed refusals.
+      optionality: required
+      agent:
+        ref: extension://graphhelm-jpd/agent/accessibility-user
+      completion:
+        requires:
+          - observerCapabilityResult
+      timeoutSeconds: 300
+    recovery_operator:
+      type: agent
+      name: Inspect retry provenance
+      objective: Verify first-failure preservation, cause tags, evidence deltas, and safe recovery classification.
+      optionality: required
+      agent:
+        ref: extension://graphhelm-jpd/agent/recovery-operator
+      completion:
+        requires:
+          - retryChainResult
+      timeoutSeconds: 300
+    resolve_disagreement:
+      type: agent
+      name: Resolve material disagreements
+      objective: Select discriminating evidence for conflicting issue 210 findings without voting.
+      optionality: required
+      agent:
+        ref: extension://graphhelm-jpd/agent/disagreement-resolver
+      completion:
+        requires:
+          - dissentPreserved
+          - discriminatingEvidenceSelected
+      timeoutSeconds: 300
+    verify_journey:
+      type: tool
+      name: Verify issue 210 obligations
+      objective: Bind graph, code, configuration, fixtures, observers, retries, and evidence to one verification result.
+      optionality: required
+      input:
+        schema: https://p50.dev/extensions/graphhelm-jpd/schemas/council-result.schema.json
+      output:
+        schema: https://p50.dev/extensions/graphhelm-jpd/schemas/journey-verification-result.schema.json
+      completion:
+        requires:
+          - everyObligationAccountedFor
+          - retryHistoryPreserved
+      timeoutSeconds: 300
+    deterministic_gate:
+      type: gate
+      name: Record the issue 210 gate result or capability gap
+      objective: Accept a registered evaluator result or preserve GATE_CAPABILITY_MISSING without relabeling the result as proven.
+      optionality: required
+      completion:
+        requires:
+          - registeredEvaluatorResultOrTypedCapabilityGap
+          - noUnsupportedSuccessClaim
+      timeoutSeconds: 60
+  edges:
+    - id: contract_to_observations
+      from: contract_journey
+      to: compile_observations
+      type: data
+    - id: contract_to_defect_hunter
+      from: contract_journey
+      to: defect_hunter
+      type: data
+    - id: contract_to_idea_generator
+      from: contract_journey
+      to: idea_generator
+      type: data
+    - id: contract_to_accessibility_user
+      from: contract_journey
+      to: accessibility_user
+      type: data
+    - id: contract_to_recovery_operator
+      from: contract_journey
+      to: recovery_operator
+      type: data
+    - id: observations_to_defect_hunter
+      from: compile_observations
+      to: defect_hunter
+      type: evidence
+    - id: observations_to_idea_generator
+      from: compile_observations
+      to: idea_generator
+      type: evidence
+    - id: observations_to_adversarial_critic
+      from: compile_observations
+      to: adversarial_critic
+      type: evidence
+    - id: observations_to_evidence_advocate
+      from: compile_observations
+      to: evidence_advocate
+      type: evidence
+    - id: observations_to_accessibility_user
+      from: compile_observations
+      to: accessibility_user
+      type: evidence
+    - id: observations_to_recovery_operator
+      from: compile_observations
+      to: recovery_operator
+      type: evidence
+    - id: defect_hunter_to_evidence_advocate
+      from: defect_hunter
+      to: evidence_advocate
+      type: data
+    - id: idea_generator_to_adversarial_critic
+      from: idea_generator
+      to: adversarial_critic
+      type: data
+    - id: defect_hunter_to_resolver
+      from: defect_hunter
+      to: resolve_disagreement
+      type: evidence
+    - id: idea_generator_to_resolver
+      from: idea_generator
+      to: resolve_disagreement
+      type: evidence
+    - id: adversarial_critic_to_resolver
+      from: adversarial_critic
+      to: resolve_disagreement
+      type: data
+    - id: evidence_advocate_to_resolver
+      from: evidence_advocate
+      to: resolve_disagreement
+      type: evidence
+    - id: accessibility_user_to_resolver
+      from: accessibility_user
+      to: resolve_disagreement
+      type: evidence
+    - id: recovery_operator_to_resolver
+      from: recovery_operator
+      to: resolve_disagreement
+      type: evidence
+    - id: resolver_to_verifier
+      from: resolve_disagreement
+      to: verify_journey
+      type: data
+    - id: contract_to_verifier
+      from: contract_journey
+      to: verify_journey
+      type: evidence
+    - id: observations_to_verifier
+      from: compile_observations
+      to: verify_journey
+      type: evidence
+    - id: defect_hunter_to_verifier
+      from: defect_hunter
+      to: verify_journey
+      type: evidence
+    - id: idea_generator_to_verifier
+      from: idea_generator
+      to: verify_journey
+      type: evidence
+    - id: adversarial_critic_to_verifier
+      from: adversarial_critic
+      to: verify_journey
+      type: evidence
+    - id: evidence_advocate_to_verifier
+      from: evidence_advocate
+      to: verify_journey
+      type: evidence
+    - id: accessibility_user_to_verifier
+      from: accessibility_user
+      to: verify_journey
+      type: evidence
+    - id: recovery_operator_to_verifier
+      from: recovery_operator
+      to: verify_journey
+      type: evidence
+    - id: verifier_to_gate
+      from: verify_journey
+      to: deterministic_gate
+      type: evidence
+  budgets:
+    maxNodes: 16
+    maxDepth: 7
+    maxMutations: 0
+    maxRetriesPerNode: 1
+    maxWallClockSeconds: 1800
+    maxApiCostUsd: 5
+    maxParallelModelCalls: 6
+  policies:
+    - extension://graphhelm-jpd/policy/assurance-tier-policy
+    - extension://graphhelm-jpd/policy/council-selection-policy
+  completion:
+    terminalNodes:
+      - deterministic_gate
+    allowWaivers: false

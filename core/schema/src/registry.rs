@@ -1,14 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use graphhelm_protocols::Diagnostic;
-use jsonschema::{Draft, Registry, Retrieve, Uri, Validator};
+use jsonschema::{Draft, FancyRegex, PatternOptions, Registry, Retrieve, Uri, Validator};
 use std::fmt;
 
 const GRAPH_SCHEMA: &str = include_str!("../../../schemas/graph.schema.json");
 const NODE_SCHEMA: &str = include_str!("../../../schemas/node.schema.json");
 const EDGE_SCHEMA: &str = include_str!("../../../schemas/edge.schema.json");
 const AGENT_SCHEMA: &str = include_str!("../../../schemas/agent.schema.json");
+const EXTENSION_SCHEMA: &str = include_str!("../../../schemas/extension.schema.json");
 const WAIVER_SCHEMA: &str = include_str!("../../../schemas/policy-waiver.schema.json");
 const EVENT_SCHEMA: &str = include_str!("../../../schemas/event-envelope.schema.json");
 const SCOPE_SCHEMA: &str = include_str!("../../../schemas/repository-scope.schema.json");
@@ -39,6 +40,7 @@ const GRAPH_ID: &str = "https://p50.dev/schemas/graph.schema.json";
 const NODE_ID: &str = "https://p50.dev/schemas/node.schema.json";
 const EDGE_ID: &str = "https://p50.dev/schemas/edge.schema.json";
 const AGENT_ID: &str = "https://p50.dev/schemas/agent.schema.json";
+const EXTENSION_ID: &str = "https://p50.dev/schemas/extension.schema.json";
 const WAIVER_ID: &str = "https://p50.dev/schemas/policy-waiver.schema.json";
 const EVENT_ID: &str = "https://p50.dev/schemas/event-envelope.schema.json";
 const SCOPE_ID: &str = "https://p50.dev/schemas/repository-scope.schema.json";
@@ -54,6 +56,17 @@ const MAX_INLINE_SCHEMA_BYTES: usize = 1024 * 1024;
 const MAX_INLINE_SCHEMA_DEPTH: usize = 64;
 const MAX_INLINE_SCHEMA_VALUES: usize = 32 * 1024;
 const MAX_INLINE_SCHEMA_KEY_BYTES: usize = 512 * 1024;
+const MAX_INLINE_SCHEMA_APPLICATOR_DEPTH: usize = 16;
+const MAX_INLINE_SCHEMA_APPLICATOR_BRANCHES: usize = 4 * 1024;
+const MAX_INLINE_INSTANCE_VALUES: usize = 32 * 1024;
+const MAX_VALIDATION_INSTANCE_VALUES: usize = 128 * 1024;
+const MAX_VALIDATION_TEXT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_VALIDATION_DIAGNOSTICS: usize = 256;
+const MAX_VALIDATION_WORK_UNITS: usize = 32 * 1024 * 1024;
+const MAX_SCHEMA_REFERENCE_NODES: usize = 128 * 1024;
+const REGEX_BACKTRACK_LIMIT: usize = 100_000;
+const REGEX_COMPILED_SIZE_LIMIT: usize = 1024 * 1024;
+const REGEX_DFA_SIZE_LIMIT: usize = 2 * 1024 * 1024;
 const INLINE_SCHEMA_ID: &str = "urn:graphhelm:inline-schema";
 
 #[derive(Clone, Copy)]
@@ -109,7 +122,48 @@ impl std::error::Error for InlineSchemaError {}
 pub fn compile_inline_schema(schema: &serde_json::Value) -> Result<(), InlineSchemaError> {
     preflight_inline_schema(schema)?;
     let registry = prepare_inline_registry_with(schema, RejectExternalResources)?;
+    resolved_schema_work_scores(&registry, &[(INLINE_SCHEMA_ID, schema)])?;
     build_inline_validator_with(schema, &registry, RejectExternalResources)
+}
+
+/// Validates one bounded value against an untrusted inline Draft 2020-12 schema.
+///
+/// Schema compilation remains fully offline. Diagnostics contain only stable
+/// constraint prose and JSON Pointers; offending values are never echoed.
+pub fn validate_inline_value(
+    schema: &serde_json::Value,
+    value: &serde_json::Value,
+    source: &str,
+) -> Result<Vec<Diagnostic>, InlineSchemaError> {
+    schema_validation_work_score(schema)?;
+    let Some(instance_work_units) =
+        instance_validation_work_units(value, MAX_INLINE_INSTANCE_VALUES, MAX_FILE_BYTES)
+    else {
+        return Err(InlineSchemaError::LimitExceeded);
+    };
+    if serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > MAX_FILE_BYTES) {
+        return Err(InlineSchemaError::LimitExceeded);
+    }
+    let registry = prepare_inline_registry_with(schema, RejectExternalResources)?;
+    let work_scores = resolved_schema_work_scores(&registry, &[(INLINE_SCHEMA_ID, schema)])?;
+    let work_score = work_scores[INLINE_SCHEMA_ID];
+    if !validation_work_is_bounded(
+        work_score.reachable_work_units,
+        work_score.expanded_work_units,
+        instance_work_units,
+    ) {
+        return Err(InlineSchemaError::LimitExceeded);
+    }
+    let validator = jsonschema::options()
+        .with_draft(Draft::Draft202012)
+        .with_base_uri(INLINE_SCHEMA_ID)
+        .with_registry(&registry)
+        .with_retriever(RejectExternalResources)
+        .with_pattern_options(bounded_pattern_options())
+        .should_validate_formats(true)
+        .build(schema)
+        .map_err(|_| InlineSchemaError::Invalid)?;
+    Ok(collect_validation_diagnostics(&validator, value, source))
 }
 
 fn prepare_inline_registry_with<R: Retrieve + 'static>(
@@ -135,20 +189,274 @@ fn build_inline_validator_with<R: Retrieve + 'static>(
         .with_base_uri(INLINE_SCHEMA_ID)
         .with_registry(registry)
         .with_retriever(retriever)
+        .with_pattern_options(bounded_pattern_options())
         .should_validate_formats(true)
         .build(schema)
         .map(|_| ())
         .map_err(|_| InlineSchemaError::Invalid)
 }
 
+fn bounded_pattern_options() -> PatternOptions<FancyRegex> {
+    PatternOptions::fancy_regex()
+        .backtrack_limit(REGEX_BACKTRACK_LIMIT)
+        .size_limit(REGEX_COMPILED_SIZE_LIMIT)
+        .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SchemaGraphNodeKey {
+    address: usize,
+    base_uri: String,
+}
+
+struct SchemaGraphNode {
+    local_work_units: usize,
+    edges: Vec<SchemaGraphNodeKey>,
+}
+
+#[derive(Clone, Copy)]
+struct SchemaWorkScore {
+    reachable_work_units: usize,
+    expanded_work_units: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SchemaReferenceGraphError {
+    Invalid,
+    LimitExceeded,
+}
+
+impl From<SchemaReferenceGraphError> for InlineSchemaError {
+    fn from(error: SchemaReferenceGraphError) -> Self {
+        match error {
+            SchemaReferenceGraphError::Invalid => Self::Invalid,
+            SchemaReferenceGraphError::LimitExceeded => Self::LimitExceeded,
+        }
+    }
+}
+
+fn schema_graph_node_key(schema: &serde_json::Value, base_uri: &Uri<String>) -> SchemaGraphNodeKey {
+    SchemaGraphNodeKey {
+        address: std::ptr::from_ref(schema).addr(),
+        base_uri: base_uri.as_str().to_owned(),
+    }
+}
+
+fn schema_node_local_work_units(
+    schema: &serde_json::Value,
+    subschemas: &[&serde_json::Value],
+) -> Result<usize, SchemaReferenceGraphError> {
+    let child_addresses: BTreeSet<_> = subschemas
+        .iter()
+        .map(|child| std::ptr::from_ref(*child).addr())
+        .collect();
+    let root_address = std::ptr::from_ref(schema).addr();
+    let mut work_units = 0usize;
+    let mut stack = vec![schema];
+    while let Some(value) = stack.pop() {
+        let address = std::ptr::from_ref(value).addr();
+        if address != root_address && child_addresses.contains(&address) {
+            continue;
+        }
+        work_units = work_units
+            .checked_add(1)
+            .ok_or(SchemaReferenceGraphError::LimitExceeded)?;
+        match value {
+            serde_json::Value::Array(items) => stack.extend(items),
+            serde_json::Value::Object(members) => stack.extend(members.values()),
+            _ => {}
+        }
+    }
+    if let Some(schema_object) = schema.as_object() {
+        for (keyword, value) in schema_object {
+            work_units = work_units
+                .checked_add(
+                    schema_keyword_work_units(keyword, value)
+                        .map_err(|_| SchemaReferenceGraphError::LimitExceeded)?,
+                )
+                .ok_or(SchemaReferenceGraphError::LimitExceeded)?;
+            if keyword == "$ref" {
+                work_units = work_units
+                    .checked_add(1)
+                    .ok_or(SchemaReferenceGraphError::LimitExceeded)?;
+            }
+        }
+    }
+    if work_units > MAX_VALIDATION_WORK_UNITS {
+        return Err(SchemaReferenceGraphError::LimitExceeded);
+    }
+    Ok(work_units)
+}
+
+fn resolved_schema_work_scores<'a>(
+    registry: &'a Registry<'a>,
+    roots: &[(&'a str, &'a serde_json::Value)],
+) -> Result<BTreeMap<String, SchemaWorkScore>, SchemaReferenceGraphError> {
+    let mut root_keys = BTreeMap::new();
+    let mut pending = Vec::with_capacity(roots.len());
+    for &(root_uri, schema) in roots {
+        let base_uri =
+            jsonschema::uri::from_str(root_uri).map_err(|_| SchemaReferenceGraphError::Invalid)?;
+        let resolver = registry
+            .resolver(base_uri)
+            .in_subresource(Draft::Draft202012.create_resource_ref(schema))
+            .map_err(|_| SchemaReferenceGraphError::Invalid)?;
+        let key = schema_graph_node_key(schema, resolver.base_uri().as_ref());
+        root_keys.insert(root_uri.to_owned(), key);
+        pending.push((schema, resolver, Draft::Draft202012));
+    }
+
+    let mut graph = BTreeMap::new();
+    while let Some((schema, resolver, draft)) = pending.pop() {
+        let key = schema_graph_node_key(schema, resolver.base_uri().as_ref());
+        if graph.contains_key(&key) {
+            continue;
+        }
+        if graph.len() >= MAX_SCHEMA_REFERENCE_NODES {
+            return Err(SchemaReferenceGraphError::LimitExceeded);
+        }
+
+        let subschemas: Vec<_> = draft.subresources_of(schema).collect();
+        let local_work_units = schema_node_local_work_units(schema, &subschemas)?;
+        let mut edges = Vec::with_capacity(subschemas.len().saturating_add(1));
+
+        if let Some(schema_object) = schema.as_object() {
+            if schema_object.contains_key("$recursiveRef") {
+                return Err(SchemaReferenceGraphError::Invalid);
+            }
+            for keyword in ["$ref", "$dynamicRef"] {
+                let Some(reference) = schema_object
+                    .get(keyword)
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                let resolved = resolver
+                    .lookup(reference)
+                    .map_err(|_| SchemaReferenceGraphError::Invalid)?;
+                let (target, target_resolver, target_draft) = resolved.into_inner();
+                let target_key = schema_graph_node_key(target, target_resolver.base_uri().as_ref());
+                // Draft 2020-12 dynamic recursion can point an anchor back to the schema that
+                // declares it. The validator's work is then bounded by the already-counted
+                // instance tree, so do not turn this normative fixed point into schema expansion.
+                // Keep ordinary non-empty `$ref` recursion fail-closed: unlike `$dynamicRef`, it
+                // is not the accepted dynamic-recursion contract exercised by GraphHelm schemas.
+                let is_bounded_self_reference = target_key == key
+                    && ((keyword == "$ref" && reference.is_empty()) || keyword == "$dynamicRef");
+                if !is_bounded_self_reference {
+                    edges.push(target_key);
+                    pending.push((target, target_resolver, target_draft));
+                }
+            }
+        }
+
+        for child in subschemas {
+            let child_draft = draft.detect(child);
+            let child_resolver = resolver
+                .in_subresource(child_draft.create_resource_ref(child))
+                .map_err(|_| SchemaReferenceGraphError::Invalid)?;
+            let child_key = schema_graph_node_key(child, child_resolver.base_uri().as_ref());
+            edges.push(child_key);
+            pending.push((child, child_resolver, child_draft));
+        }
+        graph.insert(
+            key,
+            SchemaGraphNode {
+                local_work_units,
+                edges,
+            },
+        );
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum VisitState {
+        Visiting,
+        Done,
+    }
+
+    let mut states = BTreeMap::new();
+    let mut costs = BTreeMap::new();
+    for root_key in root_keys.values() {
+        if costs.contains_key(root_key) {
+            continue;
+        }
+        states.insert(root_key.clone(), VisitState::Visiting);
+        let mut stack = vec![(root_key.clone(), 0usize)];
+        while let Some((key, next_edge)) = stack.last_mut() {
+            let node = graph.get(key).ok_or(SchemaReferenceGraphError::Invalid)?;
+            if let Some(child) = node.edges.get(*next_edge) {
+                *next_edge += 1;
+                match states.get(child) {
+                    Some(VisitState::Visiting) => {
+                        return Err(SchemaReferenceGraphError::LimitExceeded);
+                    }
+                    Some(VisitState::Done) => {}
+                    None => {
+                        states.insert(child.clone(), VisitState::Visiting);
+                        stack.push((child.clone(), 0));
+                    }
+                }
+                continue;
+            }
+
+            let mut expanded_work_units = node.local_work_units;
+            for child in &node.edges {
+                expanded_work_units = expanded_work_units
+                    .checked_add(*costs.get(child).ok_or(SchemaReferenceGraphError::Invalid)?)
+                    .ok_or(SchemaReferenceGraphError::LimitExceeded)?;
+                if expanded_work_units > MAX_VALIDATION_WORK_UNITS {
+                    return Err(SchemaReferenceGraphError::LimitExceeded);
+                }
+            }
+            costs.insert(key.clone(), expanded_work_units);
+            states.insert(key.clone(), VisitState::Done);
+            stack.pop();
+        }
+    }
+
+    root_keys
+        .into_iter()
+        .map(|(root_uri, key)| {
+            let expanded_work_units = *costs.get(&key).ok_or(SchemaReferenceGraphError::Invalid)?;
+            let mut reachable_work_units = 0usize;
+            let mut visited = BTreeSet::new();
+            let mut pending = vec![key];
+            while let Some(node_key) = pending.pop() {
+                if !visited.insert(node_key.clone()) {
+                    continue;
+                }
+                let node = graph
+                    .get(&node_key)
+                    .ok_or(SchemaReferenceGraphError::Invalid)?;
+                reachable_work_units = reachable_work_units
+                    .checked_add(node.local_work_units)
+                    .ok_or(SchemaReferenceGraphError::LimitExceeded)?;
+                if reachable_work_units > MAX_VALIDATION_WORK_UNITS {
+                    return Err(SchemaReferenceGraphError::LimitExceeded);
+                }
+                pending.extend(node.edges.iter().cloned());
+            }
+            Ok((
+                root_uri,
+                SchemaWorkScore {
+                    reachable_work_units,
+                    expanded_work_units,
+                },
+            ))
+        })
+        .collect()
+}
+
 enum InlineFrame<'a> {
     Array {
         items: std::slice::Iter<'a, serde_json::Value>,
         child_depth: usize,
+        applicator_depth: usize,
     },
     Object {
         members: serde_json::map::Iter<'a>,
         child_depth: usize,
+        applicator_depth: usize,
     },
 }
 
@@ -159,6 +467,40 @@ fn preflight_inline_schema(schema: &serde_json::Value) -> Result<(), InlineSchem
 fn preflight_inline_schema_with_peak(
     schema: &serde_json::Value,
 ) -> Result<usize, InlineSchemaError> {
+    preflight_schema_with_peak(schema, MAX_INLINE_SCHEMA_BYTES)
+}
+
+fn preflight_schema_with_peak(
+    schema: &serde_json::Value,
+    max_serialized_bytes: usize,
+) -> Result<usize, InlineSchemaError> {
+    preflight_schema(schema, max_serialized_bytes).map(|preflight| preflight.peak_pending_frames)
+}
+
+struct SchemaPreflight {
+    peak_pending_frames: usize,
+    base_work_units: usize,
+    reference_count: usize,
+}
+
+impl SchemaPreflight {
+    fn validation_work_units(&self) -> Result<usize, InlineSchemaError> {
+        self.base_work_units
+            .checked_add(self.reference_count)
+            .ok_or(InlineSchemaError::LimitExceeded)
+    }
+}
+
+pub(crate) fn schema_validation_work_score(
+    schema: &serde_json::Value,
+) -> Result<usize, InlineSchemaError> {
+    preflight_schema(schema, MAX_INLINE_SCHEMA_BYTES)?.validation_work_units()
+}
+
+fn preflight_schema(
+    schema: &serde_json::Value,
+    max_serialized_bytes: usize,
+) -> Result<SchemaPreflight, InlineSchemaError> {
     fn count_value(depth: usize, values: &mut usize) -> Result<(), InlineSchemaError> {
         if depth > MAX_INLINE_SCHEMA_DEPTH {
             return Err(InlineSchemaError::LimitExceeded);
@@ -176,6 +518,7 @@ fn preflight_inline_schema_with_peak(
         stack: &mut Vec<InlineFrame<'a>>,
         value: &'a serde_json::Value,
         depth: usize,
+        applicator_depth: usize,
     ) -> Result<(), InlineSchemaError> {
         let child_depth = depth
             .checked_add(1)
@@ -185,12 +528,14 @@ fn preflight_inline_schema_with_peak(
                 stack.push(InlineFrame::Array {
                     items: items.iter(),
                     child_depth,
+                    applicator_depth,
                 });
             }
             serde_json::Value::Object(object) if !object.is_empty() => {
                 stack.push(InlineFrame::Object {
                     members: object.iter(),
                     child_depth,
+                    applicator_depth,
                 });
             }
             _ => {}
@@ -200,28 +545,62 @@ fn preflight_inline_schema_with_peak(
 
     let mut values = 0usize;
     let mut key_bytes = 0usize;
+    let mut applicator_branches = 0usize;
+    let mut keyword_work_units = 0usize;
+    let mut reference_count = 0usize;
     count_value(0, &mut values)?;
     let mut stack = Vec::with_capacity(MAX_INLINE_SCHEMA_DEPTH + 1);
-    push_children(&mut stack, schema, 0)?;
+    push_children(&mut stack, schema, 0, 0)?;
     let mut peak = stack.len();
 
     while let Some(frame) = stack.last_mut() {
         let next = match frame {
-            InlineFrame::Array { items, child_depth } => {
-                items.next().map(|value| (None, value, *child_depth))
-            }
+            InlineFrame::Array {
+                items,
+                child_depth,
+                applicator_depth,
+            } => items
+                .next()
+                .map(|value| (None, value, *child_depth, *applicator_depth)),
             InlineFrame::Object {
                 members,
                 child_depth,
+                applicator_depth,
             } => members
                 .next()
-                .map(|(key, value)| (Some(key.as_str()), value, *child_depth)),
+                .map(|(key, value)| (Some(key.as_str()), value, *child_depth, *applicator_depth)),
         };
-        let Some((key, value, depth)) = next else {
+        let Some((key, value, depth, applicator_depth)) = next else {
             stack.pop();
             continue;
         };
+        let child_applicator_depth = if key.is_some_and(schema_applicator_keyword) {
+            applicator_depth
+                .checked_add(1)
+                .ok_or(InlineSchemaError::LimitExceeded)?
+        } else {
+            applicator_depth
+        };
+        if child_applicator_depth > MAX_INLINE_SCHEMA_APPLICATOR_DEPTH {
+            return Err(InlineSchemaError::LimitExceeded);
+        }
+        if let Some(branches) = key.and_then(|key| schema_applicator_branches(key, value)) {
+            applicator_branches = applicator_branches
+                .checked_add(branches)
+                .ok_or(InlineSchemaError::LimitExceeded)?;
+            if applicator_branches > MAX_INLINE_SCHEMA_APPLICATOR_BRANCHES {
+                return Err(InlineSchemaError::LimitExceeded);
+            }
+        }
         if let Some(key) = key {
+            keyword_work_units = keyword_work_units
+                .checked_add(schema_keyword_work_units(key, value)?)
+                .ok_or(InlineSchemaError::LimitExceeded)?;
+            if matches!(key, "$ref" | "$dynamicRef") && value.is_string() {
+                reference_count = reference_count
+                    .checked_add(1)
+                    .ok_or(InlineSchemaError::LimitExceeded)?;
+            }
             key_bytes = key_bytes
                 .checked_add(key.len())
                 .ok_or(InlineSchemaError::LimitExceeded)?;
@@ -230,12 +609,13 @@ fn preflight_inline_schema_with_peak(
             }
         }
         count_value(depth, &mut values)?;
-        push_children(&mut stack, value, depth)?;
+        push_children(&mut stack, value, depth, child_applicator_depth)?;
         peak = peak.max(stack.len());
     }
 
     struct BoundedWriter {
         bytes: usize,
+        max_bytes: usize,
     }
     impl std::io::Write for BoundedWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -243,7 +623,7 @@ fn preflight_inline_schema_with_peak(
                 .bytes
                 .checked_add(bytes.len())
                 .ok_or_else(|| std::io::Error::other("inline schema limit"))?;
-            if self.bytes > MAX_INLINE_SCHEMA_BYTES {
+            if self.bytes > self.max_bytes {
                 return Err(std::io::Error::other("inline schema limit"));
             }
             Ok(bytes.len())
@@ -253,14 +633,101 @@ fn preflight_inline_schema_with_peak(
             Ok(())
         }
     }
-    serde_json::to_writer(&mut BoundedWriter { bytes: 0 }, schema)
-        .map_err(|_| InlineSchemaError::LimitExceeded)?;
-    Ok(peak)
+    serde_json::to_writer(
+        &mut BoundedWriter {
+            bytes: 0,
+            max_bytes: max_serialized_bytes,
+        },
+        schema,
+    )
+    .map_err(|_| InlineSchemaError::LimitExceeded)?;
+    let base_work_units = values
+        .checked_add(keyword_work_units)
+        .ok_or(InlineSchemaError::LimitExceeded)?;
+    Ok(SchemaPreflight {
+        peak_pending_frames: peak,
+        base_work_units,
+        reference_count,
+    })
+}
+
+fn schema_applicator_keyword(key: &str) -> bool {
+    matches!(
+        key,
+        "allOf"
+            | "anyOf"
+            | "oneOf"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "patternProperties"
+            | "dependentSchemas"
+            | "items"
+            | "prefixItems"
+            | "properties"
+            | "additionalProperties"
+            | "unevaluatedProperties"
+            | "unevaluatedItems"
+            | "contains"
+            | "propertyNames"
+    )
+}
+
+fn schema_applicator_branches(key: &str, value: &serde_json::Value) -> Option<usize> {
+    match key {
+        "allOf" | "anyOf" | "oneOf" | "prefixItems" => value.as_array().map(Vec::len),
+        "patternProperties" | "dependentSchemas" | "properties" => {
+            value.as_object().map(serde_json::Map::len)
+        }
+        "not"
+        | "if"
+        | "then"
+        | "else"
+        | "items"
+        | "additionalProperties"
+        | "unevaluatedProperties"
+        | "unevaluatedItems"
+        | "contains"
+        | "propertyNames" => Some(1),
+        _ => None,
+    }
+}
+
+fn schema_keyword_work_units(
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<usize, InlineSchemaError> {
+    let branch_work = schema_applicator_branches(key, value).unwrap_or(0);
+    let regex_work = match key {
+        "pattern" => value.as_str().map_or(1, regex_pattern_work_units),
+        "patternProperties" => value.as_object().map_or(Ok(1), |patterns| {
+            patterns.keys().try_fold(0usize, |total, pattern| {
+                total
+                    .checked_add(regex_pattern_work_units(pattern))
+                    .ok_or(InlineSchemaError::LimitExceeded)
+            })
+        })?,
+        _ => 0,
+    };
+    branch_work
+        .checked_add(regex_work)
+        .ok_or(InlineSchemaError::LimitExceeded)
+}
+
+fn regex_pattern_work_units(pattern: &str) -> usize {
+    pattern.len().div_ceil(64).max(1)
 }
 
 /// A schema registry compiled solely from explicitly supplied in-memory resources.
 pub struct OfflineSchemaSet {
-    validators: BTreeMap<String, Validator>,
+    validators: BTreeMap<String, CompiledOfflineSchema>,
+}
+
+struct CompiledOfflineSchema {
+    validator: Validator,
+    validation_work_units: usize,
+    expanded_work_units: usize,
 }
 
 /// Strict checked-in schemas used by repository append, load and public replay.
@@ -332,18 +799,34 @@ impl OfflineSchemaSet {
                     &format!("{resource_path}/bytes"),
                 )]);
             }
+            let preflight = preflight_schema(&document, MAX_FILE_BYTES).map_err(|_| {
+                vec![compile_error_at(
+                    "schema resource exceeds deterministic complexity limits",
+                    &format!("{resource_path}/complexity"),
+                )]
+            })?;
+            preflight.validation_work_units().map_err(|_| {
+                vec![compile_error_at(
+                    "schema resource exceeds deterministic complexity limits",
+                    &format!("{resource_path}/complexity"),
+                )]
+            })?;
             resource_bytes = resource_bytes.saturating_add(bytes.len());
             if resource_bytes > MAX_RESOURCE_BYTES {
                 return Err(vec![compile_error(
                     "schema resources exceed maximum aggregate size",
                 )]);
             }
-            let Some(id) = document.get("$id").and_then(serde_json::Value::as_str) else {
+            let Some(id) = document
+                .get("$id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+            else {
                 return Err(vec![compile_error(
                     "schema resource must declare a string $id",
                 )]);
             };
-            if schemas.insert(id.to_owned(), document).is_some() {
+            if schemas.insert(id.clone(), document).is_some() {
                 return Err(vec![compile_error("schema resource $id must be unique")]);
             }
         }
@@ -359,6 +842,16 @@ impl OfflineSchemaSet {
         let registry = builder
             .prepare()
             .map_err(|_| vec![compile_error("offline schema reference cannot be resolved")])?;
+        let roots: Vec<_> = schemas
+            .iter()
+            .map(|(id, schema)| (id.as_str(), schema))
+            .collect();
+        let work_scores = resolved_schema_work_scores(&registry, &roots).map_err(|_| {
+            vec![compile_error_at(
+                "schema reference graph is recursive or exceeds deterministic limits",
+                "/resources/referenceGraph",
+            )]
+        })?;
 
         let mut validators = BTreeMap::new();
         for (id, schema) in &schemas {
@@ -366,10 +859,18 @@ impl OfflineSchemaSet {
                 .with_draft(Draft::Draft202012)
                 .with_registry(&registry)
                 .with_retriever(retriever.clone())
+                .with_pattern_options(bounded_pattern_options())
                 .should_validate_formats(true)
                 .build(schema)
                 .map_err(|_| vec![compile_error("offline root schema is invalid")])?;
-            validators.insert(id.clone(), validator);
+            validators.insert(
+                id.clone(),
+                CompiledOfflineSchema {
+                    validator,
+                    validation_work_units: work_scores[id].reachable_work_units,
+                    expanded_work_units: work_scores[id].expanded_work_units,
+                },
+            );
         }
         Ok(Self { validators })
     }
@@ -382,7 +883,7 @@ impl OfflineSchemaSet {
         document: &serde_json::Value,
         source: &str,
     ) -> Vec<Diagnostic> {
-        let Some(validator) = self.validators.get(schema_id) else {
+        let Some(schema) = self.validators.get(schema_id) else {
             return vec![Diagnostic::error(
                 "GHS002_SCHEMA",
                 "root schema is not registered in the offline schema set",
@@ -390,23 +891,66 @@ impl OfflineSchemaSet {
                 source,
             )];
         };
-        let mut diagnostics: Vec<_> = validator
-            .iter_errors(document)
-            .map(|error| {
-                let path = error.instance_path().as_str();
-                Diagnostic::error(
-                    "GHS002_SCHEMA",
-                    validation_message(error.kind()),
-                    if path.is_empty() { "/" } else { path },
-                    source,
-                )
-            })
-            .collect();
-        diagnostics.sort_by(|left, right| {
-            (&left.path, &left.code, &left.message).cmp(&(&right.path, &right.code, &right.message))
-        });
-        diagnostics
+        let Some(instance_work_units) = instance_validation_work_units(
+            document,
+            MAX_VALIDATION_INSTANCE_VALUES,
+            MAX_VALIDATION_TEXT_BYTES,
+        ) else {
+            return vec![Diagnostic::error(
+                "GHS002_SCHEMA",
+                "document exceeds deterministic validation complexity limits",
+                "/",
+                source,
+            )];
+        };
+        if !validation_work_is_bounded(
+            schema.validation_work_units,
+            schema.expanded_work_units,
+            instance_work_units,
+        ) {
+            return vec![Diagnostic::error(
+                "GHS002_SCHEMA",
+                "document exceeds deterministic validation work limits",
+                "/",
+                source,
+            )];
+        }
+        collect_validation_diagnostics(&schema.validator, document, source)
     }
+}
+
+fn collect_validation_diagnostics(
+    validator: &Validator,
+    document: &serde_json::Value,
+    source: &str,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::with_capacity(MAX_VALIDATION_DIAGNOSTICS + 1);
+    let mut omitted = false;
+    for validation_error in validator.iter_errors(document) {
+        if diagnostics.len() == MAX_VALIDATION_DIAGNOSTICS {
+            omitted = true;
+            break;
+        }
+        let path = validation_error.instance_path().as_str();
+        diagnostics.push(Diagnostic::error(
+            "GHS002_SCHEMA",
+            validation_message(validation_error.kind()),
+            if path.is_empty() { "/" } else { path },
+            source,
+        ));
+    }
+    if omitted {
+        diagnostics.push(Diagnostic::error(
+            "GHS002_SCHEMA",
+            "schema validation diagnostic limit reached; further failures omitted",
+            "/",
+            source,
+        ));
+    }
+    diagnostics.sort_by(|left, right| {
+        (&left.path, &left.code, &left.message).cmp(&(&right.path, &right.code, &right.message))
+    });
+    diagnostics
 }
 
 fn validation_message(kind: &jsonschema::error::ValidationErrorKind) -> &'static str {
@@ -473,6 +1017,18 @@ pub fn validate_graph_value(value: &serde_json::Value, source: &str) -> Vec<Diag
     validate_embedded(GRAPH_ID, value, source)
 }
 
+/// Validates a raw extension manifest using only embedded checked-in schema resources.
+#[must_use]
+pub fn validate_extension_value(value: &serde_json::Value, source: &str) -> Vec<Diagnostic> {
+    validate_embedded(EXTENSION_ID, value, source)
+}
+
+/// Validates a raw agent definition using only embedded checked-in schema resources.
+#[must_use]
+pub fn validate_agent_value(value: &serde_json::Value, source: &str) -> Vec<Diagnostic> {
+    validate_embedded(AGENT_ID, value, source)
+}
+
 /// Validates a policy waiver using the embedded checked-in waiver schema.
 #[must_use]
 pub fn validate_waiver(value: &serde_json::Value, source: &str) -> Vec<Diagnostic> {
@@ -533,6 +1089,7 @@ fn embedded_resources() -> BTreeMap<String, serde_json::Value> {
         (NODE_ID.into(), parse_schema(NODE_SCHEMA)),
         (EDGE_ID.into(), parse_schema(EDGE_SCHEMA)),
         (AGENT_ID.into(), parse_schema(AGENT_SCHEMA)),
+        (EXTENSION_ID.into(), parse_schema(EXTENSION_SCHEMA)),
         (WAIVER_ID.into(), parse_schema(WAIVER_SCHEMA)),
         (EVENT_ID.into(), parse_schema(EVENT_SCHEMA)),
         (SCOPE_ID.into(), parse_schema(SCOPE_SCHEMA)),
@@ -570,6 +1127,124 @@ fn exceeds_json_depth(value: &serde_json::Value, depth: usize) -> bool {
             .any(|item| exceeds_json_depth(item, depth + 1)),
         _ => false,
     }
+}
+
+fn instance_validation_work_units(
+    value: &serde_json::Value,
+    max_values: usize,
+    max_text_bytes: usize,
+) -> Option<usize> {
+    fn walk(
+        value: &serde_json::Value,
+        depth: usize,
+        values: &mut usize,
+        work_units: &mut usize,
+        text_bytes: &mut usize,
+        max_values: usize,
+        max_text_bytes: usize,
+    ) -> bool {
+        if depth > MAX_JSON_DEPTH {
+            return true;
+        }
+        let Some(next_values) = values.checked_add(1) else {
+            return true;
+        };
+        *values = next_values;
+        if *values > max_values {
+            return true;
+        }
+        let Some(next_work_units) = work_units.checked_add(1) else {
+            return true;
+        };
+        *work_units = next_work_units;
+        match value {
+            serde_json::Value::String(value) => {
+                let Some(next_text_bytes) = text_bytes.checked_add(value.len()) else {
+                    return true;
+                };
+                *text_bytes = next_text_bytes;
+                *text_bytes > max_text_bytes
+            }
+            serde_json::Value::Array(values_in_array) => {
+                for item in values_in_array {
+                    let Some(next_work_units) = work_units.checked_add(1) else {
+                        return true;
+                    };
+                    *work_units = next_work_units;
+                    if walk(
+                        item,
+                        depth + 1,
+                        values,
+                        work_units,
+                        text_bytes,
+                        max_values,
+                        max_text_bytes,
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            }
+            serde_json::Value::Object(values_in_object) => {
+                for (key, item) in values_in_object {
+                    let Some(next_work_units) = work_units.checked_add(1) else {
+                        return true;
+                    };
+                    *work_units = next_work_units;
+                    let Some(next_text_bytes) = text_bytes.checked_add(key.len()) else {
+                        return true;
+                    };
+                    *text_bytes = next_text_bytes;
+                    if *text_bytes > max_text_bytes
+                        || walk(
+                            item,
+                            depth + 1,
+                            values,
+                            work_units,
+                            text_bytes,
+                            max_values,
+                            max_text_bytes,
+                        )
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    let mut values = 0;
+    let mut work_units = 0;
+    let mut text_bytes = 0;
+    if walk(
+        value,
+        0,
+        &mut values,
+        &mut work_units,
+        &mut text_bytes,
+        max_values,
+        max_text_bytes,
+    ) {
+        None
+    } else {
+        Some(work_units)
+    }
+}
+
+fn validation_work_is_bounded(
+    schema_work_units: usize,
+    expanded_work_units: usize,
+    instance_work_units: usize,
+) -> bool {
+    // Reference expansion is a one-time evaluation cost. Only the deduplicated
+    // reachable schema can scale with every bounded instance value; multiplying
+    // the expanded graph by the whole document rejects valid repeated records.
+    schema_work_units
+        .checked_mul(instance_work_units)
+        .and_then(|instance_work| instance_work.checked_add(expanded_work_units))
+        .is_some_and(|work_units| work_units <= MAX_VALIDATION_WORK_UNITS)
 }
 
 fn parse_schema(source: &str) -> serde_json::Value {
@@ -619,6 +1294,10 @@ mod tests {
             serde_json::json!({"$ref": ""}),
             serde_json::json!({"$ref": "#/$defs/item", "$defs": {"item": {"type": "string"}}}),
             serde_json::json!({
+                "$ref": "#item",
+                "$defs": {"item": {"$anchor": "item", "type": "string"}}
+            }),
+            serde_json::json!({
                 "$id": "https://p50.dev/inline/root",
                 "$ref": "child",
                 "$defs": {"item": {"$id": "child", "type": "string"}}
@@ -629,6 +1308,59 @@ mod tests {
         ] {
             assert_eq!(compile_inline_schema(&schema), Ok(()), "{schema}");
         }
+    }
+
+    #[test]
+    fn inline_reference_cycles_are_rejected_before_validation() {
+        let schema = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+                "node": {
+                    "type": ["array", "null"],
+                    "allOf": [
+                        {"items": {"$ref": "#/$defs/node"}},
+                        {"items": {"$ref": "#/$defs/node"}}
+                    ]
+                }
+            },
+            "$ref": "#/$defs/node"
+        });
+        let mut instance = serde_json::Value::Null;
+        for _ in 0..20 {
+            instance = serde_json::json!([instance]);
+        }
+
+        assert_eq!(
+            compile_inline_schema(&schema),
+            Err(InlineSchemaError::LimitExceeded)
+        );
+        assert_eq!(
+            validate_inline_value(&schema, &instance, "recursive-inline"),
+            Err(InlineSchemaError::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn inline_acyclic_reference_expansion_has_a_deterministic_limit() {
+        let mut definitions = serde_json::Map::new();
+        definitions.insert("n24".into(), serde_json::Value::Bool(true));
+        for index in (0..24).rev() {
+            let next = format!("#/$defs/n{}", index + 1);
+            definitions.insert(
+                format!("n{index}"),
+                serde_json::json!({"allOf": [{"$ref": next}, {"$ref": next}]}),
+            );
+        }
+        let schema = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": definitions,
+            "$ref": "#/$defs/n0"
+        });
+
+        assert_eq!(
+            compile_inline_schema(&schema),
+            Err(InlineSchemaError::LimitExceeded)
+        );
     }
 
     #[test]
@@ -647,6 +1379,39 @@ mod tests {
                 Err(InlineSchemaError::Invalid)
             );
         }
+    }
+
+    #[test]
+    fn inline_dynamic_self_reference_is_bounded_and_recursive_ref_is_rejected() {
+        let dynamic = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$dynamicAnchor": "node",
+            "$dynamicRef": "#node"
+        });
+        assert_eq!(compile_inline_schema(&dynamic), Ok(()));
+        assert!(validate_inline_value(&dynamic, &serde_json::json!(null), "dynamic").is_ok());
+
+        assert_eq!(
+            compile_inline_schema(&serde_json::json!({"$recursiveRef": "#"})),
+            Err(InlineSchemaError::Invalid)
+        );
+    }
+
+    #[test]
+    fn inline_value_validation_is_offline_redacted_and_pointer_stable() {
+        let schema = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "required": ["enabled"],
+            "properties": {"enabled": {"type": "boolean"}},
+            "additionalProperties": false
+        });
+        let value = serde_json::json!({"enabled": "secret-canary"});
+        let diagnostics = validate_inline_value(&schema, &value, "inline-test").unwrap();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "GHS002_SCHEMA");
+        assert_eq!(diagnostics[0].path, "/enabled");
+        assert!(!format!("{diagnostics:?}").contains("secret-canary"));
     }
 
     #[test]
@@ -761,6 +1526,77 @@ mod tests {
     }
 
     #[test]
+    fn offline_schema_set_rejects_cross_resource_reference_cycles() {
+        let resources = BTreeMap::from([
+            (
+                "a".into(),
+                serde_json::json!({
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "$id": "https://p50.dev/schemas/cycle-a.json",
+                    "$ref": "https://p50.dev/schemas/cycle-b.json"
+                }),
+            ),
+            (
+                "b".into(),
+                serde_json::json!({
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "$id": "https://p50.dev/schemas/cycle-b.json",
+                    "$ref": "https://p50.dev/schemas/cycle-a.json"
+                }),
+            ),
+        ]);
+
+        let diagnostics = match OfflineSchemaSet::compile(resources) {
+            Err(diagnostics) => diagnostics,
+            Ok(_) => panic!("cross-resource reference cycle was accepted"),
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].path, "/resources/referenceGraph");
+    }
+
+    #[test]
+    fn offline_schema_set_charges_referenced_resource_expansion_to_the_root() {
+        let mut definitions = serde_json::Map::new();
+        definitions.insert("n23".into(), serde_json::Value::Bool(true));
+        for index in (0..23).rev() {
+            let next = format!("#/$defs/n{}", index + 1);
+            definitions.insert(
+                format!("n{index}"),
+                serde_json::json!({"allOf": [{"$ref": next}, {"$ref": next}]}),
+            );
+        }
+        let resources = BTreeMap::from([
+            (
+                "root".into(),
+                serde_json::json!({
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "$id": "https://p50.dev/schemas/expansion-root.json",
+                    "allOf": [
+                        {"$ref": "https://p50.dev/schemas/expansion-target.json#/$defs/n0"},
+                        {"$ref": "https://p50.dev/schemas/expansion-target.json#/$defs/n0"}
+                    ]
+                }),
+            ),
+            (
+                "target".into(),
+                serde_json::json!({
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "$id": "https://p50.dev/schemas/expansion-target.json",
+                    "$defs": definitions,
+                    "$ref": "#/$defs/n0"
+                }),
+            ),
+        ]);
+
+        let diagnostics = match OfflineSchemaSet::compile(resources) {
+            Err(diagnostics) => diagnostics,
+            Ok(_) => panic!("cross-resource reference expansion was accepted"),
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].path, "/resources/referenceGraph");
+    }
+
+    #[test]
     fn offline_schema_set_uses_an_explicit_rejecting_retriever() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resources = BTreeMap::from([(
@@ -813,9 +1649,11 @@ mod tests {
             "checksum":format!("sha256:{}", "3".repeat(64)),
             "evidenceIds":[],
             "artifacts":[],
-            "events":[event]
+            // Regression: the JPD simulation emits a valid 35-event replay batch.
+            "events":vec![event; 35]
         });
-        assert!(validate_physical_batch(&batch).is_empty());
+        let diagnostics = validate_physical_batch(&batch);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let mut invalid_digest = batch.clone();
         invalid_digest["requestDigest"] = serde_json::json!("not-a-sha256");
         assert!(!validate_physical_batch(&invalid_digest).is_empty());

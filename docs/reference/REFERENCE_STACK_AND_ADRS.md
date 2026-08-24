@@ -2,7 +2,9 @@
 
 ## 1. Status
 
-The normative architecture is language-independent. This section recommends a reference implementation coherent with security, portability, community and extensibility. No code has been implemented.
+The normative architecture is language-independent. This document began as a pre-implementation
+reference; later accepted ADRs record the implementation that now exists. The reference stack stays
+coherent with security, portability, community, and extensibility.
 
 ## 2. Reference stack
 
@@ -429,3 +431,57 @@ graphhelm/
 **Consequences:** we own protocol-revision pinning (`SUPPORTED_PROTOCOL_VERSION`, Task 2, verified against the official spec at implementation time) and the conformance tests (`rpc.rs`'s test module; promoted to black-box `mcp_stdio.rs` once the subcommand exists). The layer must stay minimal: it owns framing and the JSON-RPC envelope only; the method table — including `-32601` for unknown methods and `-32602` for refused params — belongs to the session handler above it.
 
 **The revisit trigger, named:** the first milestone that needs MCP **resources**, **push notifications**, **`structuredContent` tool results** (hosts are moving toward schema-validated structured results — the reviewer-named second candidate), or a **non-stdio transport** adopts the SDK instead of growing this layer. Growing hand-rolled code toward any of those four is the wrong side of the ADR-024/025 "keeping in step with a maintained crate" tradeoff; five methods over stdio is the right side of it.
+
+## 32. ADR-027 — Journey-Proven Development and one extension composition path
+
+**Status:** accepted.
+
+**Context:** repository guidance currently requires RED → GREEN → REFACTOR before every behavior
+change. That is a useful local method but it is not equivalent to proving a user journey. It can
+spend heavily on tests that observe the wrong boundary while a loading state, browser navigation,
+recovery path, provider delivery, or cross-component failure remains unobserved. Issue #210 also
+needs a first real skill ecosystem without creating a parallel plugin wrapper. DeepSeek Harness
+reached the same packaging boundary by [removing its duplicate repository-plugin
+format](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/.agents/notes/implemented/simplification/2026-08-09-remove-repository-plugin.md)
+and making ordinary Skill, MCP, and native contributions compose through one bundle path. Its
+[skill architecture](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/subsystems/skills.md)
+also separates the stable registry, providers, and lazy consumer instead of loading every skill
+body into every task. ADHD's [isolated divergence and separate critic
+pass](https://github.com/uditakhourii/adhd/blob/001a29d246fe140665a03ed387a7a30c56f089ed/README.md)
+informs the council pattern: first-pass roles share the same bounded contract but not one another's
+answers, then a distinct pass clusters claims, attacks traps, and deepens survivors. GraphHelm keeps
+that mechanism while selecting role count from risk instead of fixing an arbitrary fan-out.
+
+**Decision:** GraphHelm adopts [Journey-Proven Development](../harness/JOURNEY_PROVEN_DEVELOPMENT.md).
+Every user promise is compiled into typed observation obligations. Deterministic risk policy selects
+the smallest adequate mix of tests, observers, and independent agents. Missing proof capability
+fails with `OBSERVER_MISSING`; a weaker proxy cannot satisfy a stronger fact. Retry history is
+append-only and classifies first-pass, recovered, flaky, or unresolved outcomes without replacing
+earlier evidence.
+
+The JPD waiver profile is deliberately stricter than the base persisted waiver wire contract from
+ADR-022: every newly authored JPD continuation waiver must carry a non-empty reason. The base schema
+keeps `reason` optional only so legacy persisted waivers remain decodable; an old reasonless record
+cannot be reused as authority for a new override.
+
+The existing `Extension` manifest is the sole plugin envelope. A package composes ordinary skills,
+MCP adapters, agents, observers, evaluators, policies, schemas, graphs, and fixtures through that
+manifest. Installation and version resolution own source and lock state; the bundle owns explicit
+composition. Host wrappers are thin and deletable. No plugin links privileged core internals, and a
+skill calls GraphHelm only through public CLI, MCP, or HTTP. A skill may author a schema-bound local
+advisory artifact, but that artifact creates no operational authority. Data packages may be validated
+without activation; code extensions remain out of process under ADR-008.
+
+**Rejected alternatives:** universal TDD as the development constitution; deleting focused tests;
+agent voting as a quality gate; treating a later green retry as a clean first pass; one monolithic
+JPD skill; an arbitrary target number of skills; a second `.graphhelm-plugin` wrapper alongside the
+Extension manifest; loading every discovered directory; and in-process execution of untrusted
+extension code.
+
+**Consequences:** plans must describe the user journey, evidence strength, failure and recovery
+states, and observer availability before selecting test methods. Skills stay small because
+contributions are split by contracts, effects, permissions, or evidence—not by a numeric quota.
+Plugin validation and task-local Skill Capsules can ship before a general installer. Browser proof
+still requires a separately installed observer and must refuse honestly when absent. This ADR makes
+D-041 normative and supersedes the universal-method wording in `AGENTS.md`; it does not weaken the
+local gate or completion evidence requirements.

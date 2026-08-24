@@ -204,7 +204,9 @@ fn an_extraction_gap_zero_refuses_rather_than_claiming_absence() {
          a blind instrument's zero is not the subject's absence"
     );
 
-    // ASSERT THE REASON, not only the refusal. Found by L in frozen review: without this, the
+    // ASSERT THE REASON, not only the refusal. Gate stated by L and relayed to me before this PR
+    // existed, so this arm is CONFORMANCE to a stated gate rather than independent convergence --
+    // recorded here because a roster is not in front of whoever reads this in a year. Without it, the
     // assertion above stays GREEN on the day bounded source fallback lands, because "refused after
     // trying the source" and "refused because there was nothing to try" are the SAME outcome and
     // DIFFERENT facts. The suite would survive, unchanged and unread, through the very change that
@@ -917,7 +919,7 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
         .nth(1)
         .unwrap_or_else(|| panic!("HARNESS-BROKE: no zeroResultAdmission block in {}", path.display()));
 
-    let mut checked = 0usize;
+    let mut seen = std::collections::BTreeSet::new();
     for line in body.lines() {
         let line = line.split('#').next().unwrap_or("").trim_end();
         if !line.starts_with("  ") {
@@ -956,11 +958,28 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
             "policy row {key} declares {} and the compiler produced {actual}: for a consumer that              loads this artifact the table IS the contract, so a drifted row is a lie in the              artifact, not a stale comment",
             value.trim()
         );
-        checked += 1;
+        seen.insert(state);
     }
 
+    // Asserted as a SET, not a count. A set sees MEMBERSHIP, not multiplicity: a ninth row
+    // repeating an existing key collapses into the same eight-member set and passes here. That is
+    // deliberate rather than overlooked -- a repeated key with a DIFFERENT value already dies on
+    // the per-row assertion above, and with the same value it is inert. So the claim is "every
+    // state is covered", never "exactly once": the expression measures a SET and "once" is a
+    // COUNT, which is the same unit mismatch this fix exists to remove. (L, on this very fix.) A count of rows is a number in one unit standing in for a
+    // property in another: eight rows with `partial` twice and no `unknown` is eight valid rows,
+    // each agreeing with the compiler, and the arm passes while the state whose entire reason for
+    // existing is "silence is never promoted" has no row at all. A hand-rolled line parser does not
+    // reject duplicate keys, so nothing else would notice. (Found by L.)
+    //
+    // Comparing against `CoverageState::every()` also drops the hand-maintained 8: the enum decides
+    // how many there are, and a variant added upstream fails here instead of being silently
+    // uncovered.
+    let expected: std::collections::BTreeSet<_> = CoverageState::every().iter().copied().collect();
     assert_eq!(
-        checked, 8,
-        "HARNESS-BROKE: matched {checked} policy rows, expected all 8 coverage states; a parser          that matches nothing leaves this loop unrun and the arm green having proved nothing"
+        seen, expected,
+        "HARNESS-BROKE: the policy table must cover every coverage state -- missing          {:?}, unexpected {:?}",
+        expected.difference(&seen).collect::<Vec<_>>(),
+        seen.difference(&expected).collect::<Vec<_>>()
     );
 }

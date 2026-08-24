@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/token-efficiency-evaluator/1.0.0",
+  "title": "Token-efficiency evaluator",
+  "description": "Thresholds and refusal conditions for the paired token-efficiency benchmark (#225). The version is carried by every verdict, so a published result names the rules that judged it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "thresholds", "refuseWhen"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Bumped in the same commit as any change below. Travels with every verdict.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Kept as separate thresholds rather than folded into a score: folding lets a large win on one buy a loss on another.",
+      "required": [
+        "maxMedianInputRatio",
+        "maxMedianSessionRatio",
+        "maxMeanQualityDrop"
+      ],
+      "properties": {
+        "maxMedianInputRatio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Median compiled input context as a fraction of baseline. Must be above zero: a threshold of zero would accept only a compiled arm that read nothing, which is not a benchmark."
+        },
+        "maxMedianSessionRatio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Median full-session tokens as a fraction of baseline. Not capped at 1 in the schema, because a policy may deliberately allow a session regression while a separate threshold holds the input claim -- but the shipped value is 1.00."
+        },
+        "maxMeanQualityDrop": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Applies ONLY to runs that already passed the required-evidence count. A mean never compensates for a missing evidence item."
+        }
+      }
+    },
+    "refuseWhen": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Conditions under which no verdict is produced at all. Each is a refusal rather than a failing score, because a failing score is a measurement and these are the cases where no measurement exists.",
+      "required": [
+        "anyCostUnavailable",
+        "armsAsymmetric",
+        "corpusDigestMismatch",
+        "anyRequiredEvidenceMissing",
+        "oracleReachableFromAnArm"
+      ],
+      "properties": {
+        "anyCostUnavailable": {
+          "const": true,
+          "description": "Not configurable. A cost the runtime cannot observe is not zero, and a harness permitted to treat it as zero would reward moving work out of view."
+        },
+        "armsAsymmetric": {
+          "const": true,
+          "description": "Not configurable. Two arms given different inputs are not a comparison."
+        },
+        "corpusDigestMismatch": {
+          "const": true,
+          "description": "Not configurable. A corpus edited after the freeze makes every number correct arithmetic about a corpus nobody agreed to."
+        },
+        "anyRequiredEvidenceMissing": {
+          "const": true,
+          "description": "Not configurable, and const rather than boolean on purpose: this is the one threshold whose relaxation produces an arithmetically CORRECT number about the wrong population."
+        },
+        "oracleReachableFromAnArm": {
+          "const": true,
+          "description": "Not configurable. An arm that can read its own answers measures nothing."
+        }
+      }
+    }
+  }
+}

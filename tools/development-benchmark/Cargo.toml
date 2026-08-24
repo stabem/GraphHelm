@@ -1,0 +1,21 @@
+[package]
+name = "graphhelm-development-benchmark"
+default-run = "graphhelm-development-benchmark"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+sha2.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+graphhelm-protocols = { path = "../../core/protocols" }
+graphhelm-runtime = { path = "../../core/runtime" }
+serde_yaml_ng.workspace = true
+
+[[bin]]
+name = "graphhelm-development-benchmark"
+path = "src/main.rs"

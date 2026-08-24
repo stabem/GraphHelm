@@ -21,6 +21,7 @@ members = [
   "tools/acceptance-map",
   "core/quality",
   "tools/pathogens",
+  "tools/development-benchmark",
   "tools/ci-canary",
 ]
 

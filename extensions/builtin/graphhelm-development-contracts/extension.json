@@ -515,6 +515,33 @@
             "observers": []
           },
           "family": "development-contracts"
+        },
+        {
+          "id": "schema/token-efficiency-evaluator",
+          "kind": "schema",
+          "path": "schemas/token-efficiency-evaluator.schema.json",
+          "sha256": "sha256:01ae60b98c60599c2fa09e535ac1f9d9b7f0c21a80395a8f7dc4167ac4f49426",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "evaluator/token-efficiency",
+          "kind": "evaluator",
+          "path": "evaluators/token-efficiency.yaml",
+          "sha256": "sha256:1f8775afa9b2e37a232f6dde3d51c44d51b7ea0ed0649b8af522f48eb395e8ec",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/token-efficiency-evaluator.schema.json"
         }
       ]
     },

@@ -1,0 +1,42 @@
+# Token-efficiency evaluator (#225).
+#
+# This version string travels WITH every verdict, the way `context-utilization.yaml`'s version
+# travels with an accounting receipt. A published benchmark result that does not name the rules it
+# was judged under cannot be audited later: loosening a threshold and re-publishing the same
+# headline is indistinguishable from improving the work. Bump `version` in the same commit as any
+# change below.
+version: "1.0.0"
+
+# The four acceptance thresholds from #225, kept as four rather than folded into a score.
+#
+# Folding them would let a large win on one buy a loss on another, which is the averaging failure
+# this harness exists to refuse -- the same reason required-evidence recall is a COUNT and not a
+# term in a mean.
+thresholds:
+  # Median compiled input context, as a fraction of baseline. The headline claim.
+  maxMedianInputRatio: 0.40
+  # Median full-session tokens must not exceed baseline. This is the ratio that matters when the
+  # compiled arm wins the input count by spending more elsewhere -- a smaller prompt bought with
+  # more turns is not a saving.
+  maxMedianSessionRatio: 1.00
+  # Blind mean quality may fall by at most this much, and ONLY over runs that already passed the
+  # required-evidence count. A mean is never permitted to compensate for a missing evidence item.
+  maxMeanQualityDrop: 0.02
+
+# Conditions under which no verdict is produced at all.
+#
+# Each of these is a refusal rather than a failing score, because a failing score is a measurement
+# and these are the cases where no measurement exists. A benchmark that reports under any of them
+# is reporting about something other than the work.
+refuseWhen:
+  # Either arm carries a cost the runtime could not observe. Unavailable is not zero.
+  anyCostUnavailable: true
+  # The two arms were not given the same snapshot, objective, permissions, route, settings, clean
+  # state, order, seed, clock, budget or acceptance contract.
+  armsAsymmetric: true
+  # The corpus no longer hashes to the digest frozen into the manifest.
+  corpusDigestMismatch: true
+  # Any case failed to retrieve its required evidence. A COUNT, settled before a mean exists.
+  anyRequiredEvidenceMissing: true
+  # An arm could read the oracle it is graded against, by path or by containing directory.
+  oracleReachableFromAnArm: true

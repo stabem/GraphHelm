@@ -921,6 +921,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-development-benchmark"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-protocols",
+ "graphhelm-runtime",
+ "hex",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "graphhelm-events"
 version = "0.1.0"
 dependencies = [

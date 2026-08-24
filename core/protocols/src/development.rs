@@ -118,6 +118,47 @@ wire_vocabulary! {
         // Folding two causes with opposite responses into one code is the flattening this
         // milestone hunts.
         ContextBudgetInsufficient => "context_budget_insufficient",
+        // Allocated by task-002 (#218) under the scope amendment in that issue's body. Appended,
+        // never reordered: `wire_name` and the schema are generated from this one list, so a
+        // reorder is invisible here and a renumbering downstream.
+        //
+        // The first two are the pair most at risk of becoming one condition with two names, so
+        // the line between them is written here rather than left to each consumer. They differ in
+        // what the OPERATOR has to do next, which is the only difference a refusal code is for:
+        //
+        //   `code_rule_conflict`             the rules cannot both hold. Two requirements on one
+        //                                    key where neither strengthens the other under a
+        //                                    registered operator -- including the case where no
+        //                                    registered operator relates them at all. Remedy: fix
+        //                                    the RULES, by reconciling the values or registering
+        //                                    an operator for that key.
+        //
+        //   `code_rule_precedence_unresolved` the rules could both hold, but nothing says which
+        //                                    wins. Their selectors are incomparable -- neither
+        //                                    contains the other -- so no ordering applies.
+        //                                    Remedy: declare PRECEDENCE, by an owner task decision
+        //                                    or a declared priority. The rules themselves are fine.
+        //
+        // They were deliberately not folded. One code for both would send every operator down the
+        // wrong path half the time, and a single name would make the two indistinguishable in the
+        // record afterwards -- the flattening #247 records, which costs iterations rather than
+        // information.
+        CodeRuleConflict => "code_rule_conflict",
+        CodeRulePrecedenceUnresolved => "code_rule_precedence_unresolved",
+        // A declared source could not be read AS A CODE RULE. This is the resolver saying it
+        // cannot interpret an input it was handed, and it is distinct from `schema_invalid`: that
+        // one belongs to the envelope layer, where an artifact fails its kind's schema BEFORE any
+        // typed deserialization. By the time the resolver runs, that validation has happened, so a
+        // failure here means the source reached the resolver and still could not be used. A
+        // malformed WAIVER is neither of these -- see the next code.
+        CodeRuleSourceUnavailable => "code_rule_source_unavailable",
+        // The artifact is schema-valid and readable; the OVERRIDE it carries does not meet the
+        // rules for an override. Incomplete (a required field absent, or present and null), or
+        // asserted against a `structural` rule, where completeness is irrelevant. The boundary
+        // with `schema_invalid` is decided here rather than left to each consumer: schema validity
+        // is a question about the DOCUMENT, waiver validity is a judgement this resolver makes
+        // about a document that is already valid.
+        CodeRuleWaiverInvalid => "code_rule_waiver_invalid",
     }
 }
 

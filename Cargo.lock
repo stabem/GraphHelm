@@ -1019,10 +1019,12 @@ dependencies = [
 name = "graphhelm-policy"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "chrono",
  "graphhelm-graph",
  "graphhelm-protocols",
  "graphhelm-schema",
+ "serde",
  "serde_json",
 ]
 

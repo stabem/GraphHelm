@@ -67,6 +67,37 @@ fn the_refusal_vocabulary_is_one_set_on_both_sides() {
     );
 }
 
+/// The vocabulary is APPEND-ONLY, which is a claim about order that set equality cannot make.
+///
+/// The rule was stated in a comment at the declaration site and in a PR description — the site
+/// that ARMS a property, not one that fires when it breaks. A reorder keeps both sides equal as
+/// sets, so the guard above stays green through it, while every consumer that reads the list
+/// positionally silently renumbers.
+///
+/// This is the cheap version of the check, and it is available only because the ordered list
+/// already exists on both sides: `every()` is generated from the same list as `wire_name`, and the
+/// schema enum is a JSON array.
+#[test]
+fn the_refusal_vocabulary_is_in_the_same_order_on_both_sides() {
+    let from_schema: Vec<String> = envelope_schema()["$defs"]["refusalCode"]["enum"]
+        .as_array()
+        .expect("$defs/refusalCode/enum is an array")
+        .iter()
+        .map(|value| value.as_str().expect("a string").to_owned())
+        .collect();
+    let from_type: Vec<String> = DevelopmentRefusalCode::every()
+        .iter()
+        .map(|code| code.wire_name().to_owned())
+        .collect();
+
+    assert_eq!(
+        from_schema, from_type,
+        "the refusal vocabulary is in a different ORDER on the two sides. Appending is the only \
+         permitted change; a reorder leaves the two equal as SETS and is therefore invisible to \
+         the cell above."
+    );
+}
+
 /// The same discipline for the nine kinds.
 #[test]
 fn the_kind_vocabulary_is_one_set_on_both_sides() {

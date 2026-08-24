@@ -54,7 +54,11 @@
         "digest_mismatch",
         "negative_claim_unverified",
         "index_stale",
-        "context_budget_insufficient"
+        "context_budget_insufficient",
+        "code_rule_conflict",
+        "code_rule_precedence_unresolved",
+        "code_rule_source_unavailable",
+        "code_rule_waiver_invalid"
       ]
     },
     "coverageState": {

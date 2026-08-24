@@ -1507,3 +1507,76 @@ separated them, correctly:**
 **And "three instances in one day" is not a rate, because it has no denominator.** Three out of how
 many measurements? Without the base it is a story about the ones that were noticed — and the ones
 that came out right do not announce themselves.
+
+---
+
+## ED-18, LANDING-POINT AMENDMENT: verify at the MERGE, because that is where attribution is DECIDABLE
+
+ED-18 puts a check before the merge. **The merge is not where the damage appears.** Four times in one
+day `main` landed red and the bill was paid by whichever lane gated next.
+
+    ef9afcb (#215)   rustfmt + clippy       found by the next lane's gate; ~1h to attribute
+    #193             wire_name compile      only --all-targets on the merge result saw it
+    9e93c6d (#241)   2 more rustfmt files   found while fixing the previous one
+    87b6c1e          policy clippy          found by an ED-18 run on an unrelated PR
+
+**Every one was cheap to fix and expensive to attribute.** The `#215` case cost an hour of measuring
+`origin/main` in a separate worktree to establish that two failing stages were not the author's —
+and that hour bought no code, only the right to say "not mine".
+
+### The justification this amendment was FIRST written with was wrong, and the measurement is here
+
+The draft argued that per-lane checking cannot work because **the red is born in the composition** —
+two green branches making a red main with neither author at fault. **M measured it and it does not
+hold for these four.**
+
+Cheap discriminator, no compiling: was the red in a file the culpable commit **touched**, or in one
+it never saw? Touched means the author did not run; untouched means composition.
+
+    development_contract_schemas.rs   last touched before the fix by  9e93c6d (#241)
+    development.rs                    last touched before the fix by  9e93c6d (#241)
+    extension_cli.rs                  last touched before the fix by  ef9afcb (#215)
+    core/schema/src/lib.rs            last touched before the fix by  ef9afcb (#215)
+    core/policy/tests/determinism.rs  touched by 87b6c1e itself
+
+**Every red was in a file its own author had open.** Three of the four are "the author did not run
+it", not composition. **Only `#193` is measured as composition** — the libraries compiled and only
+`--all-targets` on the merge result ever saw it.
+
+**Limit of the method, stated because it is real:** *touched the file* is not *introduced the
+warning*. An edit nearby, or a toolchain change, produces the same signature. It is a strong
+indicator, not proof; the test that would prove it is running clippy on each PR head **before** its
+merge, which was not done.
+
+### So the rule stands on a different footing — and a stronger one
+
+**The cause varies and is irrelevant to this amendment.** Composition, an author who skipped a
+check, a toolchain bump — all of them land the same way. What the landing point buys is not a
+diagnosis. It is **exactly one suspect.**
+
+**Rule: after every merge to `main`, run
+`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` on the landed
+commit, and record the result in `check-activity.log`.**
+
+- **Green:** one line, and the next lane inherits a main it can trust.
+- **Red:** routed to the author of the merge that just landed.
+
+**This makes attribution DECIDABLE, not merely faster.** At the landing point the question "whose is
+this?" has one candidate and answers itself. Three merges later it has five, and answering costs a
+bisect — which is the hour the `#215` case actually cost.
+
+**Who runs it:** whoever holds the slot at the moment of the merge, or the orchestrator asks.
+
+**The honest exception:** if no slot is free, the run is **DECLARED AS OWED in the log**, never
+assumed done. A missing landing-point check is a known gap; a silently skipped one is
+indistinguishable from a green.
+
+**And whoever declares the debt CLEARS it** — same burden, same side, for the reason ED-22's
+clearing amendment already had to learn: **a list of satisfied debts stops being read, and an unread
+list is the mute file.** This is that lesson applied before the second occurrence rather than after.
+
+### What this does NOT claim
+
+It does not prevent a red `main`; all four above would still have landed. What changes is that each
+would have been named within minutes by the person holding the context to fix it, instead of days
+later by someone who first has to prove it was not theirs.

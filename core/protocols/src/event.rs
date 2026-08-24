@@ -349,40 +349,6 @@ pub struct CompletionRejected {
     pub reason_code: SafeCode,
 }
 
-/// M11 #161: an identity gains the power to countersign, FROM THIS SEQUENCE ON.
-///
-/// Runtime membership is journaled rather than spec-edited (blueprint 2e, D-039's one entry
-/// road): rotation and revocation are events, so "who could countersign at sequence N" is a
-/// question the journal answers by itself — kill-bar item 3 applied to identity.
-///
-/// THE ANSWER COMES FROM THE ORDER OF THE WALK, NEVER FROM THE END STATE. A left fold in
-/// sequence order already holds the pre-N registry when it reaches N, so validating a clearance
-/// as it is folded is both free and correct. Validating in a second pass against the FINAL
-/// registry breaks it in two directions, and the dangerous one is silent: an identity registered
-/// AFTER a clearance would retro-validate it, accepting a countersignature from someone who
-/// could not sign at the time. This sentence is the canary for that change.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ClearanceIdentityRegistered {
-    pub execution_id: OpaqueId,
-    pub identity: OpaqueId,
-    /// Compared for EQUALITY by the fold, never verified cryptographically there: the fold must
-    /// stay a pure function of the journal. Signature verification against key material is the
-    /// command layer's job at append time, where evidence sealing already lives.
-    pub key_fingerprint: WireHash,
-}
-
-/// M11 #161: an identity loses the power to countersign, FROM THIS SEQUENCE ON.
-///
-/// NOT RETROACTIVE, and that is the whole point: a clearance that was valid when it happened
-/// stays valid forever. Revocation binds what comes after it and nothing before it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ClearanceIdentityRevoked {
-    pub execution_id: OpaqueId,
-    pub identity: OpaqueId,
-}
-
 /// M11 #160: a claim the command layer would not accept, recorded so a graph that cannot finish
 /// leaves a legible trail. The refusal is the OUTCOME of a claim attempt, not an error swallowed
 /// at the boundary — an idempotent retry of a refused claim replays this event rather than
@@ -1088,4 +1054,38 @@ pub struct GateCertified {
     pub suite_digest: WireHash,
     /// How many specimens the gate rejected to earn this — auditable breadth.
     pub specimens: u32,
+}
+
+/// M11 #161: an identity gains the power to countersign, FROM THIS SEQUENCE ON.
+///
+/// Runtime membership is journaled rather than spec-edited (blueprint 2e, D-039's one entry
+/// road): rotation and revocation are events, so "who could countersign at sequence N" is a
+/// question the journal answers by itself — kill-bar item 3 applied to identity.
+///
+/// THE ANSWER COMES FROM THE ORDER OF THE WALK, NEVER FROM THE END STATE. A left fold in
+/// sequence order already holds the pre-N registry when it reaches N, so validating a clearance
+/// as it is folded is both free and correct. Validating in a second pass against the FINAL
+/// registry breaks it in two directions, and the dangerous one is silent: an identity registered
+/// AFTER a clearance would retro-validate it, accepting a countersignature from someone who
+/// could not sign at the time. This sentence is the canary for that change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClearanceIdentityRegistered {
+    pub execution_id: OpaqueId,
+    pub identity: OpaqueId,
+    /// Compared for EQUALITY by the fold, never verified cryptographically there: the fold must
+    /// stay a pure function of the journal. Signature verification against key material is the
+    /// command layer's job at append time, where evidence sealing already lives.
+    pub key_fingerprint: WireHash,
+}
+
+/// M11 #161: an identity loses the power to countersign, FROM THIS SEQUENCE ON.
+///
+/// NOT RETROACTIVE, and that is the whole point: a clearance that was valid when it happened
+/// stays valid forever. Revocation binds what comes after it and nothing before it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClearanceIdentityRevoked {
+    pub execution_id: OpaqueId,
+    pub identity: OpaqueId,
 }

@@ -154,6 +154,17 @@ pub struct ArtifactBinding {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotBinding {
     /// Identity of the bytes.
+    ///
+    /// A CONTENT or TREE digest, **never a ref and never a commit sha**. A commit sha identifies
+    /// a COMMIT, not a working tree: an uncommitted edit changes the bytes without changing the
+    /// identity, so [`SnapshotBinding::is_fresh`] answers fresh while a stored coordinate slices
+    /// bytes nobody pinned. The failure runs in the direction that hides — equal identities
+    /// over DIFFERENT bytes read as safe, never as stale, so nothing downstream has a reason to
+    /// look.
+    ///
+    /// This paragraph ARMS the requirement and does not enforce it: no comment fails when someone
+    /// passes a commit sha. The half that fires is the guard in #219 (G2b/S9), and the pair is
+    /// closed only because that guard exists — retire it and this text becomes decoration.
     pub repo_snapshot: OpaqueId,
     /// The repository snapshot this index was built from.
     pub index_generation: OpaqueId,

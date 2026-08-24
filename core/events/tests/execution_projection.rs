@@ -8,6 +8,7 @@ use std::sync::{
 
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{
+    ClearanceOutcome, CustomsStage,
     ExecutionProjection, LocalEventRepository, PreparedAppend, ProjectionGeneration, ReplayError,
     replay,
 };
@@ -1845,6 +1846,9 @@ fn a_refusal_reaches_the_timeline_with_its_reason_and_leaves_the_node_parked() {
 // sequences, captured as the list is built.
 // =================================================================================================
 
+/// The parked arrangement as NewEvents (not yet appended) plus the sequence the parking outcome
+/// will occupy, so a caller keeps adding to the SAME batch.
+
 fn identity_registered(key: &str, identity: &str, fingerprint: &str) -> NewEvent {
     event(
         key,
@@ -1864,6 +1868,343 @@ fn identity_revoked(key: &str, identity: &str) -> NewEvent {
             identity: OpaqueId::parse(identity).unwrap(),
         }),
     )
+}
+
+
+fn countersigned(key: &str, claim_seq: u64, identity: &str, fingerprint: &str) -> NewEvent {
+    event(
+        key,
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            claim_seq,
+            verifier: graphhelm_protocols::ClearanceVerifier::Countersign {
+                identity: OpaqueId::parse(identity).unwrap(),
+                key_fingerprint: WireHash::parse(format!("sha256:{}", fingerprint.repeat(64)))
+                    .unwrap(),
+            },
+        }),
+    )
+}
+
+/// R1 — THE SHARP `UnknownIdentity` CELL.
+///
+/// The signer IS in the registry at head and was NOT in it at the clearance's own sequence. This
+/// is the case that discriminates a correct fold from every implementation validating against the
+/// FINAL registry — the easy mistake, because that map is sitting right there when the fold ends.
+/// A never-registered signer is caught by the wrong implementations too, so it is the companion
+/// below and never the headline.
+#[test]
+fn a_clearance_by_an_identity_registered_after_it_is_refused() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-late", "b"));
+    batch.push(identity_registered("reg-late", "auditor-late", "b"));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+
+    assert!(
+        projection.clearance_registry.contains_key("auditor-late"),
+        "precondition: the signer IS in the registry at head, or this fixture is not measuring \
+         the case it names: {:?}",
+        projection.clearance_registry
+    );
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Refused {
+            reason_code: graphhelm_protocols::SafeCode::parse("unknown_identity")
+                .expect("a refusal code is a SafeCode")
+        }),
+        "a clearance is judged by the registry AS OF ITS OWN SEQUENCE — a registration landing \
+         afterwards cannot reach back and validate it"
+    );
+    assert_eq!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::WaitingInput),
+        "and nothing was released: a refused clearance leaves the node parked"
+    );
+}
+
+/// The cheap companion. Kept because it is free, NOT because it discriminates.
+#[test]
+fn a_clearance_by_an_identity_never_registered_is_refused() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-ghost", "c"));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Refused {
+            reason_code: graphhelm_protocols::SafeCode::parse("unknown_identity")
+                .expect("a refusal code is a SafeCode")
+        }),
+        "nobody registered this signer, ever"
+    );
+}
+
+/// R2 — revocation is NOT retroactive: a clearance valid when it happened stays valid.
+///
+/// NAMED IN ADVANCE so this reads as half a pair: it stays GREEN under a registry that ignores
+/// revocation entirely, because it asserts SURVIVAL. The member that makes revocation bite is
+/// `a_revoked_identity_cannot_clear_a_later_claim`.
+#[test]
+fn a_clearance_survives_the_later_revocation_of_its_signer() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(identity_registered("reg-a", "auditor-a", "b"));
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "b"));
+    batch.push(identity_revoked("rev-a", "auditor-a"));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+
+    assert!(
+        !projection.clearance_registry.contains_key("auditor-a"),
+        "precondition: the signer is revoked at head, or this measures nothing"
+    );
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Cleared),
+        "the clearance was valid when it happened, and no later event rewrites that verdict"
+    );
+    assert_eq!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::Succeeded),
+        "the release it earned stands too"
+    );
+}
+
+/// The member that makes the pair measure revocation.
+#[test]
+fn a_revoked_identity_cannot_clear_a_later_claim() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(identity_registered("reg-a", "auditor-a", "b"));
+    batch.push(identity_revoked("rev-a", "auditor-a"));
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "b"));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Refused {
+            reason_code: graphhelm_protocols::SafeCode::parse("unknown_identity")
+                .expect("a refusal code is a SafeCode")
+        }),
+        "revocation binds everything after it"
+    );
+}
+
+/// R1's fingerprint half: the right name with foreign key material is a different signer.
+#[test]
+fn a_clearance_whose_fingerprint_does_not_match_the_registration_is_refused() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(identity_registered("reg-a", "auditor-a", "b"));
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "d"));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Refused {
+            reason_code: graphhelm_protocols::SafeCode::parse("unknown_identity")
+                .expect("a refusal code is a SafeCode")
+        }),
+        "membership is name AND fingerprint: the fold compares both"
+    );
+}
+
+/// R5 — the same journal folds to the same verdicts every time, and those verdicts are the ones
+/// the ORDER dictates rather than the ones the end state suggests.
+#[test]
+fn interleaved_registrations_and_clearances_replay_identically() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(identity_registered("reg-a", "auditor-a", "b"));
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "b"));
+    batch.push(identity_revoked("rev-a", "auditor-a"));
+    batch.push(identity_registered("reg-b", "auditor-b", "c"));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let first = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+    let second = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+
+    assert_eq!(
+        first, second,
+        "the same journal folds to the same state every time"
+    );
+    assert_eq!(
+        first.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Cleared),
+        "cleared while its signer was live — decided by ORDER, not by the end state, where \
+         auditor-a is revoked and auditor-b appeared later"
+    );
+}
+
+/// The node's own timeline entry for a REFUSED clearance, which nothing observed until now.
+///
+/// `customs_scans` is public, several fold arms write it, and a grep across the repository finds
+/// **no test reading it at all**. Deleting the whole `record_scan` call on the refusal path left
+/// the suite at 38 passed. That is how this cell was found, and reading the field's own doc while
+/// writing it is how two defects in my own code were found with it.
+///
+/// The vocabulary settles both. `Cleared` is documented as "the only stage that releases a
+/// dependent" and a refused clearance releases nothing; `Rejected` is documented as "clearance
+/// withheld with a reason; the claim is spent, the node stays parked", which is verbatim what the
+/// fold does. And `reason_code` is for stages where this timeline is the fact's SOLE owner: a
+/// rejected claim has an outcome record keyed by `claim_seq` that owns its reason, so this entry
+/// carries the POINTER and not a copy. Two structures recording one fact is duplicated state, and
+/// a later replay can make the copies disagree.
+#[test]
+fn a_refused_clearance_leaves_a_pointer_in_the_nodes_timeline_not_a_copy() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+    batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-ghost", "c"));
+    let clear_index = batch.len() - 1;
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let clear_seq = sequence_of(&appended, clear_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a recorded refusal replays");
+
+    let history = projection
+        .customs_scans
+        .get(CUSTOMS_NODE)
+        .expect("the node has a customs timeline");
+    // Selected by the entry's OWN sequence, not by `claim_seq`: the Claimed entry and this one
+    // both point at the same claim, so a `claim_seq` selector picks the first and silently
+    // measures the wrong row. The first draft of this guard did exactly that and reported
+    // `left: Claimed`.
+    let entry = history
+        .iter()
+        .find(|s| s.at_sequence == clear_seq)
+        .expect("the refused clearance left an entry at its own sequence");
+    assert_eq!(
+        entry.claim_seq,
+        Some(claim_seq),
+        "and that entry points at the claim it refused"
+    );
+
+    assert_eq!(
+        entry.stage,
+        CustomsStage::Rejected,
+        "a withheld clearance is Rejected, never Cleared: Cleared is the only stage that releases          a dependent, and this one released nothing"
+    );
+    assert_eq!(
+        entry.reason_code, None,
+        "the timeline carries the POINTER (claim_seq) and not a copy of the reason: the outcome          record keyed by that claim owns it, and two structures holding one fact can disagree          after a replay"
+    );
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Refused {
+            reason_code: graphhelm_protocols::SafeCode::parse("unknown_identity")
+                .expect("a refusal code is a SafeCode")
+        }),
+        "and the record the pointer points AT is the one carrying the reason"
+    );
+}
+
+
+/// The `MachineReplay` arm, which NOTHING exercised until this guard existed.
+///
+/// Found by sabotage, not by reading: inverting that arm from `Cleared` to `Refused` changed the
+/// suite by exactly zero tests. The two existing fixtures that build a `MachineReplay` verifier
+/// both fail to reach the decision - one takes the Corrupt path for a clearance naming no claim
+/// and returns before the outcome is computed, the other is red for reasons in another lane's
+/// base. A production branch that no guard can turn red is the mirror of a guard that has never
+/// been red, and it deserves the same treatment.
+///
+/// The discriminating part is that the registry is EMPTY. A machine replay re-derives the evidence
+/// against the node's declared manifest and asks no membership question, so it clears with nobody
+/// registered at all. Should anyone later make this arm consult the registry, this is the cell
+/// that falls - and it is deliberately NOT left to `the_downstream_of_a_claimed_wait`, which will
+/// exercise this arm incidentally once it goes green. Coverage that a test provides by accident
+/// disappears silently the day that test changes for its own reasons.
+#[test]
+fn a_machine_replay_clearance_needs_no_registered_identity() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+    batch.push(event(
+        "clear-1",
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            claim_seq: claim_index as u64 + 1,
+            verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                manifest_hash: WireHash::parse(format!("sha256:{}", "e".repeat(64))).unwrap(),
+            },
+        }),
+    ));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+
+    assert!(
+        projection.clearance_registry.is_empty(),
+        "precondition: NOBODY is registered, or this measures nothing about membership being          irrelevant here: {:?}",
+        projection.clearance_registry
+    );
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Cleared),
+        "a machine replay carries no identity, so an empty registry cannot refuse it"
+    );
+    assert_eq!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::Succeeded),
+        "and it releases, exactly as a countersignature by a live identity would"
+    );
+}
+
+
+/// R6, refused half: a refusal is journal data and the log still reads.
+#[test]
+fn a_refused_clearance_is_recorded_and_the_log_still_replays() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-ghost",
+        "c",
+    ));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection =
+        replay(&scope(), STREAM, &appended).expect("a recorded refusal is not an unreadable log");
+    assert!(
+        projection.clearances.contains_key(&claim_seq),
+        "the mistake is ON RECORD, readable by anyone replaying: {:?}",
+        projection.clearances
+    );
 }
 
 /// The registry half, exercised WITHOUT the customs prelude — the part of this lane that is

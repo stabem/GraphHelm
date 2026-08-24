@@ -31,10 +31,10 @@ pub use key::{
 };
 pub use local::{LocalEventRepository, LocalFailpoint};
 pub use projection::{
-    CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection, MAX_PROJECTION_NODES,
-    OpenClaim, OpenWait, OverdueStage, ProjectionGeneration, ProjectionRebuildRequest,
-    ProjectionRebuilder, ProjectionRepository, ProjectionWatermark, ReplayError, overdue_at,
-    replay,
+    ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
+    MAX_PROJECTION_NODES, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
+    ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
+    ReplayError, overdue_at, replay,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

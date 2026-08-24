@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared, ExecutionId,
+    ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared,
+    ExecutionId,
     ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion, PersistedTimestamp,
-    PolicyWaiver, ProjectId, RepositoryScope, SimulationStatus, WireHash, WorkspaceId,
+    PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -229,6 +230,24 @@ pub struct OpenWait {
     pub deadline: Option<PersistedTimestamp>,
 }
 
+/// M11 #161: the verdict a clearance earned, decided AT ITS OWN SEQUENCE and never revised by a
+/// later event.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// `rename_all` on an ENUM renames the VARIANTS; the fields INSIDE a struct variant need
+// `rename_all_fields`, or `reason_code` ships snake_case alone among camelCase neighbours.
+// Free to fix today because nothing has published this shape; impossible once it has.
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "type")]
+pub enum ClearanceOutcome {
+    Cleared,
+    /// The code is a `SafeCode`, not a free `String`: the family's refusal vocabulary is meant
+    /// to be CLOSED (#161 names nine), and a free string lets a typo become a distinct outcome
+    /// that compares unequal and replays perfectly well - a defect that is invisible because
+    /// every layer accepts it. `SafeCode` bounds the charset and length; the closed SET itself
+    /// belongs to the shared refusal-registry const that lane 1 owns (#160 2d), so this does
+    /// NOT fork a second vocabulary here.
+    Refused { reason_code: SafeCode },
+}
+
 /// M11 #160: a claim in quarantine — testimony recorded, clearance owed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -333,6 +352,9 @@ pub struct ExecutionProjection {
     /// to N is how you ask it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub clearance_registry: BTreeMap<String, WireHash>,
+    /// M11 #161: what happened to each claim's clearance, keyed by the CLAIM's envelope sequence.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub clearances: BTreeMap<u64, ClearanceOutcome>,
     pub simulation_status: Option<SimulationStatus>,
     pub evidence_availability: BTreeMap<ScopedEvidenceId, EvidenceAvailability>,
     pub legal_holds: BTreeSet<ScopedEvidenceId>,
@@ -1333,6 +1355,87 @@ fn apply_projection_event(
             let Some(claim) = projection.open_claims.remove(&payload.claim_seq) else {
                 return Err(ReplayError::Corrupt);
             };
+            // MEMBERSHIP AT THIS SEQUENCE, and the whole lane is this one piece of discipline.
+            //
+            // `clearance_registry` is read HERE, mid-walk, which is why no history map is needed:
+            // a left fold in sequence order is already holding the pre-N registry when it reaches
+            // N. Validating in place is therefore both correct and free, and that freeness is the
+            // trap, because the FINAL registry is sitting right there when the fold ends and
+            // consulting it instead looks identical in a diff. A registration landing after this
+            // clearance must not reach back and validate it; a revocation landing after must not
+            // reach back and invalidate it. Both directions have a cell that names them.
+            //
+            // Do NOT hoist this lookup out of the walk, and do not answer "could X sign?" from a
+            // finished projection: that is a last-state view answering a per-sequence question,
+            // which is M09 #88's named cause one layer up.
+            let outcome = match &payload.verifier {
+                // Machine replay carries no identity: it re-derives the evidence against the
+                // node's declared manifest, so there is no membership question to ask.
+                ClearanceVerifier::MachineReplay { .. } => ClearanceOutcome::Cleared,
+                ClearanceVerifier::Countersign {
+                    identity,
+                    key_fingerprint,
+                } => {
+                    // Membership is name AND key material: a registered name presenting foreign
+                    // key material is a DIFFERENT signer, not a near miss. There is no partial
+                    // membership.
+                    //
+                    // BOTH failures refuse under ONE code, and the reason is not tidiness. Two
+                    // codes would be an EXISTENCE ORACLE: "that identity is registered, your
+                    // key is wrong" tells a caller something it did not know and could not
+                    // otherwise learn, and refusal codes travel outward, to callers nobody
+                    // vouched for. Splitting them hands an attacker a membership test for free.
+                    //
+                    // What makes it an easy call is that merging costs nothing: the distinction
+                    // is not destroyed, only UNPUBLISHED. The registry is journal data, so
+                    // anyone who can replay the journal can still say which of the two it was.
+                    // The caller loses the oracle; the operator keeps the diagnosis.
+                    //
+                    // A later lane wanting two codes is therefore deciding WHO MAY PROBE
+                    // MEMBERSHIP, not choosing a name. Take that one in writing.
+                    match projection.clearance_registry.get(identity.as_str()) {
+                        Some(registered) if registered == key_fingerprint => {
+                            ClearanceOutcome::Cleared
+                        }
+                        _ => ClearanceOutcome::Refused {
+                            reason_code: SafeCode::parse("unknown_identity")
+                                .expect("a literal refusal code is a valid SafeCode"),
+                        },
+                    }
+                }
+            };
+            // The verdict is recorded whichever way it went: a refusal is journal data, and only
+            // an UNINTERPRETABLE log is Corrupt (the M09 refusal rule). Keyed by the CLAIM's
+            // sequence, because that is the thing whose fate a later reader looks up.
+            projection
+                .clearances
+                .insert(payload.claim_seq, outcome.clone());
+            if let ClearanceOutcome::Refused { .. } = outcome {
+                // The claim is SPENT and the node stays parked. Nothing is released and the wait
+                // survives, so the node can be claimed again: a refused countersignature costs the
+                // claimant their testimony, not their turn.
+                record_scan(
+                    projection,
+                    &claim.node,
+                    CustomsScan {
+                        at_sequence: event.sequence,
+                        // REJECTED, not Cleared. `Cleared` is documented as the only stage that
+                        // releases a dependent, and this released nothing; `Rejected` is
+                        // documented as "clearance withheld with a reason; the claim is spent,
+                        // the node stays parked" - verbatim what happened above.
+                        stage: CustomsStage::Rejected,
+                        claim_seq: Some(payload.claim_seq),
+                        // The POINTER, not a copy. This field is for stages where the timeline is
+                        // the fact's SOLE owner; a rejected claim has an outcome record keyed by
+                        // `claim_seq` that owns its reason. Copying it here would be two
+                        // structures recording one fact, which a later replay can make disagree -
+                        // the rule stated in this field's own doc.
+                        reason_code: None,
+                        deadline: None,
+                    },
+                )?;
+                return Ok(());
+            }
             // THE release, and the only one: the fold performs the transition itself so
             // `ready_set(spec, states)` keeps its signature and BOTH drivers inherit readiness
             // with zero edits — one derivation, two call sites, neither of them changed.

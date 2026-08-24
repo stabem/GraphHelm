@@ -157,6 +157,30 @@ pub enum CustomsStage {
     Refused,
     /// A stage deadline lapsed and a sweep said so.
     Overdue,
+    /// The node was routed to the declared dead-letter node and is held there. Minted by the
+    /// DLQ lane (#162), which is the half of this enum's published invitation that lane owns.
+    DeadLettered,
+}
+
+/// Carry a stage across the layer boundary: wire vocabulary in, projection vocabulary out.
+///
+/// #162 keeps two enums on purpose — the wire one rides `overdue_exception` into a journal that
+/// is never rewritten, this one labels a timeline rebuilt on every replay. This is the single
+/// place the boundary is crossed, so a reader looking for the correspondence finds it here
+/// rather than reconstructing it from call sites.
+///
+/// THIS DOES NOT REPLACE THE DRIFT GUARD. The match below is exhaustive, so it cannot omit a
+/// wire stage — but exhaustiveness says nothing about whether each arm sends a stage to the
+/// stage that SPELLS THE SAME. `Parked => Cleared` compiles. The guard in
+/// `tests/customs_stage_vocabularies_agree.rs` is what makes that a red, and this comment exists
+/// so nobody deletes it thinking the compiler already covers the case.
+#[must_use]
+pub const fn project_customs_stage(stage: graphhelm_protocols::CustomsStage) -> CustomsStage {
+    match stage {
+        graphhelm_protocols::CustomsStage::Parked => CustomsStage::Parked,
+        graphhelm_protocols::CustomsStage::Claimed => CustomsStage::Claimed,
+        graphhelm_protocols::CustomsStage::DeadLettered => CustomsStage::DeadLettered,
+    }
 }
 
 /// M11 #160: one line of a node's customs history, in log order.
@@ -217,9 +241,18 @@ pub struct CustomsScan {
 /// M11 #160: one open wait, with the instant its patience runs out.
 ///
 /// `deadline` is `None` when the node declared no `wait_within_seconds` budget — absent stays
-/// absent, and no implicit patience is ever invented for a wait that did not ask for one. A wait
-/// with no deadline is visible to the sweep and never overdue, which is a DECLARED gap rather
-/// than a silent one: the load-time warning names such nodes at authoring time.
+/// absent, and no implicit patience is ever invented for a wait that did not ask for one. Such a
+/// wait is visible to the sweep and never overdue: a DECLARED gap, not a silent one, and the
+/// load-time warning names those nodes at authoring time.
+///
+/// READ THE POPULATION, NOT ONLY THE RULE. Between #160 landing and #162 fixing the persisted-node
+/// schema, `customs` was rejected at append, no budget survived publication, and this "tail case"
+/// was EVERY wait in the system. The rule above was correct throughout and the comment was still
+/// misleading, because it described a rare shape while the shape was universal.
+///
+/// And the mitigation covers less than it sounds like: the load-time warning names nodes that
+/// DECLINED to bound themselves. It never named nodes that declared a budget and had it dropped —
+/// which, in that window, was all of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenWait {
@@ -329,16 +362,16 @@ pub struct ExecutionProjection {
     /// M11 #160: episodes that have already raised an overdue exception, by stage-entry
     /// sequence. One exception per episode, ever; a re-entry is a new episode.
     ///
-    /// DECLARED GAP, not an oversight: NOTHING IN THIS BRANCH WRITES THIS SET. The events that
-    /// populate it — `overdue_exception` and `sweep_performed` — belong to the sweep lane (#162),
-    /// because the sweep is the verb and this lane only owns the reckoning it asks (`overdue_at`).
-    /// Until that lane lands, this set is permanently empty and `overdue_at` therefore reports
-    /// every elapsed stage on every call.
+    /// THE GAP IS CLOSED (#162): `overdue_exception` writes this set, in the arm below. It was
+    /// declared empty here while the sweep lane was unwritten, and the warning that went with it —
+    /// "the set is empty, so nothing is overdue" is exactly backwards — was correct for that
+    /// state and is now history rather than guidance.
     ///
-    /// That is the CORRECT behaviour for a system where no exception has ever been recorded, and
-    /// it is written here because the alternative reading — "the set is empty, so nothing is
-    /// overdue" — is exactly backwards and would look reasonable to someone debugging a sweep
-    /// that fires twice.
+    /// What the set buys, stated as the property rather than the mechanism: ONE exception per
+    /// episode, ever. The sweep runs on a tick, so the same lapsed episode is re-examined at a new
+    /// `as_of` every time; without this set every tick re-raises it, and an operator learns to
+    /// ignore the channel. A redrive is a NEW episode with a new sequence and is eligible again,
+    /// which is why the set holds episode sequences and not node names.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub exception_marked: BTreeSet<u64>,
     /// M11 #160: the per-node customs timeline (#163 renders it; the fold owns it).
@@ -1029,8 +1062,16 @@ pub fn overdue_at(
         }
     }
 
+    // THE EPISODE IS THE STAGE ENTRY, NOT THE MAP KEY (#162). The key is the claim's identity and
+    // never moves; `stage_entered_at` is where the CLOCK started, and it rebases on a redrive. A
+    // redriven claim is a new episode against the same claim, so reporting the key would make the
+    // second lapse indistinguishable from the first and `exception_marked` would swallow it. The
+    // two agree until a redrive happens, which is exactly why reporting the key looked correct.
     for (claim_seq, claim) in &projection.open_claims {
-        if projection.exception_marked.contains(claim_seq) {
+        if projection
+            .exception_marked
+            .contains(&claim.stage_entered_at)
+        {
             continue;
         }
         if let Some(deadline) = &claim.deadline
@@ -1038,7 +1079,7 @@ pub fn overdue_at(
         {
             overdue.push(OverdueStage {
                 node: claim.node.clone(),
-                episode_seq: *claim_seq,
+                episode_seq: claim.stage_entered_at,
                 deadline: deadline.clone(),
                 claim_seq: Some(*claim_seq),
             });
@@ -1711,6 +1752,155 @@ fn apply_projection_event(
         | EventKind::GraphValidationFailed(_)
         | EventKind::PolicyObligationEvaluated(_)
         | EventKind::IntegrityCheckpointCreated(_) => {}
+        // The comment that stood here said: "whoever writes the sweep moves these out of this arm
+        // — and if this comment is still here when the sweep exists, the sweep is silently a
+        // no-op." The sweep now exists, the comment WAS still here, and the prediction held: the
+        // verb appended exceptions that the fold ignored, so every tick re-raised the same
+        // episode. It was found by its own warning, which is the best case a declared gap has.
+        //
+        // `dlq_redrive` is still folded nowhere, and that is still a gap rather than a decision:
+        // R3 is the cell that moves it.
+        EventKind::DlqRouted(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            let node = payload.node_id.to_string();
+            // The WAIT closes: a dead-lettered node is not waiting for anyone.
+            projection.open_waits.remove(&node);
+            // The CLAIM does not. Testimony stands — someone did claim completion, and routing the
+            // node to the dead-letter queue does not unsay it. What stops is the CLOCK: clearance
+            // is not owed while the node is out of play, and leaving the deadline in place would
+            // re-raise a stage nobody can currently answer, on every tick, forever.
+            //
+            // This is the half a redrive needs. If routing dropped the claim, a redrive would have
+            // to mint a new one, and the design says it mints none: the claim survives and only its
+            // clock restarts.
+            for claim in projection.open_claims.values_mut() {
+                if claim.node == node {
+                    claim.deadline = None;
+                }
+            }
+            record_scan(
+                projection,
+                &node,
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::DeadLettered,
+                    claim_seq: None,
+                    reason_code: Some(payload.reason.to_string()),
+                    deadline: None,
+                },
+            )?;
+        }
+        EventKind::DlqReturned(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            let node = payload.node_id.to_string();
+            if projection.open_waits.len() >= MAX_PROJECTION_NODES
+                && !projection.open_waits.contains_key(&node)
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            // A NEW episode, not a resumed one. Its identity is THIS envelope's sequence and its
+            // budget is the one this event declares, anchored to this event's own instant — never
+            // the returning node's original wait. The plausible mistake is "the wait is the same
+            // wait": it is not, and an exception naming the old episode would point an operator at
+            // a stage that closed when the node was dead-lettered.
+            //
+            // The budget comes from the EVENT rather than the node's customs block because a
+            // return is a decision someone made about this node now, and the deadline has to be
+            // derivable from the journal alone at replay. Absent means absent — no budget declared,
+            // no deadline, forever — never a default and never zero.
+            let deadline = payload.wait_within_seconds.and_then(|seconds| {
+                let seconds = i64::try_from(seconds).ok()?;
+                let horizon = event
+                    .occurred_at
+                    .as_datetime()
+                    .checked_add_signed(chrono::Duration::seconds(seconds))?;
+                PersistedTimestamp::from_datetime(horizon).ok()
+            });
+            projection.open_waits.insert(
+                node.clone(),
+                OpenWait {
+                    at_sequence: event.sequence,
+                    deadline: deadline.clone(),
+                },
+            );
+            record_scan(
+                projection,
+                &node,
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::Parked,
+                    claim_seq: None,
+                    reason_code: None,
+                    deadline,
+                },
+            )?;
+        }
+        EventKind::OverdueException(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            // Bounded like every other unbounded-by-nature set in this projection: a journal can
+            // carry more episodes than a projection may hold, and refusing is the only honest
+            // answer when it does. Silently dropping the mark would re-arm the episode, which is
+            // the failure this set exists to prevent.
+            if projection.exception_marked.len() >= MAX_PROJECTION_NODES
+                && !projection
+                    .exception_marked
+                    .contains(&payload.episode_sequence)
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection.exception_marked.insert(payload.episode_sequence);
+        }
+        // `sweep_performed` is a LEDGER line and deliberately changes no state: it records that a
+        // reckoning happened at an instant, which is a fact about the sweep rather than about any
+        // episode. The exceptions beside it in the same batch carry every effect.
+        EventKind::DlqRedrive(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            let node = payload.node_id.to_string();
+            // No new claim is minted. The claim that exists is REBASED: its stage entry becomes
+            // this envelope, and the clearance clock restarts from this instant. That rebase is
+            // what makes the redriven stage a NEW EPISODE — and a new episode is eligible to be
+            // raised again, which is the whole point of putting a node back into play.
+            //
+            // The alternative grain — one exception per NODE, ever — would tell an operator about
+            // the first failure and stay silent about every one after it. A node that was rescued
+            // and then left to rot a second time has failed twice.
+            let deadline = stage_deadline(projection, &node, &event.occurred_at, |customs| {
+                customs.clearance_within_seconds()
+            });
+            let mut rebased = false;
+            for claim in projection.open_claims.values_mut() {
+                if claim.node == node {
+                    claim.stage_entered_at = event.sequence;
+                    claim.deadline = deadline.clone();
+                    rebased = true;
+                }
+            }
+            // A redrive naming a node with no open claim is not an uninterpretable journal — it is
+            // a mistake the command layer should have refused. The honest fold answer is to record
+            // the re-entry in the timeline and change no clock, rather than to poison every later
+            // replay. `Corrupt` is reserved for logs that cannot be READ; this one reads fine and
+            // says something false. (M09's refusal rule, the same one the stale-claim arm uses.)
+            record_scan(
+                projection,
+                &node,
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::Claimed,
+                    claim_seq: rebased.then_some(event.sequence),
+                    reason_code: None,
+                    deadline,
+                },
+            )?;
+        }
+        EventKind::SweepPerformed(_) => {}
     }
     Ok(())
 }

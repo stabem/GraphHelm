@@ -271,6 +271,31 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             json!({"type":"clearance_identity_revoked","data":{"executionId":"execution-1","identity":"auditor-a"}}),
             false,
         ),
+        // #162's five, and this is the SEVENTH place they had to be declared. The count went six
+        // (claimed) -> four (measured) -> a fifth found by a digest tripwire -> a sixth found by
+        // the conformance table -> this. Each time the enumeration listed the carriers its author
+        // could think of, and each time the one that caught him carried a different KIND of thing:
+        // a shape, then a digest, then a defence, then a conformance row, now a round-trip row.
+        (
+            json!({"type":"sweep_performed","data":{"executionId":"execution-1","asOf":"2026-08-09T00:00:00Z","caller":"operator"}}),
+            false,
+        ),
+        (
+            json!({"type":"overdue_exception","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"stage":"claimed","deadline":"2026-08-09T00:00:00Z"}}),
+            false,
+        ),
+        (
+            json!({"type":"dlq_routed","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"reason":"stalled"}}),
+            false,
+        ),
+        (
+            json!({"type":"dlq_redrive","data":{"executionId":"execution-1","nodeId":"implementation","dlqEpisodeSequence":5}}),
+            false,
+        ),
+        (
+            json!({"type":"dlq_returned","data":{"executionId":"execution-1","nodeId":"implementation","dlqEpisodeSequence":5,"waitWithinSeconds":600}}),
+            false,
+        ),
     ];
     variants
 }

@@ -13,6 +13,7 @@ mod projection;
 mod repository;
 mod retention;
 mod store;
+mod sweep;
 
 pub use artifact::{ArtifactRegistration, ArtifactRegistrationError, validate_artifact_reference};
 pub use evidence::{
@@ -36,7 +37,7 @@ pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
     MAX_PROJECTION_NODES, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
     ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
-    ReplayError, overdue_at, replay,
+    ReplayError, overdue_at, project_customs_stage, replay,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,
@@ -54,3 +55,4 @@ pub use retention::{
     retention_request_digest, revocation_receipt_authentication_bytes,
 };
 pub use store::EventRepositoryError;
+pub use sweep::sweep;

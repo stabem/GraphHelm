@@ -407,3 +407,48 @@ fn an_unreadable_node_timeout_is_refused_never_silently_accepted() {
         );
     }
 }
+
+/// #162: the stage recorded on an `overdue_exception` must speak the SAME WIRE VOCABULARY as
+/// the fold's customs timeline, even though the two are different types in different crates on
+/// purpose (issue #162 amendment: wire layer vs projection layer).
+///
+/// This lane originally minted `waiting` for the parked stage while #160's projection enum
+/// spells it `parked`. Two spellings for one stage is the defect that started the exchange —
+/// `claimed` meaning two things on the wire — so the vocabularies are held equal by test.
+///
+/// The assertion is on the SET of emitted strings rather than on each variant individually: a
+/// test that said `Parked` serialises as `parked` would only be restating `rename_all`.
+///
+/// TWO MUTATIONS, TWO DETECTORS, and they are not the same detector — measured, because the
+/// first sabotage run did not fall where this comment originally claimed it would:
+///   * renaming the VARIANT (`Parked` -> `Waiting`) breaks the `use` above: a COMPILE error,
+///     never this assertion;
+///   * changing the SPELLING (`#[serde(rename = "waiting")]`, variant untouched) leaves the
+///     import intact and falls HERE, printing both sets.
+///
+/// Only the second is this assertion's own. Saying so beats implying one guard covers both.
+#[test]
+fn overdue_stage_emits_exactly_the_customs_wire_vocabulary() {
+    use graphhelm_protocols::CustomsStage::{Claimed, DeadLettered, Parked};
+
+    let emitted: std::collections::BTreeSet<String> = [Parked, Claimed, DeadLettered]
+        .into_iter()
+        .map(|stage| {
+            serde_json::to_value(stage)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+
+    let expected: std::collections::BTreeSet<String> = ["parked", "claimed", "dead_lettered"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+    assert_eq!(
+        emitted, expected,
+        "the wire vocabulary must match #160's timeline spellings exactly"
+    );
+}

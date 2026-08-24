@@ -510,6 +510,22 @@ impl LocalEventRepository {
         <Self as EventRepository>::append_atomic(self, request)
     }
 
+    /// The instant this repository would stamp on an append made right now.
+    ///
+    /// Exposed for the one caller that has to compare a caller-supplied instant against the
+    /// instant an append WOULD carry — the sweep, which refuses to be asked about the future. It
+    /// reads the same clock through the same conversion `build_envelopes` uses, deliberately: a
+    /// second way of asking the time would be a second answer, and the comparison would then be
+    /// against an instant no event ever gets.
+    #[allow(clippy::missing_errors_doc)]
+    pub fn now(&self) -> Result<PersistedTimestamp, EventRepositoryError> {
+        PersistedTimestamp::from_datetime(self.clock.now()).map_err(|_| {
+            // Unrepresentable is not "later" and not "earlier": refusing keeps a broken clock from
+            // being read as permission.
+            EventRepositoryError::Invalid
+        })
+    }
+
     pub fn read_stream(
         &self,
         scope: &RepositoryScope,

@@ -607,6 +607,62 @@
     "freshnessClass": {"enum": ["immutable_by_input", "snapshot_closed", "drifting"]},
     "reuseKeyComponent": {"enum": ["tool_version", "canonical_input", "lease_scope", "source_snapshot"]},
     "wakeConsumeReason": {"enum": ["rung", "stale_rendezvous"]},
+    "customsStage": {"enum": ["parked", "claimed", "dead_lettered"]},
+    "sweepCaller": {"enum": ["tick", "operator"]},
+    "dlqRouted": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "episodeSequence", "reason"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "episodeSequence": {"type": "integer", "minimum": 1},
+        "reason": {"$ref": "#/$defs/safeCode"}
+      },
+      "additionalProperties": false
+    },
+    "dlqRedrive": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "dlqEpisodeSequence"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "dlqEpisodeSequence": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "dlqReturned": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "dlqEpisodeSequence"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "dlqEpisodeSequence": {"type": "integer", "minimum": 1},
+        "waitWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
+      },
+      "additionalProperties": false
+    },
+    "sweepPerformed": {
+      "type": "object",
+      "required": ["executionId", "asOf", "caller"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "asOf": {"$ref": "#/$defs/timestamp"},
+        "caller": {"$ref": "#/$defs/sweepCaller"}
+      },
+      "additionalProperties": false
+    },
+    "overdueException": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "episodeSequence", "stage", "deadline"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "episodeSequence": {"type": "integer", "minimum": 1},
+        "stage": {"$ref": "#/$defs/customsStage"},
+        "deadline": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
     "wakeLease": {
       "type": "object",
       "required": ["executionId", "sessionId", "cursor", "rendezvousId"],
@@ -1132,6 +1188,51 @@
             "data": {"$ref": "#/$defs/clearanceIdentityRevoked"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "dlq_routed"},
+            "data": {"$ref": "#/$defs/dlqRouted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "dlq_redrive"},
+            "data": {"$ref": "#/$defs/dlqRedrive"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "dlq_returned"},
+            "data": {"$ref": "#/$defs/dlqReturned"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "sweep_performed"},
+            "data": {"$ref": "#/$defs/sweepPerformed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "overdue_exception"},
+            "data": {"$ref": "#/$defs/overdueException"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -1174,7 +1275,12 @@
     {"properties": {"kind": {"properties": {"type": {"const": "completion_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "completion_refused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_registered"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_revoked"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_revoked"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dlq_routed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dlq_redrive"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dlq_returned"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "sweep_performed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

@@ -230,6 +230,11 @@ pub enum EventKind {
     CompletionRefused(CompletionRefused),
     ClearanceIdentityRegistered(ClearanceIdentityRegistered),
     ClearanceIdentityRevoked(ClearanceIdentityRevoked),
+    DlqRouted(DlqRouted),
+    DlqRedrive(DlqRedrive),
+    DlqReturned(DlqReturned),
+    SweepPerformed(SweepPerformed),
+    OverdueException(OverdueException),
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -435,6 +440,11 @@ wire_names! {
     CompletionRefused => "completion_refused",
     ClearanceIdentityRegistered => "clearance_identity_registered",
     ClearanceIdentityRevoked => "clearance_identity_revoked",
+    DlqRouted => "dlq_routed",
+    DlqRedrive => "dlq_redrive",
+    DlqReturned => "dlq_returned",
+    SweepPerformed => "sweep_performed",
+    OverdueException => "overdue_exception",
 }
 
 impl EventKind {
@@ -1005,6 +1015,110 @@ pub struct WakeLeaseConsumed {
 pub enum WakeConsumeReason {
     Rung,
     StaleRendezvous,
+}
+
+/// The customs-holding stage an episode was in when it was measured against its deadline.
+///
+/// Carried on `overdue_exception` so a later reader can tell WHICH promise lapsed without
+/// re-deriving it from a graph version that may since have been superseded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomsStage {
+    Parked,
+    Claimed,
+    DeadLettered,
+}
+
+/// Who asked for a sweep. #162 decision 1b promised a background actor a reader can SEE: the
+/// serve tick and an operator's explicit verb are the same operation, and only this field
+/// distinguishes them in the log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SweepCaller {
+    Tick,
+    Operator,
+}
+
+/// A node routed to the declared dead-letter node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DlqRouted {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    /// The stage entry this routing CLOSES — the envelope sequence at which the node entered
+    /// the state it is leaving. Captured, never re-derived: the `WakeLeaseConsumed` rule, which
+    /// records the side the log does not already know.
+    pub episode_sequence: u64,
+    pub reason: SafeCode,
+}
+
+/// A dead-lettered node put back into play.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DlqRedrive {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    /// The dead-letter episode being redriven. The NEW episode's identity is this event's own
+    /// sequence and is therefore ABSENT here on purpose — carrying it would let a caller assert
+    /// an identity the log can contradict.
+    pub dlq_episode_sequence: u64,
+}
+
+/// A dead-lettered node returned to its wait, which REOPENS the wait as a new episode.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DlqReturned {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    pub dlq_episode_sequence: u64,
+    /// The reopened wait's budget, in seconds, anchored to THIS event: the fold computes the
+    /// deadline from this envelope's own `occurred_at`, the `matures_in_seconds` shape.
+    ///
+    /// Absent means ABSENT — never zero, never a default. A node returned without a declared
+    /// budget gets no deadline, forever. `skip_serializing_if` rather than a nullable required
+    /// key, deliberately: an absent key says nobody declared a budget, while a present `null`
+    /// would say a budget WAS declared and is nothing, which is a claim no caller made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_within_seconds: Option<u64>,
+}
+
+/// A sweep that ran, recording the instant it was asked to evaluate AT.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SweepPerformed {
+    pub execution_id: OpaqueId,
+    /// An INSTANT on the wire, and this is the one place the `matures_in_seconds` duration rule
+    /// does NOT apply. That rule exists so no reader invents an instant from a clock of its own,
+    /// and it takes the shape of a duration where the value is a BUDGET, anchored to its own
+    /// event by definition. `as_of` is a QUESTION — the instant the sweep was asked to evaluate
+    /// at, which need not be the instant it ran. Deriving it from `occurred_at` would silently
+    /// rewrite the question to "now" and destroy replay determinism.
+    ///
+    /// Only the past is askable: `as_of` after the appending instant is refused at the command
+    /// layer, because a sweep does not predict, and a future-dated answer would be
+    /// indistinguishable from a real one while permanently consuming the episodes it touched.
+    pub as_of: PersistedTimestamp,
+    pub caller: SweepCaller,
+}
+
+/// One episode found overdue by a sweep.
+///
+/// Appended in the SAME BATCH as the `sweep_performed` that minted it: adjacency is what links
+/// an exception to its sweep, so no field carries the link and no state exists in which the
+/// sweep is recorded and its exceptions are not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OverdueException {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    /// The stage entry that lapsed. One exception per episode, forever — a redrive starts a NEW
+    /// episode and is eligible again, and the same episode never raises twice however many
+    /// sweeps run.
+    pub episode_sequence: u64,
+    pub stage: CustomsStage,
+    /// The instant the episode was measured against. Recorded so a later reader can check the
+    /// verdict without re-deriving it from a graph version that may since have moved.
+    pub deadline: PersistedTimestamp,
 }
 
 /// One finding inside a gate verdict (M06 Task 1): severity, the claim, the evidence that

@@ -360,11 +360,37 @@ fn path_content_slots_are_identical_closed_1_0_0_contracts() {
     // OPTIONAL timeoutSeconds the user already declares and the linter already demands —
     // a declaration that used to be dropped at persistence. The pin exists so a schema
     // edit is a decision someone defends in a diff, which is what this comment is.
+    //
+    // DELIBERATE (#162, 2026-08-24): it moved again, and for the same shape of reason one
+    // milestone later. The persisted node gained the OPTIONAL `customs` block that #160 added
+    // to `PersistedNode` and that nothing could ever store: `$defs.node` closes with
+    // `additionalProperties: false`, so every `graph_version_published` whose node declared
+    // budgets was refused by `validate_envelope` with a bare `Invalid` naming no field. No
+    // budget could persist, so no stage deadline could be computed, so the overdue sweep was
+    // structurally empty. Measured as a controlled pair on one envelope: with customs, one
+    // schema error at /kind; without customs, none — before and after, with only the second
+    // column unchanged.
+    //
+    // `customs` is NOT in `required`, and that is the half worth defending: absence has to
+    // stay absence, or every version published before customs existed becomes invalid
+    // retroactively. The required/optional split inside the block is read off the Rust type
+    // rather than chosen — `waitWithinSeconds` and `clearanceWithinSeconds` are plain `u64`;
+    // `dlqWithinSeconds` is `Option<u64>` WITH `skip_serializing_if`, which means
+    // optional-and-not-nullable rather than required-and-nullable.
+    //
+    // This assertion is why the change is defended here at all. It is the FIFTH site of a
+    // delta whose scope was measured as four, and the only one that is not a schema or a
+    // catalog — a test holding the digest as a tripwire. It fired.
+    //
+    // It also fired GREEN over a broken version of this very comment: the first attempt to
+    // write it went through a shell, whose backticks ate every identifier above and left the
+    // prose gutted. The suite passed anyway, because the tripwire guards the DIGEST and
+    // nothing guards the DEFENCE. A justification is checked by a reader or not at all.
     assert_eq!(
         schema_digest(&current.schemas["persisted-graph-version"])
             .unwrap()
             .as_str(),
-        "sha256:da059b44e693939d367b817422894e5ff1dc741db25282cf245639760bbcf6e3"
+        "sha256:174c7cf9d7e3a9d7fe14b7dadf9fc1b7c36004197a87b42d5bb0f8f04a8723b4"
     );
 }
 

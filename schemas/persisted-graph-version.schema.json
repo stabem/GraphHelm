@@ -157,6 +157,16 @@
       },
       "additionalProperties": false
     },
+    "customs": {
+      "type": "object",
+      "required": ["waitWithinSeconds", "clearanceWithinSeconds"],
+      "properties": {
+        "waitWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "clearanceWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "dlqWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
+      },
+      "additionalProperties": false
+    },
     "node": {
       "type": "object",
       "required": ["nodeType", "optionality", "controls", "contentSlotIds"],
@@ -193,7 +203,8 @@
           "maxItems": 64,
           "items": {"$ref": "#/$defs/opaqueId"},
           "uniqueItems": true
-        }
+        },
+        "customs": {"$ref": "#/$defs/customs"}
       },
       "additionalProperties": false
     },

@@ -1931,6 +1931,60 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             json!({"executionId": "execution-test", "identity": "auditor-a"}),
             false,
         ),
+        // #162's five. They were declared at every site the STORE checks -- the envelope schema,
+        // its 1.0.0 mirror, both catalogs, the wire-name table -- and this table, which no site
+        // list mentions, was not one of them. The guard above caught it, and it caught it only
+        // because the neighbouring crate's suite was run at all: the branch that added these five
+        // was red here from its first commit and green on every suite its author chose to run.
+        (
+            "sweep_performed",
+            json!({
+                "executionId": "execution-test",
+                "asOf": "2026-08-09T00:00:00Z",
+                "caller": "operator"
+            }),
+            false,
+        ),
+        (
+            "overdue_exception",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "node-1",
+                "episodeSequence": 4,
+                "stage": "claimed",
+                "deadline": "2026-08-09T00:00:00Z"
+            }),
+            false,
+        ),
+        (
+            "dlq_routed",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "node-1",
+                "episodeSequence": 4,
+                "reason": "stalled"
+            }),
+            false,
+        ),
+        (
+            "dlq_redrive",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "node-1",
+                "dlqEpisodeSequence": 5
+            }),
+            false,
+        ),
+        (
+            "dlq_returned",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "node-1",
+                "dlqEpisodeSequence": 5,
+                "waitWithinSeconds": 600
+            }),
+            false,
+        ),
     ]
 }
 

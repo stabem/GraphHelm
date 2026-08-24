@@ -380,36 +380,12 @@ function Write-SlotEvent {
     }
 }
 
-# #152: SLOT.lock is agent-managed discipline, not something this script owns the lifecycle of -
-# it only ever READS whatever is there, at start and at end, as evidence for the manifest. Absent
-# CARGO_TARGET_DIR (no shared target dir in play) there is no lock to read at all, and that absence
-# is itself recorded rather than treated as an error.
-function Read-SlotLockSnapshot {
-    # No "CARGO_TARGET_DIR not set" branch: every call site in this script runs after the
-    # TARGET-DIR REFUSAL check above, which exits the whole script before this function can ever
-    # be reached with an unset or wrong CARGO_TARGET_DIR (#166 review, L: dead code documenting a
-    # state the script itself no longer permits).
-    $lockPath = Join-Path $env:CARGO_TARGET_DIR 'SLOT.lock'
-    if (-not (Test-Path -LiteralPath $lockPath)) {
-        return [ordered]@{ present = $false; reason = 'no SLOT.lock at CARGO_TARGET_DIR'; targetDir = $env:CARGO_TARGET_DIR }
-    }
-    # [System.IO.File]::ReadAllText, NOT Get-Content -Raw - caught live, the hard way: Get-Content
-    # attaches PowerShell PROVIDER metadata (PSPath/PSParentPath/PSDrive/PSProvider) onto the
-    # string it returns, and PSDrive.Provider.ImplementingType chains straight into .NET's own
-    # reflection Type graph - which is enormous and heavily self-referential. Nothing about that
-    # is visible from a plain Write-Host of the value (it PRINTS like an ordinary string); it only
-    # surfaces once something tries to serialize the whole object, which is exactly what
-    # ConvertTo-Json -Depth 8 does downstream. Manifested as a multi-minute hang with zero error
-    # and zero output, reproduced by isolating each field of the manifest hashtable individually
-    # until this one field, alone, was the difference between instant and un-returning. A plain
-    # .NET file read carries no provider metadata at all, so there is nothing extra to walk.
-    return [ordered]@{
-        present   = $true
-        targetDir = $env:CARGO_TARGET_DIR
-        content   = if (Test-Path -LiteralPath $lockPath) { [System.IO.File]::ReadAllText($lockPath) } else { $null }
-        observedAtUtc = [DateTime]::UtcNow.ToString('o')
-    }
-}
+# #200: Read-SlotLockSnapshot moved to ci/slot-lock.ps1 (with Test-SlotLockPathMatchesTargetDirShape
+# and Test-SlotLockSnapshotsIdentical) so these functions can be unit-tested in isolation - see
+# ci/slot-lock.tests.ps1 and .factory/e-agent-200-design.md for the full account of why a boolean
+# `present` field could not tell "genuinely no lock" apart from "looked in the wrong place", and why
+# that distinction is now a `status` tag with three states instead of two.
+. (Join-Path $PSScriptRoot 'slot-lock.ps1')
 
 # #152: one `--no-run --message-format=json` pass over the whole workspace enumerates every test
 # binary (unit-test binaries per crate, integration-test binaries per crate including each
@@ -585,6 +561,12 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         staleArtifacts     = $staleArtifacts
         slotLockAtStart    = $SlotLockAtStart
         slotLockAtEnd      = $SlotLockAtEnd
+        # Gate 9 (#200, L): the pair above was already captured specifically so it COULD be
+        # compared, and nothing did the comparing - a reader had to notice on their own that two
+        # fields existed to diff. A match is a tripwire worth surfacing, not a determination: an
+        # untouched, stale lock reads identical by construction, but so would a real hold nobody
+        # touched for the whole run. See Test-SlotLockSnapshotsIdentical in ci/slot-lock.ps1.
+        slotLockStartEndIdentical = Test-SlotLockSnapshotsIdentical -Start $SlotLockAtStart -End $SlotLockAtEnd
         instrumentSuspect  = $instrumentSuspect
         overallPassed      = $passedEverything
     }

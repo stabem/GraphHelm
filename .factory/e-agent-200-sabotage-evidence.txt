@@ -1,0 +1,272 @@
+#200 (PR #228) - captured sabotage-and-revert output, requested by H's review (item 4).
+
+Real terminal output, redirected straight from `powershell -NoProfile -File ci\slot-lock.tests.ps1`
+into this file at capture time - not retyped or reconstructed from memory. Each block is preceded
+by the exact edit that was made to ci/slot-lock.ps1 or ci/slot-lock.tests.ps1 for that run, and
+every sabotage was reverted (confirmed by a clean run and `git diff` showing no residue) before the
+commit that carries this file. Timestamps are this machine's local clock at capture time.
+
+======================================================================================================
+BASELINE - clean tree, before any sabotage
+======================================================================================================
+
+Captured: 2026-08-24T05:10:57.9991385-03:00
+Command: powershell -NoProfile -File ci\slot-lock.tests.ps1
+
+
+=== Fixture A: correctly-configured present, independent of CARGO_TARGET_DIR ===
+  PASS: Fixture A: status is present (expected [present], got [present])
+  PASS: Fixture A: path echoes the configured file (expected [C:\Users\gabri\AppData\Local\Temp\canonical-slot-929a1536\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\canonical-slot-929a1536\SLOT.lock])
+  PASS: Fixture A: content matches the real lock file (expected [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING], got [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING])
+  PASS: Fixture A: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture A: observedAtUtc is stamped
+
+=== Fixture B: unset GRAPHHELM_SLOT_LOCK_PATH is indeterminate, never absent ===
+  PASS: Fixture B: status is indeterminate, not absent (expected [indeterminate], got [indeterminate])
+  PASS: Fixture B: reason names the unset variable (expected [GRAPHHELM_SLOT_LOCK_PATH not set], got [GRAPHHELM_SLOT_LOCK_PATH not set])
+  PASS: Fixture B: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture B sabotage guard: never silently reads as absent
+
+=== Fixture C: configured path matches target-dir shape -> indeterminate, never present ===
+  PASS: Fixture C: status is indeterminate, never present, despite a real readable file (expected [indeterminate], got [indeterminate])
+  PASS: Fixture C: reason names the structural signal that fired
+  PASS: Fixture C sabotage guard: a real readable file at a known-wrong path is never trusted
+
+=== Baseline: configured, non-target-dir-shaped path, nothing there -> absent ===
+  PASS: Baseline: genuinely nothing there reads as absent (expected [absent], got [absent])
+  PASS: Baseline: absent still echoes the path that was checked (expected [C:\Users\gabri\AppData\Local\Temp\clean-slot-6e030210\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\clean-slot-6e030210\SLOT.lock])
+
+=== Baseline: unreadable path -> indeterminate, never a false absent ===
+  PASS: Baseline: unreadable path is indeterminate, never a false absent (expected [indeterminate], got [indeterminate])
+  PASS: Baseline: reason explains the read failure
+
+=== Test-SlotLockPathMatchesTargetDirShape ===
+  PASS: matches the literal retired path
+  PASS: matches any per-lane target dir, not just the one that bit us
+  PASS: the canonical location itself does not false-positive
+  PASS: declared gap (design 4b): the snapshot own path does not match - known, accepted limitation, not a new failure
+
+=== Gate 9: Test-SlotLockSnapshotsIdentical ignores observedAtUtc, respects everything else ===
+  PASS: identical content, different timestamp, still identical
+  PASS: different content is correctly NOT identical
+  PASS: different status (present vs absent) is correctly NOT identical
+  PASS: a missing snapshot on either side reports unknown, not a guess
+
+24/24 passed
+
+Exit code: 0
+
+======================================================================================================
+SABOTAGE 1 - collapse the unset-branch's status from 'indeterminate' to 'absent'
+(Fixture B's named sabotage: the collapse a future editor reaches for as a "simplification")
+======================================================================================================
+
+Edit applied to ci/slot-lock.ps1, Read-SlotLockSnapshot, unset-GRAPHHELM_SLOT_LOCK_PATH branch:
+    -  status        = 'indeterminate'
+    +  status        = 'absent'
+
+Captured: 2026-08-24T05:11:12.1882833-03:00
+Command: powershell -NoProfile -File ci\slot-lock.tests.ps1
+
+
+=== Fixture A: correctly-configured present, independent of CARGO_TARGET_DIR ===
+  PASS: Fixture A: status is present (expected [present], got [present])
+  PASS: Fixture A: path echoes the configured file (expected [C:\Users\gabri\AppData\Local\Temp\canonical-slot-3d29219b\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\canonical-slot-3d29219b\SLOT.lock])
+  PASS: Fixture A: content matches the real lock file (expected [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING], got [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING])
+  PASS: Fixture A: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture A: observedAtUtc is stamped
+
+=== Fixture B: unset GRAPHHELM_SLOT_LOCK_PATH is indeterminate, never absent ===
+  FAIL: Fixture B: status is indeterminate, not absent (expected [indeterminate], got [absent])
+  PASS: Fixture B: reason names the unset variable (expected [GRAPHHELM_SLOT_LOCK_PATH not set], got [GRAPHHELM_SLOT_LOCK_PATH not set])
+  PASS: Fixture B: schemaVersion is 2 (expected [2], got [2])
+  FAIL: Fixture B sabotage guard: never silently reads as absent
+
+=== Fixture C: configured path matches target-dir shape -> indeterminate, never present ===
+  PASS: Fixture C: status is indeterminate, never present, despite a real readable file (expected [indeterminate], got [indeterminate])
+  PASS: Fixture C: reason names the structural signal that fired
+  PASS: Fixture C sabotage guard: a real readable file at a known-wrong path is never trusted
+
+=== Baseline: configured, non-target-dir-shaped path, nothing there -> absent ===
+  PASS: Baseline: genuinely nothing there reads as absent (expected [absent], got [absent])
+  PASS: Baseline: absent still echoes the path that was checked (expected [C:\Users\gabri\AppData\Local\Temp\clean-slot-a8652694\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\clean-slot-a8652694\SLOT.lock])
+
+=== Baseline: unreadable path -> indeterminate, never a false absent ===
+  PASS: Baseline: unreadable path is indeterminate, never a false absent (expected [indeterminate], got [indeterminate])
+  PASS: Baseline: reason explains the read failure
+
+=== Test-SlotLockPathMatchesTargetDirShape ===
+  PASS: matches the literal retired path
+  PASS: matches any per-lane target dir, not just the one that bit us
+  PASS: the canonical location itself does not false-positive
+  PASS: declared gap (design 4b): the snapshot own path does not match - known, accepted limitation, not a new failure
+
+=== Gate 9: Test-SlotLockSnapshotsIdentical ignores observedAtUtc, respects everything else ===
+  PASS: identical content, different timestamp, still identical
+  PASS: different content is correctly NOT identical
+  PASS: different status (present vs absent) is correctly NOT identical
+  PASS: a missing snapshot on either side reports unknown, not a guess
+
+22/24 passed
+
+Exit code: 1
+
+======================================================================================================
+SABOTAGE 2 - bypass the structural tripwire call (Fixture C's named sabotage)
+======================================================================================================
+
+Edit applied to ci/slot-lock.ps1, Read-SlotLockSnapshot:
+    -  if (Test-SlotLockPathMatchesTargetDirShape -LockPath $lockPath) {
+    +  if ($false -and (Test-SlotLockPathMatchesTargetDirShape -LockPath $lockPath)) {
+
+Captured: 2026-08-24T05:11:33.8275360-03:00
+Command: powershell -NoProfile -File ci\slot-lock.tests.ps1
+
+
+=== Fixture A: correctly-configured present, independent of CARGO_TARGET_DIR ===
+  PASS: Fixture A: status is present (expected [present], got [present])
+  PASS: Fixture A: path echoes the configured file (expected [C:\Users\gabri\AppData\Local\Temp\canonical-slot-f0d3617c\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\canonical-slot-f0d3617c\SLOT.lock])
+  PASS: Fixture A: content matches the real lock file (expected [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING], got [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING])
+  PASS: Fixture A: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture A: observedAtUtc is stamped
+
+=== Fixture B: unset GRAPHHELM_SLOT_LOCK_PATH is indeterminate, never absent ===
+  PASS: Fixture B: status is indeterminate, not absent (expected [indeterminate], got [indeterminate])
+  PASS: Fixture B: reason names the unset variable (expected [GRAPHHELM_SLOT_LOCK_PATH not set], got [GRAPHHELM_SLOT_LOCK_PATH not set])
+  PASS: Fixture B: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture B sabotage guard: never silently reads as absent
+
+=== Fixture C: configured path matches target-dir shape -> indeterminate, never present ===
+  FAIL: Fixture C: status is indeterminate, never present, despite a real readable file (expected [indeterminate], got [present])
+  FAIL: Fixture C: reason names the structural signal that fired
+  FAIL: Fixture C sabotage guard: a real readable file at a known-wrong path is never trusted
+
+=== Baseline: configured, non-target-dir-shaped path, nothing there -> absent ===
+  PASS: Baseline: genuinely nothing there reads as absent (expected [absent], got [absent])
+  PASS: Baseline: absent still echoes the path that was checked (expected [C:\Users\gabri\AppData\Local\Temp\clean-slot-1dd6c1e4\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\clean-slot-1dd6c1e4\SLOT.lock])
+
+=== Baseline: unreadable path -> indeterminate, never a false absent ===
+  PASS: Baseline: unreadable path is indeterminate, never a false absent (expected [indeterminate], got [indeterminate])
+  PASS: Baseline: reason explains the read failure
+
+=== Test-SlotLockPathMatchesTargetDirShape ===
+  PASS: matches the literal retired path
+  PASS: matches any per-lane target dir, not just the one that bit us
+  PASS: the canonical location itself does not false-positive
+  PASS: declared gap (design 4b): the snapshot own path does not match - known, accepted limitation, not a new failure
+
+=== Gate 9: Test-SlotLockSnapshotsIdentical ignores observedAtUtc, respects everything else ===
+  PASS: identical content, different timestamp, still identical
+  PASS: different content is correctly NOT identical
+  PASS: different status (present vs absent) is correctly NOT identical
+  PASS: a missing snapshot on either side reports unknown, not a guess
+
+21/24 passed
+
+Exit code: 1
+
+======================================================================================================
+SABOTAGE 3 - drop one assertion call entirely (simulates a block silently lost to a bad merge or a
+commented-out line) - proves the NEW HARNESS-BROKE guard (H's review, item 1) is real, not vacuous
+======================================================================================================
+
+Edit applied to ci/slot-lock.tests.ps1: commented out the last Gate-9 assertion (message: "a missing
+snapshot on either side reports unknown, not a guess") without touching $ExpectedAssertionCount.
+
+Captured: 2026-08-24T05:11:49.4339173-03:00
+Command: powershell -NoProfile -File ci\slot-lock.tests.ps1
+
+
+=== Fixture A: correctly-configured present, independent of CARGO_TARGET_DIR ===
+  PASS: Fixture A: status is present (expected [present], got [present])
+  PASS: Fixture A: path echoes the configured file (expected [C:\Users\gabri\AppData\Local\Temp\canonical-slot-75e428e9\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\canonical-slot-75e428e9\SLOT.lock])
+  PASS: Fixture A: content matches the real lock file (expected [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING], got [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING])
+  PASS: Fixture A: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture A: observedAtUtc is stamped
+
+=== Fixture B: unset GRAPHHELM_SLOT_LOCK_PATH is indeterminate, never absent ===
+  PASS: Fixture B: status is indeterminate, not absent (expected [indeterminate], got [indeterminate])
+  PASS: Fixture B: reason names the unset variable (expected [GRAPHHELM_SLOT_LOCK_PATH not set], got [GRAPHHELM_SLOT_LOCK_PATH not set])
+  PASS: Fixture B: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture B sabotage guard: never silently reads as absent
+
+=== Fixture C: configured path matches target-dir shape -> indeterminate, never present ===
+  PASS: Fixture C: status is indeterminate, never present, despite a real readable file (expected [indeterminate], got [indeterminate])
+  PASS: Fixture C: reason names the structural signal that fired
+  PASS: Fixture C sabotage guard: a real readable file at a known-wrong path is never trusted
+
+=== Baseline: configured, non-target-dir-shaped path, nothing there -> absent ===
+  PASS: Baseline: genuinely nothing there reads as absent (expected [absent], got [absent])
+  PASS: Baseline: absent still echoes the path that was checked (expected [C:\Users\gabri\AppData\Local\Temp\clean-slot-96429b79\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\clean-slot-96429b79\SLOT.lock])
+
+=== Baseline: unreadable path -> indeterminate, never a false absent ===
+  PASS: Baseline: unreadable path is indeterminate, never a false absent (expected [indeterminate], got [indeterminate])
+  PASS: Baseline: reason explains the read failure
+
+=== Test-SlotLockPathMatchesTargetDirShape ===
+  PASS: matches the literal retired path
+  PASS: matches any per-lane target dir, not just the one that bit us
+  PASS: the canonical location itself does not false-positive
+  PASS: declared gap (design 4b): the snapshot own path does not match - known, accepted limitation, not a new failure
+
+=== Gate 9: Test-SlotLockSnapshotsIdentical ignores observedAtUtc, respects everything else ===
+  PASS: identical content, different timestamp, still identical
+  PASS: different content is correctly NOT identical
+  PASS: different status (present vs absent) is correctly NOT identical
+
+HARNESS-BROKE: ran 23 assertions, expected 24.
+Coverage changed silently - a block was skipped, commented out, or lost in a merge.
+If this is a deliberate new test, update $ExpectedAssertionCount at the top of this file.
+
+Exit code: 2
+
+======================================================================================================
+FINAL - all three sabotages reverted, clean tree confirmed by git diff before this file was
+committed
+======================================================================================================
+
+Captured: 2026-08-24T05:12:01.1788165-03:00
+Command: powershell -NoProfile -File ci\slot-lock.tests.ps1
+
+
+=== Fixture A: correctly-configured present, independent of CARGO_TARGET_DIR ===
+  PASS: Fixture A: status is present (expected [present], got [present])
+  PASS: Fixture A: path echoes the configured file (expected [C:\Users\gabri\AppData\Local\Temp\canonical-slot-2da35085\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\canonical-slot-2da35085\SLOT.lock])
+  PASS: Fixture A: content matches the real lock file (expected [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING], got [X | 2026-08-20T14:00:00Z | lane #200 | STATUS: RUNNING])
+  PASS: Fixture A: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture A: observedAtUtc is stamped
+
+=== Fixture B: unset GRAPHHELM_SLOT_LOCK_PATH is indeterminate, never absent ===
+  PASS: Fixture B: status is indeterminate, not absent (expected [indeterminate], got [indeterminate])
+  PASS: Fixture B: reason names the unset variable (expected [GRAPHHELM_SLOT_LOCK_PATH not set], got [GRAPHHELM_SLOT_LOCK_PATH not set])
+  PASS: Fixture B: schemaVersion is 2 (expected [2], got [2])
+  PASS: Fixture B sabotage guard: never silently reads as absent
+
+=== Fixture C: configured path matches target-dir shape -> indeterminate, never present ===
+  PASS: Fixture C: status is indeterminate, never present, despite a real readable file (expected [indeterminate], got [indeterminate])
+  PASS: Fixture C: reason names the structural signal that fired
+  PASS: Fixture C sabotage guard: a real readable file at a known-wrong path is never trusted
+
+=== Baseline: configured, non-target-dir-shaped path, nothing there -> absent ===
+  PASS: Baseline: genuinely nothing there reads as absent (expected [absent], got [absent])
+  PASS: Baseline: absent still echoes the path that was checked (expected [C:\Users\gabri\AppData\Local\Temp\clean-slot-aecb7143\SLOT.lock], got [C:\Users\gabri\AppData\Local\Temp\clean-slot-aecb7143\SLOT.lock])
+
+=== Baseline: unreadable path -> indeterminate, never a false absent ===
+  PASS: Baseline: unreadable path is indeterminate, never a false absent (expected [indeterminate], got [indeterminate])
+  PASS: Baseline: reason explains the read failure
+
+=== Test-SlotLockPathMatchesTargetDirShape ===
+  PASS: matches the literal retired path
+  PASS: matches any per-lane target dir, not just the one that bit us
+  PASS: the canonical location itself does not false-positive
+  PASS: declared gap (design 4b): the snapshot own path does not match - known, accepted limitation, not a new failure
+
+=== Gate 9: Test-SlotLockSnapshotsIdentical ignores observedAtUtc, respects everything else ===
+  PASS: identical content, different timestamp, still identical
+  PASS: different content is correctly NOT identical
+  PASS: different status (present vs absent) is correctly NOT identical
+  PASS: a missing snapshot on either side reports unknown, not a guess
+
+24/24 passed
+
+Exit code: 0

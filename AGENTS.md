@@ -155,3 +155,17 @@ Explicitly out of scope: Studio/Tauri/React, SSH bootstrap, Docker/Podman orches
 - Keep commits small and independently buildable. Use conventional commit messages and include `Closes #1` in the final implementation commit/PR body.
 - Every PR includes summary and rationale, validation evidence, security review, dependency notes, rollback plan, and the exact out-of-scope list.
 - Before declaring completion, run every verification command from a clean state, inspect the output, review the full branch diff, and verify all automated acceptance scenarios. Code inspection alone is not completion evidence.
+
+## Issue labels (owner directive, 2026-08-24)
+
+Every new issue is created with exactly one of these labels — pass it at creation time
+(`gh issue create --label <label>`), never leave an issue unlabeled:
+
+- `current-wave` — a task of the active milestone, with an assigned agent.
+- `in-flight` — a lane with work in progress right now.
+- `tech-debt` — a measured finding placed on record; real, not yet scheduled. This is the default
+  for defects, flakes, and gaps found while doing other work.
+- `product-vision` — a capability that does not exist yet; future milestone, owner decision.
+
+When an issue's situation changes (a debt gets scheduled, a wave task ships), swap the label —
+one label per issue, and the label states the drawer, not the severity.

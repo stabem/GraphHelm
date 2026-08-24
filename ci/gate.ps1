@@ -327,6 +327,59 @@ function Write-CanaryNonce {
     [System.IO.File]::WriteAllText($noncePath, $content, $utf8NoBom)
 }
 
+# #199: the slot directory, which is deliberately OUTSIDE any cargo target dir.
+#
+# Measured on 2026-08-20, not designed around: SLOT.lock used to live inside CARGO_TARGET_DIR, and
+# `cargo clean` wipes that directory - so the one operation that most needs exclusion was exactly
+# the operation that destroyed the proof you held it. Two agents collided at ~15:41Z with neither
+# breaking a rule: one ran the clean the slot law requires and deleted their own lock, the other
+# verified a genuine absence and claimed the slot. Anything that must OUTLIVE a clean therefore
+# lives here and never under a target dir.
+#
+# Overridable so a machine with a different layout can point it elsewhere; the default is the path
+# the factory already uses for SLOT.lock and check-activity.log.
+function Get-SlotDir {
+    if ($env:GRAPHHELM_SLOT_DIR) { return $env:GRAPHHELM_SLOT_DIR }
+    return 'D:/graphhelm-slot'
+}
+
+# #199: one line per gate event, appended, never rewritten.
+#
+# The lock answers "who holds it now" and CANNOT answer "how many times did it change hands
+# today" - every acquisition overwrites the last, so the history is destroyed by the act of using
+# the instrument. That number is exactly what a throughput question needs, and on 2026-08-20 it was
+# unanswerable in the one instance where it mattered. This is the append-only half the lock cannot
+# provide, in the same shape as `check-activity.log`.
+#
+# Best-effort by construction: a gate run must not fail because a log line could not be written.
+# The failure is REPORTED rather than swallowed, because a silent logging failure would leave the
+# same hole this exists to close.
+function Write-SlotEvent {
+    param([Parameter(Mandatory)] [string] $Event, [string] $Detail = '')
+
+    try {
+        # .NET APIs, NOT New-Item/Join-Path. Found by this function's own negative control, run live
+        # against an unreachable drive before any of this was trusted -- and the finding is narrower
+        # than it first looked, so it is stated narrowly: under this file's own
+        # `$ErrorActionPreference = 'Stop'` the cmdlets throw and this catch reports the real cause,
+        # so THERE IS NO LIVE BREAK on the shipped path. Under 'Continue' -- which `Invoke-Stage`
+        # sets for the duration of every native call -- they fail NON-TERMINATINGLY instead: two raw
+        # DriveNotFoundExceptions print, `Join-Path` returns $null, and the catch finally fires on
+        # "Value cannot be null", a true message about the wrong cause. So the cmdlet version is
+        # correct only while nobody calls this from inside a stage. `Directory.CreateDirectory` and
+        # `Path.Combine` throw regardless of the ambient preference, which makes the behaviour a
+        # property of this function rather than of its caller.
+        $slotDir = Get-SlotDir
+        [System.IO.Directory]::CreateDirectory($slotDir) | Out-Null
+        $line = '{0} | gate | {1} | {2}' -f [DateTime]::UtcNow.ToString('o'), $Event, $Detail
+        # AppendAllText, not Add-Content: the same no-BOM discipline the rest of this file uses,
+        # and an append that cannot silently re-encode a file other processes also append to.
+        [System.IO.File]::AppendAllText([System.IO.Path]::Combine($slotDir, 'SLOT.log'), $line + "`n", (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        Write-Host "[gate] WARNING: could not append to SLOT.log: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 # #152: SLOT.lock is agent-managed discipline, not something this script owns the lifecycle of -
 # it only ever READS whatever is there, at start and at end, as evidence for the manifest. Absent
 # CARGO_TARGET_DIR (no shared target dir in play) there is no lock to read at all, and that absence
@@ -449,8 +502,69 @@ function Write-RunManifest {
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
 
+    # #199: what the status does NOT say, said out loud.
+    #
+    # `status: RED` records that a run failed and nothing about whether the failure means anything.
+    # Three classes look identical in an exit code and only the first is evidence about code:
+    #   real-red       - the code failed something
+    #   instrument-red - stale artifacts, a contaminated target dir, a broken manifest write
+    #   dead           - killed by a lock collision, a clean underneath it, an aborted slot
+    # Measured 2026-08-20: one lane produced three runs - one of each - and ZERO verdicts between
+    # them, while a census counting "two complete runs, both RED" could not tell them apart.
+    #
+    # GREEN classifies itself: there is no ambiguity in a run that passed. RED cannot, because the
+    # distinction is a judgement only the holder can make once they have read the failure - so it
+    # ships as UNCLASSIFIED, which is a legal and VISIBLE value rather than a silent absence, and
+    # `ci/classify-run.ps1` is how the holder settles it.
+#
+# DERIVED FROM THE STRONGER VERDICT, NOT FROM `$Status` -- and the first version of this line got it
+# backwards, which made `instrument-red` UNREACHABLE for the one instrument failure the gate detects
+# by itself. `$Status` counts failed STAGES only. The manifest already carries a stricter verdict,
+# `overallPassed`, which also weighs the canary and stale artifacts. So a run whose ONLY problem was
+# stale artifacts came out `GREEN` -> `green`, and `classify-run.ps1` REFUSES anything not
+# `UNCLASSIFIED` -- while the same manifest said `overallPassed: false` with a non-zero
+# `staleArtifactCount`. Unclassifiable, and counted as a pass by any census reading `runClass`.
+#
+# Stale artifacts are the FIRST EXAMPLE in this file's own definition of `instrument-red`. Deriving
+# the new field from the WEAKER of two verdicts the manifest already holds imports exactly the
+# flattening the field was added to remove. (Found in review by L Agent, against `2b5396e`.)
+$passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($staleArtifacts.Count -eq 0)
+$runClass = if ($Status -eq 'GREEN' -and $passedEverything) { 'green' } else { 'UNCLASSIFIED' }
+
+# #199: "was the INSTRUMENT broken?" is DERIVED, never chosen -- and it is born HERE, beside the
+# numbers it is computed from, so it cannot disagree with them. Not "they agree today": they have no
+# way to disagree.
+#
+# It stopped being a CLASS because real data would not fit. A Agent's `gate.log` failed `rustfmt`
+# and `clippy` -- CODE -- and carried FOUR stale binaries -- INSTRUMENT -- in the same run. Both true
+# at once, and an exclusive class forces one label, which erases half of what happened; the erased
+# half is precisely the half that decides whether the red is citable. So `instrument-red` is gone
+# from the class set, and `-Class` is left for what needs a human: `real-red` / `dead`.
+#
+# It is NOT computed in `classify-run.ps1`, deliberately: a value calculated where a run is
+# CLASSIFIED would attach itself to old manifests nobody measured at the time -- the same defect as
+# stamping a class onto a pre-taxonomy manifest, one layer up.
+#
+# ABSENT IS NOT FALSE. A manifest written before this change has no `instrumentSuspect` at all, and
+# that means NOT MEASURED -- never "the instrument was healthy".
+$instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
+
+    # #199: "is it real?" and "is it MINE?" are orthogonal, so they are two fields and not four
+    # classes. Found by the first real case the taxonomy met (#166's gate, 2026-08-20): it went RED
+    # on a flake in `runtime_http.rs`, a file that lane never touched. By the letter that is
+    # `real-red` -- code failed something -- and it says NOTHING about the diff under judgement.
+    # A fourth class would have forced that run to be either mis-labelled or mis-attributed.
+    #
+    # $null, not $true: the gate cannot know. Attribution is a judgement about a DIFF, and the only
+    # thing here that knows the diff is the person reading the failure. `ci/classify-run.ps1` sets
+    # it, and refuses to set it FALSE without the three conditions that make non-attribution
+    # checkable rather than convenient.
+    $relatedToDiff = $null
+
     $manifest = [ordered]@{
         status             = $Status
+        runClass           = $runClass
+        relatedToDiff      = $relatedToDiff
         headSha            = $headSha
         dirtyDiffHash      = $dirtyDiffHash
         runStartUtc        = $runStartUtc.ToString('o')
@@ -471,7 +585,8 @@ function Write-RunManifest {
         staleArtifacts     = $staleArtifacts
         slotLockAtStart    = $SlotLockAtStart
         slotLockAtEnd      = $SlotLockAtEnd
-        overallPassed      = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($staleArtifacts.Count -eq 0)
+        instrumentSuspect  = $instrumentSuspect
+        overallPassed      = $passedEverything
     }
 
     $fileName = "$($headSha.Substring(0, 12))-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')).json"
@@ -480,11 +595,41 @@ function Write-RunManifest {
     # file - a manifest read back with a strict JSON parser (Python's json.load, no -sig) rejects
     # a leading BOM outright, and this manifest exists specifically to be machine-read later.
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($path, ($manifest | ConvertTo-Json -Depth 8), $utf8NoBom)
+    $json = $manifest | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($path, $json, $utf8NoBom)
+
+    # #199: the SAME bytes, outside the repository.
+    #
+    # The in-repo copy is the committable evidence and stays. It is also only visible to anyone if
+    # a human chooses to commit it, and it dies with its branch - so "how many runs happened today"
+    # was answerable today only as a LOWER BOUND. This copy is written unconditionally, outside any
+    # worktree and outside any target dir, so a run leaves a trace whether or not anybody decides
+    # it is worth keeping.
+    #
+    # Best-effort, and REPORTED on failure: a durable-copy problem must not fail a gate run, and
+    # must not be silent either.
+    try {
+        # .NET APIs for the same reason as Write-SlotEvent: a cmdlet that fails non-terminatingly
+        # prints its own error and hands the catch a misleading one.
+        $durableDir = [System.IO.Path]::Combine((Get-SlotDir), 'gate-runs')
+        [System.IO.Directory]::CreateDirectory($durableDir) | Out-Null
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($durableDir, $fileName), $json, $utf8NoBom)
+    } catch {
+        Write-Host "[gate] WARNING: could not write the durable manifest copy: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    Write-SlotEvent -Event 'RUN-END' -Detail "status=$Status class=$runClass head=$($headSha.Substring(0, 12)) manifest=$fileName"
     return $path
 }
 
 $slotLockAtStart = Read-SlotLockSnapshot
+
+# #199: the START half of the append-only pair. Written BEFORE any stage runs, so a run that dies
+# without ever reaching `Write-RunManifest` - killed by a lock collision, a clean underneath it, an
+# aborted slot - still leaves a line. A START with no matching RUN-END IS the record of a dead run,
+# and that class was previously invisible: it produces no manifest at all, so a count of manifests
+# counts only the runs that survived to write one.
+Write-SlotEvent -Event 'RUN-START' -Detail "targetDir=$($env:CARGO_TARGET_DIR) cwd=$repositoryRoot"
 
 Push-Location -LiteralPath $repositoryRoot
 try {

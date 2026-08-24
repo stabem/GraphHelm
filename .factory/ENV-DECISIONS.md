@@ -1021,3 +1021,33 @@ without ENDs. Either wait for the END, or start anyway and NAME the overlap in t
 record ("check-tier activity in window: <who>, <span>") — an unnamed overlap makes the gate's RED
 unreadable.** The reverse half already exists (ED-17: check-tier never competes with a declared
 gate); this closes the race where the window opens FIRST.
+
+---
+
+## ED-21 — AN EXPLICIT TOOL FLAG OVERRIDES THE PROJECT'S CONFIG FILE, AND THE WRONG RESULT PASSES (from A's hotfix #245)
+
+Measured: `rustfmt --edition 2021` was run out of habit on three files. The workspace is **edition
+2024** and carries a `rustfmt.toml` (`edition = "2024"`, `newline_style = "Unix"`). The
+command-line flag does not confirm or complement the config file — **it overrides it.** Two files
+were reformatted under 2021 rules and **both exited 0**: a file formatted by the wrong rules is
+still a valid file, and the `--check` that followed carried the same wrong flag, so instrument and
+subject shared the defect and therefore agreed.
+
+**What caught it was an accident, not the method.** The third file failed to parse
+(`let chains are only allowed in Rust 2024 or later`) because a sibling module uses let-chains.
+Without that, the wrong formatting would have been committed and `cargo fmt` in the gate — which
+reads the config — would have failed afterwards, with the defect already in main and looking like
+the gate was wrong.
+
+**Rule: run a tool that has a project config file WITHOUT the flags that config already fixes.**
+Here that means `cargo fmt` (which reads `rustfmt.toml` and the edition from `Cargo.toml`), or
+`rustfmt` with no `--edition`. Pass such a flag only when the intent is genuinely to diverge from
+the project config, and say why. **Generally: before passing an option that a project config file
+also defines, ask which one wins — the answer is very often the flag, not the project.**
+
+**Companion check, because the failure mode is silent:** after any bulk reformat, run
+`git diff --stat` and confirm the change is formatting and not line-ending churn. With
+`core.autocrlf=true` on Windows a whole-file CRLF rewrite is indistinguishable from a formatting
+change by eye. The tell is proportion: real formatting touches some lines (here 31 insertions / 27
+deletions across three files, with the CR byte count moving with the line count); an EOL rewrite
+touches every line in the file.

@@ -2406,6 +2406,45 @@ fn batch_checksum(batch: &PhysicalBatch) -> Result<String, EventRepositoryError>
     })?))
 }
 
+/// Verify that one stored journal line still round-trips through this crate's canonical form.
+///
+/// **PURPOSE-BUILT, NOT A GENERAL API (#181).** This exists so an accounting suite OUTSIDE this
+/// crate can check committed journals that have no store around them — bare `journal.jsonl`
+/// bundles under `docs/acceptance/` with no `events/` directory, which `LocalEventRepository::open`
+/// cannot reach. It promises nothing about any other use, and it is deliberately the narrowest
+/// surface that answers that question: `&str` in, this crate's existing error out, and **no new
+/// public types** — `PhysicalBatch` and `canonical_bytes` stay `pub(crate)`.
+///
+/// **It WRAPS `load_state`'s check; it does not reimplement it.** The same `parse_physical_batch`,
+/// the same `batch_checksum`, the same `canonical_bytes`, in the same order, so a caller is
+/// comparing against THIS store's notion of canonical form. Re-deriving canonical form in the
+/// caller would be a duplicated ORACLE, and a duplicated oracle diverges in silence — the journals
+/// would then be checked against the test's idea of canonical rather than the store's.
+///
+/// # Errors
+///
+/// - [`EventRepositoryError::Integrity`] — the line is not canonical, fails schema validation, or
+///   carries a `formatVersion` this build does not write.
+/// - [`EventRepositoryError::CorruptBatch`] — the batch fails its own checksum, which is a
+///   different recovery path from a broken hash chain and is reported separately for that reason.
+pub fn journal_line_roundtrips(line: &str) -> Result<(), EventRepositoryError> {
+    // The same three checks `load_state` runs over every stored line, in the same order and
+    // through the same functions. Kept as a call sequence rather than a shared helper on purpose:
+    // extracting one would let `load_state`'s copy drift from this one, and this exists precisely
+    // so an outside caller measures against what the store actually does.
+    let schemas =
+        graphhelm_schema::repository_schema_set().map_err(|_| EventRepositoryError::Integrity)?;
+    let bytes = line.as_bytes();
+    let batch = parse_physical_batch(schemas, bytes)?;
+    if batch.checksum != batch_checksum(&batch)? {
+        return Err(EventRepositoryError::CorruptBatch);
+    }
+    if canonical_bytes(&batch)? != bytes || batch.format_version != FORMAT_VERSION {
+        return Err(EventRepositoryError::Integrity);
+    }
+    Ok(())
+}
+
 fn parse_physical_batch(
     schemas: &graphhelm_schema::RepositorySchemaSet,
     line: &[u8],

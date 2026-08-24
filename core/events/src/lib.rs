@@ -29,7 +29,7 @@ pub use key::{
     RepositoryFuture, RevocationReceipt, RevokeKeyRequest, VerifyAuthenticationRequest,
     WrapKeyRequest, WrappedKey,
 };
-pub use local::{LocalEventRepository, LocalFailpoint};
+pub use local::{LocalEventRepository, LocalFailpoint, journal_line_roundtrips};
 pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
     MAX_PROJECTION_NODES, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,

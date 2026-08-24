@@ -12,8 +12,27 @@
 //! This is the same defect as #58, and the restore below is the same move
 //! `replay_demonstration_store` makes for the same stated reason (#59). That fix reached the
 //! demonstration binding because the demonstration binding had a test that could fail. The
-//! artifact binding had none, and the M06 run is bound by no clause at all — so this test covers
-//! every committed store by directory, not by binding.
+//! artifact binding had none, and the M06 run is bound by no clause at all — so the stores below
+//! are named by DIRECTORY rather than by binding.
+//!
+//! **What this file covers, stated exactly, because the previous wording did not.** It opens the
+//! three store-layout archives listed in `archives()`, by hand. It used to claim it covered "every
+//! committed store by directory"; that was true when written and false by the time anyone read it.
+//! Eight bare-journal bundles were committed afterwards and this file never noticed, because a
+//! hand-written list under-covers in silence — the sentence asserted a property the code did not
+//! have, which is worse than saying nothing, since a reader checking for coverage found a sentence
+//! saying it existed (#181).
+//!
+//! **The enumeration now lives next door.** `committed_journals.rs` WALKS `docs/acceptance/`,
+//! finds every committed journal in both layouts, and fails on any that neither this file's list
+//! nor its own accounts for — so adding evidence without adding coverage breaks the build. It
+//! deliberately does not re-open the three archives below: duplicating this oracle would be worse
+//! than the gap it closes, because two oracles diverge in silence.
+//!
+//! **What is still not enforced, so nobody reads the above as more than it is:** the two lists are
+//! separate. Deleting an entry from `archives()` here leaves that store named in
+//! `COVERED_BY_STORE_SUITE` there, and the accounting guard would go on reporting it as covered
+//! while nothing opened it. The walk closes the ADD path, not the REMOVE path.
 //!
 //! Restoring an empty directory adds no content and can hide no loss: a real evidence blob is a
 //! tracked FILE and survives checkout.

@@ -82,3 +82,27 @@ pub trait ToolPort: Send + Sync {
     /// nothing to cancel. See [`ModelPort::cancel_all`] for the contract.
     fn cancel_all(&self) {}
 }
+
+/// Reads repository bytes for #219's retrieval plans.
+///
+/// The port exists to answer ONE question the binding cannot answer about itself: *are the bytes I
+/// would serve still the bytes this binding names?* A `SnapshotBinding` can only compare its two
+/// ids to each other, so it detects staleness that was already visible and is blind to the case
+/// where both ids agree and the bytes underneath moved.
+///
+/// **This reader is workspace-scoped: it reports the identity of what it would serve NOW, and
+/// cannot read at a historical generation.** That is a decision, not an omission — see
+/// `.factory/h-agent-219-blueprint.md` section 8. Its consequence is that a stale coordinate has
+/// TWO permitted exits rather than three: reindex, or refuse `index_stale`. Serving
+/// snapshot-owned bytes from an earlier generation is not available, so nothing in this lane may
+/// be written as though it were.
+pub trait SourceReader: Send + Sync {
+    /// The identity of the bytes this reader would serve right now.
+    ///
+    /// Must be derived from CONTENT, never from a ref: a commit id is the identity of a commit, so
+    /// an uncommitted edit would change the bytes without moving it and this port would answer
+    /// "unchanged" about bytes that changed. The runtime cannot check that — a content digest and
+    /// a commit id are both opaque ids — so an implementor that gets this wrong is caught by the
+    /// guard, not by the type.
+    fn current_snapshot(&self) -> graphhelm_protocols::OpaqueId;
+}

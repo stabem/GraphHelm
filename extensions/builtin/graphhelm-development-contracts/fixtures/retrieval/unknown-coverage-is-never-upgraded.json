@@ -1,0 +1,6 @@
+{
+  "description": "A provider that did not say what it covered has not said it covered everything. Silence is the one answer that must never be upgraded to complete.",
+  "coverage": "unknown",
+  "hits": [],
+  "expect": "refuse:negative_claim_unverified"
+}

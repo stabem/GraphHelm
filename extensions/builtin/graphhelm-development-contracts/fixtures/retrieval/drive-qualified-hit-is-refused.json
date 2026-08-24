@@ -1,0 +1,6 @@
+{
+  "description": "A Windows drive-qualified path escapes the repository while carrying no parent traversal at all. This fixture is schema-valid on purpose: it must be refused by the retrieval compiler, not by validation.",
+  "coverage": "complete",
+  "hits": ["C:/Windows/System32/config/SAM"],
+  "expect": "refuse:scope_mismatch"
+}

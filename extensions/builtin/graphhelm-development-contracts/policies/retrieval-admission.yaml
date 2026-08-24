@@ -1,0 +1,71 @@
+# Retrieval admission policy (#219 / task-003).
+#
+# The DECLARATIVE record of what core/runtime/src/retrieval.rs enforces. It DESCRIBES the contract
+# and is never a second implementation of it: the Runtime is the only enforcer, and a policy file
+# readable as authority would be a second place to change behaviour.
+#
+# The guards in core/runtime/tests/retrieval.rs are what actually hold these rules in place. This
+# file is checked against schemas/retrieval-admission-policy.schema.json, which is where the
+# closed vocabularies below are enforced rather than merely written down.
+apiVersion: p50.dev/development/v1
+kind: RetrievalAdmissionPolicy
+
+# A zero from an index is not an absence. It is "the instrument returned nothing", and each
+# coverage state is a DIFFERENT reason for that, with a different correct response. Fusing them
+# into a boolean destroys exactly the distinction the fallback decision is made on.
+#
+# All eight states are listed. `unknown` in particular is explicit rather than defaulted: a
+# provider that did not say what it covered has not said it covered everything, and silence is the
+# one answer that must never be upgraded.
+zeroResultAdmission:
+  complete: verified-absence          # the only state under which a zero may be published
+  stale: refuse:index_stale           # repair is known and specific: reindex
+  partial: refuse:negative_claim_unverified
+  excluded: refuse:negative_claim_unverified
+  skipped: refuse:negative_claim_unverified
+  extractionGap: refuse:negative_claim_unverified
+  unknown: refuse:negative_claim_unverified
+  unresolved: refuse:negative_claim_unverified
+
+boundEnforcement:
+  side: runtime
+  onExceeded: refuse
+  bounds:
+    maxResults: refuse:cardinality_violation
+    maxBytes: refuse:artifact_too_large
+    maxPages: refuse:cardinality_violation
+    maxTokens: refuse:artifact_too_large
+  measuredFrom: received-payload
+
+pathAdmission:
+  requirement: repository-relative
+  onEscape: refuse:scope_mismatch
+  refusedShapes:
+    - parent-traversal    # `..` climbing above the root, checked by SEGMENT not by substring
+    - rooted              # /etc/passwd, or a leading backslash
+    - drive-qualified     # C:/... — an escape carrying no `..` at all
+
+providerSummary:
+  authority: none
+
+# DECLARED GAPS, stated because a policy listing only what it enforces reads as complete:
+#
+#   * BOUNDED SOURCE FALLBACK IS NOT BUILT. The acceptance criterion gives non-complete coverage
+#     two exits — bounded source fallback OR negative_claim_unverified — and only the second
+#     exists. So every non-complete state above currently refuses BECAUSE THERE IS NOTHING TO FALL
+#     BACK TO, not because a fallback was attempted and failed. Those read identically in the
+#     outcome and are different facts. `extractionGap` is where it matters most: its repair is to
+#     read the source, which is precisely the exit that does not exist yet.
+#     A guard pins this: the ExtractionGap arm asserts source_fallback_available() is false, so the
+#     day fallback lands that arm goes RED and must be rewritten deliberately.
+#
+#   * CAPABILITY RECEIPTS ARE NOT AN INPUT. The acceptance criterion names determinism over
+#     "identical inputs AND capability receipts" — two variables. Only the first is exercised here:
+#     the snapshot binding is permuted, but a snapshot binding is not a capability receipt. Receipts
+#     belong to the Tool Broker lease path and arrive with #213; nothing in this lane consumes them.
+#     Listed because the other gaps were declared with care and this one was not, and a reader of a
+#     list like this concludes that whatever is absent from it is done. (Found by L.)
+#
+#     (Re-measured 2026-08-24: canonical determinism and all four bounds ARE guarded. An earlier
+#     version of this block listed them as gaps and was already false when the PR was read -- a
+#     declaration of what is not proven ages like any other claim, and nothing goes red when it does.)

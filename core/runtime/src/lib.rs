@@ -19,3 +19,4 @@ pub mod fixture;
 pub mod judge;
 pub mod ports;
 pub mod prompt;
+pub mod retrieval;

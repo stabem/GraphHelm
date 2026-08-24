@@ -186,6 +186,85 @@
             "observers": []
           },
           "family": "development-contracts"
+        },
+        {
+          "id": "fixture/retrieval-complete-coverage-compiles-a-claim",
+          "kind": "fixture",
+          "path": "fixtures/retrieval/complete-coverage-compiles-a-claim.json",
+          "sha256": "sha256:3f63d1d88602e7992fe1c2421a0a1bc270b4164a0d3d64a50b413af0249881c3",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/retrieval-drive-qualified-hit-is-refused",
+          "kind": "fixture",
+          "path": "fixtures/retrieval/drive-qualified-hit-is-refused.json",
+          "sha256": "sha256:514b0f79e99f1e8a36887de368e77e0060b9a8718f0587dadff780c682493f7e",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/retrieval-partial-coverage-refuses-the-negative-claim",
+          "kind": "fixture",
+          "path": "fixtures/retrieval/partial-coverage-refuses-the-negative-claim.json",
+          "sha256": "sha256:9b41dd3d0ad16b6623df883ca4649eea95f4c809395d08168f23da5905f6b05a",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/retrieval-unknown-coverage-is-never-upgraded",
+          "kind": "fixture",
+          "path": "fixtures/retrieval/unknown-coverage-is-never-upgraded.json",
+          "sha256": "sha256:f1f2ec947d751af5c0a6b0647ca94aaecc7483e991378485b6e6eba45d723786",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "schema/retrieval-admission-policy",
+          "kind": "schema",
+          "path": "schemas/retrieval-admission-policy.schema.json",
+          "sha256": "sha256:11f37c0c5c22ac2716b7c0957f97382a10ece6d204ba496b2665ee61776c0861",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "policy/retrieval-admission",
+          "kind": "policy",
+          "path": "policies/retrieval-admission.yaml",
+          "sha256": "sha256:608dcfad9bc37c840e8450c30b697e114758058f1d382cbf87bf8b6004005bcd",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/retrieval-admission-policy.schema.json"
         }
       ]
     },

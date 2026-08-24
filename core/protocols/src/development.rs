@@ -84,6 +84,21 @@ wire_vocabulary! {
 wire_vocabulary! {
     /// The closed refusal vocabulary. The SCHEMA owns this set; this enum is checked against it.
     /// Codes needed by consuming lanes are allocated HERE, never minted downstream.
+    ///
+    /// JURISDICTION (ruling on #216, after two lanes answered the line above differently in one
+    /// week): a refusal vocabulary belongs to the CONTRACT THAT CARRIES IT. This set owns the
+    /// codes that travel in the development envelope, and the rule above is scoped to that wire
+    /// — it is not a claim on every refusal in the repository.
+    ///
+    /// A different bounded domain MAY declare its own closed set, but only with all three of:
+    /// (1) its codes never cross into another contract’s envelope — the day one needs to, that
+    /// code is allocated in the TARGET vocabulary, not re-spelled locally; (2) it carries the
+    /// same enforcement pair as this one, schema as authority plus a set-equality guard between
+    /// the Rust type and the schema — a closed set without that pair is closed in prose only;
+    /// (3) its declaration site says which contract it belongs to and why it is not this one.
+    ///
+    /// Condition (1) is the load-bearing one: a code that crosses envelopes is how two
+    /// vocabularies drift while both look correct locally.
     DevelopmentRefusalCode {
         UnknownMajorVersion => "unknown_major_version",
         SchemaInvalid => "schema_invalid",

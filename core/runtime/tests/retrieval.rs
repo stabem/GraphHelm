@@ -534,8 +534,16 @@ fn g6_a_summary_claiming_complete_coverage_cannot_turn_a_refusal_into_a_claim() 
 //                                                        receipt that G2 and G2b test different
 //                                                        things rather than one thing twice
 //
-// Eight mutations, eight single-arm signatures, no mutation reddening two arms. A mutation that
-// reddened two would mean those arms share an assertion and must be split.
+// Eight mutations, eight single-arm signatures at the time each was run. A mutation reddening two
+// arms would normally mean they share an assertion and must be split.
+//
+// RE-MEASURED after the packaged fixtures landed, because the sentence above aged: S5b now reddens
+// TWO arms -- g4_a_windows_drive_qualified_hit_is_refused AND the fixture walker, because
+// fixtures/retrieval/drive-qualified-hit-is-refused.json exercises the same property through the
+// package. That is deliberate redundancy across two LAYERS (a unit arm and a shipped fixture), not
+// two arms sharing one assertion, and it is why the blanket claim needed correcting rather than the
+// guards. Checked here rather than left standing: a matrix that lists its own past results is a
+// claim that ages exactly like the coverage seal did.
 //
 // NOT COVERED, re-measured against the file as it now stands.
 //

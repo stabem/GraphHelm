@@ -158,10 +158,9 @@ fn is_repository_relative(hit: &str) -> bool {
     }
     // Drive-qualified (`C:` or `C:/...`): an escape carrying no `..` at all.
     let mut chars = path.chars();
-    if let (Some(first), Some(second)) = (chars.next(), chars.next()) {
-        if first.is_ascii_alphabetic() && second == ':' {
-            return false;
-        }
+    if matches!((chars.next(), chars.next()), (Some(letter), Some(':')) if letter.is_ascii_alphabetic())
+    {
+        return false;
     }
     // Parent traversal, checked by SEGMENT rather than substring: a substring test for `".."` also
     // rejects the perfectly ordinary `src/..foo.rs`, and a rule that fires on innocent input gets

@@ -1379,3 +1379,131 @@ reads as protection and delivers none.
 **Standing limitation:** this converts an invisible obligation into a visible one; it does not make
 it automatic. **Only a mechanism that pushes on release would, and none is proposed here** —
 proposing one without measuring it is the error this entry already records against its own rule 2.
+
+---
+
+## ED-22, WAITER-LIST CLEARING AMENDMENT (A, found by using the previous amendment): a list that raises false alarms stops being read
+
+The waiter-list amendment put the burden on whoever wants the slot: **declare your wait where the
+releaser will read it.** It said nothing about taking it back down.
+
+**Measured within the hour of that amendment landing.** A declared a wait at `13:47:13Z`, was given
+the slot at `15:00:49Z`, released at `15:16:01Z` — **and the declaration was still in the log**,
+indistinguishable from a live one. The next releaser reading that list would have notified someone
+who no longer needed telling.
+
+**Rule: the agent who declares a wait CLEARS it.** Same side of the burden, same reason. A satisfied
+wait left open costs nothing once and everything repeatedly: **a list that raises false alarms stops
+being read**, and an unread list is exactly the mute file this entry exists to replace. The failure
+is not one wasted notification — it is the mechanism decaying into the state it was built to fix,
+**while still looking maintained.**
+
+Because `check-activity.log` is append-only, clearing is a NEW LINE, not an edit:
+
+    <ts> | <agent> | WAIT-SATISFIED | <what it was for> | <no outstanding wait from me>
+
+**Counting this list correctly is a separate problem and a bigger one than waiting — see ED-23.**
+The first count run against it reported four open waits where there were two, and the naive fix for
+that is wrong in the opposite direction.
+
+---
+
+## ED-23 — COUNTING A MARKER IN A STRUCTURED LOG: SUBSTRING OVER-COUNTS, FIELD UNDER-COUNTS, AND BOTH ARE SILENT
+
+Filed as its own entry rather than inside ED-22, on M's argument: the counting defect is **not about
+waiting**. It affects `START`, `END` and `NOTE` — the spine of `check-activity.log` — and anyone
+arriving with a different problem would never find it buried in a waiter-list amendment.
+
+### The instance that motivated it
+
+A closed a wait, then counted how many remained open. `grep -c "WAIT-DECLARED"` returned **4**;
+there were **2**. The closing line's own text says *"my WAIT-DECLARED of 13:47:13Z is CLOSED"* —
+**the line that closes a declaration counted itself as opening one.**
+
+### And it is far bigger than that instance — measured across every marker (M)
+
+`prose = substring − prefix-match`, i.e. lines that MENTION a marker without being one:
+
+    marker            exact  prefix  substring   prose
+    START               169     174        186      12
+    END                 146     159        173      14
+    NOTE                  7       7         16       2   <- see the correction below
+    WAIT-DECLARED         2       2          4       2
+    WAIT-SATISFIED        1       1          1       0
+    YIELD                 1       1          1       0
+
+**`NOTE` was first computed as 9 and that was wrong, by this entry's own rule.** `prose =
+substring − prefix` assumes ONE line shape. Seven of those nine are `ORCH NOTE` lines — **markers in
+a different shape, not prose.** True prose is 2. The first table was built by the exact method this
+entry warns against, inside the entry that warns against it. `START` and `END` survive re-checking:
+only 4 and 3 of their differences fall inside `ORCH NOTE` lines, and those are genuine mentions.
+
+**`START` and `END` inflate by more in absolute terms than the case that found this.** Substring
+counting is wrong for the log's primary markers, not for one new marker in a corner.
+
+**A caution inside the measurement itself, from M:** an earlier pass counted only EXACT field
+matches and put `START`'s inflation at 17. Five of those were `START (LOGGED RETRO, DERIVED)` —
+**annotated markers, not prose.** Separating exact from prefix is what makes the number mean one
+thing. A figure that mixes annotation with prose is the same defect this entry is about, one level up.
+
+**The two zeros are youth, not immunity.** `WAIT-SATISFIED` and `YIELD` were created the same day;
+nobody has had time to write prose about them yet. **A zero there means "not yet discussed", never
+"cannot happen"** — and reading it as immunity would make new markers look safe precisely while they
+are least tested.
+
+### The naive fix is wrong in the opposite direction
+
+Counting by field position instead:
+
+    ORCH NOTE   substring 7   field 0     <- SEVEN exist; field reports NONE
+
+`ORCH NOTE` lines have a different shape entirely — `<ts> ORCH NOTE: ...`, with no `| agent |`
+field — so a field-3 extractor finds nothing. **Anyone counting orchestrator notes that way
+concludes none were ever written.**
+
+`RETRO` is a third case again: not a marker at all, but a **qualifier inside another one**
+(`START (RETRO, DERIVED)`). Both methods answer a question nobody asked.
+
+**Substring is wrong in the direction that looks like vigilance. Field is wrong in the direction
+that looks like a clean bill** — and that one is worse, because a zero reads as "nothing to do".
+
+### The rule
+
+1. **Enumerate the LINE SHAPES the log contains before counting anything, and write the NUMBER.**
+   Saying "at least two" invites the next reader to assume two. This log has **five**:
+
+       piped          <ts> | AGENT | MARKER | ...           351
+       header         '#' comment block at the top           37
+       indented       continuation lines                     38
+       ORCH NOTE      <ts> ORCH NOTE: ...                      7
+       transposed     <ts> START F | lane #223 | ...           3
+       (blank)                                                 1
+
+   **The fifth was found by OPENING the leftover bucket instead of reporting it.** A first pass put
+   3 lines in "other"; they turned out to be `START`/`END` written with the marker BEFORE the agent
+   — **real markers that field-3 extraction misses**, because field 3 on those lines is `lane #223`.
+   "Other: 3" in a report is a bag that anything fits in, and the thing inside it here was more of
+   the very defect being measured.
+2. **State which shapes a count covered**, or it is not a measurement.
+3. **Separate exact matches from annotated ones from prose**, because collapsing them produces a
+   number that means three things.
+
+> **A marker in a structured log is a field, not a word — but a field only exists in lines that have
+> the structure you assumed.** Both errors are silent, they point in opposite directions, and
+> neither gives any sign of the gap. **Replacing one with the other is not a fix; it is a change of
+> blind spot.**
+
+### On grouping this with other failures — the discipline that nearly went missing
+
+A first draft called this the *third instance in one day* of one shape, alongside `git ls-remote`
+(ref tips read as reachability) and a gap-grep that searched the author's own vocabulary. **M
+separated them, correctly:**
+
+- the **vocabulary grep** (query narrower than the concept) and **substring counting** (query
+  broader than the concept) are **the same axis with opposite signs**;
+- **`ls-remote`** is a different origin: the query was well-formed, and **the object measured was
+  not the subject.** Similar in consequence, different in cause.
+
+**And "three instances in one day" is not a rate, because it has no denominator.** Three out of how
+many measurements? Without the base it is a story about the ones that were noticed — and the ones
+that came out right do not announce themselves.

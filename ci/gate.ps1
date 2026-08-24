@@ -231,6 +231,8 @@ function Get-TestArtifactManifest {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
+        # `--all-features` is load-bearing and unguarded here too - see the note on the
+        # 'workspace tests' stage below. Pointer, not a copy: it carries nothing that can drift.
         $lines = cargo $toolchain test --workspace --all-features --locked --no-run --message-format=json 2>&1
         $buildExit = $LASTEXITCODE
     } finally {
@@ -367,8 +369,39 @@ try {
 
     Invoke-Stage 'rustfmt' { cargo $toolchain fmt --all -- --check } | Out-Null
     Invoke-Stage 'clippy (deny warnings)' {
+        # `--all-features` is load-bearing and unguarded here too - see the note on the
+        # 'workspace tests' stage below. Pointer, not a copy.
         cargo $toolchain clippy --workspace --all-targets --all-features --locked -- -D warnings
     } | Out-Null
+    # `--all-features` is LOAD-BEARING HERE, and UNGUARDED. This comment buys PLACEMENT, not
+    # enforcement: it fires only if whoever narrows these flags happens to read it.
+    #
+    # WHAT DEPENDS ON IT: every `[[test]]` target in the workspace declared with
+    # `required-features`, in ANY crate's Cargo.toml. Do not trust a list here - `git grep -n
+    # "required-features" -- "*/Cargo.toml"` is the population, and it is the only form of this
+    # sentence that cannot rot. Today that grep returns two, both in
+    # adapters/postgres-event-store: `concurrency` and `repository_conformance`, behind
+    # `test-support`, which is off by default (no `default` feature). They run ONLY because this
+    # line asks for every feature. Narrow the flags for speed and they stop running: no error, no
+    # skip line, and "0 tests" from a target that never built reads exactly like a target with
+    # nothing to run.
+    #
+    # The protection is INCIDENTAL: the flag is here to compile everything, not to cover
+    # `required-features`. The mechanical version - assert the per-test lines of every
+    # `required-features` target appear in the run, with the target list DERIVED from the manifests
+    # and never hand-maintained - is filed separately; a hand-maintained list would shrink in
+    # silence exactly as #98's allowlist did, which is also why the population above is a grep and
+    # not two names.
+    #
+    # STATED ONCE, and the boundary is reasoned rather than forgotten. The other `--all-features`
+    # sites carry a one-line pointer instead of a copy: a pointer holds no content that can drift.
+    # `ci/postgres.ps1` is deliberately NOT among them - its default run is `-- --ignored`, and
+    # measured on origin/main those two targets carry 19 tests and ZERO `#[ignore]`, so narrowing
+    # the flags there loses compilation and not coverage. A grep for `--all-features` finds five
+    # sites; this sentence is how you tell a considered boundary from a missed one.
+    #
+    # NOT MEASURED: nobody has observed those targets being skipped. This is a named fragility with
+    # a named trigger, not an observed defect.
     Invoke-Stage 'workspace tests' {
         cargo $toolchain test --workspace --all-features --locked
     } | Out-Null

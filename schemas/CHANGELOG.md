@@ -1,9 +1,39 @@
 # Schema Changelog
 
+## event-envelope 1.0.0 - the four customs events added
+
+`completion_claimed`, `completion_cleared`, `completion_rejected` and `completion_refused`, each
+with a payload `$defs` entry, a branch in the `eventKind` union and an execution-scoped row in the
+envelope's `oneOf`. Additive: every document valid under the previous bytes is still valid, and no
+existing kind changed shape.
+
+Also declared here, ahead of their Rust variants and deliberately:
+`clearance_identity_registered` and `clearance_identity_revoked`. See the note on
+`clearanceIdentityRegistered` in the schema itself for why, and for when that stops being true.
+
+**`overdue_exception` and `sweep_performed` are NOT here, and this line exists because they once
+were.** They were declared in this branch and removed before it landed: both were also declared,
+with INCOMPATIBLE payloads, by the sweep lane (#162), and since `validate_envelope` runs on READ a
+journal written under one shape would have failed replay under the other, permanently. The sweep
+owns the sweep's events; this lane kept only the reckoning (`overdue_at`).
+
+**Why this file is what makes an event real.** `validate_envelope` runs every appended event
+through this schema and refuses anything it does not describe, so a variant on the Rust enum with
+no entry here cannot be written to a journal at all. The typed enum, the fold and its guards were
+all in place while the store rejected all four — the declaration below is the part that made them
+appendable.
+
+**`clearanceVerifier` is tagged, and its fields are camelCase for a reason.** The Rust enum
+carried `rename_all = "camelCase"`, which renames variants and NOT the fields inside a struct
+variant; `manifest_hash` and `key_fingerprint` were therefore heading for the wire in snake_case,
+alone among every payload in the family. The type gained `rename_all_fields` rather than this
+schema gaining a snake_case spelling: a wire format is only free to correct before anything has
+published it.
+
 ## node 1.0.0 - `completion.customs` added
 
 What a completion CLAIM must present, and how long each customs stage may park:
-`requiresEvidence` plus `budgets.{waitWithinSeconds, clearanceWithinSeconds, dlqWithinSeconds?}`.
+`proofKinds` plus `budgets.{waitWithinSeconds, clearanceWithinSeconds, dlqWithinSeconds?}`.
 
 **Why nested inside `completion` rather than a sibling key.** `completion` already existed on
 nodes with a different meaning — a completion CONTRACT (`requires`/`forbids`), declared in this
@@ -11,7 +41,7 @@ schema, carried by three checked-in example graphs, and consumed by the governor
 externalizer. Customs is the same question one layer down: `requires` says what makes the node
 complete, customs says what a claim of completion must PROVE and how long each stage may wait.
 Nesting keeps that parentage, stays additive (nothing existing changes meaning or validity), and
-leaves a future unification of `requires` with `requiresEvidence` a local refactor instead of a
+leaves a future unification of `requires` with `proofKinds` a local refactor instead of a
 schema migration. Making it a sibling would have created two confusable top-level keys about
 completing.
 

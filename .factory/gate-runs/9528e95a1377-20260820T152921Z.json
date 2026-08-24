@@ -1,0 +1,807 @@
+{
+    "status":  "RED",
+    "headSha":  "9528e95a1377b8e6d3d1a2855bf33ef8f3fca356",
+    "dirtyDiffHash":  "ec5a0794b536180e000dc27412b3f7f4c14ff55b8107d43f0afd5df3e764ca50",
+    "runStartUtc":  "2026-08-20T15:22:44.7232340Z",
+    "runEndUtc":  "2026-08-20T15:29:21.0900758Z",
+    "canaryPassed":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  68.068
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.749
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  52.988
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  4.345,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  4.446,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  3.157,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.978,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.704,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  3.246,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  3.457,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.714,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  3.168,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.807,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.447,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.623,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.753,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.576,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  3.081,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  2.966,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  176.891
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.343
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.162
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.489
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.08
+                   },
+                   {
+                       "name":  "PostgreSQL ignored matrix",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  14.71,
+                       "outputTail":  [
+
+                                      ]
+                   },
+                   {
+                       "name":  "PostgreSQL matrix under a non-C collation",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  12.786,
+                       "outputTail":  [
+
+                                      ]
+                   }
+               ],
+    "artifactBuildExit":  101,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "9DBFF29975C2CE8A12B8869279D9279CACAE1A6E01DB9C87756A0726AF3C303C",
+                              "mtimeUtc":  "2026-08-20T15:22:11.5815813Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "D6939730893BDA97296E37E6EB93E561D6A26ECE339EB7D27C2E8951A28A9F21",
+                              "mtimeUtc":  "2026-08-20T15:22:11.6242861Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "359919C73A4294988D4371A8957A3A3C2F40E908C66177DFD3B32DFE892B8EA6",
+                              "mtimeUtc":  "2026-08-20T15:22:11.4826898Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "75516C7F874C2A6D5BD9855A158C9FC1909FCFC968E9FC42761A63B00F61C57E",
+                              "mtimeUtc":  "2026-08-20T15:21:57.7688597Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "D0DB66A428DB1B034629B44EEEB5CC35AF3BD3C74F20673A125F527A345523DC",
+                              "mtimeUtc":  "2026-08-20T15:22:07.1808060Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "4C47E768CC158E9CB0DCBEB6AB850BB8441C0F7B0F481A3325D013E5DE09ECB2",
+                              "mtimeUtc":  "2026-08-20T15:22:12.8804334Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "C24B529068E84A9E5D212DC99EB80E6124884C04880EA12AED17448F94D0B9A5",
+                              "mtimeUtc":  "2026-08-20T15:22:43.1222802Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "1CBBF10D8109E813E4C72FE4EB74586F0120BF36B8FA32F4AEAD7FEFBD19556F",
+                              "mtimeUtc":  "2026-08-20T15:22:08.0916423Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "D75B53E11DDE04EA9F6C0E3188241DFCC8A10B9E9C5E2B9CB83922C6F01D5AD2",
+                              "mtimeUtc":  "2026-08-20T15:22:08.0806121Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "D00B69A675E0F45350C7C1E1C08B549A93794FF2818CFEA3EEDA4280288BC202",
+                              "mtimeUtc":  "2026-08-20T15:22:07.1843256Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "0D5A8B196B8A276496755CC811F5748DE1640237A7BD8CDEED5162908C7E8064",
+                              "mtimeUtc":  "2026-08-20T15:22:12.8753979Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_tool_host-e3c4fd5a4d013cc9.exe",
+                              "sha256":  "B6529A2B4CCF15390200BBC2AFD23F8DBC19C7AACECBA4CE6FC99AB027A06498",
+                              "mtimeUtc":  "2026-08-20T15:22:09.7825314Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "EFBFFE41CE6C55C5DF5626B1AE4E49F1C1E025C67CA1464191EFEF9069C32B6D",
+                              "mtimeUtc":  "2026-08-20T15:22:15.4685464Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "C7C36326FCE4C11A0B9F830183B5F9F0057BFD0E64525965151AF628D7C9C7D6",
+                              "mtimeUtc":  "2026-08-20T15:22:04.1593855Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "F00B1BE2F86E96FB656F3EF30CD0A35615F32DC68E582F7757B1621721D3D522",
+                              "mtimeUtc":  "2026-08-20T15:22:04.1578751Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "99F72D308A1FDB32E44FBF7BBEBB0BC936B27C7D5D0456D325071586C1C59B38",
+                              "mtimeUtc":  "2026-08-20T15:22:11.0145603Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "EEA63A0590BB23263F2FA336179A96E3A83E0AFBC94807238D8C0DA7C0B4DA1B",
+                              "mtimeUtc":  "2026-08-20T15:22:04.1498086Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "55226025E0208976D51748C55CAF0E14842FCAD8430A6E7B7016E40DE9E53519",
+                              "mtimeUtc":  "2026-08-20T15:22:14.5353860Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "FC742E0DB93692AA68DA4D993BA74CB80D70A77B68B6437BDCC23720731E41D0",
+                              "mtimeUtc":  "2026-08-20T15:22:11.6222810Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "46A8AF23A9885F11E9C09FEE8FEE723DBD5272451B81FB53034FB881E93E3691",
+                              "mtimeUtc":  "2026-08-20T15:22:08.0866380Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\fake_tool-47ad3693257d64bb.exe",
+                              "sha256":  "DCDD8D17BDA6D61BDB1FE6E178700527A25D0BFEF40FF7552221D2C6C41404C6",
+                              "mtimeUtc":  "2026-08-20T15:22:15.5334341Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\process_isolation-baddfaa64ecf428c.exe",
+                              "sha256":  "6BC6360485424DAA7C673D34653E7C00D88F8CD176218497038C6C4D75D17CCA",
+                              "mtimeUtc":  "2026-08-20T15:22:34.3990072Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\workspace_containment-7edb15153c48705f.exe",
+                              "sha256":  "786EC983874042AC47B7046E8F1D586CB6557833FCFEAC63E1F11A484F944F3F",
+                              "mtimeUtc":  "2026-08-20T15:22:34.3974963Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\broker_end_to_end-10c66d5db0372266.exe",
+                              "sha256":  "88789792A28BCE979E249023A2339723D380B523DD3ABF0F52EEA6F42702031C",
+                              "mtimeUtc":  "2026-08-20T15:22:34.4065656Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_schema-8f4322ba8e89fd18.exe",
+                              "sha256":  "270FE2094983931ABAD8A131C1F33A949669659C8F9604BE5F3E4C22B758796E",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0982473Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\persistence_wire-23d4f3a81bc8c168.exe",
+                              "sha256":  "4955355937BB7E162F080B0C4F46CBEE17259FE388E21D7CACBF0EC0ABFF6881",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0871783Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\wire_roundtrip-5e2976afc85cd749.exe",
+                              "sha256":  "C8E1B88CC29320235FA9CD899321FBC6A6354B18A917DA08DF964C12ECD52606",
+                              "mtimeUtc":  "2026-08-20T15:22:30.5880758Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_protocols-bac38ae17ce95534.exe",
+                              "sha256":  "F10BB7B8A33D9724821267E183EB81DA81940F4C617D5A3BE2E9E4CE9981AAC9",
+                              "mtimeUtc":  "2026-08-20T15:22:05.4993944Z",
+                              "freshBuild":  false
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\immutability-adaa2acdd5923ed0.exe",
+                              "sha256":  "7BFF3B0BA0AE51F5185A048A36B7E1FA2A077EC7976966B70E8A0A0AD9D8D72B",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0942242Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\offline_registry-f4f33a936185c1a4.exe",
+                              "sha256":  "772D32292BF6E671EE4E2B20B85B292BB364FBD91D67112EFF59263F7BB7F7C6",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0725483Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\determinism-eecf3199ecb69a68.exe",
+                              "sha256":  "49202DD2E33FDC007360C6991552D788564C7A8C8C2554A6E3C9C34E6747DDC3",
+                              "mtimeUtc":  "2026-08-20T15:23:10.5736362Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\conformance-306b9de11f5ea69b.exe",
+                              "sha256":  "F5813A6FE47AF49FD527FC981A6F770CDEFB26D17AB7E03ECE843DCA3C69CC3B",
+                              "mtimeUtc":  "2026-08-20T15:23:24.1002597Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\obligations-87189e2f90f5b26d.exe",
+                              "sha256":  "C22D415E5B6D8A6B4F7B1BB1A88A17B381C8A203BD1DC1A6858AC96F7B4186FC",
+                              "mtimeUtc":  "2026-08-20T15:23:24.1032674Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\compatibility-4dd2f902940ee632.exe",
+                              "sha256":  "49129404FC0AF4CD39DE22F7CB02D7FADFA96B03AE799B9C3098FA80DB2FE8D8",
+                              "mtimeUtc":  "2026-08-20T15:23:09.4240302Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\migration-2248a021d97a739b.exe",
+                              "sha256":  "3B4F903BEFB7C1ABE7DC542E5C04FF21CB15B6A87AE319B1D375D0D3561F0AEB",
+                              "mtimeUtc":  "2026-08-20T15:23:11.7371069Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\release_gate-6b761598a7d59f23.exe",
+                              "sha256":  "237F583167602F9C7B7ABBBD46D398F30AE2C9FD9760CFBED8E04C0195255429",
+                              "mtimeUtc":  "2026-08-20T15:23:10.0599464Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\canonical_examples-7373b906a52cf5af.exe",
+                              "sha256":  "F82B8B65F53767311476EB41FF80940294F849044669AEBEEB7CE376F6500AF0",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0947249Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_schema_evolution-8e9caeba6e7c5008.exe",
+                              "sha256":  "5F6E4EB05BB3D9E8B44C258E6DDF0C0CA68274AB5651C38E7FC0F06BB6868316",
+                              "mtimeUtc":  "2026-08-20T15:23:09.9126131Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_policy-5c07a15cbae0b2af.exe",
+                              "sha256":  "3B073F1F878173AC0109F89C04E099180C64926A8EA7EC27C08DE7C504EC2FB8",
+                              "mtimeUtc":  "2026-08-20T15:22:50.5575083Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\canonical_hash-a50a948b196ca8ed.exe",
+                              "sha256":  "C8805DB74F4C2975ED7EE93AC4FF6C2082945D9AD629AA431C448E60CCB03541",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0901964Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\persistence_projection-d2a899fac1a77e47.exe",
+                              "sha256":  "116AA4FA352375ED972A75C2B15D38EB9464F1E3E78BB69D41EA02662113EF72",
+                              "mtimeUtc":  "2026-08-20T15:23:11.5344072Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\lint_rules-b8972deff1e10fcb.exe",
+                              "sha256":  "BDBD1ECAAFC91A2A99D5FE9C0BC4147B6A27E8F52B683020D8EC43179F925485",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0957307Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_graph-1d27531cc064f850.exe",
+                              "sha256":  "E0F2A91D92D4D435CC953C41A54FF8774894C2ED7F857114AA105DF8043412D5",
+                              "mtimeUtc":  "2026-08-20T15:23:12.8345575Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\catalog_integrity-71daddb431e4e785.exe",
+                              "sha256":  "F7E37F32FB1564576FAB9E56AD56D4E79A0852424B629706A2962194D09BD78C",
+                              "mtimeUtc":  "2026-08-20T15:23:24.0987503Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "D:/graphhelm-target-m10\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "6B216B981FD7BC743980E98422E809D7BDB6FA85E617BFA98A6DDA6C7A829AE2",
+                              "mtimeUtc":  "2026-08-20T15:23:54.6427870Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  26,
+    "staleArtifacts":  [
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                               "target":  "manifest_contract",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                               "sha256":  "9DBFF29975C2CE8A12B8869279D9279CACAE1A6E01DB9C87756A0726AF3C303C",
+                               "mtimeUtc":  "2026-08-20T15:22:11.5815813Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                               "target":  "capacity_mapping",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                               "sha256":  "D6939730893BDA97296E37E6EB93E561D6A26ECE339EB7D27C2E8951A28A9F21",
+                               "mtimeUtc":  "2026-08-20T15:22:11.6242861Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                               "target":  "source_invariants",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                               "sha256":  "359919C73A4294988D4371A8957A3A3C2F40E908C66177DFD3B32DFE892B8EA6",
+                               "mtimeUtc":  "2026-08-20T15:22:11.4826898Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                               "target":  "pathogens",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                               "sha256":  "75516C7F874C2A6D5BD9855A158C9FC1909FCFC968E9FC42761A63B00F61C57E",
+                               "mtimeUtc":  "2026-08-20T15:21:57.7688597Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/gateway#graphhelm-gateway@0.1.0",
+                               "target":  "graphhelm_gateway",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                               "sha256":  "D0DB66A428DB1B034629B44EEEB5CC35AF3BD3C74F20673A125F527A345523DC",
+                               "mtimeUtc":  "2026-08-20T15:22:07.1808060Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                               "target":  "record_contract",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                               "sha256":  "4C47E768CC158E9CB0DCBEB6AB850BB8441C0F7B0F481A3325D013E5DE09ECB2",
+                               "mtimeUtc":  "2026-08-20T15:22:12.8804334Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                               "target":  "path_rules",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                               "sha256":  "C24B529068E84A9E5D212DC99EB80E6124884C04880EA12AED17448F94D0B9A5",
+                               "mtimeUtc":  "2026-08-20T15:22:43.1222802Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                               "target":  "thymus",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                               "sha256":  "1CBBF10D8109E813E4C72FE4EB74586F0120BF36B8FA32F4AEAD7FEFBD19556F",
+                               "mtimeUtc":  "2026-08-20T15:22:08.0916423Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                               "target":  "geometry",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                               "sha256":  "D75B53E11DDE04EA9F6C0E3188241DFCC8A10B9E9C5E2B9CB83922C6F01D5AD2",
+                               "mtimeUtc":  "2026-08-20T15:22:08.0806121Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                               "target":  "graphhelm_quality",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                               "sha256":  "D00B69A675E0F45350C7C1E1C08B549A93794FF2818CFEA3EEDA4280288BC202",
+                               "mtimeUtc":  "2026-08-20T15:22:07.1843256Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                               "target":  "effect_contract",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                               "sha256":  "0D5A8B196B8A276496755CC811F5748DE1640237A7BD8CDEED5162908C7E8064",
+                               "mtimeUtc":  "2026-08-20T15:22:12.8753979Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                               "target":  "graphhelm_tool_host",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_tool_host-e3c4fd5a4d013cc9.exe",
+                               "sha256":  "B6529A2B4CCF15390200BBC2AFD23F8DBC19C7AACECBA4CE6FC99AB027A06498",
+                               "mtimeUtc":  "2026-08-20T15:22:09.7825314Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                               "target":  "authorize_contract",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                               "sha256":  "EFBFFE41CE6C55C5DF5626B1AE4E49F1C1E025C67CA1464191EFEF9069C32B6D",
+                               "mtimeUtc":  "2026-08-20T15:22:15.4685464Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                               "target":  "thymus",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                               "sha256":  "C7C36326FCE4C11A0B9F830183B5F9F0057BFD0E64525965151AF628D7C9C7D6",
+                               "mtimeUtc":  "2026-08-20T15:22:04.1593855Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                               "target":  "mold",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\mold-82621595498b78d2.exe",
+                               "sha256":  "F00B1BE2F86E96FB656F3EF30CD0A35615F32DC68E582F7757B1621721D3D522",
+                               "mtimeUtc":  "2026-08-20T15:22:04.1578751Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                               "target":  "freeze_enforced",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                               "sha256":  "99F72D308A1FDB32E44FBF7BBEBB0BC936B27C7D5D0456D325071586C1C59B38",
+                               "mtimeUtc":  "2026-08-20T15:22:11.0145603Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/tools/pathogens#0.1.0",
+                               "target":  "subject_refusals",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                               "sha256":  "EEA63A0590BB23263F2FA336179A96E3A83E0AFBC94807238D8C0DA7C0B4DA1B",
+                               "mtimeUtc":  "2026-08-20T15:22:04.1498086Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                               "target":  "graphhelm_tool_broker",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                               "sha256":  "55226025E0208976D51748C55CAF0E14842FCAD8430A6E7B7016E40DE9E53519",
+                               "mtimeUtc":  "2026-08-20T15:22:14.5353860Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                               "target":  "source_invariants",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                               "sha256":  "FC742E0DB93692AA68DA4D993BA74CB80D70A77B68B6437BDCC23720731E41D0",
+                               "mtimeUtc":  "2026-08-20T15:22:11.6222810Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/quality#graphhelm-quality@0.1.0",
+                               "target":  "freeze",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                               "sha256":  "46A8AF23A9885F11E9C09FEE8FEE723DBD5272451B81FB53034FB881E93E3691",
+                               "mtimeUtc":  "2026-08-20T15:22:08.0866380Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                               "target":  "fake_tool",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\fake_tool-47ad3693257d64bb.exe",
+                               "sha256":  "DCDD8D17BDA6D61BDB1FE6E178700527A25D0BFEF40FF7552221D2C6C41404C6",
+                               "mtimeUtc":  "2026-08-20T15:22:15.5334341Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                               "target":  "process_isolation",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\process_isolation-baddfaa64ecf428c.exe",
+                               "sha256":  "6BC6360485424DAA7C673D34653E7C00D88F8CD176218497038C6C4D75D17CCA",
+                               "mtimeUtc":  "2026-08-20T15:22:34.3990072Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                               "target":  "workspace_containment",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\workspace_containment-7edb15153c48705f.exe",
+                               "sha256":  "786EC983874042AC47B7046E8F1D586CB6557833FCFEAC63E1F11A484F944F3F",
+                               "mtimeUtc":  "2026-08-20T15:22:34.3974963Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                               "target":  "broker_end_to_end",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\broker_end_to_end-10c66d5db0372266.exe",
+                               "sha256":  "88789792A28BCE979E249023A2339723D380B523DD3ABF0F52EEA6F42702031C",
+                               "mtimeUtc":  "2026-08-20T15:22:34.4065656Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/protocols#graphhelm-protocols@0.1.0",
+                               "target":  "wire_roundtrip",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\wire_roundtrip-5e2976afc85cd749.exe",
+                               "sha256":  "C8E1B88CC29320235FA9CD899321FBC6A6354B18A917DA08DF964C12ECD52606",
+                               "mtimeUtc":  "2026-08-20T15:22:30.5880758Z",
+                               "freshBuild":  false
+                           },
+                           {
+                               "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/a-agent-c35d10/core/protocols#graphhelm-protocols@0.1.0",
+                               "target":  "graphhelm_protocols",
+                               "executable":  "D:/graphhelm-target-m10\\debug\\deps\\graphhelm_protocols-bac38ae17ce95534.exe",
+                               "sha256":  "F10BB7B8A33D9724821267E183EB81DA81940F4C617D5A3BE2E9E4CE9981AAC9",
+                               "mtimeUtc":  "2026-08-20T15:22:05.4993944Z",
+                               "freshBuild":  false
+                           }
+                       ],
+    "slotLockAtStart":  {
+                            "present":  true,
+                            "targetDir":  "D:/graphhelm-target-m10",
+                            "content":  "A Agent | 2026-08-20T15:22:44Z | lane #160 (issue-160-event-family-readiness) | STATUS: RUNNING (full gate, all 21 packages cleaned; no timing measurement in flight)\n",
+                            "observedAtUtc":  "2026-08-20T15:22:44.7367535Z"
+                        },
+    "slotLockAtEnd":  {
+                          "present":  true,
+                          "targetDir":  "D:/graphhelm-target-m10",
+                          "content":  "A Agent | 2026-08-20T15:22:44Z | lane #160 (issue-160-event-family-readiness) | STATUS: RUNNING (full gate, all 21 packages cleaned; no timing measurement in flight)\n",
+                          "observedAtUtc":  "2026-08-20T15:29:20.8253171Z"
+                      },
+    "overallPassed":  false
+}

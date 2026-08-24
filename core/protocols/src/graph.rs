@@ -117,17 +117,37 @@ pub struct GraphNode {
 /// `requires`/`forbids` have three checked-in graphs and a governor consumer, and tightening them
 /// is a different decision by a different lane.
 ///
-/// OPEN QUESTION, recorded rather than settled: `requires` are predicates over the node's OUTPUT
-/// and `requires_evidence` is about what a CLAIM presents. They are close relatives and may
-/// unify one day. Nested like this, that unification is a local refactor; as sibling top-level
-/// keys it would have been a schema migration. The separation is the current shape, not doctrine.
+/// WHY `proof_kinds` AND NOT `requires_evidence` (#182, decided before the name could publish):
+/// `completion.requires[].evidence` ALREADY EXISTS in this same block and means something else —
+/// a predicate over the node's OUTPUT, read by `build_completion_control`. A sibling called
+/// `requires_evidence` would have put two near-homographs one nesting level apart, meaning
+/// different things, in the same block; the next author reads one and uses the other, and a diff
+/// is exactly where a near-identical name does its damage. `proof_kinds` shares no token, no root
+/// and no reading with it, so the collision stops existing rather than being documented.
+///
+/// The rejected alternative was `submission_kinds`, and the reason it lost is worth keeping: it
+/// names the ACT, while `proof_kinds` names the THING. A test report is not a species of
+/// submission that happens to be evidence — it is a species of evidence that happens to arrive by
+/// submission. A name describing the transport is a name of PLACE in disguise, and place-names
+/// collide again the moment someone quotes them alone.
+///
+/// The relatives may still unify one day. Nested like this that is a local refactor; as sibling
+/// top-level keys it would have been a schema migration. The separation is the current shape, not
+/// doctrine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeCustoms {
-    /// Evidence kinds a claim MUST carry. Fewer than declared is refused (`EvidenceBudgetUnmet`);
-    /// extra kinds are accepted and marked unverified — logged, never counted as stronger proof.
+    /// The kinds of work-evidence a completion claim must present. Fewer than declared is refused
+    /// (`EvidenceBudgetUnmet`); extra kinds are accepted and marked unverified — logged, never
+    /// counted as stronger proof.
+    ///
+    /// "PROOF" HERE MEANS THE ARTEFACTS THAT SHOW THE WORK HAPPENED — a test report, a diff, a
+    /// log. It is NOT cryptographic proof, and nothing in this field is signature-verified.
+    /// Signature verification, where it exists, lives on the clearance side
+    /// (`ClearanceVerifier::Countersign`), and a reader who takes "proof" as cryptographic will
+    /// go looking for verification in the wrong half of the pipeline.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub requires_evidence: Vec<String>,
+    pub proof_kinds: Vec<String>,
     pub budgets: CustomsBudgets,
 }
 

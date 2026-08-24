@@ -1566,6 +1566,46 @@ fn build_completion_control(
                     }
                 }
             }
+            // M11 #160. This match is key-EXHAUSTIVE, so until it learned `customs` a graph
+            // declaring the field was refused outright at publication with `InvalidAuthoring` —
+            // the whole feature undeliverable regardless of how correct the fold was.
+            //
+            // The two children are treated differently ON PURPOSE, and the asymmetry is the
+            // interesting part:
+            //
+            // `proofKinds` is encoded here because this control is its ONLY carrier. Drop
+            // it and the operator's declaration of what a claim must present dies at sealing,
+            // silently, which is the exact defect `timeout_seconds` was added to fix one
+            // milestone earlier.
+            //
+            // `budgets` is deliberately NOT encoded here, and that is not an oversight: it
+            // already crosses to the sealed form as `PersistedNode::customs`, which is where the
+            // fold reads it. Encoding it a second time would put two spellings of one
+            // declaration in the topology, and two spellings of one fact drift — the reader of
+            // the second copy has no way to know which one the deadline was computed from.
+            //
+            // The other consumer of this block does NOT share this strictness. Both are correct
+            // for their jobs and neither generalizes: `collect_completion_content` is
+            // key-SELECTIVE and permissive, walking `requires`/`forbids` only, which is why no
+            // budget leaks into externalized content. That difference predates this change, and
+            // anyone reading either half alone will infer a uniform policy that does not exist.
+            "customs" => {
+                let customs = nonempty_object(value)?;
+                for (child, value) in customs {
+                    match child.as_str() {
+                        "proofKinds" => {
+                            let items = value.as_array().ok_or(GovernorError::InvalidAuthoring)?;
+                            if items.len() > 64 {
+                                return Err(GovernorError::LimitExceeded);
+                            }
+                            builder.count("customsProofCount", items.len())?;
+                            builder.token_array_unique("customsProof", value)?;
+                        }
+                        "budgets" => {}
+                        _ => return Err(GovernorError::InvalidAuthoring),
+                    }
+                }
+            }
             _ => return Err(GovernorError::InvalidAuthoring),
         }
     }

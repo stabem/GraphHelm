@@ -630,25 +630,6 @@
       },
       "additionalProperties": false
     },
-    "clearanceIdentityRegistered": {
-      "type": "object",
-      "required": ["executionId", "identity", "keyFingerprint"],
-      "properties": {
-        "executionId": {"$ref": "#/$defs/opaqueId"},
-        "identity": {"$ref": "#/$defs/opaqueId"},
-        "keyFingerprint": {"$ref": "#/$defs/wireHash"}
-      },
-      "additionalProperties": false
-    },
-    "clearanceIdentityRevoked": {
-      "type": "object",
-      "required": ["executionId", "identity"],
-      "properties": {
-        "executionId": {"$ref": "#/$defs/opaqueId"},
-        "identity": {"$ref": "#/$defs/opaqueId"}
-      },
-      "additionalProperties": false
-    },
     "gateFinding": {
       "type": "object",
       "required": ["severity", "claim", "evidence", "remediation"],
@@ -699,6 +680,112 @@
         "keyDigest": {"$ref": "#/$defs/wireHash"},
         "evidenceRef": {"$ref": "#/$defs/opaqueId"},
         "provenanceErased": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "clearanceIdentityRegistered": {
+      "description": "clearance_identity_registered and clearance_identity_revoked are declared here while their Rust EventKind variants live on the #161 branch. THIS IS DELIBERATE COORDINATION, NOT DRIFT: the store validates every event against this vocabulary on append AND on read, so #161's guards die in fixture setup with a bare Invalid until the names exist. One writer per file means the entries land in the #160 branch. A schema-vs-enum comparator will report these two as schema-ahead-of-Rust; that direction is safe (no Rust variant can emit them, so no journal can contain them). The dangerous direction is the opposite - enum ahead of schema - which emits values the store then refuses with no diagnostic. Do not 'fix' this by deleting them. THIS EXEMPTION EXPIRES, and the condition is decidable by measurement rather than opinion: it ends when the Rust variants for these two kinds land on main (issue #201). After that, schema-without-Rust here is real divergence and should be treated as one. An exemption with no death condition outlives its own truth and starts protecting a divergence nobody decided on.",
+      "type": "object",
+      "required": ["executionId", "identity", "keyFingerprint"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "identity": {"$ref": "#/$defs/opaqueId"},
+        "keyFingerprint": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "clearanceIdentityRevoked": {
+      "type": "object",
+      "required": ["executionId", "identity"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "identity": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "claimEvidence": {
+      "type": "object",
+      "required": ["kind", "contentHash", "size"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1, "maxLength": 128},
+        "contentHash": {"$ref": "#/$defs/wireHash"},
+        "size": {"$ref": "#/$defs/positiveSafeInteger"}
+      },
+      "additionalProperties": false
+    },
+    "claimAttestation": {
+      "type": "object",
+      "required": ["asserter", "mode"],
+      "properties": {
+        "asserter": {"$ref": "#/$defs/opaqueId"},
+        "mode": {"enum": ["operator_attested", "machine_verified"]}
+      },
+      "additionalProperties": false
+    },
+    "clearanceVerifier": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "manifestHash"],
+          "properties": {
+            "type": {"const": "machineReplay"},
+            "manifestHash": {"$ref": "#/$defs/wireHash"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "identity", "keyFingerprint"],
+          "properties": {
+            "type": {"const": "countersign"},
+            "identity": {"$ref": "#/$defs/opaqueId"},
+            "keyFingerprint": {"$ref": "#/$defs/wireHash"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "completionClaimed": {
+      "type": "object",
+      "required": ["executionId", "node", "completesWaitSeq", "evidence", "attestation"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "node": {"$ref": "#/$defs/opaqueId"},
+        "completesWaitSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/claimEvidence"}, "maxItems": 64},
+        "attestation": {"$ref": "#/$defs/claimAttestation"}
+      },
+      "additionalProperties": false
+    },
+    "completionCleared": {
+      "type": "object",
+      "required": ["executionId", "claimSeq", "verifier"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "claimSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "verifier": {"$ref": "#/$defs/clearanceVerifier"}
+      },
+      "additionalProperties": false
+    },
+    "completionRejected": {
+      "type": "object",
+      "required": ["executionId", "claimSeq", "verifier", "reasonCode"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "claimSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "verifier": {"$ref": "#/$defs/clearanceVerifier"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"}
+      },
+      "additionalProperties": false
+    },
+    "completionRefused": {
+      "type": "object",
+      "required": ["executionId", "node", "claimedWaitSeq", "reasonCode"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "node": {"$ref": "#/$defs/opaqueId"},
+        "claimedWaitSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"}
       },
       "additionalProperties": false
     },
@@ -996,6 +1083,42 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "completion_claimed"},
+            "data": {"$ref": "#/$defs/completionClaimed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_cleared"},
+            "data": {"$ref": "#/$defs/completionCleared"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_rejected"},
+            "data": {"$ref": "#/$defs/completionRejected"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_refused"},
+            "data": {"$ref": "#/$defs/completionRefused"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "clearance_identity_registered"},
             "data": {"$ref": "#/$defs/clearanceIdentityRegistered"}
           },
@@ -1046,6 +1169,10 @@
     {"properties": {"kind": {"properties": {"type": {"const": "wake_lease_consumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "gate_verdict"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "gate_certified"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_claimed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_cleared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_refused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_registered"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_revoked"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],

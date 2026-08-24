@@ -151,6 +151,55 @@ fn executable_node_without_timeout_gets_stable_warning() {
     }));
 }
 
+/// M11 #160 (G2 part 1): a node that can park for input and declares no customs budgets is
+/// flagged at AUTHORING time, because nothing downstream will ever flag it.
+///
+/// The pair is what makes this a guard rather than a description. A rule that only fires would
+/// pass just as happily if it fired on every node in the graph, so the second half names a node
+/// that DOES declare budgets and requires the warning to be absent for it. Without that, "warns
+/// about unbounded nodes" and "warns about all nodes" are the same green.
+#[test]
+fn a_node_that_can_park_without_customs_budgets_gets_a_stable_warning() {
+    let mut declared = graph();
+    declared
+        .spec
+        .nodes
+        .get_mut("implement")
+        .unwrap()
+        .properties
+        .insert(
+            "completion".to_owned(),
+            serde_json::json!({
+                "customs": {
+                    "budgets": {
+                        "waitWithinSeconds": 3600,
+                        "clearanceWithinSeconds": 900,
+                    }
+                }
+            }),
+        );
+
+    let undeclared = lint(&graph(), "fixture.yaml");
+    assert!(
+        undeclared.warnings.iter().any(|item| {
+            item.code == "GHG102_UNBOUNDED_CUSTOMS"
+                && item.path == "/spec/nodes/implement/completion/customs"
+        }),
+        "a parkable node with no customs budgets must be named at authoring time: {:?}",
+        undeclared.warnings
+    );
+
+    let bounded = lint(&declared, "fixture.yaml");
+    assert!(
+        !bounded.warnings.iter().any(|item| {
+            item.code == "GHG102_UNBOUNDED_CUSTOMS"
+                && item.path == "/spec/nodes/implement/completion/customs"
+        }),
+        "and the SAME node with budgets declared must stop being named, or the rule is not          reading the declaration: {:?}",
+        bounded.warnings
+    );
+}
+
 #[test]
 fn controlled_cycle_is_condensed_when_enforcing_depth_budget() {
     let mut invalid = graph();

@@ -1558,7 +1558,6 @@ fn missing_resource_always_fails_closed() {
     assert_eq!(report.diagnostics[0].code, "GHCONF001_FIXTURE_FAILED");
 }
 
-
 /// The conformance table: one (wire name, payload, project-scoped) row per event variant.
 ///
 /// Extracted from the test body so the COVERAGE assertion and the REPLAY-SAFETY walk read the
@@ -1774,107 +1773,166 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             }),
             true,
         ),
+        // ---------------------------------------------------------------------------------
+        // The thirteen rows the coverage assertion demanded (#160, closing #167).
+        //
+        // Seven of these variants shipped in earlier milestones and were never listed here: the
+        // old mechanism compared this table's length to the literal 25, so it could not see a
+        // variant it did not already carry. Six are M11's customs family. Writing rows for
+        // variants this lane does not own is safe precisely because a row is not a claim anyone
+        // has to trust — the test validates each payload against the real current schema and
+        // then requires it to REJECT an unregistered field, so a wrong payload here fails loudly
+        // rather than recording a comfortable fiction.
+        // ---------------------------------------------------------------------------------
+        (
+            "execution_form_declared",
+            json!({
+                "executionId": "execution-test",
+                "nodeIds": ["start"],
+                "nodeTimeoutSeconds": {"start": 900}
+            }),
+            false,
+        ),
+        (
+            "execution_form_amended",
+            json!({
+                "executionId": "execution-test",
+                "computedAtSequence": 4,
+                "nodeTimeoutSeconds": {"start": 900},
+                "observedSilenceSeconds": {"start": 30}
+            }),
+            false,
+        ),
+        (
+            "gate_verdict",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "start",
+                "gateId": "gate-quality",
+                "passed": false,
+                "findings": [{
+                    "severity": "high",
+                    "claim": "the suite did not cover the changed branch",
+                    "evidence": ["evidence-test"],
+                    "remediation": "add a case that fails without the change"
+                }]
+            }),
+            false,
+        ),
+        (
+            "gate_certified",
+            json!({
+                "executionId": "execution-test",
+                "gateId": "gate-quality",
+                "suiteDigest": wire_hash(),
+                "specimens": 3
+            }),
+            false,
+        ),
+        (
+            "reuse_decision",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "start",
+                "plane": "tool_broker",
+                "decision": "hit",
+                "keyComponents": ["tool_version", "canonical_input"],
+                "keyDigest": wire_hash(),
+                "provenanceErased": false
+            }),
+            false,
+        ),
+        (
+            "wake_lease",
+            json!({
+                "executionId": "execution-test",
+                "sessionId": "session-test",
+                "cursor": 0,
+                "rendezvousId": "rendezvous-test",
+                "maturesInSeconds": 60
+            }),
+            false,
+        ),
+        (
+            "wake_lease_consumed",
+            json!({
+                "executionId": "execution-test",
+                "sessionId": "session-test",
+                "reason": "rung",
+                "capturedArming": 4
+            }),
+            false,
+        ),
+        (
+            "completion_claimed",
+            json!({
+                "executionId": "execution-test",
+                "node": "implementation",
+                "completesWaitSeq": 4,
+                "evidence": [{
+                    "kind": "patch",
+                    "contentHash": wire_hash(),
+                    "size": 2048
+                }],
+                "attestation": {
+                    "asserter": "agent-claimer",
+                    "mode": "operator_attested"
+                }
+            }),
+            false,
+        ),
+        (
+            "completion_cleared",
+            json!({
+                "executionId": "execution-test",
+                "claimSeq": 5,
+                "verifier": {"type": "machineReplay", "manifestHash": wire_hash()}
+            }),
+            false,
+        ),
+        (
+            "completion_rejected",
+            json!({
+                "executionId": "execution-test",
+                "claimSeq": 5,
+                "verifier": {
+                    "type": "countersign",
+                    "identity": "reviewer-test",
+                    "keyFingerprint": wire_hash()
+                },
+                "reasonCode": "evidence_did_not_replay"
+            }),
+            false,
+        ),
+        (
+            "completion_refused",
+            json!({
+                "executionId": "execution-test",
+                "node": "implementation",
+                "claimedWaitSeq": 4,
+                "reasonCode": "wait_superseded"
+            }),
+            false,
+        ),
+        // #161's kinds. Their Rust variants arrived from that lane; these rows are what stop the
+        // coverage check being blind to the two newest variants — the exact hole that let a real
+        // failure on main name thirteen and not fifteen.
+        (
+            "clearance_identity_registered",
+            json!({
+                "executionId": "execution-test",
+                "identity": "auditor-a",
+                "keyFingerprint": wire_hash()
+            }),
+            false,
+        ),
+        (
+            "clearance_identity_revoked",
+            json!({"executionId": "execution-test", "identity": "auditor-a"}),
+            false,
+        ),
     ]
 }
-
-
-/// The wire name of every `EventKind` variant, in a match the COMPILER checks for exhaustiveness.
-///
-/// This exists to be impossible to leave stale. Rust has no runtime reflection over variants, so
-/// the honest substitute is a total match: adding a variant to `EventKind` without adding it here
-/// FAILS TO COMPILE — the loudest signal available, and the one a forgotten list cannot give.
-fn wire_name(kind: &EventKind) -> &'static str {
-    match kind {
-        EventKind::GraphImported(_) => "graph_imported",
-        EventKind::GraphValidationFailed(_) => "graph_validation_failed",
-        EventKind::GraphVersionPublished(_) => "graph_version_published",
-        EventKind::DraftProposed(_) => "draft_proposed",
-        EventKind::DraftRejected(_) => "draft_rejected",
-        EventKind::DraftApplied(_) => "draft_applied",
-        EventKind::PolicyObligationEvaluated(_) => "policy_obligation_evaluated",
-        EventKind::PolicyWaiverCreated(_) => "policy_waiver_created",
-        EventKind::SimulationStarted(_) => "simulation_started",
-        EventKind::NodeStateChanged(_) => "node_state_changed",
-        EventKind::SimulationCompleted(_) => "simulation_completed",
-        EventKind::ExecutionStarted(_) => "execution_started",
-        EventKind::ExecutionFormDeclared(_) => "execution_form_declared",
-        EventKind::ExecutionFormAmended(_) => "execution_form_amended",
-        EventKind::ExecutionModeChanged(_) => "execution_mode_changed",
-        EventKind::NodeOutcomeRecorded(_) => "node_outcome_recorded",
-        EventKind::ExecutionCompleted(_) => "execution_completed",
-        EventKind::SignalRecorded(_) => "signal_recorded",
-        EventKind::GhostNodeProposed(_) => "ghost_node_proposed",
-        EventKind::MutationAccepted(_) => "mutation_accepted",
-        EventKind::ExecutionPaused(_) => "execution_paused",
-        EventKind::ExecutionResumed(_) => "execution_resumed",
-        EventKind::IntegrityCheckpointCreated(_) => "integrity_checkpoint_created",
-        EventKind::EvidenceErasureRequested(_) => "evidence_erasure_requested",
-        EventKind::EvidenceErasureCompleted(_) => "evidence_erasure_completed",
-        EventKind::EvidenceCiphertextDeleted(_) => "evidence_ciphertext_deleted",
-        EventKind::EvidenceLegalHoldChanged(_) => "evidence_legal_hold_changed",
-        EventKind::ReuseDecision(_) => "reuse_decision",
-        EventKind::WakeLease(_) => "wake_lease",
-        EventKind::WakeLeaseConsumed(_) => "wake_lease_consumed",
-        EventKind::GateVerdict(_) => "gate_verdict",
-        EventKind::GateCertified(_) => "gate_certified",
-        EventKind::CompletionClaimed(_) => "completion_claimed",
-        EventKind::CompletionCleared(_) => "completion_cleared",
-        EventKind::CompletionRejected(_) => "completion_rejected",
-        EventKind::CompletionRefused(_) => "completion_refused",
-        EventKind::OverdueException(_) => "overdue_exception",
-        EventKind::SweepPerformed(_) => "sweep_performed",
-        EventKind::ClearanceIdentityRegistered(_) => "clearance_identity_registered",
-        EventKind::ClearanceIdentityRevoked(_) => "clearance_identity_revoked",
-    }
-}
-
-/// Every wire name the enum can produce.
-///
-/// Listed a second time deliberately, and the PAIR is the mechanism: the match above makes the
-/// compiler demand a name for each variant, and this list lets the coverage assertion enumerate
-/// without instances (which Rust cannot do). A name here that the table lacks fails by NAME below;
-/// a variant the match lacks fails at compile time. Neither can pass silently, which is the whole
-/// difference from the count this replaces.
-const EVERY_WIRE_NAME: &[&str] = &[
-    "graph_imported",
-    "graph_validation_failed",
-    "graph_version_published",
-    "draft_proposed",
-    "draft_rejected",
-    "draft_applied",
-    "policy_obligation_evaluated",
-    "policy_waiver_created",
-    "simulation_started",
-    "node_state_changed",
-    "simulation_completed",
-    "execution_started",
-    "execution_form_declared",
-    "execution_form_amended",
-    "execution_mode_changed",
-    "node_outcome_recorded",
-    "execution_completed",
-    "signal_recorded",
-    "ghost_node_proposed",
-    "mutation_accepted",
-    "execution_paused",
-    "execution_resumed",
-    "integrity_checkpoint_created",
-    "evidence_erasure_requested",
-    "evidence_erasure_completed",
-    "evidence_ciphertext_deleted",
-    "evidence_legal_hold_changed",
-    "reuse_decision",
-    "wake_lease",
-    "wake_lease_consumed",
-    "gate_verdict",
-    "gate_certified",
-    "completion_claimed",
-    "completion_cleared",
-    "completion_rejected",
-    "completion_refused",
-    "overdue_exception",
-    "sweep_performed",
-];
 
 /// THE COVERAGE MECHANISM (#160): every variant the enum can produce appears in the conformance
 /// table, asserted BY NAME so the failure says which one is missing.
@@ -1889,7 +1947,7 @@ fn every_event_variant_appears_in_the_conformance_table() {
         .into_iter()
         .map(|(kind, _, _)| kind)
         .collect();
-    let expected: BTreeSet<&str> = EVERY_WIRE_NAME.iter().copied().collect();
+    let expected: BTreeSet<&str> = EventKind::EVERY_WIRE_NAME.iter().copied().collect();
     let missing: Vec<&str> = expected.difference(&listed).copied().collect();
     assert!(
         missing.is_empty(),

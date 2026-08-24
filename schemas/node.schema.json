@@ -128,11 +128,12 @@
             "budgets"
           ],
           "properties": {
-            "requiresEvidence": {
+            "proofKinds": {
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "description": "The kinds of work-evidence a completion claim must present. \"Proof\" here means the artefacts that show the work happened (test report, diff, log); it is NOT cryptographic proof, and nothing in this field is signature-verified. Signature verification, where it exists, lives on the clearance side (Countersign). Named proofKinds and not requiresEvidence because completion.requires[].evidence already exists in this same block with a different meaning - a predicate over the node's OUTPUT - and two near-homographs one nesting level apart is how the next author reads one and uses the other."
             },
             "budgets": {
               "type": "object",

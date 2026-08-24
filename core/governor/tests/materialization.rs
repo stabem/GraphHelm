@@ -159,6 +159,60 @@ fn scope() -> RepositoryScope {
     )
 }
 
+/// The same preparation, but handing back the governor's verdict instead of unwrapping it.
+///
+/// Needed because the customs guard below is about a REFUSAL: unwrapping inside a helper would
+/// land the failure on the helper's `.unwrap()`, which says nothing about what was refused or
+/// why. A guard has to fail at its own assertion or it is measuring the harness.
+fn try_preparation_with(
+    keys: Keys,
+    edit: impl FnOnce(&mut graphhelm_protocols::ExecutionGraph),
+) -> Result<graphhelm_governor::ProjectionPreparation, graphhelm_governor::GovernorError> {
+    let mut graph = graphhelm_schema::load_graph(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml"),
+    )
+    .unwrap()
+    .graph;
+    edit(&mut graph);
+    let record = GraphVersion::publish(
+        graph,
+        None,
+        Actor::new(ActorType::Owner, "owner-test"),
+        Utc.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap(),
+    )
+    .unwrap()
+    .to_record();
+    block_on(SealingGraphExternalizer::new(EvidenceProtector::new(keys)).prepare(scope(), &record))
+}
+
+/// Writes `completion.customs` onto the `implement` node, NESTED inside the completion block that
+/// already exists there — the placement #160 ratified, and the one an operator would actually
+/// author.
+fn declare_customs(graph: &mut graphhelm_protocols::ExecutionGraph) {
+    let node = graph
+        .spec
+        .nodes
+        .get_mut("implement")
+        .expect("the example graph declares an `implement` node");
+    let completion = node
+        .properties
+        .entry("completion".to_owned())
+        .or_insert_with(|| serde_json::json!({}));
+    completion
+        .as_object_mut()
+        .expect("the example graph's completion block is an object")
+        .insert(
+            "customs".to_owned(),
+            serde_json::json!({
+                "proofKinds": ["patch"],
+                "budgets": {
+                    "waitWithinSeconds": 3600,
+                    "clearanceWithinSeconds": 900,
+                },
+            }),
+        );
+}
+
 fn preparation(keys: Keys) -> graphhelm_governor::ProjectionPreparation {
     preparation_with(keys, |_| {})
 }
@@ -523,4 +577,82 @@ fn an_unreadable_node_timeout_never_becomes_a_budget() {
         matches!(declare(serde_json::json!(42)), Outcome::Carried(Some(42))),
         "a legal declaration must still publish and still arrive"
     );
+}
+
+/// M11 #160: a graph declaring `completion.customs` PUBLISHES, and its budgets reach the store.
+///
+/// Both halves matter and they fail differently. `build_completion_control` is key-EXHAUSTIVE for
+/// node completion — its arms are `contractRef | requires | forbids` and everything else falls to
+/// `_ => Err(GovernorError::InvalidAuthoring)` — so before this lane taught it the key, authoring
+/// the field refused the whole publication. That refusal is the red this guard was written
+/// against and observed before the arm existed; without it the feature is undeliverable no matter
+/// how correct the fold is, because no graph declaring customs can be sealed at all.
+///
+/// The second half is the one that would rot quietly: accepting the key without carrying the
+/// budgets through would publish happily and leave the fold with nothing to compute a deadline
+/// from, which looks exactly like a node that declared no budget.
+///
+/// NOTE for whoever reads this next, because the two consumers of this block do NOT agree and
+/// inferring a uniform policy from either is a mistake: `collect_completion_content` is
+/// key-SELECTIVE and permissive (it walks `requires`/`forbids` only, so no budget leaks into
+/// externalized content), while `build_completion_control` is key-exhaustive and strict. That
+/// asymmetry predates this change.
+#[test]
+fn a_node_declaring_customs_budgets_publishes_and_carries_them() {
+    let prepared = match try_preparation_with(Keys::default(), declare_customs) {
+        Ok(prepared) => prepared,
+        Err(error) => panic!(
+            "a graph declaring `completion.customs` must publish, and the governor refused it              with {error:?} — the node-completion match has not learned the key"
+        ),
+    };
+
+    let customs = prepared
+        .version()
+        .topology()
+        .nodes()
+        .get(&graphhelm_protocols::OpaqueId::parse("implement").unwrap())
+        .expect("the published topology keeps the `implement` node")
+        .customs()
+        .expect("the declared budgets survive sealing, or the fold has nothing to compute from");
+    assert_eq!(customs.wait_within_seconds(), 3600);
+    assert_eq!(customs.clearance_within_seconds(), 900);
+    assert_eq!(
+        customs.dlq_within_seconds(),
+        None,
+        "an undeclared dead-letter budget stays absent rather than becoming zero"
+    );
+
+    // The evidence requirement travels by a DIFFERENT road than the budgets, so it needs its own
+    // assertion. Budgets ride `PersistedNode::customs`; `proofKinds` is encoded into the
+    // node_completion control, whose key vocabulary is closed in THREE separate places in
+    // `core/graph/src/persistence.rs` (identifiers, integers, count groups). Each one refuses an
+    // undeclared key as `InvalidProjection` at sealing without naming the key — which is how a
+    // field can be authored, schema-valid, and still unpublishable.
+    let completion = prepared
+        .version()
+        .topology()
+        .nodes()
+        .get(&graphhelm_protocols::OpaqueId::parse("implement").unwrap())
+        .expect("the published topology keeps the `implement` node")
+        .controls()
+        .iter()
+        .find(|control| control.control_type().as_str() == "node_completion")
+        .expect("the node keeps a completion control");
+    assert_eq!(
+        completion
+            .identifiers()
+            .get(&graphhelm_protocols::SafeKey::parse("customsProof.000").unwrap())
+            .map(|value| value.as_str()),
+        Some("patch"),
+        "the operator's declared evidence requirement must survive sealing, not be accepted          and dropped"
+    );
+}
+
+/// The three checked-in example graphs must keep publishing UNCHANGED. Strict typing applies
+/// inside `customs` only; widening the node-completion match must not have loosened anything
+/// around it, and this is the regression half of that promise.
+#[test]
+fn the_example_graph_still_publishes_without_any_customs_declaration() {
+    try_preparation_with(Keys::default(), |_| {})
+        .expect("the untouched example graph publishes exactly as before");
 }

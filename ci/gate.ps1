@@ -679,6 +679,13 @@ try {
     # named guards never ran at all — verified name by name, not inferred. A RED that stopped
     # looking is not the same object as a RED that looked at everything, and before this flag the
     # two printed the same word (#238).
+    #
+    # THEY STILL CAN, and this comment would mislead without the next sentence: the flag stops
+    # CARGO aborting on a failing binary. It does not stop the stage ending early from a harness
+    # abort, a timeout, a killed process or a crash — and in those cases the manifest is shaped
+    # exactly like a complete run. Coverage becomes visible in the LOG here; it becomes visible in
+    # the RECORD only with #238's executed-vs-discovered field. (Caught reviewing #239: a PR body
+    # is read once at merge, this line is read by whoever touches it next.)
     Invoke-Stage 'workspace tests' {
         cargo $toolchain test --workspace --all-features --locked --no-fail-fast
     } | Out-Null

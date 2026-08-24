@@ -1423,7 +1423,6 @@ fn a_horizon_half_a_second_later_is_stored_as_later() {
     );
 }
 
-
 // -------------------------------------------------------------------------------------------
 // M11 #160: the customs pipeline's fold-grain guards.
 //
@@ -1441,6 +1440,40 @@ fn a_horizon_half_a_second_later_is_stored_as_later() {
 
 const CUSTOMS_NODE: &str = "implementation";
 
+/// Minimal two-node chain: `implementation -> deploy`. Enough to ask readiness a real question.
+fn customs_spec() -> graphhelm_protocols::GraphSpec {
+    use graphhelm_protocols::{EdgeType, GraphEdge, GraphNode, GraphSpec, NodeType, Optionality};
+    let node = || GraphNode {
+        node_type: NodeType::Agent,
+        name: "n".to_owned(),
+        objective: "o".to_owned(),
+        optionality: Optionality::Required,
+        properties: std::collections::BTreeMap::new(),
+    };
+    let mut nodes = std::collections::BTreeMap::new();
+    nodes.insert(CUSTOMS_NODE.to_owned(), node());
+    nodes.insert("deploy".to_owned(), node());
+    GraphSpec {
+        entrypoints: vec![CUSTOMS_NODE.to_owned()],
+        nodes,
+        edges: vec![GraphEdge {
+            id: "implementation-to-deploy".to_owned(),
+            from: CUSTOMS_NODE.to_owned(),
+            to: "deploy".to_owned(),
+            edge_type: EdgeType::Control,
+            payload_schema: None,
+            condition: None,
+            on_false: None,
+            on_unknown: None,
+            priority: None,
+            bindings: std::collections::BTreeMap::new(),
+        }],
+        budgets: Default::default(),
+        policies: Vec::new(),
+        completion: serde_json::Value::Null,
+    }
+}
+
 fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent {
     event(
         key.to_owned(),
@@ -1450,6 +1483,22 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
             outcome,
             next_state,
             reason: None,
+        }),
+    )
+}
+
+fn claim_event(key: &str, completes_wait_seq: u64) -> NewEvent {
+    event(
+        key.to_owned(),
+        EventKind::CompletionClaimed(graphhelm_protocols::CompletionClaimed {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            node: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
+            completes_wait_seq,
+            evidence: vec![],
+            attestation: graphhelm_protocols::ClaimAttestation {
+                asserter: OpaqueId::parse("agent-claimer").unwrap(),
+                mode: graphhelm_protocols::ClaimAttestationMode::OperatorAttested,
+            },
         }),
     )
 }
@@ -1476,6 +1525,315 @@ fn parked_batch() -> Vec<NewEvent> {
     ]
 }
 
+/// The projection's node states with `deploy` set to `Ready`, so `ready_set` is asked a question
+/// about the EDGE rather than about `deploy`'s own state.
+///
+/// This exists because the negative half of the guard below was passing for the wrong reason.
+/// `is_dispatchable` is `Ready`-only by design, and a node with no recorded state folds to
+/// `Draft` — so `deploy` was absent from the ready set no matter what `implementation` did, and
+/// an assertion that would have held with the quarantine deleted is not a guard, it is decoration.
+/// Marking `deploy` dispatchable removes its own state as an explanation and leaves exactly one:
+/// the predecessor edge. The positive half then proves the same call releases it once cleared,
+/// which is what makes the pair measure the transition instead of the default.
+fn dispatchable_deploy(
+    projection: &graphhelm_events::ExecutionProjection,
+) -> std::collections::BTreeMap<String, NodeState> {
+    let mut states = projection.node_states.clone();
+    states.insert("deploy".to_owned(), NodeState::Ready);
+    states
+}
+
+/// The sequence of the event at `index`, CHECKED rather than assumed: a batch appended from a
+/// fresh repository numbers its events 1..n in order, and this asserts that held before any test
+/// depends on it.
+fn sequence_of(appended: &[EventEnvelope], index: usize) -> u64 {
+    let sequence = appended[index].sequence;
+    assert_eq!(
+        sequence,
+        index as u64 + 1,
+        "batch position {index} did not become sequence {}: the fixture's whole identity model \
+         rests on this",
+        index + 1
+    );
+    sequence
+}
+
+/// THE TRAP GUARD (#159 sealed, #160 lane): a claim addressed to a SUPERSEDED wait answers
+/// nothing and leaves the node parked.
+///
+/// The arrangement is reachable with today's events alone — `(WaitingInput, NeedsInput) ->
+/// WaitingInput` is the state machine's own arm, so a node re-parks and its first wait is
+/// superseded. That is what makes this fixture constructable BEFORE the fix, which is the
+/// precondition the house rule demands of a trap guard.
+#[test]
+fn a_claim_naming_a_superseded_wait_answers_nothing_and_leaves_the_node_parked() {
+    let mut batch = parked_batch();
+    let first_wait_index = batch.len() - 1;
+    // Re-park: the SECOND wait supersedes the first under the same node name.
+    batch.push(outcome_event(
+        "repark",
+        Outcome::NeedsInput,
+        NodeState::WaitingInput,
+    ));
+    let second_wait_index = batch.len() - 1;
+    // The stale claim names the FIRST wait, which is no longer the open one.
+    batch.push(claim_event("claim-stale", first_wait_index as u64 + 1));
+
+    let appended = append(batch);
+    let first_wait = sequence_of(&appended, first_wait_index);
+    let second_wait = sequence_of(&appended, second_wait_index);
+    assert_ne!(
+        first_wait, second_wait,
+        "the arrangement must produce two DISTINCT waits or it is not the trap"
+    );
+
+    let projection = replay(&scope(), STREAM, &appended).unwrap();
+    assert!(
+        projection.open_claims.is_empty(),
+        "a claim against a superseded wait must mint NO open claim: {:?}",
+        projection.open_claims
+    );
+    assert_eq!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::WaitingInput),
+        "the node must stay parked"
+    );
+    assert_eq!(
+        projection
+            .open_waits
+            .get(CUSTOMS_NODE)
+            .map(|wait| wait.at_sequence),
+        Some(second_wait),
+        "the OPEN wait is still the second one, untouched by the stale claim"
+    );
+}
+
+/// THE FALSE-READY CELL (#159 sealed): a CLAIMED-not-cleared wait releases nothing downstream;
+/// the clearance, and only the clearance, does.
+///
+/// Note what the assertion does NOT do: it never inspects a customs field to decide readiness. It
+/// asks `ready_set` — the same derivation both drivers call, signature unchanged — so a green here
+/// means both call sites inherit the behaviour rather than one of them being taught it.
+#[test]
+fn the_downstream_of_a_claimed_wait_is_not_ready_until_the_claim_clears() {
+    let spec = customs_spec();
+
+    // First batch: park, then claim the OPEN wait. Claimed-not-cleared is the quarantine.
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim-open", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+
+    let claimed_events = append(batch.clone());
+    let _wait_seq = sequence_of(&claimed_events, wait_index);
+    let claim_seq = sequence_of(&claimed_events, claim_index);
+
+    let claimed = replay(&scope(), STREAM, &claimed_events).unwrap();
+    assert_eq!(
+        claimed.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::WaitingInput),
+        "a claim is testimony, not a transition"
+    );
+    assert!(
+        !graphhelm_execution::ready_set(&spec, &dispatchable_deploy(&claimed))
+            .unwrap()
+            .contains("deploy"),
+        "downstream of a CLAIMED-not-cleared wait must not be ready — this is the quarantine"
+    );
+
+    // Same arrangement, one event longer: the countersignature. Appended as ONE batch again, so
+    // the clearance's `claim_seq` names a sequence that genuinely is the claim's.
+    batch.push(event(
+        "clearance",
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            claim_seq,
+            verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                manifest_hash: WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+            },
+        }),
+    ));
+    let cleared_events = append(batch);
+    assert_eq!(
+        sequence_of(&cleared_events, claim_index),
+        claim_seq,
+        "the claim kept its sequence when the batch grew, or the clearance names the wrong event"
+    );
+
+    let cleared = replay(&scope(), STREAM, &cleared_events).unwrap();
+    assert_eq!(
+        cleared.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::Succeeded),
+        "clearance is the release"
+    );
+    assert!(
+        cleared.open_claims.is_empty() && cleared.open_waits.is_empty(),
+        "clearance spends the claim and closes the wait"
+    );
+    assert!(
+        graphhelm_execution::ready_set(&spec, &dispatchable_deploy(&cleared))
+            .unwrap()
+            .contains("deploy"),
+        "once cleared, the dependent is ready through the SAME derivation both drivers call"
+    );
+}
+
+/// A clearance whose claim sequence names no claim is UNINTERPRETABLE — the countersignature has
+/// no testimony under it, and no later reader can decide what was cleared. That is the one Corrupt
+/// case in this family; a refused or rejected claim is merely a recorded mistake.
+#[test]
+fn a_clearance_naming_no_claim_is_corrupt_rather_than_silently_ignored() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(event(
+        "clearance-orphan",
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            // The PARKING event's sequence is a real sequence and not a claim: the sharpest
+            // possible near-miss, derived from the arrangement rather than invented.
+            claim_seq: wait_index as u64 + 1,
+            verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                manifest_hash: WireHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
+            },
+        }),
+    ));
+    let appended = append(batch);
+    let _ = sequence_of(&appended, wait_index);
+    assert!(matches!(
+        replay(&scope(), STREAM, &appended),
+        Err(ReplayError::Corrupt)
+    ));
+}
+
+/// THE TIMELINE HAS AN ORACLE NOW (#160). `customs_scans` is written by FIVE arms of the fold and,
+/// until this guard, was asserted by NONE — five writers and no reader.
+///
+/// That is worse than an unused field. An unused field is inert; a field written by five sites
+/// with no oracle is five places where a wrong stage, a wrong sequence or a dropped entry survives
+/// every green suite. The question the orchestrator asked was whether this is "an interface
+/// awaiting a consumer" or dead state; measured, it was neither — it was UNGUARDED state, and the
+/// answer to that is a guard rather than a deadline.
+///
+/// The consumer (#163 renders this timeline) is real and is someone else's lane. This guard does
+/// not wait for it, because the defect it catches is mine and lands before theirs.
+///
+/// Asserts the whole story in LOG ORDER, which is the property the renderer depends on: a timeline
+/// whose entries are individually right and collectively out of order tells the operator a false
+/// sequence of events.
+#[test]
+fn the_customs_timeline_records_each_stage_once_in_log_order() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event("claim", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+    let appended = append(batch.clone());
+    let wait_seq = sequence_of(&appended, wait_index);
+    let claim_seq = sequence_of(&appended, claim_index);
+
+    batch.push(event(
+        "clearance",
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            claim_seq,
+            verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                manifest_hash: WireHash::parse(format!("sha256:{}", "d".repeat(64))).unwrap(),
+            },
+        }),
+    ));
+    let cleared_index = batch.len() - 1;
+    let appended = append(batch);
+    let cleared_seq = sequence_of(&appended, cleared_index);
+
+    let projection = replay(&scope(), STREAM, &appended).unwrap();
+    let timeline = projection
+        .customs_scans
+        .get(CUSTOMS_NODE)
+        .expect("the node that parked, claimed and cleared has a timeline");
+
+    // The SHAPE is asserted as a whole rather than field-by-field, so an entry appearing twice or
+    // in the wrong place fails here instead of passing three separate spot checks.
+    let shape: Vec<(u64, graphhelm_events::CustomsStage, Option<u64>)> = timeline
+        .iter()
+        .map(|scan| (scan.at_sequence, scan.stage, scan.claim_seq))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (wait_seq, graphhelm_events::CustomsStage::Parked, None),
+            (
+                claim_seq,
+                graphhelm_events::CustomsStage::Claimed,
+                Some(claim_seq)
+            ),
+            (
+                cleared_seq,
+                graphhelm_events::CustomsStage::Cleared,
+                Some(claim_seq)
+            ),
+        ],
+        "the timeline is the story in log order: parked, claimed, cleared"
+    );
+
+    // The CLEARED entry points at the claim it spent, not at itself — the property that lets a
+    // reader join an outcome back to the testimony it answered.
+    assert_eq!(
+        timeline[2].claim_seq,
+        Some(claim_seq),
+        "a clearance names the claim it cleared, never its own sequence"
+    );
+    assert_ne!(
+        cleared_seq, claim_seq,
+        "the arrangement must give the clearance its own sequence or the assertion above is          satisfied by coincidence"
+    );
+}
+
+/// A REFUSAL reaches the timeline carrying its reason, and changes nothing else.
+///
+/// Separate from the story above because a refusal is the one stage with NO claim to point at —
+/// which is exactly why it carries `reason_code` itself while a rejection points at its claim's
+/// outcome record instead. Asserting both in one fixture would let either explain the other.
+#[test]
+fn a_refusal_reaches_the_timeline_with_its_reason_and_leaves_the_node_parked() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(event(
+        "refusal",
+        EventKind::CompletionRefused(graphhelm_protocols::CompletionRefused {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            node: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
+            claimed_wait_seq: wait_index as u64 + 1,
+            reason_code: graphhelm_protocols::SafeCode::parse("stale_rendezvous").unwrap(),
+        }),
+    ));
+    let refusal_index = batch.len() - 1;
+    let appended = append(batch);
+    let refusal_seq = sequence_of(&appended, refusal_index);
+
+    let projection = replay(&scope(), STREAM, &appended).unwrap();
+    let timeline = projection
+        .customs_scans
+        .get(CUSTOMS_NODE)
+        .expect("a refused node still has a timeline");
+
+    assert_eq!(timeline.len(), 2, "parked, then refused: {timeline:?}");
+    assert_eq!(timeline[1].at_sequence, refusal_seq);
+    assert_eq!(timeline[1].stage, graphhelm_events::CustomsStage::Refused);
+    assert_eq!(
+        timeline[1].reason_code.as_deref(),
+        Some("stale_rendezvous"),
+        "a refusal has no claim to point at, so it must carry its own reason"
+    );
+    assert_eq!(
+        timeline[1].claim_seq, None,
+        "and it names no claim, because a refused claim never became one"
+    );
+    assert_eq!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::WaitingInput),
+        "a recorded refusal changes no state — that is its whole point"
+    );
+}
+
 // =================================================================================================
 // M11 #161 (lane 2) — clearance and the countersign identity registry.
 //
@@ -1486,9 +1844,6 @@ fn parked_batch() -> Vec<NewEvent> {
 // express the orderings these cells are about. Positions inside the single batch ARE the
 // sequences, captured as the list is built.
 // =================================================================================================
-
-/// The parked arrangement as NewEvents (not yet appended) plus the sequence the parking outcome
-/// will occupy, so a caller keeps adding to the SAME batch.
 
 fn identity_registered(key: &str, identity: &str, fingerprint: &str) -> NewEvent {
     event(
@@ -1510,7 +1865,6 @@ fn identity_revoked(key: &str, identity: &str) -> NewEvent {
         }),
     )
 }
-
 
 /// The registry half, exercised WITHOUT the customs prelude — the part of this lane that is
 /// testable today, found by H's review.

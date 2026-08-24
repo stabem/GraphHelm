@@ -320,6 +320,69 @@ fn an_undeclared_node_timeout_stays_absent_and_never_becomes_zero() {
     );
 }
 
+/// M11 #160: customs budgets inherit `timeout_seconds`' absence rule EXACTLY, and this pair is
+/// the guard that says so.
+///
+/// The trap is specific and it is silent. Every graph version published before customs existed
+/// has a `PersistedNode` with no `customs` key. Once the sweep computes stage deadlines as
+/// `occurred_at + budget`, a missing budget read as ZERO makes the deadline equal to the moment
+/// the stage was entered — so every stage of every historical replay is instantly overdue, and
+/// the system would raise exceptions against work that was never bounded by anyone. That reads
+/// as a flood of real findings, not as a bug, which is what makes it worth a guard rather than a
+/// comment.
+///
+/// Byte-identical re-serialization is the second half and is not decoration: replay re-serializes
+/// every event and re-hashes it, so a `customs: null` emitted where the stored bytes had no key
+/// would break the hash chain of every version already published. `skip_serializing_if` is what
+/// prevents it, and this assertion is what would notice if it were ever removed.
+#[test]
+fn an_undeclared_customs_budget_stays_absent_and_never_becomes_zero() {
+    let value = serde_json::json!({
+        "nodeType": "agent",
+        "optionality": "required",
+        "controls": [],
+        "contentSlotIds": [],
+    });
+    let node: graphhelm_protocols::PersistedNode =
+        serde_json::from_value(value.clone()).expect("a pre-customs node still deserializes");
+    assert!(
+        node.customs().is_none(),
+        "no declaration is not a budget of zero — a stage nobody bounded has NO deadline, and          reading absence as zero would make every historical stage instantly overdue"
+    );
+    assert_eq!(
+        serde_json::to_value(&node).unwrap(),
+        value,
+        "and it re-serializes byte-identically: every graph version already published must keep          its hash, which an always-emitted null would break"
+    );
+}
+
+/// The declared half of the same pair: a budget that IS written reaches the store intact, so the
+/// absence assertion above cannot pass by the field being unreadable for everyone.
+#[test]
+fn a_declared_customs_budget_survives_persistence() {
+    let value = serde_json::json!({
+        "nodeType": "agent",
+        "optionality": "required",
+        "controls": [],
+        "contentSlotIds": [],
+        "customs": {
+            "waitWithinSeconds": 3600,
+            "clearanceWithinSeconds": 900,
+        },
+    });
+    let node: graphhelm_protocols::PersistedNode =
+        serde_json::from_value(value.clone()).expect("a node with customs budgets deserializes");
+    let customs = node.customs().expect("the declaration reaches the store");
+    assert_eq!(customs.wait_within_seconds(), 3600);
+    assert_eq!(customs.clearance_within_seconds(), 900);
+    assert_eq!(
+        customs.dlq_within_seconds(),
+        None,
+        "an absent dead-letter budget is absent, not zero: the dead-letter state IS the exception"
+    );
+    assert_eq!(serde_json::to_value(&node).unwrap(), value);
+}
+
 /// (3) An unreadable value is NOT a budget. A negative or non-numeric timeout must arrive
 /// downstream as absent, or the surface would publish calm over a number nobody can read.
 #[test]

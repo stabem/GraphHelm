@@ -59,6 +59,48 @@ impl<'de> Deserialize<'de> for SafeCode {
     }
 }
 
+/// The closed vocabulary of refusal reason codes for the customs pipeline.
+///
+/// TRANSCRIBED, NOT INVENTED. Source: `.factory/b-agent-159-blueprint.md` §2d, read at
+/// `origin/k-162-dlq-sweep` — the file is not on `main` because the merge that would put it there
+/// is built and waiting on the owner. Anyone re-deriving this list should read that section rather
+/// than trust this comment.
+///
+/// **The source enumerates NINE, and #160 asks for eight.** §2d lists nine names and marks the
+/// last as "the ninth added by amendment: J's custody finding, 2e"; §8 of the same document still
+/// says "beyond the eight named". The count in §8 was not updated when the amendment landed, so
+/// the document disagrees with itself and #160 inherited the older half. The NAMES are the
+/// authority here, never the count — which is the same defect this milestone already fixed twice
+/// (`assert_eq!(variants.len(), 25)` against a literal), and which the blueprint itself complains
+/// about in its own opening section.
+///
+/// NOTHING PRODUCES THESE YET, and that is deliberate rather than an omission. The command layer
+/// that would emit a `completion_refused` — decide-then-append with the sequence pinned from the
+/// read, the #74 pattern — is not built. So this is a legal vocabulary with no producer, and a
+/// reader must not take its existence as evidence that any refusal path exists. It is frozen here
+/// because the blueprint asks the implementation lane to freeze it, and because a vocabulary
+/// agreed across four lanes is cheaper to fix before anyone emits than after.
+pub const REFUSAL_REASON_CODES: &[&str] = &[
+    // A claim naming a wait that has been superseded or already answered.
+    "stale_rendezvous",
+    // A second claim against a wait that already carries one.
+    "duplicate_completion",
+    // Fewer evidence kinds presented than the node's `proof_kinds` declares.
+    "evidence_budget_unmet",
+    // Presented evidence does not hash to what it claims.
+    "hash_mismatch",
+    // The named wait sequence is not a wait.
+    "unknown_wait",
+    // The countersigning identity is not in the registry at this sequence.
+    "unknown_identity",
+    // Clearance arrived after the stage's declared patience ran out.
+    "clearance_expired",
+    // The node is not parked, so there is nothing to complete.
+    "not_waiting",
+    // A signature could not be verified — the ninth, added by amendment (blueprint §2e).
+    "signature_unverifiable",
+];
+
 /// A safe event before repository-assigned identity, timestamp, sequence and hashes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -186,8 +228,6 @@ pub enum EventKind {
     CompletionCleared(CompletionCleared),
     CompletionRejected(CompletionRejected),
     CompletionRefused(CompletionRefused),
-    OverdueException(OverdueException),
-    SweepPerformed(SweepPerformed),
     ClearanceIdentityRegistered(ClearanceIdentityRegistered),
     ClearanceIdentityRevoked(ClearanceIdentityRevoked),
 }
@@ -206,7 +246,7 @@ pub enum EventKind {
 /// One piece of testimony offered with a completion claim.
 ///
 /// The hash is the evidence's identity; the fold never opens the bytes. `kind` is matched against
-/// the node's DECLARED `requires_evidence` list — fewer kinds than declared refuses
+/// the node's DECLARED `proof_kinds` list — fewer kinds than declared refuses
 /// (`EvidenceBudgetUnmet`), extra kinds are accepted and marked `unverified_extra` in the fold:
 /// logged, never counted as stronger proof.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,8 +296,18 @@ pub struct CompletionClaimed {
 }
 
 /// Who countersigned a claim.
+// `rename_all` renames the VARIANTS; the fields INSIDE a struct variant keep their Rust
+// spelling unless `rename_all_fields` says otherwise. Without the second attribute this enum
+// put `manifest_hash` and `key_fingerprint` on the wire in snake_case while every other
+// payload in this file is camelCase — a silent escape from the convention that no amount of
+// reading the type would show, because the attribute that looks like it covers fields does
+// not. Caught by the store refusing the event against `event-envelope.schema.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "type"
+)]
 pub enum ClearanceVerifier {
     /// Clearance re-derived the evidence bundle against the node's declared manifest —
     /// deterministic and replayable.
@@ -291,7 +341,12 @@ pub struct CompletionRejected {
     pub execution_id: OpaqueId,
     pub claim_seq: u64,
     pub verifier: ClearanceVerifier,
-    pub reason_code: String,
+    /// `SafeCode`, not `String`, and the difference is not cosmetic: this value is supplied by
+    /// whoever withholds clearance and is rendered to operators. `SafeCode` bounds it to 64 bytes
+    /// of `^[a-z][a-z0-9_]{0,63}$` — the grammar every other reason code in this file already
+    /// uses. A bare `String` accepted arbitrary length and arbitrary bytes on a field that
+    /// reaches a screen, which is the shape `scan_safe_value` exists to refuse.
+    pub reason_code: SafeCode,
 }
 
 /// M11 #161: an identity gains the power to countersign, FROM THIS SEQUENCE ON.
@@ -339,40 +394,81 @@ pub struct CompletionRefused {
     pub node: OpaqueId,
     /// The wait the refused claim NAMED — frequently stale, which is frequently the reason.
     pub claimed_wait_seq: u64,
-    pub reason_code: String,
+    /// The registry code naming WHY the command layer would not accept the claim. `SafeCode` for
+    /// the same reason as on `CompletionRejected`: house grammar, bounded, and the spelling every
+    /// sibling event already uses.
+    pub reason_code: SafeCode,
 }
 
-/// M11 #160: one overdue stage, raised by a sweep.
-///
-/// `episode_seq` is the STAGE-ENTRY event's sequence and therefore the episode's identity: one
-/// exception per episode, ever. A re-entry (a redrive, a returned wait) is a NEW episode with a
-/// fresh deadline and is exception-eligible again. The alternative grain — per episode per
-/// `as_of` — re-fires on every sweep and trains operators to ignore the channel, which is the
-/// cry-wolf failure this project has already paid for once.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OverdueException {
-    pub execution_id: OpaqueId,
-    pub node: OpaqueId,
-    pub episode_seq: u64,
-    /// The claim whose clearance lapsed, when the overdue stage was a claimed one. Absent for an
-    /// un-claimed wait that expired — the state that motivated this milestone.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim_seq: Option<u64>,
+// ONE SOURCE, TWO PRODUCTS (#160, added after the design — see the PR body).
+//
+// `wire_name` and `EVERY_WIRE_NAME` used to be two hand-written artifacts that had to agree by
+// discipline. They drifted, and the drift was invisible in the worst way: a name missing from BOTH
+// is absent from both sides of the coverage check's `difference()`, so it can never appear in
+// `missing`. That is why a real failure on main named thirteen variants and not fifteen — the two
+// newest were invisible to the check meant to catch exactly them.
+//
+// This macro emits both from one list, so they cannot disagree. The match stays exhaustive, so a
+// variant nobody names here is still a COMPILE ERROR — which is the half that already proved
+// itself by refusing to build main.
+macro_rules! wire_names {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        impl EventKind {
+            /// Every wire name this enum can produce, in declaration order.
+            ///
+            /// Derived from the same list as [`EventKind::wire_name`], so the two cannot drift.
+            pub const EVERY_WIRE_NAME: &'static [&'static str] = &[$($name),+];
+
+            /// This variant's serde tag — the `type` string it carries on the wire.
+            ///
+            /// Exhaustive by construction: a variant absent from the list above fails to compile.
+            #[must_use]
+            pub const fn wire_name(&self) -> &'static str {
+                match self { $(Self::$variant(..) => $name),+ }
+            }
+        }
+    };
 }
 
-/// M11 #160: the sweep, journaled with the instant it judged against.
-///
-/// `as_of` is an ARGUMENT the caller supplies and the journal records — never a clock the sweep
-/// reads for itself. That is what makes the exception set a pure function of the log: replay
-/// recomputes the identical set because both the deadlines and the judging instant are journal
-/// data. A sweep that read `SystemTime` would make replay disagree with the original run, which
-/// is the defect this whole family is built to avoid.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SweepPerformed {
-    pub execution_id: OpaqueId,
-    pub as_of: PersistedTimestamp,
+wire_names! {
+    GraphImported => "graph_imported",
+    GraphValidationFailed => "graph_validation_failed",
+    GraphVersionPublished => "graph_version_published",
+    DraftProposed => "draft_proposed",
+    DraftRejected => "draft_rejected",
+    DraftApplied => "draft_applied",
+    PolicyObligationEvaluated => "policy_obligation_evaluated",
+    PolicyWaiverCreated => "policy_waiver_created",
+    SimulationStarted => "simulation_started",
+    NodeStateChanged => "node_state_changed",
+    SimulationCompleted => "simulation_completed",
+    ExecutionStarted => "execution_started",
+    ExecutionFormDeclared => "execution_form_declared",
+    ExecutionFormAmended => "execution_form_amended",
+    ExecutionModeChanged => "execution_mode_changed",
+    NodeOutcomeRecorded => "node_outcome_recorded",
+    ExecutionCompleted => "execution_completed",
+    SignalRecorded => "signal_recorded",
+    GhostNodeProposed => "ghost_node_proposed",
+    MutationAccepted => "mutation_accepted",
+    ExecutionPaused => "execution_paused",
+    ExecutionResumed => "execution_resumed",
+    IntegrityCheckpointCreated => "integrity_checkpoint_created",
+    EvidenceErasureRequested => "evidence_erasure_requested",
+    EvidenceErasureCompleted => "evidence_erasure_completed",
+    EvidenceCiphertextDeleted => "evidence_ciphertext_deleted",
+    EvidenceLegalHoldChanged => "evidence_legal_hold_changed",
+    ReuseDecision => "reuse_decision",
+    WakeLease => "wake_lease",
+    WakeLeaseConsumed => "wake_lease_consumed",
+    GateVerdict => "gate_verdict",
+    GateCertified => "gate_certified",
+    CompletionClaimed => "completion_claimed",
+    CompletionCleared => "completion_cleared",
+    CompletionRejected => "completion_rejected",
+    CompletionRefused => "completion_refused",
+    ClearanceIdentityRegistered => "clearance_identity_registered",
+    ClearanceIdentityRevoked => "clearance_identity_revoked",
 }
 
 impl EventKind {

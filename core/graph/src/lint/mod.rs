@@ -90,6 +90,47 @@ pub fn lint(graph: &ExecutionGraph, source: &str) -> LintReport {
         }
     }
 
+    // M11 #160 (G2 part 1): a node that can PARK FOR INPUT and declares no customs budgets can
+    // wait forever, and nothing in the system will ever say so. The sweep raises an overdue
+    // exception from a stage deadline, a stage deadline comes from a declared budget, and an
+    // absent budget is honestly absent rather than defaulted — which closes the "instantly
+    // overdue" trap at the cost of leaving genuinely unbounded stages silent. This warning is
+    // where that cost gets paid back: the silence becomes visible at authoring time instead of
+    // at 3am on a parked execution nobody is watching.
+    //
+    // WARNING and not an error, deliberately: every graph checked in today predates customs, and
+    // making this an error would refuse graphs that are working. It follows `GHG101` exactly —
+    // same shape, same reasoning, one milestone later, for the same class of defect (a bound
+    // nobody declared).
+    //
+    // The node set is the set that can reach `WaitingInput`, which is the set that can be
+    // dispatched and run. `HumanDecision` is IN and is the clearest case: a node whose entire
+    // purpose is to wait for a person is the one most able to wait forever.
+    for (id, node) in &graph.spec.nodes {
+        let can_park = matches!(
+            node.node_type,
+            NodeType::Agent
+                | NodeType::Tool
+                | NodeType::HumanDecision
+                | NodeType::Deploy
+                | NodeType::Rollback
+                | NodeType::ArtifactTransform
+        );
+        let declares_customs = node
+            .properties
+            .get("completion")
+            .and_then(|completion| completion.get("customs"))
+            .is_some();
+        if can_park && !declares_customs {
+            warnings.push(Diagnostic::warning(
+                "GHG102_UNBOUNDED_CUSTOMS",
+                "node can park for input but declares no customs budgets, so no stage of it can                  ever go overdue",
+                format!("/spec/nodes/{}/completion/customs", escape(id)),
+                source,
+            ));
+        }
+    }
+
     sort_diagnostics(&mut errors);
     sort_diagnostics(&mut warnings);
     LintReport { errors, warnings }

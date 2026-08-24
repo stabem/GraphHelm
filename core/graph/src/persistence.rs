@@ -1730,6 +1730,12 @@ fn identifier_key_allowed(control_type: &str, key: &str) -> bool {
                 || indexed_any(
                     key,
                     &[
+                        // M11 #160: the customs evidence family. Three separate closed
+                        // vocabularies govern this control type — identifiers here, integers
+                        // below, and count groups in `validate_control_counts` — and a key
+                        // missing from ANY of them fails as `InvalidProjection` at sealing,
+                        // with nothing naming the key that was rejected.
+                        "customsProof.",
                         "requires.",
                         "forbids.",
                         "requiresArtifact.",
@@ -1819,7 +1825,7 @@ fn integer_key_allowed(control_type: &str, key: &str) -> bool {
         "subgraph_configuration" => matches!(key, "parameterCount" | "exposedResultCount"),
         "deploy_configuration" => key == "preconditionCount",
         "node_completion" => {
-            matches!(key, "requiresCount" | "forbidsCount")
+            matches!(key, "requiresCount" | "forbidsCount" | "customsProofCount")
                 || indexed_any(key, &["requiresEvidenceMin.", "forbidsEvidenceMin."])
         }
         "node_configuration" => key == "timeoutSeconds",
@@ -2170,6 +2176,12 @@ fn validate_control_counts(control: &PersistedControl) -> Result<(), GraphError>
         ],
         "deploy_configuration" => &[("preconditionCount", &["precondition."])],
         "node_completion" => &[
+            // M11 #160: the customs evidence requirement is an indexed family like the others,
+            // so it needs its declared count here or `validate_control_counts` refuses the whole
+            // projection. Naming this table is the point: the node-completion control's key
+            // vocabulary is CLOSED, and a governor arm that emits an undeclared prefix produces
+            // `InvalidProjection` at sealing rather than a message about the key it dislikes.
+            ("customsProofCount", &["customsProof."]),
             (
                 "requiresCount",
                 &[

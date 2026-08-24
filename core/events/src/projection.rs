@@ -303,6 +303,17 @@ pub struct ExecutionProjection {
     pub open_claims: BTreeMap<u64, OpenClaim>,
     /// M11 #160: episodes that have already raised an overdue exception, by stage-entry
     /// sequence. One exception per episode, ever; a re-entry is a new episode.
+    ///
+    /// DECLARED GAP, not an oversight: NOTHING IN THIS BRANCH WRITES THIS SET. The events that
+    /// populate it — `overdue_exception` and `sweep_performed` — belong to the sweep lane (#162),
+    /// because the sweep is the verb and this lane only owns the reckoning it asks (`overdue_at`).
+    /// Until that lane lands, this set is permanently empty and `overdue_at` therefore reports
+    /// every elapsed stage on every call.
+    ///
+    /// That is the CORRECT behaviour for a system where no exception has ever been recorded, and
+    /// it is written here because the alternative reading — "the set is empty, so nothing is
+    /// overdue" — is exactly backwards and would look reasonable to someone debugging a sweep
+    /// that fires twice.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub exception_marked: BTreeSet<u64>,
     /// M11 #160: the per-node customs timeline (#163 renders it; the fold owns it).
@@ -919,6 +930,137 @@ impl ProjectionGeneration {
 /// `MAX_READY_SET`. `graphhelm_execution` pins that relationship in a test.
 pub const MAX_PROJECTION_NODES: usize = 10_000;
 
+/// One customs stage whose deadline has passed — what a sweep would raise an exception FOR.
+///
+/// `episode_seq` is the stage-entry event's sequence and therefore the episode's identity, which
+/// is what makes "one exception per episode, ever" expressible: names repeat because a node
+/// re-parks, sequences cannot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OverdueStage {
+    pub node: String,
+    /// The stage-entry sequence: the wait's own sequence for a parked stage, the claim's for a
+    /// claimed one.
+    pub episode_seq: u64,
+    pub deadline: PersistedTimestamp,
+    /// The claim this stage is holding, when it is holding one. `None` is the F1 case: a wait
+    /// nobody has claimed at all, which is the state that had no way to expire before this lane.
+    pub claim_seq: Option<u64>,
+}
+
+/// THE F1 QUERY (#160): every customs stage whose declared patience has run out at `as_of`.
+///
+/// Pure and total over the projection — no clock, no I/O, no append. `as_of` is an ARGUMENT
+/// because the sweep's instant is journaled as one; a function that read a clock here would make
+/// replay non-deterministic and would be the second clock this family exists to avoid.
+///
+/// This is deliberately NOT the sweep. Lane 3 owns the verb — the command, its surfaces, and the
+/// decision to call it. What lives here is the arithmetic the verb asks, because the F1 cell (an
+/// UNCLAIMED wait past `waitWithinSeconds` is visible to a sweep) is this lane's sealed guard and
+/// could not be expressed at all if the reckoning lived in lane 3.
+///
+/// Three rules, each of which is a decision rather than an implementation detail:
+///
+/// - A stage with NO deadline is never overdue. Absence is absence; see `stage_deadline`.
+/// - `deadline <= as_of` — a stage is overdue AT its deadline, not one tick after. The boundary
+///   is inclusive because the declaration reads "within N seconds", and "within" that has
+///   elapsed is spent.
+/// - An episode already in `exception_marked` is skipped. One exception per episode ever; the
+///   alternative grain re-fires on every sweep and trains operators to ignore the channel, which
+///   is the cry-wolf failure this project has already paid for once.
+///
+/// A CLAIMED wait is reported under its claim, not twice: entering the claimed stage replaces the
+/// wait's clock with the clearance clock, so the wait is no longer the open question.
+#[must_use]
+pub fn overdue_at(
+    projection: &ExecutionProjection,
+    as_of: &PersistedTimestamp,
+) -> Vec<OverdueStage> {
+    let claimed_waits: BTreeSet<u64> = projection
+        .open_claims
+        .values()
+        .map(|claim| claim.completes_wait_seq)
+        .collect();
+
+    let mut overdue: Vec<OverdueStage> = Vec::new();
+
+    for (node, wait) in &projection.open_waits {
+        if claimed_waits.contains(&wait.at_sequence)
+            || projection.exception_marked.contains(&wait.at_sequence)
+        {
+            continue;
+        }
+        if let Some(deadline) = &wait.deadline
+            && deadline <= as_of
+        {
+            overdue.push(OverdueStage {
+                node: node.clone(),
+                episode_seq: wait.at_sequence,
+                deadline: deadline.clone(),
+                claim_seq: None,
+            });
+        }
+    }
+
+    for (claim_seq, claim) in &projection.open_claims {
+        if projection.exception_marked.contains(claim_seq) {
+            continue;
+        }
+        if let Some(deadline) = &claim.deadline
+            && deadline <= as_of
+        {
+            overdue.push(OverdueStage {
+                node: claim.node.clone(),
+                episode_seq: *claim_seq,
+                deadline: deadline.clone(),
+                claim_seq: Some(*claim_seq),
+            });
+        }
+    }
+
+    overdue.sort_by_key(|stage| stage.episode_seq);
+    overdue
+}
+
+/// The instant a customs stage's patience runs out: the entering event's OWN recorded instant
+/// plus the duration the node's sealed spec declared (#160, blueprint 2b').
+///
+/// Pure arithmetic over the log — no clock is read, so replay stays byte-identical and a reader
+/// is handed an instant instead of a sum to work out against a clock of its own. This is M09's
+/// `matures_at` technique applied to a second family, deliberately and not by coincidence: one
+/// clock for the whole system, and that clock is the envelope's `occurred_at`.
+///
+/// `None` means NO DEADLINE, and that is the load-bearing case. It arises three ways — no graph
+/// published yet, the node absent from the sealed topology, or the node declaring no customs
+/// block — and every one of them must read as "nobody bounded this stage", never as a deadline
+/// of zero. Zero would place the horizon at the instant the stage was entered, making every
+/// stage of every pre-customs replay instantly overdue: a flood of exceptions against work no
+/// one ever put a bound on, arriving as what looks like real findings. That is the trap the
+/// fifth condition on this lane names, and `an_undeclared_customs_budget_stays_absent_and_never
+/// _becomes_zero` is its guard one layer down.
+///
+/// The arithmetic is saturating-by-refusal rather than wrapping: an overflow yields `None`, on
+/// the same reasoning — an unrepresentable horizon is not a horizon of zero.
+fn stage_deadline(
+    projection: &ExecutionProjection,
+    node: &str,
+    entered_at: &PersistedTimestamp,
+    budget: impl FnOnce(&graphhelm_protocols::PersistedCustoms) -> u64,
+) -> Option<PersistedTimestamp> {
+    let node_id = graphhelm_protocols::OpaqueId::parse(node).ok()?;
+    let customs = projection
+        .current_graph
+        .as_ref()?
+        .topology()
+        .nodes()
+        .get(&node_id)?
+        .customs()?;
+    let seconds = i64::try_from(budget(&customs)).ok()?;
+    let horizon = entered_at
+        .as_datetime()
+        .checked_add_signed(chrono::Duration::seconds(seconds))?;
+    PersistedTimestamp::from_datetime(horizon).ok()
+}
+
 /// Appends one line to a node's customs timeline, bounded (#160).
 ///
 /// The per-node cap is `MAX_PROJECTION_NODES` reused as an entry bound: it is the same order of
@@ -934,10 +1076,7 @@ fn record_scan(
     {
         return Err(ReplayError::LimitExceeded);
     }
-    let history = projection
-        .customs_scans
-        .entry(node.to_owned())
-        .or_default();
+    let history = projection.customs_scans.entry(node.to_owned()).or_default();
     if history.len() >= MAX_PROJECTION_NODES {
         return Err(ReplayError::LimitExceeded);
     }
@@ -1106,11 +1245,17 @@ fn apply_projection_event(
                 {
                     return Err(ReplayError::LimitExceeded);
                 }
+                // Computed BEFORE the insert, and not only to satisfy the borrow checker: the
+                // deadline belongs to the moment the stage was ENTERED, which is this event, and
+                // reading the spec first keeps that plain.
+                let deadline = stage_deadline(projection, &node, &event.occurred_at, |customs| {
+                    customs.wait_within_seconds()
+                });
                 projection.open_waits.insert(
                     node.clone(),
                     OpenWait {
                         at_sequence: event.sequence,
-                        deadline: None,
+                        deadline: deadline.clone(),
                     },
                 );
                 record_scan(
@@ -1121,7 +1266,7 @@ fn apply_projection_event(
                         stage: CustomsStage::Parked,
                         claim_seq: None,
                         reason_code: None,
-                        deadline: None,
+                        deadline,
                     },
                 )?;
             } else {
@@ -1147,13 +1292,20 @@ fn apply_projection_event(
                 return Err(ReplayError::LimitExceeded);
             }
             if answers_open_wait {
+                // A claim ENTERS the claimed stage, so the clearance budget starts here rather
+                // than continuing the wait's clock. Two stages, two budgets, one rule: the
+                // deadline is always the entering event's instant plus the budget for the stage
+                // being entered.
+                let deadline = stage_deadline(projection, &node, &event.occurred_at, |customs| {
+                    customs.clearance_within_seconds()
+                });
                 projection.open_claims.insert(
                     event.sequence,
                     OpenClaim {
                         node: node.clone(),
                         completes_wait_seq: payload.completes_wait_seq,
                         stage_entered_at: event.sequence,
-                        deadline: None,
+                        deadline: deadline.clone(),
                     },
                 );
                 record_scan(
@@ -1164,7 +1316,7 @@ fn apply_projection_event(
                         stage: CustomsStage::Claimed,
                         claim_seq: Some(event.sequence),
                         reason_code: None,
-                        deadline: None,
+                        deadline,
                     },
                 )?;
             }
@@ -1237,41 +1389,10 @@ fn apply_projection_event(
                     at_sequence: event.sequence,
                     stage: CustomsStage::Refused,
                     claim_seq: None,
-                    reason_code: Some(payload.reason_code.clone()),
+                    reason_code: Some(payload.reason_code.as_str().to_owned()),
                     deadline: None,
                 },
             )?;
-        }
-        EventKind::OverdueException(payload) => {
-            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
-                return Err(ReplayError::Corrupt);
-            }
-            if projection.exception_marked.len() >= MAX_PROJECTION_NODES {
-                return Err(ReplayError::LimitExceeded);
-            }
-            // Idempotency grain is the EPISODE (the stage-entry sequence), so a later sweep at any
-            // as_of raises nothing more for it. A re-entry mints a new episode and is eligible
-            // again — deliberate, and the reason an advisory exception nobody acts on does not
-            // re-fire within its episode.
-            projection.exception_marked.insert(payload.episode_seq);
-            record_scan(
-                projection,
-                payload.node.as_str(),
-                CustomsScan {
-                    at_sequence: event.sequence,
-                    stage: CustomsStage::Overdue,
-                    claim_seq: payload.claim_seq,
-                    reason_code: None,
-                    deadline: None,
-                },
-            )?;
-        }
-        EventKind::SweepPerformed(payload) => {
-            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
-                return Err(ReplayError::Corrupt);
-            }
-            // The sweep's own record. `as_of` is journal data, never a clock read: that is what
-            // makes a replayed sweep reproduce the identical exception set.
         }
         EventKind::ClearanceIdentityRegistered(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
@@ -1811,6 +1932,262 @@ mod tests {
         event
     }
 
+    /// A sealed version whose single node either declares customs budgets or does not.
+    ///
+    /// Only the node's spec differs between the two calls, so anything that changes in the fold's
+    /// output between them is attributable to the DECLARATION and to nothing else.
+    fn customs_version(budgeted: bool) -> PersistedGraphVersion {
+        let completion = PersistedControl::new(
+            SafeValue::parse("all_terminal").unwrap(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let node = PersistedNode::new(
+            NodeType::Agent,
+            Optionality::Required,
+            vec![],
+            vec![],
+            None,
+            budgeted.then(|| graphhelm_protocols::PersistedCustoms::new(3600, 900, None)),
+        )
+        .unwrap();
+        let topology = PersistedTopology::new(
+            OpaqueId::parse("graph-1").unwrap(),
+            graphhelm_protocols::ExecutionId::parse("execution-1").unwrap(),
+            BTreeMap::new(),
+            vec![OpaqueId::parse("plan").unwrap()],
+            BTreeMap::from([(OpaqueId::parse("plan").unwrap(), node)]),
+            vec![],
+            PersistedBudgets::default(),
+            vec![],
+            completion,
+        )
+        .unwrap();
+        PersistedGraphVersion::new(
+            1,
+            None,
+            topology,
+            WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+            vec![],
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-test").unwrap(),
+            ),
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Folds one parking outcome for `plan` against a projection already carrying `version`, and
+    /// returns the wait that parking minted.
+    fn park_under(version: PersistedGraphVersion) -> OpenWait {
+        let mut projection = ExecutionProjection {
+            execution_id: Some("execution-1".to_owned()),
+            current_graph: Some(version),
+            ..ExecutionProjection::default()
+        };
+        let mut holds = BTreeSet::new();
+        let event = outcome_envelope(7);
+        apply_projection_event(&mut projection, &mut holds, &event).unwrap();
+        projection
+            .open_waits
+            .get("plan")
+            .expect("parking mints a wait regardless of whether a budget was declared")
+            .clone()
+    }
+
+    fn outcome_envelope(sequence: u64) -> EventEnvelope {
+        let mut envelope = EventEnvelope::new(
+            OpaqueId::parse("event-park").unwrap(),
+            graphhelm_protocols::RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+                Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+            ),
+            OpaqueId::parse("stream-1").unwrap(),
+            sequence,
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap())
+                .unwrap(),
+            graphhelm_protocols::NewEvent::new(
+                OpaqueId::parse("event-park").unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-test").unwrap(),
+                ),
+                graphhelm_protocols::Sensitivity::Internal,
+                EventKind::NodeOutcomeRecorded(graphhelm_protocols::NodeOutcomeRecorded {
+                    execution_id: OpaqueId::parse("execution-1").unwrap(),
+                    node_id: OpaqueId::parse("plan").unwrap(),
+                    outcome: graphhelm_protocols::NodeOutcome::NeedsInput,
+                    next_state: NodeState::WaitingInput,
+                    reason: None,
+                }),
+                vec![],
+                vec![],
+            ),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+            EventHash::parse(GENESIS_HASH).unwrap(),
+        );
+        envelope.event_hash =
+            EventHash::parse(event_hash(&envelope, GENESIS_HASH).unwrap()).unwrap();
+        envelope
+    }
+
+    fn at(hour: u32, minute: u32) -> PersistedTimestamp {
+        PersistedTimestamp::from_datetime(
+            Utc.with_ymd_and_hms(2026, 8, 10, hour, minute, 0).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// A projection with `plan` parked at 12:00 under a 3600s wait budget, so its horizon is
+    /// 13:00. Returned by value so each cell can bend it without disturbing the others.
+    fn parked_projection() -> ExecutionProjection {
+        let mut projection = ExecutionProjection {
+            execution_id: Some("execution-1".to_owned()),
+            current_graph: Some(customs_version(true)),
+            ..ExecutionProjection::default()
+        };
+        let mut holds = BTreeSet::new();
+        apply_projection_event(&mut projection, &mut holds, &outcome_envelope(7)).unwrap();
+        projection
+    }
+
+    /// THE F1 CELL (#160, sealed): an UNCLAIMED wait past its declared budget is visible to a
+    /// sweep — the state that, before this lane, nothing in the system could ever expire.
+    ///
+    /// The three instants are the guard. One before the horizon, one exactly ON it, one after:
+    /// a comparison with the wrong direction or the wrong boundary fails at least one of them,
+    /// and a query that simply returned everything fails the first.
+    #[test]
+    fn an_unclaimed_wait_past_its_budget_is_sweep_visible_and_not_before() {
+        let projection = parked_projection();
+
+        assert!(
+            overdue_at(&projection, &at(12, 59)).is_empty(),
+            "one minute before the horizon nothing is overdue"
+        );
+
+        let at_horizon = overdue_at(&projection, &at(13, 0));
+        assert_eq!(at_horizon.len(), 1, "exactly one stage is overdue");
+        assert_eq!(at_horizon[0].node, "plan");
+        assert_eq!(
+            at_horizon[0].episode_seq, 7,
+            "the episode is identified by the STAGE-ENTRY sequence, not by the node name"
+        );
+        assert_eq!(
+            at_horizon[0].claim_seq, None,
+            "nobody claimed this wait — that absence IS the F1 case"
+        );
+        assert_eq!(
+            at_horizon[0].deadline,
+            at(13, 0),
+            "12:00 entry plus a declared 3600s"
+        );
+
+        assert_eq!(
+            overdue_at(&projection, &at(14, 0)).len(),
+            1,
+            "and it stays overdue afterwards; a horizon does not un-elapse"
+        );
+    }
+
+    /// A node with no declared budget never becomes sweep-visible, however long it waits.
+    ///
+    /// This is the cost of "absence stays absence" stated as a test rather than left implied: the
+    /// same decision that stops pre-customs replays going instantly overdue also means a stage
+    /// nobody bounded is a stage nobody will be told about. `GHG102_UNBOUNDED_CUSTOMS` is where
+    /// that cost is paid back, at authoring time.
+    #[test]
+    fn a_wait_with_no_declared_budget_is_never_overdue_however_late_it_is() {
+        let mut projection = ExecutionProjection {
+            execution_id: Some("execution-1".to_owned()),
+            current_graph: Some(customs_version(false)),
+            ..ExecutionProjection::default()
+        };
+        let mut holds = BTreeSet::new();
+        apply_projection_event(&mut projection, &mut holds, &outcome_envelope(7)).unwrap();
+        assert!(
+            overdue_at(&projection, &at(23, 59)).is_empty(),
+            "no declared budget means no horizon means nothing to be past"
+        );
+    }
+
+    /// An episode that already raised an exception does not raise a second one, ever.
+    ///
+    /// The grain is the episode, not the sweep: the alternative re-fires on every pass and
+    /// teaches operators that the channel is noise, which is the failure mode this project has
+    /// already paid for once.
+    #[test]
+    fn an_episode_that_already_raised_an_exception_is_not_raised_again() {
+        let mut projection = parked_projection();
+        assert_eq!(
+            overdue_at(&projection, &at(13, 0)).len(),
+            1,
+            "the control: it IS overdue before the episode is marked"
+        );
+        projection.exception_marked.insert(7);
+        assert!(
+            overdue_at(&projection, &at(13, 0)).is_empty(),
+            "and silent afterwards, because one episode raises one exception"
+        );
+    }
+
+    /// THE STAGE-ENTRY DEADLINE RULE (#160, blueprint 2b'): a stage's horizon is the ENTERING
+    /// event's own instant plus the budget the sealed spec declared — and there is NO horizon for
+    /// a node that declared none.
+    ///
+    /// Both halves sit in one test deliberately. The absent half alone would pass against a fold
+    /// that never computed any deadline at all; the present half is what forces the mechanism to
+    /// exist before absence can mean anything. The expected instant is written out rather than
+    /// recomputed the way the fold computes it, because a deadline re-derived by the method under
+    /// test asserts nothing about that method.
+    #[test]
+    fn a_stage_deadline_is_the_entry_instant_plus_the_declared_budget_and_absent_without_one() {
+        let expected =
+            PersistedTimestamp::from_datetime(Utc.with_ymd_and_hms(2026, 8, 10, 13, 0, 0).unwrap())
+                .unwrap();
+        assert_eq!(
+            park_under(customs_version(true)).deadline,
+            Some(expected),
+            "12:00:00 entry plus a declared 3600s is a 13:00:00 horizon"
+        );
+        assert_eq!(
+            park_under(customs_version(false)).deadline,
+            None,
+            "a node that declared no budget gets NO horizon — never zero, which would put the              deadline at the instant it parked and make it overdue immediately"
+        );
+    }
+
+    /// A projection with no published graph at all also yields no horizon.
+    ///
+    /// Worth its own cell because it is the state EVERY replay passes through before the first
+    /// publication, and reading it as a deadline of zero would make the earliest events of every
+    /// execution retroactively overdue.
+    #[test]
+    fn a_stage_entered_before_any_graph_is_published_has_no_deadline() {
+        let mut projection = ExecutionProjection {
+            execution_id: Some("execution-1".to_owned()),
+            ..ExecutionProjection::default()
+        };
+        let mut holds = BTreeSet::new();
+        apply_projection_event(&mut projection, &mut holds, &outcome_envelope(7)).unwrap();
+        assert_eq!(
+            projection
+                .open_waits
+                .get("plan")
+                .expect("the node still parks")
+                .deadline,
+            None,
+            "no sealed spec means no declared budget means no horizon"
+        );
+    }
+
     fn invalid_projection() -> PersistedGraphVersion {
         let completion = PersistedControl::new(
             SafeValue::parse("all_terminal").unwrap(),
@@ -1820,8 +2197,15 @@ mod tests {
             BTreeMap::new(),
         )
         .unwrap();
-        let node = PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![], None, None)
-            .unwrap();
+        let node = PersistedNode::new(
+            NodeType::Tool,
+            Optionality::Required,
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .unwrap();
         let topology = PersistedTopology::new(
             OpaqueId::parse("graph-1").unwrap(),
             graphhelm_protocols::ExecutionId::parse("execution-1").unwrap(),

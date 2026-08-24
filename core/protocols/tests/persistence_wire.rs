@@ -100,8 +100,12 @@ fn event_fixture(kind: Value, project_level: bool) -> Value {
     })
 }
 
-#[test]
-fn all_twenty_five_safe_event_variants_strictly_round_trip_against_schema() {
+/// The safe event rows this suite walks: one `(kind json, project_level)` per variant.
+///
+/// Extracted so the ROUND-TRIP walk and the COVERAGE assertion read the same rows. Two
+/// copies would drift, and drift between two spellings of one vocabulary is the defect this
+/// change exists to remove — reproducing it one level up while fixing it would be a joke.
+fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
     let diagnostic = json!({
         "code":"GHP001_SAFE","severity":"error","path":"/topology","component":"governor"
     });
@@ -213,9 +217,74 @@ fn all_twenty_five_safe_event_variants_strictly_round_trip_against_schema() {
             json!({"type":"evidence_legal_hold_changed","data":{"evidenceScope":{"workspaceId":"workspace-1","projectId":"project-1","executionId":"execution-1"},"holdId":"hold-1","evidenceId":"evidence-1","authority":"authority-1","reasonCode":"investigation","state":"placed","changedAt":"2026-08-09T00:03:00Z"}}),
             true,
         ),
+        // M11 #160, closing the same gap the schema-evolution table had: thirteen variants the
+        // old `variants.len() == 25` literal could not see. Seven predate this milestone.
+        (
+            json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{"start":900}}}),
+            false,
+        ),
+        (
+            json!({"type":"execution_form_amended","data":{"executionId":"execution-1","computedAtSequence":4,"nodeTimeoutSeconds":{"start":900},"observedSilenceSeconds":{"start":30}}}),
+            false,
+        ),
+        (
+            json!({"type":"reuse_decision","data":{"executionId":"execution-1","nodeId":"start","plane":"tool_broker","decision":"hit","keyComponents":["tool_version","canonical_input"],"keyDigest":hash,"provenanceErased":false}}),
+            false,
+        ),
+        (
+            json!({"type":"wake_lease","data":{"executionId":"execution-1","sessionId":"session-1","cursor":0,"rendezvousId":"rendezvous-1","maturesInSeconds":60}}),
+            false,
+        ),
+        (
+            json!({"type":"wake_lease_consumed","data":{"executionId":"execution-1","sessionId":"session-1","reason":"rung","capturedArming":4}}),
+            false,
+        ),
+        (
+            json!({"type":"gate_verdict","data":{"executionId":"execution-1","nodeId":"start","gateId":"gate-quality","passed":false,"findings":[{"severity":"high","claim":"the suite did not cover the changed branch","evidence":["evidence-1"],"remediation":"add a case that fails without the change"}]}}),
+            false,
+        ),
+        (
+            json!({"type":"gate_certified","data":{"executionId":"execution-1","gateId":"gate-quality","suiteDigest":hash,"specimens":3}}),
+            false,
+        ),
+        (
+            json!({"type":"completion_claimed","data":{"executionId":"execution-1","node":"implementation","completesWaitSeq":4,"evidence":[{"kind":"patch","contentHash":hash,"size":2048}],"attestation":{"asserter":"agent-claimer","mode":"operator_attested"}}}),
+            false,
+        ),
+        (
+            json!({"type":"completion_cleared","data":{"executionId":"execution-1","claimSeq":5,"verifier":{"type":"machineReplay","manifestHash":hash}}}),
+            false,
+        ),
+        (
+            json!({"type":"completion_rejected","data":{"executionId":"execution-1","claimSeq":5,"verifier":{"type":"countersign","identity":"reviewer-1","keyFingerprint":hash},"reasonCode":"evidence_did_not_replay"}}),
+            false,
+        ),
+        (
+            json!({"type":"completion_refused","data":{"executionId":"execution-1","node":"implementation","claimedWaitSeq":4,"reasonCode":"wait_superseded"}}),
+            false,
+        ),
+        (
+            json!({"type":"clearance_identity_registered","data":{"executionId":"execution-1","identity":"auditor-a","keyFingerprint":hash}}),
+            false,
+        ),
+        (
+            json!({"type":"clearance_identity_revoked","data":{"executionId":"execution-1","identity":"auditor-a"}}),
+            false,
+        ),
     ];
+    variants
+}
 
-    assert_eq!(variants.len(), 25);
+#[test]
+fn every_listed_safe_event_variant_strictly_round_trips_against_schema() {
+    let variants = safe_event_variants();
+
+    // No length literal. This suite carried the SAME broken mechanism as the
+    // schema-evolution conformance table: a count compared to the literal 25 while
+    // `EventKind` had grown to 38, so a variant nobody listed was invisible to both.
+    // Coverage is asserted against the enum instead, by name, in
+    // `every_event_variant_round_trips_here_too`.
+    assert!(!variants.is_empty());
     for (kind, project_level) in variants {
         let document = event_fixture(kind, project_level);
         assert_schema_valid(EVENT_ID, &document);
@@ -1007,8 +1076,15 @@ fn persistence_read_api_exposes_budget_edge_and_topology_fields() {
         BTreeMap::new(),
     )
     .unwrap();
-    let node =
-        PersistedNode::new(NodeType::Agent, Optionality::Required, vec![], vec![], None, None).unwrap();
+    let node = PersistedNode::new(
+        NodeType::Agent,
+        Optionality::Required,
+        vec![],
+        vec![],
+        None,
+        None,
+    )
+    .unwrap();
     let topology = PersistedTopology::new(
         OpaqueId::parse("graph-fixture").unwrap(),
         ExecutionId::parse("execution-fixture").unwrap(),
@@ -1302,4 +1378,64 @@ fn the_envelope_schema_accepts_the_lifecycle_event_kinds() {
     ] {
         assert_envelope_valid(data);
     }
+}
+
+/// THE COVERAGE MECHANISM, second half of the pair (#160).
+///
+/// This suite and the schema-evolution conformance table ask two different questions of the same
+/// vocabulary, and BOTH counted against a literal. Fixing one and leaving the other is how a
+/// class of defect returns wearing the other hat, so both now derive the expected set from
+/// `EventKind::EVERY_WIRE_NAME` — one list, held honest by the exhaustive match in
+/// `EventKind::wire_name`, which no new variant can pass without a compile error.
+///
+/// What this asserts that the round-trip walk cannot: the walk proves every row it HAS is valid
+/// and says nothing about rows never written. That silence is exactly what let thirteen variants
+/// accumulate unchecked behind a green test.
+#[test]
+fn every_event_variant_round_trips_here_too() {
+    let listed: std::collections::BTreeSet<String> = safe_event_variants()
+        .into_iter()
+        .map(|(kind, _)| {
+            kind["type"]
+                .as_str()
+                .expect("every row names its wire type")
+                .to_owned()
+        })
+        .collect();
+    let missing: Vec<&&str> = EventKind::EVERY_WIRE_NAME
+        .iter()
+        .filter(|name| !listed.contains(**name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "event variants absent from the wire round-trip suite: {missing:?}"
+    );
+}
+
+/// The refusal registry is a CLOSED vocabulary and every entry must satisfy the grammar the wire
+/// enforces (blueprint §2d asks the implementation lane to freeze it with a conformance test).
+///
+/// NO COUNT LITERAL, deliberately. A count checked against a number someone remembered is the
+/// exact defect this milestone removed from two conformance suites, and the blueprint that
+/// specifies this registry disagrees with ITSELF about the number — §2d enumerates nine, §8 still
+/// says eight. Asserting a count here would have frozen whichever half I happened to read.
+///
+/// What this CAN check is that every name is a legal `SafeCode` and that no two collide, which is
+/// what makes the vocabulary usable as `CompletionRefused::reason_code` at all. What it cannot
+/// check is that anything EMITS them — nothing does yet, and no test can manufacture that.
+#[test]
+fn every_refusal_reason_code_is_a_legal_safe_code_and_unique() {
+    let mut seen = std::collections::BTreeSet::new();
+    for code in graphhelm_protocols::REFUSAL_REASON_CODES {
+        graphhelm_protocols::SafeCode::parse(*code)
+            .unwrap_or_else(|_| panic!("refusal code {code} is not a legal SafeCode"));
+        assert!(
+            seen.insert(*code),
+            "refusal code {code} appears twice in the registry"
+        );
+    }
+    assert!(
+        !seen.is_empty(),
+        "an empty registry would satisfy every assertion above"
+    );
 }

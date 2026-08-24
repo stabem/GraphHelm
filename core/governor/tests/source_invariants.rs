@@ -35,10 +35,29 @@ const EXTERNALIZE: &str = include_str!("../src/externalize.rs");
 /// Keys the builder accepts that carry NO free-form content, so the collector has nothing to
 /// register for them. Every entry needs a reason — an unexplained entry here is how the guard
 /// would be silenced.
-const CONTENT_FREE_KEYS: &[(&str, &str)] = &[(
-    "contractRef",
-    "a reference to a contract, not authored prose: the collector has nothing to seal",
-)];
+const CONTENT_FREE_KEYS: &[(&str, &str)] = &[
+    (
+        "contractRef",
+        "a reference to a contract, not authored prose: the collector has nothing to seal",
+    ),
+    (
+        "customs",
+        // M11 #160, decided against B's own criterion rather than to quiet this guard. The arm
+        // emits exactly two things and neither is authored prose: `proofKinds` is a closed
+        // vocabulary encoded through `token_array_unique` (kind names, not text), and `budgets`
+        // does not pass through the control at all — it crosses to the sealed form as
+        // `PersistedNode::customs`, because two spellings of one declaration drift and a reader
+        // of the second copy cannot tell which produced a deadline.
+        //
+        // THE CONDITION THAT ENDS THIS EXEMPTION, written here because whoever adds the next
+        // field under `customs` reads this before the guard fires at them: if free-form prose
+        // ever lands under `customs` — a description, an expression, a message — this entry is
+        // WRONG and the collector must learn to read the key instead. Otherwise the graph
+        // publishes and that string is never registered: content lost with no error and no
+        // diagnostic, which is the exact failure this guard exists to make impossible.
+        "closed-vocabulary tokens and integers, no authored prose: proofKinds is a kind list and          budgets cross as PersistedNode::customs, not as content",
+    ),
+];
 
 /// The body of `fn <name>(`, from its signature to the line that closes it at column 0.
 fn function_body<'a>(source: &'a str, name: &str) -> &'a str {

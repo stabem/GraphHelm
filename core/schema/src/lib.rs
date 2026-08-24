@@ -7,7 +7,7 @@ mod registry;
 
 pub use document::{LoadedExtension, LoadedGraph, load_extension, load_graph};
 pub use extension::{
-    ValidatedExtensionPackage, __surface_allowlists_for_testing, validate_extension_package,
+    __surface_allowlists_for_testing, ValidatedExtensionPackage, validate_extension_package,
 };
 pub use registry::{
     InlineSchemaError, OfflineSchemaSet, RepositorySchemaSet, compile_inline_schema,

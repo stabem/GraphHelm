@@ -11,10 +11,10 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use graphhelm_protocols::{
-    ArtifactBinding, ArtifactId, CoverageState, DevelopmentEnvelope, DEVELOPMENT_API_MAJOR, DevelopmentKind,
-    DevelopmentRefusalCode, DevelopmentScope, OpaqueId, ProjectId, SemanticVersion, SnapshotBinding,
-    WireHash, WorkspaceId, canonical_json, development_api_version_major, normalise_path_separators,
-    verify_binding,
+    ArtifactBinding, ArtifactId, CoverageState, DEVELOPMENT_API_MAJOR, DevelopmentEnvelope,
+    DevelopmentKind, DevelopmentRefusalCode, DevelopmentScope, OpaqueId, ProjectId,
+    SemanticVersion, SnapshotBinding, WireHash, WorkspaceId, canonical_json,
+    development_api_version_major, normalise_path_separators, verify_binding,
 };
 
 fn extension_dir() -> PathBuf {
@@ -24,8 +24,9 @@ fn extension_dir() -> PathBuf {
 
 fn envelope_schema() -> serde_json::Value {
     let path = extension_dir().join("schemas/development-envelope.schema.json");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("envelope schema unreadable at {}: {error}", path.display()));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!("envelope schema unreadable at {}: {error}", path.display())
+    });
     serde_json::from_str(&text).expect("the envelope schema is JSON")
 }
 
@@ -236,7 +237,6 @@ fn a_snapshot_binding_carries_both_identities() {
     );
 }
 
-
 fn reference_binding() -> ArtifactBinding {
     ArtifactBinding {
         artifact_id: ArtifactId::parse("journey-contract-1").expect("artifact id"),
@@ -315,8 +315,7 @@ fn a_digest_mismatch_is_refused_under_its_own_code() {
 fn a_snapshot_mismatch_is_refused_under_its_own_code() {
     let reference = reference_binding();
     let mut candidate = reference_binding();
-    candidate.snapshots.index_generation =
-        OpaqueId::parse("snapshot-h").expect("index generation");
+    candidate.snapshots.index_generation = OpaqueId::parse("snapshot-h").expect("index generation");
     assert_eq!(
         verify_binding(&candidate, &reference),
         Err(DevelopmentRefusalCode::BindingSnapshotMissing)
@@ -376,7 +375,6 @@ fn a_windows_path_and_its_posix_twin_normalise_to_one_value() {
     );
 }
 
-
 /// PRESERVED — half one of the compatible-minor property.
 ///
 /// Merely permitting an unknown field is not preservation: serde would DROP it, and a consumer that
@@ -398,7 +396,8 @@ fn an_unknown_field_from_a_compatible_minor_survives_a_round_trip() {
         "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "fieldFromANewerMinor": {"kept": true}
     }"#;
-    let envelope: DevelopmentEnvelope = serde_json::from_str(text).expect("a compatible minor parses");
+    let envelope: DevelopmentEnvelope =
+        serde_json::from_str(text).expect("a compatible minor parses");
     assert!(
         envelope.additional.contains_key("fieldFromANewerMinor"),
         "the unknown field was captured rather than dropped: {:?}",
@@ -460,7 +459,6 @@ fn a_preserved_unknown_field_cannot_change_the_digest() {
     );
 }
 
-
 /// Does this lockfile text show `serde_json` pulling `indexmap`?
 ///
 /// Extracted so the DETECTION can be exercised on synthetic input. The real-file cell below cannot
@@ -494,7 +492,10 @@ dependencies = [
  \"itoa\",
 ]
 ";
-    assert!(!serde_json_pulls_indexmap(clean), "a clean block must not read as preserve_order");
+    assert!(
+        !serde_json_pulls_indexmap(clean),
+        "a clean block must not read as preserve_order"
+    );
     assert!(
         serde_json_pulls_indexmap(enabled),
         "the probe must see indexmap when it is there, or the real-file cell proves nothing"
@@ -523,10 +524,9 @@ dependencies = [
 /// sabotaging the subject: the subject was fine.
 #[test]
 fn serde_json_is_built_without_preserve_order() {
-    let lock = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"),
-    )
-    .expect("the workspace lockfile is readable");
+    let lock =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"))
+            .expect("the workspace lockfile is readable");
     assert!(
         lock.contains("name = \"serde_json\""),
         "control: serde_json must be in the lockfile, or the assertion below reads an empty block"
@@ -536,7 +536,6 @@ fn serde_json_is_built_without_preserve_order() {
         "serde_json now depends on indexmap, so preserve_order is enabled. Key order is no longer          supplied by BTreeMap, canonical_json's explicit sort becomes load-bearing, and every          digest published before this change was computed under different rules."
     );
 }
-
 
 fn fixture(relative: &str) -> serde_json::Value {
     let path = extension_dir().join("fixtures/contracts").join(relative);
@@ -603,14 +602,15 @@ fn the_unknown_major_fixture_passes_schema_and_is_refused_by_the_version_check()
         schema_diagnostics(&value).is_empty(),
         "the schema admits the SHAPE of a future major: refusing it here would be the wrong layer"
     );
-    let api_version = value["apiVersion"].as_str().expect("apiVersion is a string");
+    let api_version = value["apiVersion"]
+        .as_str()
+        .expect("apiVersion is a string");
     assert_ne!(
         development_api_version_major(api_version),
         Some(DEVELOPMENT_API_MAJOR),
         "and the version check is what refuses it"
     );
 }
-
 
 /// The four closed artifacts this task binds are UNCHANGED, asserted rather than promised.
 ///
@@ -682,7 +682,6 @@ fn the_two_context_capsule_copies_are_the_same_bytes() {
     );
 }
 
-
 /// serde and `wire_name()` are TWO serialisers of one closed vocabulary, and they must agree.
 ///
 /// The three equality cells above compare `wire_name()` against the schema and never touch serde,
@@ -707,11 +706,19 @@ fn serde_and_wire_name_agree_on_every_vocabulary() {
         }
     }
 
-    check(DevelopmentKind::every(), DevelopmentKind::wire_name, "DevelopmentKind");
+    check(
+        DevelopmentKind::every(),
+        DevelopmentKind::wire_name,
+        "DevelopmentKind",
+    );
     check(
         DevelopmentRefusalCode::every(),
         DevelopmentRefusalCode::wire_name,
         "DevelopmentRefusalCode",
     );
-    check(CoverageState::every(), CoverageState::wire_name, "CoverageState");
+    check(
+        CoverageState::every(),
+        CoverageState::wire_name,
+        "CoverageState",
+    );
 }

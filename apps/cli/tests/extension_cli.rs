@@ -1149,10 +1149,10 @@ fn parse_help_subcommand_names(help_text: &str) -> Vec<String> {
         if line.trim().is_empty() || !line.starts_with(char::is_whitespace) {
             break;
         }
-        if let Some(name) = line.trim_start().split_whitespace().next() {
-            if name != "help" {
-                names.push(name.to_owned());
-            }
+        if let Some(name) = line.split_whitespace().next()
+            && name != "help"
+        {
+            names.push(name.to_owned());
         }
     }
     names

@@ -359,6 +359,3 @@ pub fn normalise_path_separators(value: &str) -> String {
     const WINDOWS_SEPARATOR: char = '\\';
     value.replace(WINDOWS_SEPARATOR, "/")
 }
-
-
-

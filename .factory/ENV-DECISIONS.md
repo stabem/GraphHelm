@@ -1008,3 +1008,16 @@ name the owner of every entry — and never `pop` blind; `pop` takes the TOP of 
 lanes share.** Preferred alternative: a WIP commit on your own branch (`git commit -m "wip"` +
 later `reset --soft`), which is per-branch by construction. Entries used as coordination belong to
 their writers; touching one is touching another lane's state.
+
+---
+
+## ED-20 — A DECLARED GATE DOES NOT START OVER AN OPEN WINDOW (from D's overlap measurement)
+
+Measured: a full cold gate STARTED at 09:42:56Z inside a check-tier window opened at 09:38:27Z and
+still running at 10:15Z — different target dirs, so shared-target contamination is NOT established;
+what is established is TEMPORAL OVERLAP, and load contention is exactly what the house's flaky
+files respond to. **Rule: before starting a DECLARED GATE, read `check-activity.log` for STARTs
+without ENDs. Either wait for the END, or start anyway and NAME the overlap in the gate's own
+record ("check-tier activity in window: <who>, <span>") — an unnamed overlap makes the gate's RED
+unreadable.** The reverse half already exists (ED-17: check-tier never competes with a declared
+gate); this closes the race where the window opens FIRST.

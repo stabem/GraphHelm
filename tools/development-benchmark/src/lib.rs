@@ -119,7 +119,10 @@ pub fn compare_arms(
     check("objective", baseline.objective == compiled.objective);
     check("permissions", baseline.permissions == compiled.permissions);
     check("modelRoute", baseline.model_route == compiled.model_route);
-    check("modelSettings", baseline.model_settings == compiled.model_settings);
+    check(
+        "modelSettings",
+        baseline.model_settings == compiled.model_settings,
+    );
     check("cleanState", baseline.clean_state == compiled.clean_state);
     check("order", baseline.order == compiled.order);
     check("seed", baseline.seed == compiled.seed);
@@ -339,9 +342,7 @@ pub struct ArmInputs {
 ///
 /// Nothing else is interpreted. See `comparable`.
 fn normalise(path: &str) -> String {
-    path.replace('\\', "/")
-        .trim_end_matches('/')
-        .to_lowercase()
+    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
 }
 
 /// Whether a normalised path can be compared to the oracle path at all.

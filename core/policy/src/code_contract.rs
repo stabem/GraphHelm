@@ -94,8 +94,12 @@ pub fn dominance(left: &serde_json::Value, right: &serde_json::Value) -> Dominan
     let left = predicates(left);
     let right = predicates(right);
 
-    let left_contains_right = right.iter().all(|(key, value)| left.get(key) == Some(value));
-    let right_contains_left = left.iter().all(|(key, value)| right.get(key) == Some(value));
+    let left_contains_right = right
+        .iter()
+        .all(|(key, value)| left.get(key) == Some(value));
+    let right_contains_left = left
+        .iter()
+        .all(|(key, value)| right.get(key) == Some(value));
 
     match (left_contains_right, right_contains_left) {
         (true, true) => Dominance::Equal,
@@ -110,7 +114,9 @@ fn predicates(value: &serde_json::Value) -> BTreeMap<String, String> {
         .as_object()
         .map(|map| {
             map.iter()
-                .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.to_owned())))
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|text| (key.clone(), text.to_owned()))
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -150,7 +156,6 @@ fn compare(candidate: &CodeRuleSpec, incumbent: &CodeRuleSpec) -> Strengthening 
         _ => Strengthening::NotComparable,
     }
 }
-
 
 /// Why a resolution produced no contract. Each variant names the source, because a refusal that
 /// does not say WHICH input failed sends the caller back to bisecting it.

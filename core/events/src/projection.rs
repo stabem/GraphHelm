@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
     ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared,
-    ExecutionId,
-    ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion, PersistedTimestamp,
-    PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
+    ExecutionId, ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
+    PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus,
+    WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -236,7 +236,11 @@ pub struct OpenWait {
 // `rename_all` on an ENUM renames the VARIANTS; the fields INSIDE a struct variant need
 // `rename_all_fields`, or `reason_code` ships snake_case alone among camelCase neighbours.
 // Free to fix today because nothing has published this shape; impossible once it has.
-#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "type")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "type"
+)]
 pub enum ClearanceOutcome {
     Cleared,
     /// The code is a `SafeCode`, not a free `String`: the family's refusal vocabulary is meant
@@ -245,7 +249,9 @@ pub enum ClearanceOutcome {
     /// every layer accepts it. `SafeCode` bounds the charset and length; the closed SET itself
     /// belongs to the shared refusal-registry const that lane 1 owns (#160 2d), so this does
     /// NOT fork a second vocabulary here.
-    Refused { reason_code: SafeCode },
+    Refused {
+        reason_code: SafeCode,
+    },
 }
 
 /// M11 #160: a claim in quarantine — testimony recorded, clearance owed.

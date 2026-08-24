@@ -21,8 +21,20 @@ fn an_item_id_follows_its_content_not_its_position() {
     let capsule = "cap-1";
     let version = 1;
 
-    let at_position_zero = item_id(capsule, version, "evidence", 0, "the wake path burns the lease");
-    let same_text_moved = item_id(capsule, version, "evidence", 3, "the wake path burns the lease");
+    let at_position_zero = item_id(
+        capsule,
+        version,
+        "evidence",
+        0,
+        "the wake path burns the lease",
+    );
+    let same_text_moved = item_id(
+        capsule,
+        version,
+        "evidence",
+        3,
+        "the wake path burns the lease",
+    );
 
     assert_eq!(
         at_position_zero, same_text_moved,
@@ -71,7 +83,10 @@ fn the_same_text_in_two_sections_gets_two_ids() {
 fn re_deriving_an_item_id_from_the_same_inputs_gives_the_same_id() {
     let first = item_id("cap-1", 1, "evidence", 0, "the wake path burns the lease");
     let again = item_id("cap-1", 1, "evidence", 0, "the wake path burns the lease");
-    assert_eq!(first, again, "item ID derivation must be a function of its inputs");
+    assert_eq!(
+        first, again,
+        "item ID derivation must be a function of its inputs"
+    );
     assert!(!first.is_empty(), "an item ID must not be empty");
 }
 
@@ -172,7 +187,7 @@ fn an_item_containing_a_newline_is_not_two_items() {
 // ---------------------------------------------------------------------------------------------
 
 use graphhelm_protocols::DevelopmentRefusalCode;
-use graphhelm_runtime::context_compiler::{fit_within_budget, BudgetOutcome};
+use graphhelm_runtime::context_compiler::{BudgetOutcome, fit_within_budget};
 
 /// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before writing it: **dropping required items
 /// to make the total fit.**
@@ -234,7 +249,10 @@ fn optional_context_over_budget_is_dropped_rather_than_refused() {
     let budget = 10; // fits required, not optional
 
     match fit_within_budget(&required, &optional, budget) {
-        BudgetOutcome::Fits { included, dropped_optional } => {
+        BudgetOutcome::Fits {
+            included,
+            dropped_optional,
+        } => {
             assert!(
                 included.contains(&"r".to_owned()),
                 "required context must survive: it is the half that may never be trimmed"
@@ -259,7 +277,7 @@ fn optional_context_over_budget_is_dropped_rather_than_refused() {
 // citations refuse." Threat assessment names citation spoofing alongside it.
 // ---------------------------------------------------------------------------------------------
 
-use graphhelm_runtime::context_compiler::{verify_citations, CitationVerdict};
+use graphhelm_runtime::context_compiler::{CitationVerdict, verify_citations};
 
 /// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before writing it: **accepting a result that
 /// cites nothing for a required item.**
@@ -645,9 +663,12 @@ fn capsules_differing_only_in_identity_do_not_compile_to_the_same_bytes() {
         vec!["The retry budget is consumed by the caller.".to_owned()],
     )];
 
-    let alpha_v1 = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &sections);
-    let beta_v1 = graphhelm_runtime::context_compiler::compile_capsule("capsule-beta", 1, &sections);
-    let alpha_v2 = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 2, &sections);
+    let alpha_v1 =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &sections);
+    let beta_v1 =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-beta", 1, &sections);
+    let alpha_v2 =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 2, &sections);
 
     assert!(
         !alpha_v1.is_empty(),
@@ -673,7 +694,7 @@ fn capsules_differing_only_in_identity_do_not_compile_to_the_same_bytes() {
 // ---------------------------------------------------------------------------------------------
 
 use graphhelm_runtime::context_compiler::{
-    base_digest, verify_delta_base, DeltaBaseRefusal, DeltaProvenance,
+    DeltaBaseRefusal, DeltaProvenance, base_digest, verify_delta_base,
 };
 
 fn base_sections() -> Vec<(String, Vec<String>)> {
@@ -705,7 +726,8 @@ fn provenance_for(id: &str, version: u32, bytes: &[u8]) -> DeltaProvenance {
 /// reported to anyone.
 #[test]
 fn a_base_rewritten_under_the_delta_is_refused_under_its_own_cause() {
-    let original = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
+    let original =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
     let delta = provenance_for("capsule-alpha", 1, &original);
 
     let rewritten = graphhelm_runtime::context_compiler::compile_capsule(
@@ -750,9 +772,11 @@ fn a_base_rewritten_under_the_delta_is_refused_under_its_own_cause() {
 /// green.
 #[test]
 fn a_different_capsule_is_refused_as_a_different_capsule_not_as_a_rewrite() {
-    let base = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
+    let base =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
     let delta = provenance_for("capsule-alpha", 1, &base);
-    let other = graphhelm_runtime::context_compiler::compile_capsule("capsule-beta", 1, &base_sections());
+    let other =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-beta", 1, &base_sections());
 
     match verify_delta_base(&delta, "capsule-beta", 1, &other) {
         Err(DeltaBaseRefusal::DifferentCapsule { expected, offered }) => {
@@ -773,9 +797,11 @@ fn a_different_capsule_is_refused_as_a_different_capsule_not_as_a_rewrite() {
 /// under you".
 #[test]
 fn a_different_version_of_the_right_capsule_is_its_own_refusal() {
-    let base = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
+    let base =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
     let delta = provenance_for("capsule-alpha", 1, &base);
-    let newer = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 2, &base_sections());
+    let newer =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 2, &base_sections());
 
     match verify_delta_base(&delta, "capsule-alpha", 2, &newer) {
         Err(DeltaBaseRefusal::DifferentVersion { expected, offered }) => {
@@ -793,7 +819,8 @@ fn a_different_version_of_the_right_capsule_is_its_own_refusal() {
 /// error unconditionally passes every one of them, and the feature is dead rather than strict.
 #[test]
 fn the_base_a_delta_was_actually_computed_against_verifies() {
-    let base = graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
+    let base =
+        graphhelm_runtime::context_compiler::compile_capsule("capsule-alpha", 1, &base_sections());
     let delta = provenance_for("capsule-alpha", 1, &base);
 
     assert_eq!(

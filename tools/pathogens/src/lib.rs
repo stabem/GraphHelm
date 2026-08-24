@@ -551,65 +551,67 @@ pub trait FailureAxis<E> {
 impl FailureAxis<Deliverable> for UselessnessMode {
     fn is_defeated_by(&self, d: &Deliverable) -> bool {
         match self {
-        // Useless on the interaction axis: the answer arrives, but the asking is the cost.
-        UselessnessMode::ExpensiveButCorrect => d.interaction.as_ref().is_some_and(|trace| {
-            trace.calls.len() as u64 > trace.budget_calls
-                && trace.calls.iter().any(|call| call.answered)
-        }),
-        // Useless the mirrored way: within budget, and the answer is nowhere in it.
-        UselessnessMode::DumpedButUnanswered => d.interaction.as_ref().is_some_and(|trace| {
-            trace.calls.len() as u64 <= trace.budget_calls
-                && !trace.calls.iter().any(|call| call.answered)
-        }),
-        UselessnessMode::DeadFeature => d.claims.iter().any(|c| {
-            c.artifact.is_some()
-                && c.element_id
-                    .as_ref()
-                    .is_some_and(|id| !d.html.contains(&format!("id=\"{id}\"")))
-        }),
-        UselessnessMode::UnreachableUi => d.claims.iter().any(|c| {
-            c.element_id.as_ref().is_some_and(|id| {
-                d.html.contains(&format!("id=\"{id}\"")) && !d.reachable_ids.contains(id)
-            })
-        }),
-        UselessnessMode::TautologicalJourney => {
-            !d.journey.is_empty()
-                && d.journey.iter().all(|step| {
-                    step.assertion.as_ref().is_some_and(|assertion| {
-                        !d.claims.iter().any(|c| assertion.contains(&c.feature))
-                    })
-                })
-        }
-        UselessnessMode::BlankScreen => d.html.is_empty(),
-        UselessnessMode::OrphanView => d
-            .html
-            .split("<section id=\"")
-            .skip(1)
-            .filter_map(|rest| rest.split('"').next())
-            .any(|view_id| {
-                !d.reachable_ids.contains(view_id)
-                    && !d.html.contains(&format!("href=\"#{view_id}\""))
+            // Useless on the interaction axis: the answer arrives, but the asking is the cost.
+            UselessnessMode::ExpensiveButCorrect => d.interaction.as_ref().is_some_and(|trace| {
+                trace.calls.len() as u64 > trace.budget_calls
+                    && trace.calls.iter().any(|call| call.answered)
             }),
-        UselessnessMode::GuttedAssertion => d
-            .tests
-            .iter()
-            .any(|test| test.passed && test.assertions == 0),
-        UselessnessMode::HappyPathOnly => {
-            !d.journey.is_empty() && d.journey.iter().all(|step| !step.exercises_error_path)
-        }
-        UselessnessMode::SpecClaimWithoutArtifact => d.claims.iter().any(|c| c.artifact.is_none()),
-        UselessnessMode::MinimalDiffNoBehavior => {
-            d.diff.files_touched >= 1 && d.diff.behavior_lines == 0
-        }
-        UselessnessMode::LabelSwappedUi => d.claims.iter().any(|a| {
-            d.claims.iter().any(|b| {
-                a.feature != b.feature
-                    && a.element_id
+            // Useless the mirrored way: within budget, and the answer is nowhere in it.
+            UselessnessMode::DumpedButUnanswered => d.interaction.as_ref().is_some_and(|trace| {
+                trace.calls.len() as u64 <= trace.budget_calls
+                    && !trace.calls.iter().any(|call| call.answered)
+            }),
+            UselessnessMode::DeadFeature => d.claims.iter().any(|c| {
+                c.artifact.is_some()
+                    && c.element_id
                         .as_ref()
-                        .is_some_and(|id| d.html.contains(&format!("id=\"{id}\">{}", b.feature)))
-            })
-        }),
-    }
+                        .is_some_and(|id| !d.html.contains(&format!("id=\"{id}\"")))
+            }),
+            UselessnessMode::UnreachableUi => d.claims.iter().any(|c| {
+                c.element_id.as_ref().is_some_and(|id| {
+                    d.html.contains(&format!("id=\"{id}\"")) && !d.reachable_ids.contains(id)
+                })
+            }),
+            UselessnessMode::TautologicalJourney => {
+                !d.journey.is_empty()
+                    && d.journey.iter().all(|step| {
+                        step.assertion.as_ref().is_some_and(|assertion| {
+                            !d.claims.iter().any(|c| assertion.contains(&c.feature))
+                        })
+                    })
+            }
+            UselessnessMode::BlankScreen => d.html.is_empty(),
+            UselessnessMode::OrphanView => d
+                .html
+                .split("<section id=\"")
+                .skip(1)
+                .filter_map(|rest| rest.split('"').next())
+                .any(|view_id| {
+                    !d.reachable_ids.contains(view_id)
+                        && !d.html.contains(&format!("href=\"#{view_id}\""))
+                }),
+            UselessnessMode::GuttedAssertion => d
+                .tests
+                .iter()
+                .any(|test| test.passed && test.assertions == 0),
+            UselessnessMode::HappyPathOnly => {
+                !d.journey.is_empty() && d.journey.iter().all(|step| !step.exercises_error_path)
+            }
+            UselessnessMode::SpecClaimWithoutArtifact => {
+                d.claims.iter().any(|c| c.artifact.is_none())
+            }
+            UselessnessMode::MinimalDiffNoBehavior => {
+                d.diff.files_touched >= 1 && d.diff.behavior_lines == 0
+            }
+            UselessnessMode::LabelSwappedUi => d.claims.iter().any(|a| {
+                d.claims.iter().any(|b| {
+                    a.feature != b.feature
+                        && a.element_id.as_ref().is_some_and(|id| {
+                            d.html.contains(&format!("id=\"{id}\">{}", b.feature))
+                        })
+                })
+            }),
+        }
     }
 }
 

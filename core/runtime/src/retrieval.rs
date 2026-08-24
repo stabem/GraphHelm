@@ -67,7 +67,9 @@ pub enum RetrievalOutcome {
     },
     /// A zero that coverage licenses as a fact about the subject.
     VerifiedAbsence,
-    Refused { code: DevelopmentRefusalCode },
+    Refused {
+        code: DevelopmentRefusalCode,
+    },
 }
 
 /// Compile a retrieval plan from an index response bound to a snapshot pair.

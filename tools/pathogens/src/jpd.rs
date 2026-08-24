@@ -71,7 +71,11 @@ impl FailureAxis<JpdEvidence> for JpdFailureAxis {
                 .and_then(Value::as_array)
                 .is_none_or(|observers| observers.is_empty()),
             Self::FlakyCountedAsProven => {
-                document.get("attempts").and_then(Value::as_u64).unwrap_or(1) > 1
+                document
+                    .get("attempts")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1)
+                    > 1
             }
             Self::SelfValidation => {
                 let producer = document.get("producer");

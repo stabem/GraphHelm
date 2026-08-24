@@ -172,8 +172,9 @@ fn refuse(given: &str) -> BenchmarkRefusal {
     let arm = ArmInputs {
         paths: vec![given.to_owned()],
     };
-    check_oracle_isolation(ORACLE, &arm, "compiled")
-        .expect_err(&format!("{given} reaches the oracle and the check called it clean"))
+    check_oracle_isolation(ORACLE, &arm, "compiled").expect_err(&format!(
+        "{given} reaches the oracle and the check called it clean"
+    ))
 }
 
 #[test]
@@ -234,4 +235,3 @@ fn a_case_variant_of_the_oracle_file_still_reaches_it() {
         BenchmarkRefusal::OracleReachable { .. }
     ));
 }
-

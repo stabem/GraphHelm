@@ -8,9 +8,8 @@ use std::sync::{
 
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{
-    ClearanceOutcome, CustomsStage,
-    ExecutionProjection, LocalEventRepository, PreparedAppend, ProjectionGeneration, ReplayError,
-    replay,
+    ClearanceOutcome, CustomsStage, ExecutionProjection, LocalEventRepository, PreparedAppend,
+    ProjectionGeneration, ReplayError, replay,
 };
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
@@ -1867,7 +1866,6 @@ fn identity_revoked(key: &str, identity: &str) -> NewEvent {
     )
 }
 
-
 fn countersigned(key: &str, claim_seq: u64, identity: &str, fingerprint: &str) -> NewEvent {
     event(
         key,
@@ -1896,7 +1894,12 @@ fn a_clearance_by_an_identity_registered_after_it_is_refused() {
     let wait_index = batch.len() - 1;
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-late", "b"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-late",
+        "b",
+    ));
     batch.push(identity_registered("reg-late", "auditor-late", "b"));
 
     let appended = append(batch);
@@ -1932,7 +1935,12 @@ fn a_clearance_by_an_identity_never_registered_is_refused() {
     let wait_index = batch.len() - 1;
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-ghost", "c"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-ghost",
+        "c",
+    ));
 
     let appended = append(batch);
     let claim_seq = sequence_of(&appended, claim_index);
@@ -1959,7 +1967,12 @@ fn a_clearance_survives_the_later_revocation_of_its_signer() {
     batch.push(identity_registered("reg-a", "auditor-a", "b"));
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "b"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-a",
+        "b",
+    ));
     batch.push(identity_revoked("rev-a", "auditor-a"));
 
     let appended = append(batch);
@@ -1991,7 +2004,12 @@ fn a_revoked_identity_cannot_clear_a_later_claim() {
     batch.push(identity_revoked("rev-a", "auditor-a"));
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "b"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-a",
+        "b",
+    ));
 
     let appended = append(batch);
     let claim_seq = sequence_of(&appended, claim_index);
@@ -2014,7 +2032,12 @@ fn a_clearance_whose_fingerprint_does_not_match_the_registration_is_refused() {
     batch.push(identity_registered("reg-a", "auditor-a", "b"));
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "d"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-a",
+        "d",
+    ));
 
     let appended = append(batch);
     let claim_seq = sequence_of(&appended, claim_index);
@@ -2038,7 +2061,12 @@ fn interleaved_registrations_and_clearances_replay_identically() {
     batch.push(identity_registered("reg-a", "auditor-a", "b"));
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-        batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-a", "b"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-a",
+        "b",
+    ));
     batch.push(identity_revoked("rev-a", "auditor-a"));
     batch.push(identity_registered("reg-b", "auditor-b", "c"));
 
@@ -2079,7 +2107,12 @@ fn a_refused_clearance_leaves_a_pointer_in_the_nodes_timeline_not_a_copy() {
     let wait_index = batch.len() - 1;
     batch.push(claim_event("claim-1", wait_index as u64 + 1));
     let claim_index = batch.len() - 1;
-    batch.push(countersigned("clear-1", claim_index as u64 + 1, "auditor-ghost", "c"));
+    batch.push(countersigned(
+        "clear-1",
+        claim_index as u64 + 1,
+        "auditor-ghost",
+        "c",
+    ));
     let clear_index = batch.len() - 1;
 
     let appended = append(batch);
@@ -2123,7 +2156,6 @@ fn a_refused_clearance_leaves_a_pointer_in_the_nodes_timeline_not_a_copy() {
         "and the record the pointer points AT is the one carrying the reason"
     );
 }
-
 
 /// The `MachineReplay` arm, which NOTHING exercised until this guard existed.
 ///
@@ -2177,7 +2209,6 @@ fn a_machine_replay_clearance_needs_no_registered_identity() {
         "and it releases, exactly as a countersignature by a live identity would"
     );
 }
-
 
 /// R6, refused half: a refusal is journal data and the log still reads.
 #[test]

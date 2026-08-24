@@ -33,7 +33,6 @@ impl pathogens::FailureAxis<Note> for NoteAxis {
 struct RejectsEmptyNotes;
 
 impl EvidenceGate<Note> for RejectsEmptyNotes {
-
     fn id(&self) -> &str {
         "gate/rejects-empty-notes"
     }
@@ -81,7 +80,6 @@ fn one_specimen_slipping_through_still_refuses_the_whole_certification() {
     struct PassesEverything;
 
     impl EvidenceGate<Note> for PassesEverything {
-
         fn id(&self) -> &str {
             "gate/passes-everything"
         }
@@ -94,8 +92,8 @@ fn one_specimen_slipping_through_still_refuses_the_whole_certification() {
         }
     }
 
-    let refusal =
-        certify(&PassesEverything, &empty_note_suite()).expect_err("a gate fooled once is not certified");
+    let refusal = certify(&PassesEverything, &empty_note_suite())
+        .expect_err("a gate fooled once is not certified");
 
     assert_eq!(
         refusal.fooled_by,

@@ -42,7 +42,12 @@ fn rule(id: &str, spec: serde_json::Value) -> DevelopmentEnvelope {
 }
 
 /// `enforcement` is one of structural | quality | preference; `selector` is a predicate map.
-fn structural(id: &str, key: &str, minimum: u32, selector: serde_json::Value) -> DevelopmentEnvelope {
+fn structural(
+    id: &str,
+    key: &str,
+    minimum: u32,
+    selector: serde_json::Value,
+) -> DevelopmentEnvelope {
     rule(
         id,
         serde_json::json!({
@@ -151,8 +156,14 @@ fn dominance_has_a_third_answer_and_it_is_not_spelled_false() {
     let module = serde_json::json!({ "module": "billing" });
 
     // Strictly more predicates, same values: dominates.
-    assert_eq!(dominance(&language_and_module, &language), Dominance::Dominates);
-    assert_eq!(dominance(&language, &language_and_module), Dominance::DominatedBy);
+    assert_eq!(
+        dominance(&language_and_module, &language),
+        Dominance::Dominates
+    );
+    assert_eq!(
+        dominance(&language, &language_and_module),
+        Dominance::DominatedBy
+    );
     // The empty selector is dominated by anything that adds a predicate.
     assert_eq!(dominance(&language, &empty), Dominance::Dominates);
     // Same selector: neither adds a predicate, so neither dominates -- and this is NOT the same

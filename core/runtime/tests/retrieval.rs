@@ -26,7 +26,6 @@ fn fresh_binding() -> SnapshotBinding {
     }
 }
 
-
 /// Turn a wire spelling into its `CoverageState` by DESERIALISING it, never by a hand map.
 ///
 /// The enum already owns these spellings through `#[serde(rename)]`. A hand-written match in the
@@ -460,13 +459,19 @@ fn generous_limits() -> DeclaredLimits {
 /// self-reports having respected it, or not enforcing it at all — which is the state today.
 #[test]
 fn g5_more_results_than_declared_refuses_rather_than_truncating() {
-    let flood: Vec<String> = (0..5).map(|n| format!("core/runtime/src/f{n}.rs:1")).collect();
+    let flood: Vec<String> = (0..5)
+        .map(|n| format!("core/runtime/src/f{n}.rs:1"))
+        .collect();
     let limits = DeclaredLimits {
         max_results: 3,
         ..generous_limits()
     };
 
-    let outcome = compile_plan_within(&fresh_binding(), &IndexResponse::new(flood, CoverageState::Complete), &limits);
+    let outcome = compile_plan_within(
+        &fresh_binding(),
+        &IndexResponse::new(flood, CoverageState::Complete),
+        &limits,
+    );
 
     assert_eq!(
         outcome,
@@ -761,7 +766,6 @@ fn g5_more_tokens_than_declared_refuses() {
     );
 }
 
-
 /// G3 - the same file named two ways must compile to the SAME plan.
 ///
 /// The acceptance criterion is that identical inputs emit a canonical plan or an identical typed
@@ -843,13 +847,19 @@ fn g3_compiling_the_same_input_twice_is_identical() {
 /// never resolvable, which is the more fundamental thing to say.
 #[test]
 fn a_stale_and_over_budget_response_refuses_as_stale_not_as_over_budget() {
-    let flood: Vec<String> = (0..50).map(|n| format!("core/runtime/src/f{n}.rs:1")).collect();
+    let flood: Vec<String> = (0..50)
+        .map(|n| format!("core/runtime/src/f{n}.rs:1"))
+        .collect();
     let tight = DeclaredLimits {
         max_results: 1,
         ..generous_limits()
     };
 
-    let outcome = compile_plan_within(&stale_binding(), &IndexResponse::new(flood, CoverageState::Complete), &tight);
+    let outcome = compile_plan_within(
+        &stale_binding(),
+        &IndexResponse::new(flood, CoverageState::Complete),
+        &tight,
+    );
 
     assert_eq!(
         outcome,
@@ -878,11 +888,17 @@ fn a_stale_and_over_budget_response_refuses_as_stale_not_as_over_budget() {
 fn f1_a_claim_found_under_partial_coverage_carries_that_coverage() {
     let partial = compile_plan(
         &fresh_binding(),
-        &IndexResponse::new(vec!["core/runtime/src/lib.rs:1".to_owned()], CoverageState::Partial),
+        &IndexResponse::new(
+            vec!["core/runtime/src/lib.rs:1".to_owned()],
+            CoverageState::Partial,
+        ),
     );
     let complete = compile_plan(
         &fresh_binding(),
-        &IndexResponse::new(vec!["core/runtime/src/lib.rs:1".to_owned()], CoverageState::Complete),
+        &IndexResponse::new(
+            vec!["core/runtime/src/lib.rs:1".to_owned()],
+            CoverageState::Complete,
+        ),
     );
 
     assert!(
@@ -925,7 +941,12 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
     let body = text
         .split("zeroResultAdmission:")
         .nth(1)
-        .unwrap_or_else(|| panic!("HARNESS-BROKE: no zeroResultAdmission block in {}", path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "HARNESS-BROKE: no zeroResultAdmission block in {}",
+                path.display()
+            )
+        });
 
     let mut seen = std::collections::BTreeSet::new();
     for line in body.lines() {
@@ -985,7 +1006,8 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
     // uncovered.
     let expected: std::collections::BTreeSet<_> = CoverageState::every().iter().copied().collect();
     assert_eq!(
-        seen, expected,
+        seen,
+        expected,
         "HARNESS-BROKE: the policy table must cover every coverage state -- missing          {:?}, unexpected {:?}",
         expected.difference(&seen).collect::<Vec<_>>(),
         seen.difference(&expected).collect::<Vec<_>>()

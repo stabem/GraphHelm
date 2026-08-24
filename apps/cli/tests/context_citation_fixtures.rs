@@ -68,7 +68,9 @@ fn cases() -> Vec<(PathBuf, serde_json::Value)> {
 
 /// Derive the item IDs for one capsule's declared items.
 fn ids_for(capsule_id: &str, capsule: &serde_json::Value) -> Vec<String> {
-    let version = capsule["version"].as_u64().expect("version must be an integer") as u32;
+    let version = capsule["version"]
+        .as_u64()
+        .expect("version must be an integer") as u32;
     capsule["items"]
         .as_array()
         .expect("items must be an array")
@@ -121,8 +123,9 @@ fn every_citation_case_produces_exactly_the_refusal_codes_it_declares() {
         // passed: the verdict is the diagnostics vector inside it. Reading the `Result` alone would
         // wave every invalid case straight through, and the case would then run against the
         // verifier with a shape nobody checked.
-        let diagnostics = graphhelm_schema::validate_inline_value(&schema, case, "context-citation-case")
-            .expect("the citation-case schema compiles offline");
+        let diagnostics =
+            graphhelm_schema::validate_inline_value(&schema, case, "context-citation-case")
+                .expect("the citation-case schema compiles offline");
         assert!(
             diagnostics.is_empty(),
             "case {name} does not validate against its own schema: {diagnostics:?}"
@@ -135,7 +138,9 @@ fn every_citation_case_produces_exactly_the_refusal_codes_it_declares() {
             .as_str()
             .expect("capsuleUnderTest must be a string");
         let capsule = capsules.get(under_test).unwrap_or_else(|| {
-            panic!("case {name} names `{under_test}` as the capsule under test and does not declare it")
+            panic!(
+                "case {name} names `{under_test}` as the capsule under test and does not declare it"
+            )
         });
 
         let capsule_item_ids = ids_for(under_test, capsule);
@@ -165,7 +170,9 @@ fn every_citation_case_produces_exactly_the_refusal_codes_it_declares() {
                 if let Some(literal) = citation["literal"].as_str() {
                     return literal.to_owned();
                 }
-                let owner = citation["capsule"].as_str().expect("citation needs a capsule");
+                let owner = citation["capsule"]
+                    .as_str()
+                    .expect("citation needs a capsule");
                 let owner_capsule = capsules.get(owner).unwrap_or_else(|| {
                     panic!("case {name} cites capsule `{owner}` and does not declare it")
                 });

@@ -54,13 +54,23 @@ type DimensionCase = (&'static str, fn(&mut ContextCacheKeyInputs));
 fn dimension_cases() -> Vec<DimensionCase> {
     vec![
         ("scope_project", |i| i.scope_project = "proj-b".to_owned()),
-        ("permissions", |i| i.permissions = vec!["repo.write".to_owned()]),
+        ("permissions", |i| {
+            i.permissions = vec!["repo.write".to_owned()]
+        }),
         ("repo_snapshot", |i| i.repo_snapshot = "snap-2".to_owned()),
-        ("index_generation", |i| i.index_generation = "gen-2".to_owned()),
-        ("schema_id", |i| i.schema_id = "https://p50.dev/schemas/other.schema.json".to_owned()),
+        ("index_generation", |i| {
+            i.index_generation = "gen-2".to_owned()
+        }),
+        ("schema_id", |i| {
+            i.schema_id = "https://p50.dev/schemas/other.schema.json".to_owned()
+        }),
         ("schema_version", |i| i.schema_version = "2.0.0".to_owned()),
-        ("objective", |i| i.objective = "explain the sweep path".to_owned()),
-        ("capsule_digest", |i| i.capsule_digest = "sha256:bbbb".to_owned()),
+        ("objective", |i| {
+            i.objective = "explain the sweep path".to_owned()
+        }),
+        ("capsule_digest", |i| {
+            i.capsule_digest = "sha256:bbbb".to_owned()
+        }),
         ("producer", |i| i.producer = "compiler-b".to_owned()),
         ("utilization_policy_version", |i| {
             i.utilization_policy_version = "2.0.0".to_owned()
@@ -224,7 +234,13 @@ fn a_capsule_that_never_ran_has_no_utilization_ratio() {
     let compiled_never_used = Utilization::not_executed();
 
     assert!(
-        matches!(compiled_and_used, Utilization::Ratio { cited: 3, emitted: 10 }),
+        matches!(
+            compiled_and_used,
+            Utilization::Ratio {
+                cited: 3,
+                emitted: 10
+            }
+        ),
         "arrangement check: a real run must produce a ratio, or this proves nothing"
     );
 
@@ -302,7 +318,7 @@ fn byte_identity_is_decided_on_bytes_not_on_canonical_meaning() {
 // Where a number is born. A number is born where its inputs are born; a reader only reads.
 // ---------------------------------------------------------------------------------------------
 
-use graphhelm_runtime::context_accounting::{AccountingReceipt, ACCOUNTING_MODULE};
+use graphhelm_runtime::context_accounting::{ACCOUNTING_MODULE, AccountingReceipt};
 
 /// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before writing it: **accepting the accounting
 /// module itself as the producer of a measured field.**
@@ -345,9 +361,8 @@ fn the_accounting_module_cannot_be_the_observer_of_a_measured_cost() {
 // ---------------------------------------------------------------------------------------------
 
 use graphhelm_runtime::context_accounting::{
-    IndexCost, INDEX_COST_AMORTIZED_FIELD, INDEX_COST_COLD_FIELD,
+    INDEX_COST_AMORTIZED_FIELD, INDEX_COST_COLD_FIELD, IndexCost,
 };
-
 
 /// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **reporting an
 /// amortized share as a measured cost** -- `CostField::measured(total / runs, "index")`.
@@ -446,7 +461,9 @@ fn index_cost_lands_as_two_lines_and_never_as_one() {
         .expect("an amortized index cost is a legal receipt line");
 
     assert_eq!(
-        receipt.field(INDEX_COST_COLD_FIELD).and_then(|f| f.observed()),
+        receipt
+            .field(INDEX_COST_COLD_FIELD)
+            .and_then(|f| f.observed()),
         Some(1200),
         "the cold line must be present and hold what this run paid"
     );
@@ -549,7 +566,10 @@ fn every_field_of_the_key_inputs_has_a_dimension_case() {
         ("objective", !objective.is_empty()),
         ("capsule_digest", !capsule_digest.is_empty()),
         ("producer", !producer.is_empty()),
-        ("utilization_policy_version", !utilization_policy_version.is_empty()),
+        (
+            "utilization_policy_version",
+            !utilization_policy_version.is_empty(),
+        ),
     ];
 
     for (name, populated) in fields {

@@ -285,7 +285,10 @@ pub enum IndexCost {
     /// Paid by this run, observed by `producer`.
     Cold { tokens: u64, producer: String },
     /// A share of a cost paid earlier, spread over the runs that use it.
-    AmortizedShare { total_tokens: u64, runs_sharing: u32 },
+    AmortizedShare {
+        total_tokens: u64,
+        runs_sharing: u32,
+    },
 }
 
 impl IndexCost {

@@ -75,7 +75,10 @@ fn the_verification_gate_rejects_every_specimen_in_its_suite() {
 #[test]
 fn every_shipped_specimen_genuinely_defeats_its_axis() {
     let suite = jpd_suite();
-    assert!(!suite.is_empty(), "HARNESS-BROKE: an empty suite certifies nothing and passes");
+    assert!(
+        !suite.is_empty(),
+        "HARNESS-BROKE: an empty suite certifies nothing and passes"
+    );
     for specimen in &suite {
         assert!(
             is_defeated_on_its_axis(specimen),

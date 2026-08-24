@@ -1259,3 +1259,72 @@ A name-based count may stay **as an addition** — it says *who* is competing, w
 log — but it must never be the gate condition. **And a run that started under contention is VOID,
 not merely noisy:** it gets an END line saying so and its numbers are discarded, because a
 contaminated run left unlabelled is read later as data.
+
+---
+
+## ED-22, WAITER-LIST AMENDMENT (found by A while COMPLYING with the rule; the uncovered waiter was M): notifying the NAMED successor leaves every other waiter staring at a mute file
+
+ED-22's third failure mode says releasing the slot is not finished until the next holder has been
+**told**. **That rule was followed and someone still waited on nothing.**
+
+**Measured, 2026-08-24, hours after the rule was written.** A released the slot at `13:28:13Z`,
+wrote `next: K` into the line, and messaged K directly — exactly as the rule requires. **M was also
+waiting, was not named, and was not told.** M kept reading the file and saw a state that had already
+changed twice.
+
+**The rule assumed ONE successor.** With two waiters, telling the named one leaves the other exactly
+where the file always left them. **Worse: the `next:` field, added to help, became the reason only
+one was told** — it answered "who is next?" so completely that "who else is waiting?" was never
+asked.
+
+**A SECOND INSTANCE, different releaser, measured the same day.** At `12:37:07Z` M released the
+slot, told the Orchestrator, and did not tell A; A waited about thirty minutes on a release that had
+already happened. **Two occurrences with two different releasers make this the mechanism, not one
+agent's lapse** — and the rule being written here would have caught both.
+
+**Rule: whoever releases notifies EVERY agent who has declared a wait, not only the named
+successor.** The obligation is only dischargeable if the waiting list is legible in an artifact
+rather than in the releaser's memory of who happened to message them. Today it lives nowhere: A
+knew about K because K wrote, and about M by accident.
+
+**The list goes in `check-activity.log`, NOT in `SLOT.lock`, and the reason is the shape of the two
+files rather than taste:**
+
+| | `SLOT.lock` | `check-activity.log` |
+|---|---|---|
+| writes | **overwritten** on every claim | **append-only** |
+| lifetime of a line | until the next claim | permanent |
+| who reads it | whoever takes the slot | anyone, at any time |
+
+**A waiting list kept in the lock dies at exactly the event that should make it be read.** The
+releaser rewrites the line and the queue goes with it — **and it dies silently, with the releaser
+reading back its own write and seeing everything in order**, which is word for word the defect this
+whole entry is about.
+
+**This is not hypothetical: it already happened to this file.** The ED registry itself once lived
+inside `SLOT.lock` and was erased on a later acquisition. The reason is written down because the
+lock is the *obvious* place, and the next author will reach for it again otherwise.
+
+**Concretely:** a lane that wants the slot writes its wait where the releaser will read it, and the
+release names every waiter it discharges. A release that names one waiter while another is queued is
+**incomplete**, not merely terse.
+
+**Why this belongs as an amendment and not a new entry:** it is the same failure as the mode it
+amends — the file does not notify — surviving the fix written for it. **A rule that discharges an
+obligation toward one party while silently keeping it toward another is the same shape as a check
+whose green does not distinguish two states**, which is what all of ED-22 is about. Splitting it out
+would let a reader adopt the third mode and believe the notification problem is solved.
+
+**UNTIL SOMEONE DECLARES A WAIT, THIS RULE IS VACUOUS, AND IT MUST NOT BE READ AS COVERAGE.** A
+releaser who reads an empty list has notified nobody **and is in full compliance**. That is a guard
+over an empty set: it passes always, and its passing means nothing — the same shape as every other
+failure this entry records.
+
+**So the load-bearing half is the WAITER declaring, not the releaser reading.** The burden sits with
+whoever wants the slot: write your wait where the releaser will read it, or you are not in the queue
+in any sense the mechanism can honour. Stating it the other way round — as a duty on the releaser —
+reads as protection and delivers none.
+
+**Standing limitation:** this converts an invisible obligation into a visible one; it does not make
+it automatic. **Only a mechanism that pushes on release would, and none is proposed here** —
+proposing one without measuring it is the error this entry already records against its own rule 2.

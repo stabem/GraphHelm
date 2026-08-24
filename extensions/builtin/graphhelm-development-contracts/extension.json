@@ -60,7 +60,7 @@
           "id": "schema/development-envelope",
           "kind": "schema",
           "path": "schemas/development-envelope.schema.json",
-          "sha256": "sha256:d922f36a2f61838f0408e6189ca34c67d667f6c5219e45b225da24582365ece3",
+          "sha256": "sha256:ee3415257fd82b000c437b0439f2329cd435838a13807b363ffacdfc49571cff",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -364,6 +364,98 @@
           "kind": "fixture",
           "path": "fixtures/memory/invalid/transition-tuple-missing-its-target.json",
           "sha256": "sha256:d4aa1982fd1b45c7518aa5ea9e016a57599cfad26aae2b899149811fdae6da70",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "schema/owner-output-policy",
+          "kind": "schema",
+          "path": "schemas/owner-output-policy.schema.json",
+          "sha256": "sha256:459b8e40da6a8055cbb89e0c84616794052441c539fc0c980b91aaea32855ed6",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "policy/owner-output",
+          "kind": "policy",
+          "path": "policies/owner-output-policy.yaml",
+          "sha256": "sha256:9f6238d3bab3ce87f52a6315ccf9967268ce0c250d6c0110c12f29d916cf1433",
+          "schema": "schemas/owner-output-policy.schema.json",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/owner-output-no-decision-nothing-now",
+          "kind": "fixture",
+          "path": "fixtures/owner-output/positive/no-decision-nothing-now.json",
+          "sha256": "sha256:8935da9fecee5d3ab2cc68fc913a3b6fbf89660dbbafb9b899514e0a01bf59dc",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/owner-output-real-decision-two-options-one-recommendation",
+          "kind": "fixture",
+          "path": "fixtures/owner-output/positive/real-decision-two-options-one-recommendation.json",
+          "sha256": "sha256:7d8dc5b76c25aeb4505e599fe924b55d0d8bdc8f774a2c89c0c01a5dd85c894a",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/owner-output-destructive-consequence-survives-compression",
+          "kind": "fixture",
+          "path": "fixtures/owner-output/positive/destructive-consequence-survives-compression.json",
+          "sha256": "sha256:1e1b38a661f6e2a3c0305e956965a9058e9ddf976a1b898780a3397ef79717ad",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/owner-output-invalid-cardinality-mismatch",
+          "kind": "fixture",
+          "path": "fixtures/owner-output/negative/cardinality-mismatch-action-required-no-decision.json",
+          "sha256": "sha256:6bede5c8e245cdd594bb0d8f2782424ae625720e8c5a1f87faf2eb664cd66b90",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/owner-output-invalid-secret-in-slot-value",
+          "kind": "fixture",
+          "path": "fixtures/owner-output/negative/secret-in-slot-value.json",
+          "sha256": "sha256:7011d1125993bace070e16848629dcce492566982a1f8ca562766c1a9f727474",
           "effects": [],
           "permissions": [],
           "requires": {

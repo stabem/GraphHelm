@@ -1,0 +1,25 @@
+{
+  "summary": "about to drop a table",
+  "status": "success",
+  "ownerActionRequired": true,
+  "decision": {
+    "decisionStatement": "confirm the drop",
+    "options": [
+      { "label": "drop the table", "consequence": "irreversible data loss" },
+      { "label": "stop", "consequence": "table stays, nothing lost" }
+    ],
+    "recommended": 1,
+    "rationale": "irreversible, confirm first"
+  },
+  "evidenceLimitation": "row count estimated, not exact",
+  "riskFlags": {
+    "security": false,
+    "destructive": true,
+    "financial": false,
+    "production": false,
+    "privacy": false,
+    "irreversible": false
+  },
+  "_requestedStyle": "terse",
+  "_note": "risk_flags.destructive must override the Terse request for evidenceLimitation - see core/runtime/tests/owner_output.rs destructive_consequence_survives_compression"
+}

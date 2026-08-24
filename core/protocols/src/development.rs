@@ -159,6 +159,16 @@ wire_vocabulary! {
         // is a question about the DOCUMENT, waiver validity is a judgement this resolver makes
         // about a document that is already valid.
         CodeRuleWaiverInvalid => "code_rule_waiver_invalid",
+        // #221 (task-005, owner-output validation): allocated here per this macro's own rule
+        // ("codes needed by consuming lanes are allocated HERE, never minted downstream"),
+        // append-only, scope amended by the orchestrator for this one addition. Fires when a
+        // requested compression (a Terse style plan) would hide required consequence, rollback,
+        // or evidence-limitation content for a risk-flagged result - design doc §8.4/§9.
+        // Publication order, not merge-tool convenience (D's finding: a digest conflict on this
+        // file has no "right side", the resolved file needs every lane's entries and the order is
+        // whoever landed on main first, then whoever is merging). At this merge, task-002's four
+        // codes above (#267) were already on main, so this entry is appended AFTER them.
+        UnsafeCompression => "unsafe_compression",
     }
 }
 

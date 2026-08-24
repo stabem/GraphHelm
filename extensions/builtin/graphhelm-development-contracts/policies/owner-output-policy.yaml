@@ -1,0 +1,46 @@
+apiVersion: p50.dev/development/v1alpha1
+kind: OwnerOutputPolicyContract
+metadata:
+  id: graphhelm-development-contracts/owner-output
+  version: 1.0.0
+spec:
+  # Matches core/runtime/src/owner_output.rs's real SlotId enum and Test-SlotLockPathMatches...
+  # style closed vocabulary — this file documents what the Rust validator does, not the reverse
+  # (blueprint §6 decision: the safe built-in fallback text lives in Rust match arms, compiled
+  # in, never loaded from this YAML at runtime).
+  structuralSlots:
+    - summary
+    - result
+    - optionA
+    - optionAConsequence
+    - optionB
+    - optionBConsequence
+    - recommendation
+    - recommendationRationale
+    - evidenceLimitation
+  movableSlots:
+    - yourAction
+  styleTokens:
+    - terse
+    - standard
+  # Any true flag forces full (never Terse-compressed) rendering of the evidence limitation
+  # slot for that response — design §8.4's "safety expansion", implemented in `render()`'s
+  # RiskFlags.any() check.
+  safetyExpansionTriggers:
+    - security
+    - destructive
+    - financial
+    - production
+    - privacy
+    - irreversible
+invariants:
+  - No sequence of valid inputs produces a Result slot whose rendered phrase contradicts the
+    typed result's status — the phrase is derived from a closed four-state enum by the Runtime's
+    own code, never accepted as caller-supplied text.
+  - A style plan can reorder only movableSlots; every other slot's position is fixed.
+  - A style plan carries no field capable of holding a rendered value.
+  - A risk-flagged evidence limitation cannot be compressed away by a Terse request.
+  - A malformed style plan (naming a non-movable slot in its order) is discarded wholesale; the
+    response still renders via the safe built-in plan.
+  - A secret-shaped value anywhere in the typed result refuses the entire response, never a
+    partial render with the offending slot silently dropped.

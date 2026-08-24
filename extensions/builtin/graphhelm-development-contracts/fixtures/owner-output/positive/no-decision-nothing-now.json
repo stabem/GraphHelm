@@ -1,0 +1,15 @@
+{
+  "summary": "checked the thing",
+  "status": "success",
+  "ownerActionRequired": false,
+  "decision": null,
+  "evidenceLimitation": null,
+  "riskFlags": {
+    "security": false,
+    "destructive": false,
+    "financial": false,
+    "production": false,
+    "privacy": false,
+    "irreversible": false
+  }
+}

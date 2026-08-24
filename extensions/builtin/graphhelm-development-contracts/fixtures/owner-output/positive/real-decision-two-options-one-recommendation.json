@@ -1,0 +1,23 @@
+{
+  "summary": "found two ways forward",
+  "status": "success",
+  "ownerActionRequired": true,
+  "decision": {
+    "decisionStatement": "pick a rollout strategy",
+    "options": [
+      { "label": "ship behind a flag", "consequence": "reversible, slower rollout" },
+      { "label": "ship directly", "consequence": "faster, harder to revert" }
+    ],
+    "recommended": 0,
+    "rationale": "flag lets us revert without a deploy"
+  },
+  "evidenceLimitation": null,
+  "riskFlags": {
+    "security": false,
+    "destructive": false,
+    "financial": false,
+    "production": false,
+    "privacy": false,
+    "irreversible": false
+  }
+}

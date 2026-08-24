@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-development-contracts/schemas/owner-output-policy.schema.json",
+  "title": "GraphHelm Owner Output Policy Contract",
+  "description": "Declarative documentation of what core/runtime/src/owner_output.rs actually does (task-005, #221): the movable-slot allowlist, the closed style-token vocabulary, and the safety-expansion trigger set. Not loaded by the Runtime at validation time - the safe built-in fallback lives in Rust match arms, compiled in (blueprint §6 decision).",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec", "invariants"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "p50.dev/development/v1alpha1" },
+    "kind": { "const": "OwnerOutputPolicyContract" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": { "$ref": "#/$defs/spec" },
+    "invariants": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "const": "graphhelm-development-contracts/owner-output" },
+        "version": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "structuralSlots",
+        "movableSlots",
+        "styleTokens",
+        "safetyExpansionTriggers"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "structuralSlots": { "$ref": "#/$defs/slotIdArray" },
+        "movableSlots": { "$ref": "#/$defs/slotIdArray" },
+        "styleTokens": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["terse", "standard"] }
+        },
+        "safetyExpansionTriggers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "security",
+              "destructive",
+              "financial",
+              "production",
+              "privacy",
+              "irreversible"
+            ]
+          }
+        }
+      }
+    },
+    "slotIdArray": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "summary",
+          "result",
+          "yourAction",
+          "optionA",
+          "optionAConsequence",
+          "optionB",
+          "optionBConsequence",
+          "recommendation",
+          "recommendationRationale",
+          "evidenceLimitation",
+          "rollback"
+        ]
+      }
+    }
+  }
+}

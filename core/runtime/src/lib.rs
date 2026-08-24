@@ -17,6 +17,7 @@ pub mod evidence;
 pub mod executor;
 pub mod fixture;
 pub mod judge;
+pub mod owner_output;
 pub mod ports;
 pub mod prompt;
 pub mod retrieval;

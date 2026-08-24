@@ -43,43 +43,78 @@ impl JpdEvidence {
 /// How a JPD certification can be fooled.
 ///
 /// A CLOSED set, and deliberately NOT merged into `UselessnessMode`: those are failures of a
-/// rendered surface, these are failures of evidence. One enum covering both would give every
-/// exhaustive match over it arms it cannot mean, and that failure is silent because the enum
-/// still compiles everywhere.
+/// rendered surface, these are failures of evidence.
+///
+/// **Every name and every value below is read from the DECLARED schema**
+/// (`extensions/builtin/graphhelm-jpd/schemas/journey-verification-result.schema.json`) and checked
+/// against the repository's real fixtures. The first version of this module invented `status`,
+/// `observers`, `attempts`, `producer` and `validator` — none of which exist — so the gate passed
+/// every real document including the repository's own negative fixture. Inventing a field name is
+/// not a typo here; it is a gate that certifies nothing while reporting that it certified.
+///
+/// **A third axis was removed rather than translated, and this is the record of why.**
+/// `SelfValidation` — a producer certifying its own work — is **not expressible against this
+/// schema.** Enumerating all 17 identity-bearing properties finds identities for the VALIDATOR
+/// (`evaluatorId`, `observerId`) and for the WORK (`verificationId`, `journeyRunId`, `contractId`,
+/// and the rest), and **no producer identity at the root**: the comparison has no left side. Any
+/// implementation would have had to invent one — the exact defect described above, wearing the
+/// clothes of thoroughness. **An axis with no basis in the evidence is worse than a missing axis,
+/// because it reports that something was checked.** (Enumerated independently by L.)
+///
+/// **Condition of death for this removal — the axis is meant to COME BACK.** When the schema gains
+/// a producer identity at the root comparable against `observers[].observerId` or
+/// `evaluatorReceipt.evaluatorId`, `SelfValidation` becomes expressible and should be restored.
+/// Recorded here so the next author reads a decision instead of re-deriving it, and so the removal
+/// cannot quietly harden into "we decided self-validation does not matter".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JpdFailureAxis {
-    /// A required observer capability is absent and the result claims success anyway.
-    MissingObserver,
-    /// A run that only passed on retry, presented as proven.
-    FlakyCountedAsProven,
-    /// The producer of the work is also its validator.
-    SelfValidation,
+    /// A capability that was required never ran, and the result claims success anyway.
+    ///
+    /// Discriminated on `gate.status`, which the schema fixes to `evaluated` in the branches where
+    /// the gate ran and to `capability_missing` in the branch where it did not. It can discriminate
+    /// precisely BECAUSE the schema branches on it.
+    ///
+    /// **Not** on `authority.validation.status`. That path is declared exactly once, as
+    /// `"const": "capability_missing"` (in `$defs/candidateAuthority`, the sole `$ref` target of
+    /// `authority`), so **no schema-valid document can carry any other value there** — a gate keyed
+    /// to it would refuse every input, both positive fixtures included, and look strict while being
+    /// broken. That the three shipped fixtures all read `capability_missing` is the weaker form of
+    /// this fact: it holds only until someone adds a fixture. The constant is the reason that
+    /// cannot age, and it is the one worth writing down. (Sharpened by L.)
+    CapabilityMissingUnderClaimedSuccess,
+    /// A run classified `flaky_pass` presented as `proven`.
+    ///
+    /// `recovered_success` under `accepted_with_waiver` is a legitimate outcome and is not this.
+    FlakyClaimedAsProven,
+}
+
+/// Whether a document claims success at all. `proven` and `accepted_with_waiver` both do;
+/// `unresolved` does not, and a document admitting failure has no false certification to earn.
+fn claims_success(document: &Value) -> bool {
+    matches!(
+        document.get("proposedResultStatus").and_then(Value::as_str),
+        Some("proven" | "accepted_with_waiver")
+    )
 }
 
 impl FailureAxis<JpdEvidence> for JpdFailureAxis {
     fn is_defeated_by(&self, evidence: &JpdEvidence) -> bool {
         let document = evidence.document();
-        // Every axis below is only defeated by a document that CLAIMS success. A document
-        // admitting failure defeats nothing: there is no false certification to earn.
-        if document.get("status").and_then(Value::as_str) != Some("passed") {
+        if !claims_success(document) {
             return false;
         }
         match self {
-            Self::MissingObserver => document
-                .get("observers")
-                .and_then(Value::as_array)
-                .is_none_or(|observers| observers.is_empty()),
-            Self::FlakyCountedAsProven => {
-                document
-                    .get("attempts")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1)
-                    > 1
+            Self::CapabilityMissingUnderClaimedSuccess => {
+                document.pointer("/gate/status").and_then(Value::as_str)
+                    == Some("capability_missing")
             }
-            Self::SelfValidation => {
-                let producer = document.get("producer");
-                producer.is_some() && producer == document.get("validator")
+            Self::FlakyClaimedAsProven => {
+                document.get("proposedResultStatus").and_then(Value::as_str) == Some("proven")
+                    && document
+                        .pointer("/retry/outcomeClassification")
+                        .and_then(Value::as_str)
+                        == Some("flaky_pass")
             }
         }
     }
@@ -110,7 +145,7 @@ impl EvidenceGate<JpdEvidence> for VerificationResultGate {
         };
 
         // A document that does not claim success has nothing to falsely certify.
-        if document.get("status").and_then(Value::as_str) != Some("passed") {
+        if !claims_success(document) {
             return Verdict {
                 passed: true,
                 findings: Vec::new(),
@@ -119,9 +154,8 @@ impl EvidenceGate<JpdEvidence> for VerificationResultGate {
 
         let mut findings = Vec::new();
         for axis in [
-            JpdFailureAxis::MissingObserver,
-            JpdFailureAxis::FlakyCountedAsProven,
-            JpdFailureAxis::SelfValidation,
+            JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
+            JpdFailureAxis::FlakyClaimedAsProven,
         ] {
             if axis.is_defeated_by(evidence) {
                 findings.push(finding_for(axis));
@@ -138,52 +172,43 @@ impl EvidenceGate<JpdEvidence> for VerificationResultGate {
 /// What each axis means when it fires, in the operator's words.
 fn finding_for(axis: JpdFailureAxis) -> String {
     match axis {
-        JpdFailureAxis::MissingObserver => {
-            "a result claiming success carries no observer capability".to_owned()
+        JpdFailureAxis::CapabilityMissingUnderClaimedSuccess => {
+            "a result claiming success reports gate.status = capability_missing: the capability              that would have judged it never ran"
+                .to_owned()
         }
-        JpdFailureAxis::FlakyCountedAsProven => {
-            "success reached only on retry is not proven success".to_owned()
-        }
-        JpdFailureAxis::SelfValidation => {
-            "the producer of the work is also its validator".to_owned()
+        JpdFailureAxis::FlakyClaimedAsProven => {
+            "a run classified flaky_pass is presented as proven; flaky success is not proven              success"
+                .to_owned()
         }
     }
 }
 
-/// The JPD pathogen suite.
+/// The JPD pathogen suite, written in the schema's vocabulary.
 ///
-/// Three specimens is a FLOOR, not a coverage claim: it is the smallest set that exercises more
-/// than one axis. Growing it changes `suite_digest`, which voids every stale certification by
-/// comparison rather than by cleanup — but growth alone proves nothing, which is why every
-/// specimen must also defeat the axis it names.
+/// Two specimens is a FLOOR, not a coverage claim. Growing it changes `suite_digest`, which voids
+/// stale certifications by comparison rather than by cleanup — but growth alone proves nothing,
+/// which is why every specimen must also defeat the axis it names, and why the real repository
+/// fixtures are driven through this gate in the tests: synthetic specimens can disagree with a
+/// gate about LOGIC, never about VOCABULARY, because they were written by the same hand.
 #[must_use]
 pub fn jpd_suite() -> Vec<JpdSpecimen> {
     vec![
         JpdSpecimen {
-            id: "verification/missing-observer".to_owned(),
-            axis: JpdFailureAxis::MissingObserver,
+            id: "verification/capability-missing-claimed-proven".to_owned(),
+            axis: JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
             evidence: JpdEvidence::VerificationResult(serde_json::json!({
-                "status": "passed",
-                "observers": []
+                "proposedResultStatus": "proven",
+                "gate": { "status": "capability_missing" },
+                "retry": { "outcomeClassification": "first_pass_success" }
             })),
         },
         JpdSpecimen {
-            id: "verification/flaky-as-proven".to_owned(),
-            axis: JpdFailureAxis::FlakyCountedAsProven,
+            id: "verification/flaky-claimed-proven".to_owned(),
+            axis: JpdFailureAxis::FlakyClaimedAsProven,
             evidence: JpdEvidence::VerificationResult(serde_json::json!({
-                "status": "passed",
-                "observers": [{ "capability": "first_party_deterministic" }],
-                "attempts": 3
-            })),
-        },
-        JpdSpecimen {
-            id: "verification/self-validated".to_owned(),
-            axis: JpdFailureAxis::SelfValidation,
-            evidence: JpdEvidence::VerificationResult(serde_json::json!({
-                "status": "passed",
-                "observers": [{ "capability": "first_party_deterministic" }],
-                "producer": "agent-a",
-                "validator": "agent-a"
+                "proposedResultStatus": "proven",
+                "gate": { "status": "evaluated" },
+                "retry": { "outcomeClassification": "flaky_pass" }
             })),
         },
     ]

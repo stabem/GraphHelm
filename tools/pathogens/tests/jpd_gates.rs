@@ -11,47 +11,54 @@ use serde_json::json;
 
 /// The axes are different KINDS, and the compiler is what says so.
 ///
-/// The production change that would make this fail: folding the JPD axes into
-/// `UselessnessMode` — which is the tempting repair, and would give every exhaustive match over
-/// that enum arms it cannot mean, silently, because the enum still compiles everywhere.
+/// The production change that would make this fail: folding the JPD axes into `UselessnessMode`.
 #[test]
 fn a_jpd_specimen_carries_a_jpd_axis() {
     let specimen: JpdSpecimen = JpdSpecimen {
-        id: "verification/missing-observer".to_owned(),
-        axis: JpdFailureAxis::MissingObserver,
-        evidence: JpdEvidence::VerificationResult(json!({ "status": "passed", "observers": [] })),
+        id: "verification/capability-missing-claimed-proven".to_owned(),
+        axis: JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
+        evidence: JpdEvidence::VerificationResult(json!({
+            "proposedResultStatus": "proven",
+            "gate": { "status": "capability_missing" }
+        })),
     };
 
-    assert_eq!(specimen.id, "verification/missing-observer");
+    assert_eq!(
+        specimen.id,
+        "verification/capability-missing-claimed-proven"
+    );
 }
 
 /// Fixture integrity generalises WITH the harness, or it is dropped in silence.
 ///
-/// This is the arm that N's finding demanded: a specimen claiming an axis it does not defeat
-/// certifies a gate for catching nothing, and nothing else in the harness notices.
+/// N's finding: a specimen claiming an axis it does not defeat certifies a gate for catching
+/// nothing, and nothing else in the harness notices.
 #[test]
 fn a_jpd_axis_can_say_whether_its_own_specimen_is_genuinely_defeated() {
     let real = JpdSpecimen {
-        id: "verification/missing-observer".to_owned(),
-        axis: JpdFailureAxis::MissingObserver,
-        evidence: JpdEvidence::VerificationResult(json!({ "status": "passed", "observers": [] })),
+        id: "verification/capability-missing-claimed-proven".to_owned(),
+        axis: JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
+        evidence: JpdEvidence::VerificationResult(json!({
+            "proposedResultStatus": "proven",
+            "gate": { "status": "capability_missing" }
+        })),
     };
     let fraudulent = JpdSpecimen {
-        id: "verification/not-actually-missing".to_owned(),
-        axis: JpdFailureAxis::MissingObserver,
+        id: "verification/gate-actually-ran".to_owned(),
+        axis: JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
         evidence: JpdEvidence::VerificationResult(json!({
-            "status": "passed",
-            "observers": [{ "capability": "first_party_deterministic" }]
+            "proposedResultStatus": "proven",
+            "gate": { "status": "evaluated" }
         })),
     };
 
     assert!(
         is_defeated_on_its_axis(&real),
-        "a result claiming success with no observer IS defeated on the missing-observer axis"
+        "a result claiming proven while its gate never ran IS defeated on this axis"
     );
     assert!(
         !is_defeated_on_its_axis(&fraudulent),
-        "a specimen that names an axis it does not defeat must be caught here: the digest sees          CHANGE, never QUALITY, so growth alone would certify a gate for catching nothing"
+        "a specimen naming an axis it does not defeat must be caught: the digest sees CHANGE,          never QUALITY, so growth alone would certify a gate for catching nothing"
     );
 }
 
@@ -63,7 +70,7 @@ fn the_verification_gate_rejects_every_specimen_in_its_suite() {
 
     assert_eq!(certification.gate_id, "gate/jpd-verification-result");
     assert!(
-        certification.specimens >= 3,
+        certification.specimens >= 2,
         "the suite must exercise more than one axis, or the certification says less than it looks"
     );
 }
@@ -88,26 +95,28 @@ fn every_shipped_specimen_genuinely_defeats_its_axis() {
     }
 }
 
-/// ADVISORY IN BOTH DIRECTIONS. Found by L, and the direction nobody guards is the one that
-/// gets implemented.
+/// ADVISORY IN BOTH DIRECTIONS. Found by L, and the direction nobody guards is the one that gets
+/// implemented.
 ///
-/// The obvious arm proves a unanimous approval cannot rescue bad evidence. But a gate that
-/// consulted the council only in order to REFUSE would pass that arm untouched — and refusing on
-/// disagreement looks conservative, so it is exactly what a well-meaning implementer reaches for.
+/// A gate consulting the council only in order to REFUSE would pass a one-directional arm
+/// untouched — and refusing on disagreement looks conservative, which is why it is the direction
+/// reached for. Same evidence, opposite verdicts, IDENTICAL result.
 ///
-/// Same evidence, opposite council verdicts, IDENTICAL result. That is the only shape that pins
-/// "the council has no code path" rather than "the council is used carefully".
+/// The council is injected at `bindings.council`, which is where the schema actually puts it —
+/// a top-level `council` key would test a shape no document has.
 #[test]
 fn a_council_verdict_moves_nothing_in_either_direction() {
-    let base = serde_json::json!({
-        "status": "passed",
-        "observers": [{ "capability": "first_party_deterministic" }]
+    let base = json!({
+        "proposedResultStatus": "proven",
+        "gate": { "status": "evaluated" },
+        "retry": { "outcomeClassification": "first_pass_success" },
+        "bindings": {}
     });
 
     let mut approving = base.clone();
-    approving["council"] = json!({ "agreement": "unanimous", "verdict": "approve" });
+    approving["bindings"]["council"] = json!({ "status": "unanimous", "verdict": "approve" });
     let mut rejecting = base.clone();
-    rejecting["council"] = json!({ "agreement": "unanimous", "verdict": "reject" });
+    rejecting["bindings"]["council"] = json!({ "status": "unanimous", "verdict": "reject" });
 
     let bare = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(base));
     let with_approval =
@@ -121,7 +130,7 @@ fn a_council_verdict_moves_nothing_in_either_direction() {
     );
     assert_eq!(
         with_rejection.passed, bare.passed,
-        "a unanimous rejection must not sink anything either: refusing on disagreement looks          conservative, which is precisely why it is the direction that gets implemented unguarded"
+        "a unanimous rejection must not sink anything either"
     );
     assert_eq!(
         with_approval.findings, with_rejection.findings,
@@ -129,31 +138,91 @@ fn a_council_verdict_moves_nothing_in_either_direction() {
     );
 }
 
-// MUTATION MATRIX, run against a COMMITTED tree and reverted with `git checkout` against that
-// commit, so no mutation could eat the work it was testing.
+// ---------------------------------------------------------------------------------------------
+// THE ARM THAT WOULD HAVE CAUGHT IT: the repository's own verification-result fixtures, driven
+// through the real gate.
 //
-//   baseline                                  -> 5 passed
-//   M1  MissingObserver never fires           -> 2 passed, 3 failed
-//         a_jpd_axis_can_say_whether_its_own_specimen_is_genuinely_defeated
-//         every_shipped_specimen_genuinely_defeats_its_axis
-//         the_verification_gate_rejects_every_specimen_in_its_suite
-//   M4  a rejecting council sinks the verdict -> 4 passed, 1 failed
-//         a_council_verdict_moves_nothing_in_either_direction   (ONLY)
-//   revert                                    -> 5 passed
+// The first version of this gate read `status`, `observers`, `attempts`, `producer` and
+// `validator`. None of those exist in the declared schema, which requires `proposedResultStatus`
+// and spells success as `proven`. So the gate's opening check found no `status`, concluded the
+// document was not claiming success, and PASSED it — every schema-valid document, including the
+// repository's own negative fixture, which exists precisely to be refused.
 //
-// M1 reddening THREE arms is deliberate layering, not coarse assertions: the axis predicate, the
-// shipped specimens' integrity, and the gate's certification are three layers over one property,
-// and each fails for its own reason. A mutation reddening two arms that assert the SAME thing
-// would mean they must be split; these assert different things about one predicate.
+// Nothing caught it because MY SPECIMENS SHARED MY INVENTED VOCABULARY. The fixture and the defect
+// had the same shape, so the suite agreed with the gate about a language neither the schema nor any
+// real document speaks. Synthetic specimens can only disagree with a gate about logic; they cannot
+// disagree with it about vocabulary. Real documents can, and that is the whole reason these arms
+// exist. (Found by N wiring #226 against this gate.)
+
+use std::path::{Path, PathBuf};
+
+fn jpd_fixture(relative: &str) -> serde_json::Value {
+    let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../extensions/builtin/graphhelm-jpd/fixtures")
+        .join(relative);
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("HARNESS-BROKE: cannot read {}: {e}", path.display()));
+    serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("HARNESS-BROKE: {} is not valid JSON: {e}", path.display()))
+}
+
+/// The repository's own negative fixture must be REFUSED. It claims `proven` while its gate
+/// reports `capability_missing` — a result claiming success over a capability that never ran.
+#[test]
+fn the_repositorys_negative_fixture_is_refused_by_the_gate() {
+    let document = jpd_fixture("negative/journey-verification-missing-gate-claimed-success.json");
+
+    assert_eq!(
+        document
+            .get("proposedResultStatus")
+            .and_then(serde_json::Value::as_str),
+        Some("proven"),
+        "HARNESS-BROKE: this fixture is only meaningful while it CLAIMS success; if the vocabulary          moved again, this arm is comparing against something else entirely"
+    );
+
+    let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
+
+    assert!(
+        !verdict.passed,
+        "the repository's own missing-gate-claimed-success fixture must be refused: it exists to          be refused, and a gate that passes it certifies nothing"
+    );
+}
+
+/// And the positive fixtures must still PASS, so the fix is not "refuse everything".
+///
+/// Without this pair the negative arm alone is satisfied by a gate that refuses unconditionally,
+/// which is the cheapest possible false fix.
+#[test]
+fn the_repositorys_positive_fixtures_are_accepted_by_the_gate() {
+    for name in [
+        "positive/journey-verification-first-pass.json",
+        "positive/journey-verification-accepted-with-waiver.json",
+    ] {
+        let document = jpd_fixture(name);
+        let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
+        assert!(
+            verdict.passed,
+            "{name} is a well-formed accepted result and must pass; findings were {:?}",
+            verdict.findings
+        );
+    }
+}
+
+// MUTATION EVIDENCE for the vocabulary fix.
 //
-// M4 is the one that justifies L's finding. `council` appears nowhere else in this file's fixtures
-// and nowhere in the shipped suite — measured, not assumed — so WITHOUT the both-directions cell,
-// M4 would have reddened NOTHING. A gate reading the council purely to refuse would have shipped
-// green. The direction nobody guards is the one that gets implemented, because refusing on
-// disagreement looks conservative.
+//   baseline                                            -> 7 passed
+//   M5  restore the original defect: read the invented
+//       `status`/`passed` instead of `proposedResultStatus`/`proven`
+//                                                       -> 3 passed, 4 failed, INCLUDING
+//          the_repositorys_negative_fixture_is_refused_by_the_gate
+//   revert                                              -> 7 passed
 //
-// A note on the harness itself: the first run of M1 was reported as a DEAD MUTATION that failed to
-// compile. It had not. `cargo` prints `error: test failed` for a red test, and a `^error` match
-// counts that as a build failure — so a genuine red was labelled unbuildable and nearly discarded.
-// The build check now matches `^error[E` or `could not compile`, which is what a compile failure
-// actually looks like. A sabotage harness needs its own control, exactly like everything else here.
+// The asymmetry is the whole point, and it is measurable:
+//
+//   BEFORE the fix: every synthetic arm PASSED and only the real-fixture arm failed.
+//   AFTER  the fix: reverting the vocabulary reddens the synthetic arms too.
+//
+// Before the fix the synthetic specimens shared the gate's invented vocabulary, so they could not
+// disagree with it — a suite written by the same hand as the gate agrees with it about language by
+// construction, and language was the defect. Anchoring the suite to the schema's words is what
+// gives those arms the power to fail at all; the real fixtures are what proved the words.

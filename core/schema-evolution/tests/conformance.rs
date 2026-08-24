@@ -1823,6 +1823,8 @@ fn wire_name(kind: &EventKind) -> &'static str {
         EventKind::CompletionRefused(_) => "completion_refused",
         EventKind::OverdueException(_) => "overdue_exception",
         EventKind::SweepPerformed(_) => "sweep_performed",
+        EventKind::ClearanceIdentityRegistered(_) => "clearance_identity_registered",
+        EventKind::ClearanceIdentityRevoked(_) => "clearance_identity_revoked",
     }
 }
 

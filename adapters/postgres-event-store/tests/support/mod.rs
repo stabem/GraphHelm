@@ -257,6 +257,11 @@ pub fn graph_published_event(key: &str, execution: &str) -> NewEvent {
                 ],
                 vec![],
                 None,
+                // #193 gave `PersistedNode::new` a sixth parameter (customs budgets) and did not
+                // update this call site, so five postgres test targets stopped compiling. This
+                // fixture predates customs and stays that way: absence here is what a pre-customs
+                // stored version looks like, and that is the case worth having in a fixture.
+                None,
             )
             .unwrap(),
         )]),

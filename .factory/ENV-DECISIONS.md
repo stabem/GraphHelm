@@ -984,3 +984,27 @@ the PR or a report naming it.
 > as binding — the committed-vs-reachable defect, on the registry itself, second instance. From
 > now on every new ED is appended on a branch off main and merged the same hour. A rule a
 > reviewer cannot read by the reader's path is not yet a rule.
+
+---
+
+## ED-18, READER-PATH AMENDMENT (B): the verification command dies on Windows for dot-paths
+
+`git show origin/main:.factory/ENV-DECISIONS.md` dies in Git Bash on Windows: MSYS reads `x:.y` as
+a POSIX path-list **whenever the path after `:` starts with a dot** — `.factory/`, `.github/`,
+`.claude/` — exactly where this registry lives, and the failure reads as "the rule is not there".
+Working forms: `MSYS_NO_PATHCONV=1 git show "origin/main:.factory/ENV-DECISIONS.md"`, or
+`git ls-tree` for the sha + `git cat-file blob`, which carry no `:` at all.
+
+---
+
+## ED-19 — `git stash` IS ONE SHARED STACK FOR THE WHOLE REPOSITORY, ACROSS ALL WORKTREES (from F's near-incident)
+
+Measured live: a reflex `git stash` + `pop` while switching branches brought back **another
+agent's stash entry** from another lane entirely (a merge conflict stopped the pop, so git
+preserved the entry — no loss). The stack held three entries from three different lanes, at least
+two used DELIBERATELY as coordination ("recover with git stash pop" written into the entry name).
+**Rule: do not use `git stash` in this repository unless you have just run `git stash list` and can
+name the owner of every entry — and never `pop` blind; `pop` takes the TOP of a stack thirteen
+lanes share.** Preferred alternative: a WIP commit on your own branch (`git commit -m "wip"` +
+later `reset --soft`), which is per-branch by construction. Entries used as coordination belong to
+their writers; touching one is touching another lane's state.

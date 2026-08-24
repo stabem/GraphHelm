@@ -673,8 +673,14 @@ try {
     #
     # NOT MEASURED: nobody has observed those targets being skipped. This is a named fragility with
     # a named trigger, not an observed defect.
+    # --no-fail-fast, because without it a single failing binary aborts the run and the verdict
+    # goes RED without recording how much of the suite never executed. Measured on two consecutive
+    # cold gates: one truncated after 9 binaries, the next after 23, and in BOTH a lane's nineteen
+    # named guards never ran at all — verified name by name, not inferred. A RED that stopped
+    # looking is not the same object as a RED that looked at everything, and before this flag the
+    # two printed the same word (#238).
     Invoke-Stage 'workspace tests' {
-        cargo $toolchain test --workspace --all-features --locked
+        cargo $toolchain test --workspace --all-features --locked --no-fail-fast
     } | Out-Null
 
     # DERIVED, not hand-maintained (#98): a hardcoded allowlist under-gates every new suite by

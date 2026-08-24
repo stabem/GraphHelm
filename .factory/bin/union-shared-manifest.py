@@ -142,11 +142,15 @@ def main(main_sha, check_only):
     stale = [e["id"] for e in entries
              if "sha256:" + hashlib.sha256((PKG / e["path"]).read_bytes()).hexdigest() != e["sha256"]]
 
-    print(f"\nMEMBERSHIP CHECK against {main_sha}")
-    print(f"  rust arms {len(arms)}   schema {len(result_enum)}   main {len(their_enum)}")
-    print(f"  missing from main   : {missing}          <- MUST be []")
-    print(f"  added by this branch: {mine}")
-    print(f"  duplicates          : {dupes}            <- MUST be []")
+    print(f"\nREFUSAL-CODE MEMBERSHIP CHECK against {main_sha}")
+    print("  (every row below counts CODES. Manifest ENTRY counts are the block above.)")
+    print(f"  codes: rust arms {len(arms)}   schema {len(result_enum)}   main {len(their_enum)}")
+    print(f"  codes missing from main   : {missing}          <- MUST be []")
+    print(f"  codes added by this branch: {mine}")
+    if not mine:
+        print("      (empty is expected for a manifest-only branch -- it means no new CODES,")
+        print("       not that this branch adds nothing. The entry count is in the block above.)")
+    print(f"  duplicate codes           : {dupes}            <- MUST be []")
     print(f"  rust minus schema   : {sorted(set(arms) - set(result_enum))}   <- MUST be []")
     print(f"  schema minus rust   : {sorted(set(result_enum) - set(arms))}   <- MUST be []")
     print(f"  order of main kept  : {[c for c in result_enum if c in their_enum] == their_enum}")

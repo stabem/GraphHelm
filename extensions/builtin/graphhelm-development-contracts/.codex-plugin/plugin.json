@@ -1,0 +1,33 @@
+{
+  "id": "graphhelm-development-contracts",
+  "name": "graphhelm-development-contracts",
+  "version": "0.1.0",
+  "description": "Three data-only entry skills that turn change requests into development contracts, assemble and cite evidence, and propose durable lessons — all through GraphHelm public read surfaces, proposing artifacts rather than writing them.",
+  "skills": "skills",
+  "mcpServers": ".mcp.json",
+  "author": {
+    "name": "GraphHelm"
+  },
+  "repository": "https://github.com/stabem/GraphHelm",
+  "license": "MIT",
+  "keywords": [
+    "graphhelm",
+    "development-contracts",
+    "skills",
+    "evidence"
+  ],
+  "interface": {
+    "displayName": "GraphHelm Development Contracts",
+    "shortDescription": "Contract the change, cite the evidence, propose the lesson.",
+    "longDescription": "Three entry skills for contract-first development. code-contract states scope, refusal cases and evidence obligations before code exists. context-retrieval assembles evidence, cites it by stable item identity, and declares what it did not retrieve. memory-curator proposes durable lessons as advisory candidates only. All three read through public surfaces and propose artifacts; none enforces, publishes, or mutates.",
+    "developerName": "GraphHelm",
+    "category": "Developer Tools",
+    "capabilities": [
+      "skills",
+      "mcp"
+    ],
+    "defaultPrompt": [
+      "Contract the change before writing it, cite the evidence the contract depends on, and propose what was learned once it lands."
+    ]
+  }
+}

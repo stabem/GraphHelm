@@ -542,6 +542,128 @@
           },
           "family": "development-contracts",
           "schema": "schemas/token-efficiency-evaluator.schema.json"
+        },
+        {
+          "id": "skill/code-contract",
+          "kind": "skill",
+          "path": "skills/code-contract/SKILL.md",
+          "sha256": "sha256:54ff82f47fa6aab2e53348371eea76c09746d7cc3aa98dcb107daf975efe03dd",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "surfaces": [
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/context-retrieval",
+          "kind": "skill",
+          "path": "skills/context-retrieval/SKILL.md",
+          "sha256": "sha256:b7196350b28b513d75178e5ed45a402099266dba1e8b90a118e88985467c43fc",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "surfaces": [
+            "tool:routes",
+            "tool:status"
+          ],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/memory-curator",
+          "kind": "skill",
+          "path": "skills/memory-curator/SKILL.md",
+          "sha256": "sha256:992334b3e7cd5c857b7d42719b96c13d1586cb7788567fa37beb01cf9c082cfe",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "surfaces": [
+            "tool:events"
+          ],
+          "family": "development-contracts"
+        },
+        {
+          "id": "host/claude",
+          "kind": "host-adapter",
+          "path": ".claude-plugin/plugin.json",
+          "sha256": "sha256:a8b288018a0daf06b111ef616fb5035ef51676bed9c980d1fd5590a8a63918e1",
+          "effects": [
+            "host.discover"
+          ],
+          "permissions": [
+            "package.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          }
+        },
+        {
+          "id": "host/codex",
+          "kind": "host-adapter",
+          "path": ".codex-plugin/plugin.json",
+          "sha256": "sha256:6732cf48159876839a01b65d4badd437d6be1e5b009e93e051ad06db97e33021",
+          "effects": [
+            "host.discover"
+          ],
+          "permissions": [
+            "package.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          }
+        },
+        {
+          "id": "host/mcp",
+          "kind": "host-adapter",
+          "path": ".mcp.json",
+          "sha256": "sha256:8fd119dc375d073974ec8cbac78fa64ddecbd79a62dafe0f284d65b67b1f5b44",
+          "effects": [
+            "host.discover"
+          ],
+          "permissions": [
+            "package.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          }
         }
       ]
     },

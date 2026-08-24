@@ -1,0 +1,19 @@
+{
+  "case": "required-citation-missing",
+  "why": "The evidence was compiled into the capsule and the answer never referred to it. Nothing is malformed and nothing is spoofed: the run looks complete, and the utilization accounting downstream still counts the capsule as used, so the ratio rises with nothing behind it. The remedy is to cite the evidence.",
+  "capsuleUnderTest": "capsule-alpha",
+  "capsules": {
+    "capsule-alpha": {
+      "version": 1,
+      "items": [
+        {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."},
+        {"section": "task", "text": "Decide whether the transport may retry on its own."}
+      ]
+    }
+  },
+  "requiredItems": [
+    {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+  ],
+  "citations": [],
+  "expectedRefusalCodes": ["required_citation_missing"]
+}

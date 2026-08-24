@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/context-citation-case.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Context Citation Case",
+  "description": "One citation-verification case. Declares capsule ITEMS rather than item IDs: identity is derived from content, so a case that hard-coded IDs would assert against a number nothing computed and would keep passing after the derivation changed.",
+  "type": "object",
+  "required": ["case", "why", "capsuleUnderTest", "capsules", "requiredItems", "citations", "expectedRefusalCodes"],
+  "properties": {
+    "case": {"type": "string", "minLength": 1},
+    "why": {"type": "string", "minLength": 1},
+    "capsuleUnderTest": {"type": "string", "minLength": 1},
+    "capsules": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["version", "items"],
+        "properties": {
+          "version": {"type": "integer", "minimum": 1},
+          "items": {"type": "array", "items": {"$ref": "#/$defs/item"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "requiredItems": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "citations": {"type": "array", "items": {"$ref": "#/$defs/citation"}},
+    "expectedRefusalCodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["required_citation_missing", "citation_unresolved"]}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["section", "text"],
+      "properties": {
+        "section": {"enum": ["projectKernel", "task", "node", "evidence", "dependencyOutputs", "agentExperience"]},
+        "text": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "citation": {
+      "description": "Either a citation of a real item in one of the declared capsules, whose ID the walker derives, or a literal ID standing for one nothing hashes to.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["capsule", "section", "text"],
+          "properties": {
+            "capsule": {"type": "string", "minLength": 1},
+            "section": {"enum": ["projectKernel", "task", "node", "evidence", "dependencyOutputs", "agentExperience"]},
+            "text": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["literal"],
+          "properties": {"literal": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

@@ -43,7 +43,15 @@ fn baseline() -> ContextCacheKeyInputs {
 /// `SnapshotBinding` carries them as independent identities — the bytes read versus what the index
 /// was built from — and their *relation* is the freshness verdict. Folding them into one case would
 /// be the flattening the guard exists to catch.
-fn dimension_cases() -> Vec<(&'static str, fn(&mut ContextCacheKeyInputs))> {
+/// One dimension case: the name of the semantic input, and the mutation that changes exactly
+/// that input and nothing else.
+///
+/// Named rather than written inline because clippy refuses the inline form at this depth --
+/// and it was right to: the tuple-of-function-pointer says what the compiler needs and nothing
+/// about what the case IS, which is the whole content of this table.
+type DimensionCase = (&'static str, fn(&mut ContextCacheKeyInputs));
+
+fn dimension_cases() -> Vec<DimensionCase> {
     vec![
         ("scope_project", |i| i.scope_project = "proj-b".to_owned()),
         ("permissions", |i| i.permissions = vec!["repo.write".to_owned()]),
@@ -329,5 +337,241 @@ fn the_accounting_module_cannot_be_the_observer_of_a_measured_cost() {
          observer makes a recomputed value indistinguishable from a watched one, which is the \
          whole distinction the provenance tag exists to carry.\n\
          Either name the component that did the work, or mark the field derived."
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cold and amortized index cost, which the acceptance criterion requires reported SEPARATELY.
+// ---------------------------------------------------------------------------------------------
+
+use graphhelm_runtime::context_accounting::{
+    IndexCost, INDEX_COST_AMORTIZED_FIELD, INDEX_COST_COLD_FIELD,
+};
+
+
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **reporting an
+/// amortized share as a measured cost** -- `CostField::measured(total / runs, "index")`.
+///
+/// It is the tempting implementation, because a share is a number and every other number in a
+/// receipt is measured. But nobody observed *this* run paying it: the cost was paid earlier by a
+/// run that is not this one, and the share is arithmetic over that. Marked measured, it acquires an
+/// observer that never watched anything, and a reader auditing "which numbers were seen" gets a
+/// yes for a number that was computed.
+#[test]
+fn an_amortized_share_is_derived_because_nobody_watched_this_run_pay_it() {
+    let share = IndexCost::amortized(900, 3).expect("three runs is a usable denominator");
+    let field = share.as_cost_field();
+
+    assert!(
+        !field.is_measured(),
+        "the amortized share reported itself as MEASURED. It names {:?} as its observer, and that \
+         component did not watch this run pay anything -- the cost was paid by an earlier run.",
+        field.producer()
+    );
+    assert_eq!(
+        field.provenance(),
+        &CostProvenance::Derived,
+        "an amortized share is computed from a cost paid elsewhere, so its provenance is Derived"
+    );
+    assert_eq!(
+        field.observed(),
+        Some(300),
+        "the share of 900 tokens over 3 runs is 300; the value must still be present, since \
+         Derived means computed, not absent"
+    );
+}
+
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **letting the
+/// cold arm lose its observer** -- reporting it derived, or measured against a generic name rather
+/// than the component that did the work.
+///
+/// This is the discriminating half. A `as_cost_field` that returns Derived for everything satisfies
+/// the test above perfectly and destroys the distinction it exists to protect: cold cost IS
+/// observed, and marking it derived means no receipt anywhere can say a real index build was
+/// watched.
+#[test]
+fn a_cold_index_cost_keeps_the_observer_that_watched_it() {
+    let field = IndexCost::cold(1200, "native_index_builder").as_cost_field();
+
+    assert!(
+        field.is_measured(),
+        "a cold index cost was paid by this run and watched; it must be measured, not {:?}",
+        field.provenance()
+    );
+    assert_eq!(
+        field.producer(),
+        Some("native_index_builder"),
+        "the cold cost must name the component that did the work, not a generic label"
+    );
+}
+
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **accepting a
+/// denominator of zero**, returning a share of zero or of the full total.
+///
+/// A share over zero runs is not small, it is undefined. Returning the full total quietly turns an
+/// amortized line into a cold one; returning zero quietly deletes a real cost. Both read as a
+/// number and neither is one.
+#[test]
+fn an_amortized_share_over_zero_runs_is_refused_rather_than_valued() {
+    let refusal = IndexCost::amortized(900, 0);
+    let message = refusal.expect_err("a zero denominator must be refused, not valued");
+    assert!(
+        message.contains("ZERO"),
+        "the refusal must say what was wrong with the input; it said: {message}"
+    );
+}
+
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **adding the two
+/// costs into a single receipt line** -- an `index_cost` field carrying cold plus amortized.
+///
+/// The merged number is neither of its parts: larger than what this run paid and smaller than what
+/// the index cost, carrying whichever provenance the summing code picked. The absence assertion
+/// below is paired with the presence of both real lines, so a receipt that simply lost its index
+/// accounting cannot satisfy it -- an absence guard with nothing present is satisfied by an empty
+/// receipt.
+#[test]
+fn index_cost_lands_as_two_lines_and_never_as_one() {
+    let receipt = AccountingReceipt::new()
+        .with_field(
+            INDEX_COST_COLD_FIELD,
+            IndexCost::cold(1200, "native_index_builder").as_cost_field(),
+        )
+        .expect("a cold index cost is a legal receipt line")
+        .with_field(
+            INDEX_COST_AMORTIZED_FIELD,
+            IndexCost::amortized(900, 3)
+                .expect("three runs is a usable denominator")
+                .as_cost_field(),
+        )
+        .expect("an amortized index cost is a legal receipt line");
+
+    assert_eq!(
+        receipt.field(INDEX_COST_COLD_FIELD).and_then(|f| f.observed()),
+        Some(1200),
+        "the cold line must be present and hold what this run paid"
+    );
+    assert_eq!(
+        receipt
+            .field(INDEX_COST_AMORTIZED_FIELD)
+            .and_then(|f| f.observed()),
+        Some(300),
+        "the amortized line must be present and hold this run's share"
+    );
+    assert!(
+        receipt.field("index_cost").is_none(),
+        "the receipt carries a merged `index_cost` line. It is neither number: too large to be \
+         what this run paid, too small to be what the index cost, and reported under whichever \
+         provenance the summing code picked."
+    );
+}
+
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **changing the
+/// rounding of an amortized share** — to `div_ceil`, to a float, or to anything that reports more
+/// than was paid.
+///
+/// Raised by F's cold pass: every other case here divides exactly (900 over 3), so the truncation
+/// was invisible and a reader could not tell a chosen policy from an unnoticed one. This case uses
+/// a denominator that does not divide, so the policy is pinned by a number rather than by a
+/// comment, and the bound is asserted rather than asserted-about: the shares sum to at most the
+/// real cost, short by strictly less than one token per sharing run.
+#[test]
+fn an_amortized_share_truncates_and_the_loss_is_bounded() {
+    let total = 901u64;
+    let runs = 3u32;
+    let share = IndexCost::amortized(total, runs)
+        .expect("three runs is a usable denominator")
+        .as_cost_field();
+
+    assert_eq!(
+        share.observed(),
+        Some(300),
+        "901 over 3 truncates to 300. If this says 301, the rounding now reports more than was \
+         ever paid, and a cost line that can overstate cannot be used to bound anything."
+    );
+
+    let summed = share.observed().expect("the share has a value") * u64::from(runs);
+    assert!(
+        summed <= total,
+        "the shares sum to {summed}, which is MORE than the {total} actually paid"
+    );
+    assert!(
+        total - summed < u64::from(runs),
+        "the shortfall is {}, which is not under one token per run ({runs}). The bound is what \
+         makes truncation safe to choose; without it the understatement is unbounded.",
+        total - summed
+    );
+}
+
+/// THIS ONE DOES NOT REDDEN — IT FAILS TO COMPILE, deliberately, and that is the point.
+///
+/// Raised by L's primary review, and it is the ironic one: the dimension table above is the guard
+/// against a cache key that silently omits an input, and the table itself was **maintained by
+/// hand** against the struct. Add a field to `ContextCacheKeyInputs` and every existing case still
+/// passes — the omitted dimension is exactly the failure the table exists to catch, arriving
+/// through the table.
+///
+/// The destructuring below has no `..`, so a new field stops this file compiling. A compile error
+/// cannot be read as a pass, cannot be skipped, and lands on the author rather than on whoever
+/// reads the report later. Then the count assertion forces the new name into the case list rather
+/// than letting it be named and left uncovered.
+///
+/// **If you are here because this stopped compiling, do not take rustc's advice.** Verified by
+/// sabotage — adding a field produced `error[E0027]: pattern does not mention field ...`, exactly
+/// once and here, with the tree restored afterwards. The compiler then offers two remedies:
+/// *"you can explicitly ignore it"* and *"or always ignore missing fields here"*. Both mean adding
+/// `..`, both make this compile again in one keystroke, and both silently delete the guard —
+/// leaving a cache key with a dimension nothing covers, which is a HIT across that dimension and a
+/// correct-looking cheap answer. The remedy is to add the field to the list below **and** give it
+/// a case in `dimension_cases`.
+#[test]
+fn every_field_of_the_key_inputs_has_a_dimension_case() {
+    let ContextCacheKeyInputs {
+        scope_project,
+        permissions,
+        repo_snapshot,
+        index_generation,
+        schema_id,
+        schema_version,
+        objective,
+        capsule_digest,
+        producer,
+        utilization_policy_version,
+    } = baseline();
+
+    // Bound so the destructuring cannot be dismissed as unused and quietly replaced with `..`.
+    let fields: [(&str, bool); 10] = [
+        ("scope_project", !scope_project.is_empty()),
+        ("permissions", !permissions.is_empty()),
+        ("repo_snapshot", !repo_snapshot.is_empty()),
+        ("index_generation", !index_generation.is_empty()),
+        ("schema_id", !schema_id.is_empty()),
+        ("schema_version", !schema_version.is_empty()),
+        ("objective", !objective.is_empty()),
+        ("capsule_digest", !capsule_digest.is_empty()),
+        ("producer", !producer.is_empty()),
+        ("utilization_policy_version", !utilization_policy_version.is_empty()),
+    ];
+
+    for (name, populated) in fields {
+        assert!(
+            populated,
+            "the baseline leaves `{name}` empty, so the case that mutates it may not be changing \
+             anything observable"
+        );
+        assert!(
+            dimension_cases().iter().any(|(case, _)| *case == name),
+            "`{name}` is a field of the cache key with no dimension case. A dimension with no case \
+             is not a weaker guard, it is no guard: an omitted dimension produces a cache HIT \
+             across it, which is a correct-looking cheap answer."
+        );
+    }
+
+    assert_eq!(
+        dimension_cases().len(),
+        fields.len(),
+        "there are {} dimension cases for {} fields. A case naming something that is not a field \
+         is dead weight claiming to be coverage.",
+        dimension_cases().len(),
+        fields.len()
     );
 }

@@ -169,6 +169,15 @@ wire_vocabulary! {
         // whoever landed on main first, then whoever is merging). At this merge, task-002's four
         // codes above (#267) were already on main, so this entry is appended AFTER them.
         UnsafeCompression => "unsafe_compression",
+        // A capsule item the result was required to rely on was never cited (#222). Distinct
+        // from citation_unresolved below, and the distinction is the operator response: here the
+        // evidence EXISTS and the answer does not connect to it, so the remedy is to cite it.
+        RequiredCitationMissing => "required_citation_missing",
+        // A citation names an item id the capsule does not contain (#222) -- citation spoofing.
+        // Item ids are content-derived, so an id nothing hashes to is a typo or a fabrication;
+        // the remedy is the OPPOSITE of the one above: stop citing what does not exist. Folding
+        // the two into one code would fold two opposite remedies into one instruction.
+        CitationUnresolved => "citation_unresolved",
     }
 }
 

@@ -1,0 +1,21 @@
+{
+  "case": "citation-resolves-to-no-item",
+  "why": "Every required item was cited, and the answer also cited an ID that no item hashes to. Item IDs are content-derived, so an ID nothing produces is a typo or a fabrication -- and either way it reads as provenance to any report that counts citations instead of resolving them. The remedy is the opposite of the missing case: stop citing what does not exist. This case must NOT emit required_citation_missing, or the operator is told to cite evidence they already cited.",
+  "capsuleUnderTest": "capsule-alpha",
+  "capsules": {
+    "capsule-alpha": {
+      "version": 1,
+      "items": [
+        {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+      ]
+    }
+  },
+  "requiredItems": [
+    {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+  ],
+  "citations": [
+    {"capsule": "capsule-alpha", "section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."},
+    {"literal": "item-00000000000000000000000000000000"}
+  ],
+  "expectedRefusalCodes": ["citation_unresolved"]
+}

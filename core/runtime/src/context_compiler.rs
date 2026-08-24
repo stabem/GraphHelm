@@ -40,12 +40,25 @@ pub fn item_id(
     format!("item-{}", hex::encode(&hasher.finalize()[..16]))
 }
 
-/// The section order the capsule schema declares, and therefore the only order the compiler may
-/// emit in.
+/// The sections this compiler emits, in the order it emits them.
 ///
-/// Alphabetical would also be deterministic and would be wrong: the schema is the authority on
-/// this document's shape, and a compiler that invents its own ordering has quietly become a
-/// second opinion about the contract.
+/// **The schema owns the set; this constant owns the order.** An earlier version of this comment
+/// claimed the schema declared the order too, which was a claim about the code that nothing
+/// verified — and measuring it showed it could not be true. The capsule schema names its sections
+/// in two places, `sections.required` (a JSON array) and `sections.properties` (a JSON object),
+/// and JSON Schema reads both as **sets**: order carries no meaning to a validator. There is no
+/// ordered authority in that document to defer to.
+///
+/// Binding the emitted order to the schema file's textual order would be worse than unfounded. Key
+/// order in JSON is not semantic, so reordering two keys is a no-op edit to every reader of the
+/// document — and it would silently change the bytes of every capsule this compiler produces,
+/// hence every digest binding one, hence every cache key holding one.
+///
+/// What the schema does own is which sections exist, and that agreement is now checked rather than
+/// asserted here: `the_compilers_section_set_is_the_capsule_schemas_section_set` in
+/// `core/runtime/tests/context_compiler.rs` fails when either side gains or loses a name. The
+/// order itself is held by the determinism guard in the same file — alphabetical would also be
+/// deterministic, and the point is not which order but that every caller obtains the same one.
 const DECLARED_SECTION_ORDER: [&str; 6] = [
     "projectKernel",
     "task",
@@ -76,6 +89,16 @@ const DECLARED_SECTION_ORDER: [&str; 6] = [
 /// One shared helper rather than a third copy of the rule: this change had already
 /// length-prefixed in two places, each with the reason written above it, and still shipped a
 /// third site that did not. A rule restated is a rule that can be forgotten at the next site.
+/// The section names this compiler treats as declared, in the order it emits them.
+///
+/// Exposed so the agreement with the capsule schema is *checked* rather than asserted in a comment.
+/// It returns a slice rather than the array so that callers cannot come to depend on the count, and
+/// the ordering stays an implementation choice of this module — what the schema is entitled to
+/// constrain is the set, and that is what the guard compares.
+pub fn declared_section_order() -> &'static [&'static str] {
+    &DECLARED_SECTION_ORDER
+}
+
 pub fn compile_capsule(
     capsule_id: &str,
     capsule_version: u32,
@@ -101,4 +124,234 @@ pub fn compile_capsule(
         }
     }
     out.into_bytes()
+}
+
+/// What happened when context was fitted to a token budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BudgetOutcome {
+    /// Everything required fits. `dropped_optional` counts what was left out, never silently.
+    Fits {
+        included: Vec<String>,
+        dropped_optional: usize,
+    },
+    /// Required context does not fit. Carries the allocated refusal code and what would fit.
+    Refused {
+        code: graphhelm_protocols::DevelopmentRefusalCode,
+        expansion: ExpansionRequest,
+    },
+}
+
+/// How much budget the required context actually needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpansionRequest {
+    pub required_budget: usize,
+}
+
+/// Fit context to a token budget, refusing rather than trimming what is required.
+///
+/// The asymmetry is the whole point. Optional context is droppable and its drops are COUNTED;
+/// required context is not droppable at any budget. An implementation that trims required items
+/// to fit **succeeds** — it returns a capsule, under budget, with every number healthy and
+/// without the evidence the caller was required to see. A refusal is visible; a silent trim is
+/// not, and the trimmed capsule flatters every metric this task reports.
+///
+/// The refusal carries both halves because they can go missing separately: the allocated code
+/// `context_budget_insufficient`, and an expansion request naming a budget that would actually
+/// fit. Refusing without saying how much more is needed leaves the operator with no move.
+///
+/// The code is deliberately not `cardinality_violation`: nothing here is malformed, and folding
+/// two causes with opposite operator responses — correct it, versus grant more budget — into one
+/// code is the flattening this milestone exists to remove.
+pub fn fit_within_budget(required: &[String], optional: &[String], budget: usize) -> BudgetOutcome {
+    let required_budget: usize = required.iter().map(String::len).sum();
+    if required_budget > budget {
+        return BudgetOutcome::Refused {
+            code: graphhelm_protocols::DevelopmentRefusalCode::ContextBudgetInsufficient,
+            expansion: ExpansionRequest { required_budget },
+        };
+    }
+
+    let mut included: Vec<String> = required.to_vec();
+    let mut used = required_budget;
+    let mut dropped_optional = 0usize;
+    for item in optional {
+        if used + item.len() <= budget {
+            used += item.len();
+            included.push(item.clone());
+        } else {
+            dropped_optional += 1;
+        }
+    }
+    BudgetOutcome::Fits {
+        included,
+        dropped_optional,
+    }
+}
+
+/// Whether a result's citations account for the capsule items it was required to rely on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CitationVerdict {
+    Accepted,
+    /// `missing` = required items nobody cited. `unknown` = citations the capsule cannot resolve.
+    /// Two lists rather than one count: they are different causes with different fixes.
+    Refused {
+        missing: Vec<String>,
+        unknown: Vec<String>,
+    },
+}
+
+impl CitationVerdict {
+    /// The allocated refusal codes this verdict carries, one per cause actually present.
+    ///
+    /// A list rather than a single code, because the two causes co-occur constantly and for one
+    /// reason: an answer citing something the capsule does not contain has usually also failed to
+    /// cite an item it was handed. Reporting the first and stopping gives the operator half a cure,
+    /// they apply it, and the verdict refuses again for the half they were never shown — which they
+    /// will then attribute to the fix they just made.
+    ///
+    /// Derived from the verdict rather than from the input lists, so an accepted result carries
+    /// nothing. A consumer counting refusals must not see two on a clean run.
+    pub fn refusal_codes(&self) -> Vec<graphhelm_protocols::DevelopmentRefusalCode> {
+        use graphhelm_protocols::DevelopmentRefusalCode as Code;
+        match self {
+            Self::Accepted => Vec::new(),
+            Self::Refused { missing, unknown } => {
+                let mut codes = Vec::new();
+                if !missing.is_empty() {
+                    codes.push(Code::RequiredCitationMissing);
+                }
+                if !unknown.is_empty() {
+                    codes.push(Code::CitationUnresolved);
+                }
+                codes
+            }
+        }
+    }
+}
+
+/// Check a result's citations against the capsule it was compiled from.
+///
+/// Two failures are reported separately because they are different causes with different fixes.
+/// **Missing** means a required item was never cited: the evidence exists and the answer does not
+/// connect to it, while the accounting downstream still counts the capsule as used, so utilization
+/// rises with nothing behind it. **Unknown** means a citation resolves to no capsule item at all —
+/// citation spoofing, which this task's threat assessment names. Item IDs are content-derived, so
+/// an ID nothing hashes to is a typo or a fabrication, and either way the citation reads as
+/// provenance in any report that counts citations instead of checking them.
+///
+/// Collapsing them into one count would make each read as the other, and the two have opposite
+/// remedies: cite the evidence, versus stop citing something that does not exist.
+pub fn verify_citations(
+    capsule_item_ids: &[String],
+    required_item_ids: &[String],
+    cited_item_ids: &[String],
+) -> CitationVerdict {
+    let missing: Vec<String> = required_item_ids
+        .iter()
+        .filter(|id| !cited_item_ids.contains(id))
+        .cloned()
+        .collect();
+    let unknown: Vec<String> = cited_item_ids
+        .iter()
+        .filter(|id| !capsule_item_ids.contains(id))
+        .cloned()
+        .collect();
+
+    if missing.is_empty() && unknown.is_empty() {
+        CitationVerdict::Accepted
+    } else {
+        CitationVerdict::Refused { missing, unknown }
+    }
+}
+
+/// What a delta capsule must carry about the base it was computed against.
+///
+/// A delta is not readable without its base: it is the increment, and read alone it looks exactly
+/// like a small complete capsule. That is the failure this type exists to make impossible — a delta
+/// whose provenance is lost gets applied to whatever base is at hand and **succeeds**, producing a
+/// capsule that is well-formed, under budget, and assembled from evidence the delta was never
+/// computed against.
+/// **A delta of a delta cannot be expressed here, and that is a limit of this slice rather than a
+/// decision about chaining.** The provenance names exactly one base and there is no composition
+/// operator, so `verify_delta_base` has no second hop to check and the four cases guarding it are
+/// exhaustive over what this type can build — four single-hop cells because single-hop is the
+/// whole space, not because the multi-hop cell was skipped. Raised on review, where the reviewer
+/// could not tell those two apart from the outside, which is the point of writing it down.
+///
+/// When chaining arrives, the case that has to arrive with it is the one this shape cannot fail:
+/// a chain whose every adjacent pair verifies while the chain as a whole does not reach the base
+/// it claims. Each hop is locally correct and the composition is not, which is invisible to a
+/// check that only ever sees one pair.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeltaProvenance {
+    pub base_capsule_id: String,
+    pub base_version: u32,
+    /// Digest over the base's compiled BYTES, not over its meaning. See `capsules_identical`.
+    pub base_digest: String,
+}
+
+/// Why a delta could not be applied to the base it was offered.
+///
+/// Three variants rather than one "base mismatch", because the operator response differs for each
+/// and the third is invisible if folded into the others.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeltaBaseRefusal {
+    /// The delta was computed against a different capsule entirely. Usually a routing mistake.
+    DifferentCapsule { expected: String, offered: String },
+    /// The right capsule, the wrong revision. The delta may still be recomputable against this one.
+    DifferentVersion { expected: u32, offered: u32 },
+    /// Same identity, different bytes: the base was **rewritten underneath the delta**. Nothing in
+    /// the identity can show this, which is why the digest is carried at all — and why this cause
+    /// must not be folded into the two above, whose remedy is to find the right base. Here the
+    /// right base is the one in hand, and it is no longer the one the delta was computed from.
+    BaseRewritten { expected: String, actual: String },
+}
+
+/// Check that a delta's provenance names the base actually offered.
+///
+/// Digest first would be tempting and wrong: a digest mismatch is also what a completely different
+/// capsule produces, so checking it first reports every routing mistake as a rewritten base and the
+/// distinction dies. Identity is checked first so `BaseRewritten` means what it says.
+///
+/// The digest is checked last and is the only cause identity cannot see: same capsule, same
+/// version, different bytes means the base was rewritten underneath the delta, and every identity
+/// check downstream agrees while the applied result is assembled from evidence the delta was never
+/// computed against.
+pub fn verify_delta_base(
+    delta: &DeltaProvenance,
+    base_capsule_id: &str,
+    base_version: u32,
+    base_bytes: &[u8],
+) -> Result<(), DeltaBaseRefusal> {
+    if delta.base_capsule_id != base_capsule_id {
+        return Err(DeltaBaseRefusal::DifferentCapsule {
+            expected: delta.base_capsule_id.clone(),
+            offered: base_capsule_id.to_owned(),
+        });
+    }
+    if delta.base_version != base_version {
+        return Err(DeltaBaseRefusal::DifferentVersion {
+            expected: delta.base_version,
+            offered: base_version,
+        });
+    }
+    let actual = base_digest(base_bytes);
+    if delta.base_digest != actual {
+        return Err(DeltaBaseRefusal::BaseRewritten {
+            expected: delta.base_digest.clone(),
+            actual,
+        });
+    }
+    Ok(())
+}
+
+/// The digest a `DeltaProvenance` must carry for a given base.
+///
+/// Over the compiled bytes, deliberately: a canonical digest is blind to written order by design,
+/// so a base that was reserialised into a different order would pass while the delta's positions
+/// no longer describe it.
+pub fn base_digest(base_bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(base_bytes);
+    format!("sha256:{}", hex::encode(hasher.finalize()))
 }

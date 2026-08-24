@@ -1,5 +1,25 @@
 //! Context Capsule accounting (#222).
 //!
+//! # Declared gap: eight of the nine cost categories are not here
+//!
+//! #222's criterion names nine things that must be counted — orientation, zero results, pages,
+//! retries, fallbacks, summaries, compiled input, output, and formatting — plus cold and amortized
+//! index cost reported separately. **This module implements the index pair and the receipt
+//! mechanism, and nothing for the other eight.** Measured rather than estimated: a
+//! case-insensitive sweep of this file for each category name returns zero for all eight, against
+//! fifteen hits for `index` and eleven for `amortiz` as the live positive control. The two hits for
+//! `output` and three for `format` are the word `format!`, not a category.
+//!
+//! It is written here because an undeclared gap and an implemented category read identically from
+//! outside: both are silence. A reader summing this receipt would get a number that looks total.
+//!
+//! **Condition for closing it, and who owns it.** The eight are all costs of *retrieval*, and this
+//! slice has no retriever — no production caller constructs anything in this module, measured as
+//! zero call sites outside the tests. They become writable when a caller wires compilation to a
+//! retrieval path, which is #219's surface, not this one. Owner is whoever lands that wiring; the
+//! shape to reuse is `CostField`, which already forces each number to carry how it came to exist,
+//! so the eight arrive with provenance or not at all.
+//!
 //! Every type here exists to keep two states apart that a careless representation folds into one:
 //! a measured zero versus nothing measured, a real run versus a capsule that was only built, an
 //! omitted cache dimension versus a miss. In each pair the flattened form fails in the direction
@@ -27,7 +47,19 @@ pub struct ContextCacheKeyInputs {
     pub schema_version: String,
     /// The objective the capsule was compiled for.
     pub objective: String,
-    /// Digest of the bound capsule. Note this is over CONTENT, which is why `producer` is separate.
+    /// Digest of the bound capsule, over CONTENT — which is why `producer` is a separate dimension.
+    ///
+    /// **This is a requirement on the caller, not a description of the value.** Measured while J
+    /// audited the claim: the only construction of this field anywhere in the repository is a test
+    /// literal, so there is no producer to read and nothing enforces what a caller puts here. A
+    /// field whose meaning lives only in its doc comment is a convention, and a convention is what
+    /// the first caller decides it is.
+    ///
+    /// The value must be `context_compiler::base_digest(compiled_bytes)` — over the compiled
+    /// **bytes**, not over a canonical form. A canonical digest is blind to written order by
+    /// design, so keying on one would make two capsules that serialise differently share a cache
+    /// entry, which is the cross-caller determinism this compiler exists to provide, defeated at
+    /// the cache instead of at the compiler.
     pub capsule_digest: String,
     /// `ArtifactBinding::producer`. NOT subsumed by `capsule_digest`: two producers emitting
     /// byte-identical capsules share a digest, so keying on content alone would let a less-trusted
@@ -236,3 +268,91 @@ impl AccountingReceipt {
         self.fields.iter().find(|(n, _)| n == name).map(|(_, f)| f)
     }
 }
+
+/// Index cost, in the two shapes that must never become one number.
+///
+/// The acceptance criterion asks for cold and amortized index cost **reported separately**, and the
+/// reason is not presentation. They answer different questions and fail in opposite directions. A
+/// cold cost is what this run actually paid to make an index usable: somebody watched it happen. An
+/// amortized share is arithmetic over a cost paid earlier by a run that is not this one — nobody
+/// observed this run paying it, and no observer can be named for it.
+///
+/// Summed, they produce a number that is neither: too large to be what this run paid and too small
+/// to be what the index cost, and reported under whichever provenance the summing code happened to
+/// pick. The type keeps them apart so the sum has to be written on purpose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexCost {
+    /// Paid by this run, observed by `producer`.
+    Cold { tokens: u64, producer: String },
+    /// A share of a cost paid earlier, spread over the runs that use it.
+    AmortizedShare { total_tokens: u64, runs_sharing: u32 },
+}
+
+impl IndexCost {
+    pub fn cold(tokens: u64, producer: &str) -> Self {
+        Self::Cold {
+            tokens,
+            producer: producer.to_owned(),
+        }
+    }
+
+    /// An amortized share, refusing a denominator of zero and **truncating the remainder**.
+    ///
+    /// The truncation is a decision, not an artefact of writing `/`. Raised on review: every
+    /// fixture here divides exactly (900 over 3), so nothing made the behaviour visible, and a
+    /// reader could not tell a chosen policy from an unnoticed one. It is chosen, and this is the
+    /// property that makes it safe to choose: **the shares sum to at most the real cost, never
+    /// more, and the shortfall is strictly less than `runs_sharing` tokens in total** — one token
+    /// per run at worst, spread across the whole fleet that shares one index.
+    ///
+    /// The direction is the reason. Rounding up would let the reported cost of an index exceed
+    /// what was ever paid for it, and a cost line that can overstate is one a reader cannot use to
+    /// bound anything. Understating by less than a token per run is a floor that still holds.
+    ///
+    /// `an_amortized_share_truncates_and_the_loss_is_bounded` pins it with a denominator that does
+    /// not divide, so a future change to rounding has to change that test on purpose.
+    ///
+    /// Zero runs sharing is not a small number, it is an undefined one: dividing by it produces no
+    /// value, and a "share" of a cost nothing uses is a category error rather than a rounding
+    /// problem. The refusal is at construction so no later reader has to check.
+    pub fn amortized(total_tokens: u64, runs_sharing: u32) -> Result<Self, String> {
+        if runs_sharing == 0 {
+            return Err(format!(
+                "an amortized share of {total_tokens} tokens over ZERO runs has no value: the \
+                 denominator is what makes a share checkable, and a share of a cost nothing uses \
+                 is not a small number, it is an undefined one. Report the cost as cold against \
+                 the run that paid it, or name the runs it is spread over."
+            ));
+        }
+        Ok(Self::AmortizedShare {
+            total_tokens,
+            runs_sharing,
+        })
+    }
+
+    /// The receipt line this cost becomes, carrying the provenance the cost actually has.
+    ///
+    /// Cold is `measured` and names the component that watched the work. An amortized share is
+    /// `derived`, and this is the load-bearing half: nobody observed *this* run paying it. Marked
+    /// measured it would acquire an observer that watched nothing, and a reader auditing which
+    /// numbers were seen would get a yes for a number that was computed.
+    ///
+    /// The basis records the arithmetic rather than only its result, so the share stays checkable:
+    /// a share without its denominator is a number nobody can re-derive or contradict.
+    pub fn as_cost_field(&self) -> CostField {
+        match self {
+            Self::Cold { tokens, producer } => CostField::measured(*tokens, producer),
+            Self::AmortizedShare {
+                total_tokens,
+                runs_sharing,
+            } => CostField::derived(
+                total_tokens / u64::from(*runs_sharing),
+                &format!("{total_tokens} tokens spread over {runs_sharing} runs sharing the index"),
+            ),
+        }
+    }
+}
+
+/// The receipt field names index cost is reported under. There is deliberately no `index_cost`.
+pub const INDEX_COST_COLD_FIELD: &str = "index_cost_cold";
+pub const INDEX_COST_AMORTIZED_FIELD: &str = "index_cost_amortized";

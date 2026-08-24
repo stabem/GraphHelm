@@ -60,7 +60,7 @@
           "id": "schema/development-envelope",
           "kind": "schema",
           "path": "schemas/development-envelope.schema.json",
-          "sha256": "sha256:ee3415257fd82b000c437b0439f2329cd435838a13807b363ffacdfc49571cff",
+          "sha256": "sha256:148eb7892ffc687d78427879855e053d0a5da3fdf4158bb1c37089a67070ee05",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -456,6 +456,58 @@
           "kind": "fixture",
           "path": "fixtures/owner-output/negative/secret-in-slot-value.json",
           "sha256": "sha256:7011d1125993bace070e16848629dcce492566982a1f8ca562766c1a9f727474",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "schema/context-citation-case",
+          "kind": "schema",
+          "path": "schemas/context-citation-case.schema.json",
+          "sha256": "sha256:e4ab18e1b74d076c0ccf67a101720928f83c974ee1b7794675f86f68b54de017",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/context-required-citation-missing",
+          "kind": "fixture",
+          "path": "fixtures/context/required-citation-missing.json",
+          "sha256": "sha256:a072cee373a7bda041333b6af3aa243947da074daf63a2f7d00b5ae3613b80e7",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/context-citation-resolves-to-no-item",
+          "kind": "fixture",
+          "path": "fixtures/context/citation-resolves-to-no-item.json",
+          "sha256": "sha256:31dc6573185c882b62bbb5a5d4688a126223aa68bf12ce837a948ca41f39b251",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/context-citation-belongs-to-another-capsule",
+          "kind": "fixture",
+          "path": "fixtures/context/citation-belongs-to-another-capsule.json",
+          "sha256": "sha256:bec056ce0b15f4f3570287ba58dc5c9c7cb638072a35c20403c95a3a721ea792",
           "effects": [],
           "permissions": [],
           "requires": {

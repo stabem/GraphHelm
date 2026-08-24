@@ -1422,3 +1422,166 @@ fn a_horizon_half_a_second_later_is_stored_as_later() {
         earlier.matures_at
     );
 }
+
+
+// -------------------------------------------------------------------------------------------
+// M11 #160: the customs pipeline's fold-grain guards.
+//
+// EVERY fixture here appends ONE batch. That is not a style preference: `append()` opens a fresh
+// repository and always asks for `expected_next_sequence = 1`, so two calls produce two events
+// numbered 1 and a journal no real stream could contain. A guard whose arrangement cannot exist
+// proves nothing about the product, and would break the moment anything validated sequence
+// continuity — while being wrong about ITSELF, not about the code. (Found by J reading this file
+// for #161, whose own cells are ORDERINGS and therefore could not be expressed at all under
+// restarting sequences.)
+//
+// Sequences are PREDICTED from batch position and then CHECKED against the appended envelopes, so
+// the prediction is an assertion rather than an assumption.
+// -------------------------------------------------------------------------------------------
+
+const CUSTOMS_NODE: &str = "implementation";
+
+fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent {
+    event(
+        key.to_owned(),
+        EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            node_id: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
+            outcome,
+            next_state,
+            reason: None,
+        }),
+    )
+}
+
+/// Drives `implementation` to a parked wait: execution start, dispatch, run, park.
+///
+/// Returns the batch so the caller can keep stacking events into the SAME append. The parking
+/// event is the last entry, so its sequence is the batch's length — predicted here, checked by
+/// [`sequence_of`] once the batch is appended.
+fn parked_batch() -> Vec<NewEvent> {
+    vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        outcome_event("dispatch", Outcome::Started, NodeState::Queued),
+        outcome_event("run", Outcome::Started, NodeState::Running),
+        outcome_event("park", Outcome::NeedsInput, NodeState::WaitingInput),
+    ]
+}
+
+// =================================================================================================
+// M11 #161 (lane 2) — clearance and the countersign identity registry.
+//
+// EVERY fixture below appends ONE batch. That is not style: `append()` opens a fresh store and
+// always asks for first-sequence 1, so two calls produce two events numbered 1 and the combined
+// vector carries restarting sequences. This family's whole thesis is SEQUENCE AS IDENTITY — which
+// wait, which claim, which registration came first — so a fixture whose sequences restart cannot
+// express the orderings these cells are about. Positions inside the single batch ARE the
+// sequences, captured as the list is built.
+// =================================================================================================
+
+/// The parked arrangement as NewEvents (not yet appended) plus the sequence the parking outcome
+/// will occupy, so a caller keeps adding to the SAME batch.
+
+fn identity_registered(key: &str, identity: &str, fingerprint: &str) -> NewEvent {
+    event(
+        key,
+        EventKind::ClearanceIdentityRegistered(graphhelm_protocols::ClearanceIdentityRegistered {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            identity: OpaqueId::parse(identity).unwrap(),
+            key_fingerprint: WireHash::parse(format!("sha256:{}", fingerprint.repeat(64))).unwrap(),
+        }),
+    )
+}
+
+fn identity_revoked(key: &str, identity: &str) -> NewEvent {
+    event(
+        key,
+        EventKind::ClearanceIdentityRevoked(graphhelm_protocols::ClearanceIdentityRevoked {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            identity: OpaqueId::parse(identity).unwrap(),
+        }),
+    )
+}
+
+
+/// The registry half, exercised WITHOUT the customs prelude — the part of this lane that is
+/// testable today, found by H's review.
+///
+/// It matters that this one RUNS while the clearance cells cannot: `clearance_identity_*` are
+/// declared in the schema, so a batch containing only them is appendable, while every cell about
+/// a CLEARANCE drags `completion_claimed` + `completion_cleared`, which are not. So the lane's
+/// blockage is PARTIAL, not total, and this is the piece on the free side of the line.
+///
+/// What it does NOT do, stated so nobody reads it as more: it exercises the register/revoke fold
+/// arms and their determinism. It does NOT test membership-at-N, because that property only
+/// becomes observable when a clearance is VALIDATED at N — and validating a clearance is exactly
+/// what is not implemented yet. A green here is coverage of the accumulator, never of the rule.
+#[test]
+fn the_identity_registry_folds_deterministically_and_revocation_removes() {
+    let mut batch = parked_batch();
+    // `auditor-a` is the composite: registered, revoked, registered again with new key material.
+    batch.push(identity_registered("reg-a", "auditor-a", "b"));
+    // `auditor-b` is never touched again.
+    batch.push(identity_registered("reg-b", "auditor-b", "c"));
+    batch.push(identity_revoked("rev-a", "auditor-a"));
+    batch.push(identity_registered("reg-a2", "auditor-a", "d"));
+    // `auditor-c` is revoked and NEVER restored. Without this identity the fixture is blind to a
+    // revoke that does nothing, because on `auditor-a` a no-op revoke is invisible: the later
+    // registration overwrites to the same value whether or not the remove happened.
+    batch.push(identity_registered("reg-c", "auditor-c", "e"));
+    batch.push(identity_revoked("rev-c", "auditor-c"));
+    // `auditor-d` rotates its key with NO revocation in between. Without this identity the fixture
+    // is blind to first-write-wins, because every other overwrite here follows a `remove`, which
+    // leaves an empty slot that a first-write-wins insert fills identically.
+    batch.push(identity_registered("reg-d", "auditor-d", "f"));
+    batch.push(identity_registered("reg-d2", "auditor-d", "0"));
+
+    let appended = append(batch);
+    let first = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+    let second = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+
+    assert_eq!(
+        first, second,
+        "the same journal folds to the same registry every time"
+    );
+    assert!(
+        first.clearance_registry.contains_key("auditor-b"),
+        "a registration that was never revoked survives: {:?}",
+        first.clearance_registry
+    );
+    assert!(
+        !first.clearance_registry.contains_key("auditor-c"),
+        "a revocation with no later registration leaves NOTHING behind, which is the only \
+         assertion here that a do-nothing revoke can fail: {:?}",
+        first.clearance_registry
+    );
+    assert_eq!(
+        first
+            .clearance_registry
+            .get("auditor-d")
+            .map(|hash| hash.as_str().to_owned()),
+        Some(format!("sha256:{}", "0".repeat(64))),
+        "a rotation with no revocation between the two registrations keeps the LAST fingerprint, \
+         which is the only assertion here that first-write-wins can fail: {:?}",
+        first.clearance_registry
+    );
+    assert_eq!(
+        first
+            .clearance_registry
+            .get("auditor-a")
+            .map(|hash| hash.as_str().to_owned()),
+        Some(format!("sha256:{}", "d".repeat(64))),
+        "re-registering after a revocation restores the identity with the NEW fingerprint, \
+         because a rotation is a register and the last one before the cursor is the one that \
+         counts: {:?}",
+        first.clearance_registry
+    );
+}

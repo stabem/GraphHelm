@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use graphhelm_protocols::Diagnostic;
+use graphhelm_protocols::{Diagnostic, EventKind};
 use graphhelm_schema::OfflineSchemaSet;
 use graphhelm_schema_evolution::{
     ConformanceResources, ConformanceSuite, MAX_CONFORMANCE_CASES, run_conformance,
@@ -884,220 +884,19 @@ fn serde_tagged_event_kind_serializes_validates_and_round_trips_nested() {
 
 // Prevents adding a legacy/import receipt branch or silently dropping replay-critical fields from
 // any safe event variant.
+//
+// THE NAME NO LONGER CARRIES A COUNT, and that is the repair rather than tidiness: a name that
+// states a number goes stale silently, and this one had (twenty-five in the name, more in the
+// enum). What the suite promises is coverage, and coverage is now asserted where it can fail.
 #[test]
-fn all_twenty_five_event_variants_are_complete_closed_and_replay_safe() {
-    let variants = [
-        (
-            "graph_imported",
-            json!({"sourceSha256": raw_digest(), "sourceKind": "graph_document"}),
-            false,
-        ),
-        (
-            "graph_validation_failed",
-            json!({"diagnostics": [safe_diagnostic()]}),
-            false,
-        ),
-        (
-            "graph_version_published",
-            json!({"version": persisted_graph_version()}),
-            false,
-        ),
-        (
-            "draft_proposed",
-            json!({
-                "draftId": "draft-test",
-                "expectedVersion": 1,
-                "expectedHash": wire_hash(),
-                "operationCount": 1
-            }),
-            false,
-        ),
-        (
-            "draft_rejected",
-            json!({
-                "draftId": "draft-test",
-                "reasonCode": "policy_blocked",
-                "diagnostics": [safe_diagnostic()],
-                "detailEvidenceId": "evidence-rejection"
-            }),
-            false,
-        ),
-        (
-            "draft_applied",
-            json!({"draftId": "draft-test", "graphVersion": 2, "graphHash": wire_hash()}),
-            false,
-        ),
-        (
-            "policy_obligation_evaluated",
-            json!({
-                "draftId": "draft-test",
-                "requirementId": "review",
-                "status": "waived",
-                "evidenceIds": ["evidence-review"],
-                "reasonCode": "owner_override",
-                "overrideable": true
-            }),
-            false,
-        ),
-        (
-            "policy_waiver_created",
-            json!({"waiver": {
-                "id": "waiver-test",
-                "requirement": "review",
-                "executionId": "execution-test",
-                "graphVersion": 2,
-                "actor": "owner-test",
-                "acknowledgedRisks": ["unreviewed change"],
-                "scope": "execution",
-                "createdAt": "2026-08-09T00:00:00Z",
-                "expiresAt": null
-            }}),
-            false,
-        ),
-        ("simulation_started", simulation_started_payload(), false),
-        (
-            "node_state_changed",
-            json!({
-                "simulationId": "simulation-test",
-                "nodeId": "node-test",
-                "previousState": "waiting_capacity",
-                "nextState": "succeeded"
-            }),
-            false,
-        ),
-        (
-            "simulation_completed",
-            json!({"simulationId": "simulation-test", "status": "blocked"}),
-            false,
-        ),
-        (
-            "execution_started",
-            json!({
-                "executionId": "execution-test",
-                "graphVersion": 2,
-                "graphHash": wire_hash(),
-                "mode": "supervised"
-            }),
-            false,
-        ),
-        (
-            "execution_mode_changed",
-            json!({
-                "executionId": "execution-test",
-                "previousMode": null,
-                "mode": "manual"
-            }),
-            false,
-        ),
-        (
-            "node_outcome_recorded",
-            json!({
-                "executionId": "execution-test",
-                "nodeId": "node-test",
-                "outcome": "succeeded",
-                "nextState": "succeeded"
-            }),
-            false,
-        ),
-        (
-            "execution_completed",
-            json!({"executionId": "execution-test", "status": "completed"}),
-            false,
-        ),
-        (
-            "signal_recorded",
-            json!({
-                "executionId": "execution-test",
-                "signalId": "signal-test",
-                "sourceKind": "node",
-                "sourceId": "node-test",
-                "kind": "unexpected_dependency",
-                "severity": "high",
-                "envelopeSha256": raw_digest()
-            }),
-            false,
-        ),
-        (
-            "ghost_node_proposed",
-            json!({
-                "executionId": "execution-test",
-                "nodeId": "ghost-test",
-                "draftId": "draft-test"
-            }),
-            false,
-        ),
-        (
-            "mutation_accepted",
-            json!({
-                "executionId": "execution-test",
-                "draftId": "draft-test",
-                "mode": "autopilot",
-                "graphVersion": 4
-            }),
-            false,
-        ),
-        (
-            "execution_paused",
-            json!({"executionId": "execution-test"}),
-            false,
-        ),
-        (
-            "execution_resumed",
-            json!({"executionId": "execution-test"}),
-            false,
-        ),
-        (
-            "integrity_checkpoint_created",
-            json!({
-                "streamId": "stream-test",
-                "sequence": 1,
-                "eventHash": wire_hash(),
-                "repositoryFormat": "1.0.0",
-                "authenticationTag": {
-                    "keyId": "integrity-key",
-                    "algorithm": "hmac-sha256",
-                    "tagSha256": raw_digest()
-                }
-            }),
-            true,
-        ),
-        (
-            "evidence_erasure_requested",
-            erasure_requested_payload(),
-            true,
-        ),
-        (
-            "evidence_erasure_completed",
-            erasure_completed_payload(),
-            true,
-        ),
-        (
-            "evidence_ciphertext_deleted",
-            json!({
-                "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
-                "operationId": "erasure-operation-test",
-                "evidenceId": "evidence-test",
-                "ciphertextSha256": raw_digest(),
-                "deletedAt": "2026-08-09T02:00:00Z"
-            }),
-            true,
-        ),
-        (
-            "evidence_legal_hold_changed",
-            json!({
-                "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
-                "holdId": "hold-test",
-                "evidenceId": "evidence-test",
-                "authority": "compliance-test",
-                "reasonCode": "litigation",
-                "state": "placed",
-                "changedAt": "2026-08-09T00:00:00Z"
-            }),
-            true,
-        ),
-    ];
+fn every_listed_event_variant_is_complete_closed_and_replay_safe() {
+    let variants = conformance_table();
 
-    assert_eq!(variants.len(), 25);
+    // No length literal: a hand-maintained count is the mechanism that failed here (it
+    // compared this table's length to 25 while the enum had grown past it, so unlisted
+    // variants were invisible). COVERAGE is asserted against the enum instead, by name, in
+    // `every_event_variant_appears_in_the_conformance_table`.
+    assert!(!variants.is_empty());
     for (kind, data, project_scoped) in variants {
         let event = event_envelope(kind, data, project_scoped);
         let diagnostics = validate_current_schema("event-envelope", &event);
@@ -1757,4 +1556,341 @@ fn missing_resource_always_fails_closed() {
     assert!(!report.ok);
     assert_eq!((report.passed, report.failed), (0, 1));
     assert_eq!(report.diagnostics[0].code, "GHCONF001_FIXTURE_FAILED");
+}
+
+
+/// The conformance table: one (wire name, payload, project-scoped) row per event variant.
+///
+/// Extracted from the test body so the COVERAGE assertion and the REPLAY-SAFETY walk read the
+/// same rows. Two copies would drift, which is the defect this whole change exists to remove —
+/// repeating it one level up while fixing it would be its own joke.
+fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
+    vec![
+        (
+            "graph_imported",
+            json!({"sourceSha256": raw_digest(), "sourceKind": "graph_document"}),
+            false,
+        ),
+        (
+            "graph_validation_failed",
+            json!({"diagnostics": [safe_diagnostic()]}),
+            false,
+        ),
+        (
+            "graph_version_published",
+            json!({"version": persisted_graph_version()}),
+            false,
+        ),
+        (
+            "draft_proposed",
+            json!({
+                "draftId": "draft-test",
+                "expectedVersion": 1,
+                "expectedHash": wire_hash(),
+                "operationCount": 1
+            }),
+            false,
+        ),
+        (
+            "draft_rejected",
+            json!({
+                "draftId": "draft-test",
+                "reasonCode": "policy_blocked",
+                "diagnostics": [safe_diagnostic()],
+                "detailEvidenceId": "evidence-rejection"
+            }),
+            false,
+        ),
+        (
+            "draft_applied",
+            json!({"draftId": "draft-test", "graphVersion": 2, "graphHash": wire_hash()}),
+            false,
+        ),
+        (
+            "policy_obligation_evaluated",
+            json!({
+                "draftId": "draft-test",
+                "requirementId": "review",
+                "status": "waived",
+                "evidenceIds": ["evidence-review"],
+                "reasonCode": "owner_override",
+                "overrideable": true
+            }),
+            false,
+        ),
+        (
+            "policy_waiver_created",
+            json!({"waiver": {
+                "id": "waiver-test",
+                "requirement": "review",
+                "executionId": "execution-test",
+                "graphVersion": 2,
+                "actor": "owner-test",
+                "acknowledgedRisks": ["unreviewed change"],
+                "scope": "execution",
+                "createdAt": "2026-08-09T00:00:00Z",
+                "expiresAt": null
+            }}),
+            false,
+        ),
+        ("simulation_started", simulation_started_payload(), false),
+        (
+            "node_state_changed",
+            json!({
+                "simulationId": "simulation-test",
+                "nodeId": "node-test",
+                "previousState": "waiting_capacity",
+                "nextState": "succeeded"
+            }),
+            false,
+        ),
+        (
+            "simulation_completed",
+            json!({"simulationId": "simulation-test", "status": "blocked"}),
+            false,
+        ),
+        (
+            "execution_started",
+            json!({
+                "executionId": "execution-test",
+                "graphVersion": 2,
+                "graphHash": wire_hash(),
+                "mode": "supervised"
+            }),
+            false,
+        ),
+        (
+            "execution_mode_changed",
+            json!({
+                "executionId": "execution-test",
+                "previousMode": null,
+                "mode": "manual"
+            }),
+            false,
+        ),
+        (
+            "node_outcome_recorded",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "node-test",
+                "outcome": "succeeded",
+                "nextState": "succeeded"
+            }),
+            false,
+        ),
+        (
+            "execution_completed",
+            json!({"executionId": "execution-test", "status": "completed"}),
+            false,
+        ),
+        (
+            "signal_recorded",
+            json!({
+                "executionId": "execution-test",
+                "signalId": "signal-test",
+                "sourceKind": "node",
+                "sourceId": "node-test",
+                "kind": "unexpected_dependency",
+                "severity": "high",
+                "envelopeSha256": raw_digest()
+            }),
+            false,
+        ),
+        (
+            "ghost_node_proposed",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "ghost-test",
+                "draftId": "draft-test"
+            }),
+            false,
+        ),
+        (
+            "mutation_accepted",
+            json!({
+                "executionId": "execution-test",
+                "draftId": "draft-test",
+                "mode": "autopilot",
+                "graphVersion": 4
+            }),
+            false,
+        ),
+        (
+            "execution_paused",
+            json!({"executionId": "execution-test"}),
+            false,
+        ),
+        (
+            "execution_resumed",
+            json!({"executionId": "execution-test"}),
+            false,
+        ),
+        (
+            "integrity_checkpoint_created",
+            json!({
+                "streamId": "stream-test",
+                "sequence": 1,
+                "eventHash": wire_hash(),
+                "repositoryFormat": "1.0.0",
+                "authenticationTag": {
+                    "keyId": "integrity-key",
+                    "algorithm": "hmac-sha256",
+                    "tagSha256": raw_digest()
+                }
+            }),
+            true,
+        ),
+        (
+            "evidence_erasure_requested",
+            erasure_requested_payload(),
+            true,
+        ),
+        (
+            "evidence_erasure_completed",
+            erasure_completed_payload(),
+            true,
+        ),
+        (
+            "evidence_ciphertext_deleted",
+            json!({
+                "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
+                "operationId": "erasure-operation-test",
+                "evidenceId": "evidence-test",
+                "ciphertextSha256": raw_digest(),
+                "deletedAt": "2026-08-09T02:00:00Z"
+            }),
+            true,
+        ),
+        (
+            "evidence_legal_hold_changed",
+            json!({
+                "evidenceScope": {"workspaceId":"workspace-test","projectId":"project-test","executionId":"execution-test"},
+                "holdId": "hold-test",
+                "evidenceId": "evidence-test",
+                "authority": "compliance-test",
+                "reasonCode": "litigation",
+                "state": "placed",
+                "changedAt": "2026-08-09T00:00:00Z"
+            }),
+            true,
+        ),
+    ]
+}
+
+
+/// The wire name of every `EventKind` variant, in a match the COMPILER checks for exhaustiveness.
+///
+/// This exists to be impossible to leave stale. Rust has no runtime reflection over variants, so
+/// the honest substitute is a total match: adding a variant to `EventKind` without adding it here
+/// FAILS TO COMPILE — the loudest signal available, and the one a forgotten list cannot give.
+fn wire_name(kind: &EventKind) -> &'static str {
+    match kind {
+        EventKind::GraphImported(_) => "graph_imported",
+        EventKind::GraphValidationFailed(_) => "graph_validation_failed",
+        EventKind::GraphVersionPublished(_) => "graph_version_published",
+        EventKind::DraftProposed(_) => "draft_proposed",
+        EventKind::DraftRejected(_) => "draft_rejected",
+        EventKind::DraftApplied(_) => "draft_applied",
+        EventKind::PolicyObligationEvaluated(_) => "policy_obligation_evaluated",
+        EventKind::PolicyWaiverCreated(_) => "policy_waiver_created",
+        EventKind::SimulationStarted(_) => "simulation_started",
+        EventKind::NodeStateChanged(_) => "node_state_changed",
+        EventKind::SimulationCompleted(_) => "simulation_completed",
+        EventKind::ExecutionStarted(_) => "execution_started",
+        EventKind::ExecutionFormDeclared(_) => "execution_form_declared",
+        EventKind::ExecutionFormAmended(_) => "execution_form_amended",
+        EventKind::ExecutionModeChanged(_) => "execution_mode_changed",
+        EventKind::NodeOutcomeRecorded(_) => "node_outcome_recorded",
+        EventKind::ExecutionCompleted(_) => "execution_completed",
+        EventKind::SignalRecorded(_) => "signal_recorded",
+        EventKind::GhostNodeProposed(_) => "ghost_node_proposed",
+        EventKind::MutationAccepted(_) => "mutation_accepted",
+        EventKind::ExecutionPaused(_) => "execution_paused",
+        EventKind::ExecutionResumed(_) => "execution_resumed",
+        EventKind::IntegrityCheckpointCreated(_) => "integrity_checkpoint_created",
+        EventKind::EvidenceErasureRequested(_) => "evidence_erasure_requested",
+        EventKind::EvidenceErasureCompleted(_) => "evidence_erasure_completed",
+        EventKind::EvidenceCiphertextDeleted(_) => "evidence_ciphertext_deleted",
+        EventKind::EvidenceLegalHoldChanged(_) => "evidence_legal_hold_changed",
+        EventKind::ReuseDecision(_) => "reuse_decision",
+        EventKind::WakeLease(_) => "wake_lease",
+        EventKind::WakeLeaseConsumed(_) => "wake_lease_consumed",
+        EventKind::GateVerdict(_) => "gate_verdict",
+        EventKind::GateCertified(_) => "gate_certified",
+        EventKind::CompletionClaimed(_) => "completion_claimed",
+        EventKind::CompletionCleared(_) => "completion_cleared",
+        EventKind::CompletionRejected(_) => "completion_rejected",
+        EventKind::CompletionRefused(_) => "completion_refused",
+        EventKind::OverdueException(_) => "overdue_exception",
+        EventKind::SweepPerformed(_) => "sweep_performed",
+    }
+}
+
+/// Every wire name the enum can produce.
+///
+/// Listed a second time deliberately, and the PAIR is the mechanism: the match above makes the
+/// compiler demand a name for each variant, and this list lets the coverage assertion enumerate
+/// without instances (which Rust cannot do). A name here that the table lacks fails by NAME below;
+/// a variant the match lacks fails at compile time. Neither can pass silently, which is the whole
+/// difference from the count this replaces.
+const EVERY_WIRE_NAME: &[&str] = &[
+    "graph_imported",
+    "graph_validation_failed",
+    "graph_version_published",
+    "draft_proposed",
+    "draft_rejected",
+    "draft_applied",
+    "policy_obligation_evaluated",
+    "policy_waiver_created",
+    "simulation_started",
+    "node_state_changed",
+    "simulation_completed",
+    "execution_started",
+    "execution_form_declared",
+    "execution_form_amended",
+    "execution_mode_changed",
+    "node_outcome_recorded",
+    "execution_completed",
+    "signal_recorded",
+    "ghost_node_proposed",
+    "mutation_accepted",
+    "execution_paused",
+    "execution_resumed",
+    "integrity_checkpoint_created",
+    "evidence_erasure_requested",
+    "evidence_erasure_completed",
+    "evidence_ciphertext_deleted",
+    "evidence_legal_hold_changed",
+    "reuse_decision",
+    "wake_lease",
+    "wake_lease_consumed",
+    "gate_verdict",
+    "gate_certified",
+    "completion_claimed",
+    "completion_cleared",
+    "completion_rejected",
+    "completion_refused",
+    "overdue_exception",
+    "sweep_performed",
+];
+
+/// THE COVERAGE MECHANISM (#160): every variant the enum can produce appears in the conformance
+/// table, asserted BY NAME so the failure says which one is missing.
+///
+/// What it replaces could not fail: `assert_eq!(variants.len(), 25)` compared this table's length
+/// to a literal while the enum had grown past it, so unlisted variants were invisible to the suite
+/// that claimed to cover them. (#167 asks the separate question of whether those seven are covered
+/// anywhere else; this test's job is only to make the next omission impossible to miss.)
+#[test]
+fn every_event_variant_appears_in_the_conformance_table() {
+    let listed: BTreeSet<&str> = conformance_table()
+        .into_iter()
+        .map(|(kind, _, _)| kind)
+        .collect();
+    let expected: BTreeSet<&str> = EVERY_WIRE_NAME.iter().copied().collect();
+    let missing: Vec<&str> = expected.difference(&listed).copied().collect();
+    assert!(
+        missing.is_empty(),
+        "event variants absent from the conformance table: {missing:?}"
+    );
 }

@@ -1006,6 +1006,25 @@ fn build_topology(
                     // uses to record the declared form at start. Two readings of one rule is
                     // how the first divergence becomes invisible.
                     graphhelm_protocols::declared_timeout_seconds(node),
+                    // M11 #160, and the same lesson as the line above: the customs budgets are
+                    // declared in the graph and used by the FOLD, which reads the sealed version
+                    // — so they have to cross here or they never arrive. Read through the single
+                    // definition on the node type, for the reason the neighbouring comment gives:
+                    // two readings of one rule is how the first divergence becomes invisible.
+                    //
+                    // A malformed block REFUSES publication rather than publishing without a
+                    // budget. A budget that silently vanishes reads downstream exactly like a
+                    // stage with infinite patience, which is the failure this milestone exists
+                    // to end.
+                    node.customs()
+                        .map_err(|_| GovernorError::InvalidAuthoring)?
+                        .map(|customs| {
+                            graphhelm_protocols::PersistedCustoms::new(
+                                customs.budgets.wait_within_seconds,
+                                customs.budgets.clearance_within_seconds,
+                                customs.budgets.dlq_within_seconds,
+                            )
+                        }),
                 )
                 .map_err(|_| GovernorError::InvalidProjection)?,
             ))

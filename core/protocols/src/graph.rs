@@ -27,6 +27,24 @@ pub struct GraphMetadata {
     pub based_on: Option<String>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+    /// Everything else the node declares, kept as authored.
+    ///
+    /// TRAP, NAMED HERE BECAUSE THIS IS WHERE SOMEONE WOULD SPRING IT (#160): promoting one of
+    /// these keys to a typed field looks like a pure improvement and is not. The governor's
+    /// content externalizer iterates THIS MAP (`collect_node_properties`, and for the completion
+    /// block `collect_completion_content` in core/governor/src/externalize.rs) — a key consumed
+    /// into a named field disappears from here, and the externalizer simply stops seeing it.
+    /// For `completion` that would silently stop collecting node completion contracts, which
+    /// three checked-in example graphs rely on.
+    ///
+    /// It is not unguarded: `node_completion_contract_content_is_externalized`-style coverage in
+    /// core/governor/tests/safe_publication.rs inserts a `completion` block, externalizes, and
+    /// asserts the collected `requiresArtifact.000` reference — so the regression fails a test
+    /// rather than shipping. This comment exists so the failure is UNDERSTOOD when it happens
+    /// instead of looking like an unrelated break in a crate you were not editing.
+    ///
+    /// M11's customs budgets are therefore typed on READ (a helper deserializes
+    /// `completion.customs`), never by moving the key out of this map.
     #[serde(flatten)]
     pub properties: BTreeMap<String, serde_json::Value>,
 }
@@ -88,6 +106,73 @@ pub struct GraphNode {
     pub optionality: Optionality,
     #[serde(flatten)]
     pub properties: BTreeMap<String, serde_json::Value>,
+}
+
+/// M11 #160: the customs declaration a node may carry, read out of `completion.customs`.
+///
+/// STRICT ON PURPOSE, and strict ONLY HERE: `deny_unknown_fields` means a typo in a budget name
+/// is refused rather than silently ignored, because a budget nobody notices is missing reads
+/// exactly like a stage with infinite patience — the 0/4 failure this milestone exists to end.
+/// The surrounding `completion` block stays the permissive placeholder it has always been:
+/// `requires`/`forbids` have three checked-in graphs and a governor consumer, and tightening them
+/// is a different decision by a different lane.
+///
+/// OPEN QUESTION, recorded rather than settled: `requires` are predicates over the node's OUTPUT
+/// and `requires_evidence` is about what a CLAIM presents. They are close relatives and may
+/// unify one day. Nested like this, that unification is a local refactor; as sibling top-level
+/// keys it would have been a schema migration. The separation is the current shape, not doctrine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeCustoms {
+    /// Evidence kinds a claim MUST carry. Fewer than declared is refused (`EvidenceBudgetUnmet`);
+    /// extra kinds are accepted and marked unverified — logged, never counted as stronger proof.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_evidence: Vec<String>,
+    pub budgets: CustomsBudgets,
+}
+
+/// How long each customs stage may park, in seconds, declared by the node.
+///
+/// Durations on the wire, instants in the projection: the fold adds one to the `occurred_at` of
+/// the event that ENTERED the stage. That is the M09 `matures_in_seconds` discipline — one clock,
+/// the envelope's — generalized so that no stage is exempt from the sweep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CustomsBudgets {
+    /// REQUIRED: how long an UN-CLAIMED wait may sit. Required because the un-claimed wait is
+    /// precisely the state that parked forever with nothing watching it; a customs declaration
+    /// that could omit this would reproduce the hole with more ceremony.
+    pub wait_within_seconds: u64,
+    /// REQUIRED: how long a claim may await clearance. The quarantine must not be able to park.
+    pub clearance_within_seconds: u64,
+    /// OPTIONAL: absent means dead-letter occupancy raises no time exception — the DLQ is the
+    /// exception state itself, and a second timer on it is escalation policy rather than a
+    /// default anyone chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dlq_within_seconds: Option<u64>,
+}
+
+impl GraphNode {
+    /// Reads this node's customs declaration, if it has one.
+    ///
+    /// Typed ON READ rather than as a struct field, and that is not a style choice: the governor's
+    /// content externalizer iterates `properties`, so promoting `completion` to a named field
+    /// would consume the key out of that map and silently stop node completion contracts from
+    /// being collected. See the trap named at `properties`.
+    ///
+    /// # Errors
+    /// Returns the deserialization error when a `customs` block is present but malformed — a
+    /// missing or misspelled budget is a refusal, never a default.
+    pub fn customs(&self) -> Result<Option<NodeCustoms>, serde_json::Error> {
+        let Some(customs) = self
+            .properties
+            .get("completion")
+            .and_then(|completion| completion.get("customs"))
+        else {
+            return Ok(None);
+        };
+        serde_json::from_value(customs.clone()).map(Some)
+    }
 }
 
 /// Node kinds accepted by the checked-in v1 wire schema.

@@ -182,6 +182,197 @@ pub enum EventKind {
     WakeLeaseConsumed(WakeLeaseConsumed),
     GateVerdict(GateVerdict),
     GateCertified(GateCertified),
+    CompletionClaimed(CompletionClaimed),
+    CompletionCleared(CompletionCleared),
+    CompletionRejected(CompletionRejected),
+    CompletionRefused(CompletionRefused),
+    OverdueException(OverdueException),
+    SweepPerformed(SweepPerformed),
+    ClearanceIdentityRegistered(ClearanceIdentityRegistered),
+    ClearanceIdentityRevoked(ClearanceIdentityRevoked),
+}
+
+// ---------------------------------------------------------------------------------------------
+// M11 #160: the customs family — a completion is TESTIMONY, clearance is the countersignature.
+//
+// The one rule that governs every deadline in this family: a stage's deadline is the
+// `occurred_at` of the event that ENTERED the stage plus a duration DECLARED ON THE NODE SPEC.
+// Durations ride the spec, instants live in the projection, and the fold computes one from the
+// other using the envelope's own recorded instant — the M09 `matures_in_seconds` discipline,
+// generalized to every stage so no customs state is exempt from the sweep. Nothing in this
+// family reads a clock: `sweep`'s `as_of` is an ARGUMENT and every other instant is journal data.
+// ---------------------------------------------------------------------------------------------
+
+/// One piece of testimony offered with a completion claim.
+///
+/// The hash is the evidence's identity; the fold never opens the bytes. `kind` is matched against
+/// the node's DECLARED `requires_evidence` list — fewer kinds than declared refuses
+/// (`EvidenceBudgetUnmet`), extra kinds are accepted and marked `unverified_extra` in the fold:
+/// logged, never counted as stronger proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaimEvidence {
+    pub kind: String,
+    pub content_hash: WireHash,
+    pub size: u64,
+}
+
+/// Who asserts a claim, and on what authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimAttestationMode {
+    /// A human asserted this completion. Weaker than machine verification and recorded as such.
+    OperatorAttested,
+    /// A machine re-derived the evidence against the node's manifest.
+    MachineVerified,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaimAttestation {
+    pub asserter: OpaqueId,
+    pub mode: ClaimAttestationMode,
+}
+
+/// M11 #160: a claim that a waiting node's input has arrived — EVIDENCE-BEARING TESTIMONY, and
+/// nothing more. A claim alone NEVER releases a dependent: it moves the node into a claimed
+/// (quarantined) stage whose only exits are clearance, rejection, or the sweep. That separation
+/// is the milestone's thesis, and `the_downstream_of_a_claimed_wait_is_not_ready` is its guard.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompletionClaimed {
+    pub execution_id: OpaqueId,
+    pub node: OpaqueId,
+    /// Envelope sequence of the EXACT open wait this answers — the rendezvous.
+    ///
+    /// Sequence, not name: a node re-parks (`WaitingInput` on `NeedsInput`, the state machine's
+    /// own arm), so names and node ids repeat across waits while sequences cannot. This is
+    /// M09's `armed_at_sequence` decision applied to the same problem one layer over: a claim
+    /// naming a SUPERSEDED wait is refused with `StaleRendezvous` rather than silently answering
+    /// whichever wait happens to be open.
+    pub completes_wait_seq: u64,
+    pub evidence: Vec<ClaimEvidence>,
+    pub attestation: ClaimAttestation,
+}
+
+/// Who countersigned a claim.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum ClearanceVerifier {
+    /// Clearance re-derived the evidence bundle against the node's declared manifest —
+    /// deterministic and replayable.
+    MachineReplay { manifest_hash: WireHash },
+    /// A declared identity countersigned. Membership is checked by the fold against the
+    /// registry; the cryptographic verification itself happens at append time, where evidence
+    /// sealing already lives.
+    Countersign {
+        identity: OpaqueId,
+        key_fingerprint: WireHash,
+    },
+}
+
+/// M11 #160: the countersignature — the ONLY event in this family that releases a dependent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompletionCleared {
+    pub execution_id: OpaqueId,
+    /// Envelope sequence of the CLAIM this countersigns — same identity discipline as the claim's
+    /// own `completes_wait_seq`.
+    pub claim_seq: u64,
+    pub verifier: ClearanceVerifier,
+}
+
+/// M11 #160: clearance withheld, with a registry reason. The node stays parked; the claim is
+/// spent. Recording the rejection rather than refusing the append is the M09 rule: a faithfully
+/// recorded mistake is journal data, and only an uninterpretable journal is fold-Corrupt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompletionRejected {
+    pub execution_id: OpaqueId,
+    pub claim_seq: u64,
+    pub verifier: ClearanceVerifier,
+    pub reason_code: String,
+}
+
+/// M11 #161: an identity gains the power to countersign, FROM THIS SEQUENCE ON.
+///
+/// Runtime membership is journaled rather than spec-edited (blueprint 2e, D-039's one entry
+/// road): rotation and revocation are events, so "who could countersign at sequence N" is a
+/// question the journal answers by itself — kill-bar item 3 applied to identity.
+///
+/// THE ANSWER COMES FROM THE ORDER OF THE WALK, NEVER FROM THE END STATE. A left fold in
+/// sequence order already holds the pre-N registry when it reaches N, so validating a clearance
+/// as it is folded is both free and correct. Validating in a second pass against the FINAL
+/// registry breaks it in two directions, and the dangerous one is silent: an identity registered
+/// AFTER a clearance would retro-validate it, accepting a countersignature from someone who
+/// could not sign at the time. This sentence is the canary for that change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClearanceIdentityRegistered {
+    pub execution_id: OpaqueId,
+    pub identity: OpaqueId,
+    /// Compared for EQUALITY by the fold, never verified cryptographically there: the fold must
+    /// stay a pure function of the journal. Signature verification against key material is the
+    /// command layer's job at append time, where evidence sealing already lives.
+    pub key_fingerprint: WireHash,
+}
+
+/// M11 #161: an identity loses the power to countersign, FROM THIS SEQUENCE ON.
+///
+/// NOT RETROACTIVE, and that is the whole point: a clearance that was valid when it happened
+/// stays valid forever. Revocation binds what comes after it and nothing before it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClearanceIdentityRevoked {
+    pub execution_id: OpaqueId,
+    pub identity: OpaqueId,
+}
+
+/// M11 #160: a claim the command layer would not accept, recorded so a graph that cannot finish
+/// leaves a legible trail. The refusal is the OUTCOME of a claim attempt, not an error swallowed
+/// at the boundary — an idempotent retry of a refused claim replays this event rather than
+/// fabricating a success (#83's stored-outcome lesson).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompletionRefused {
+    pub execution_id: OpaqueId,
+    pub node: OpaqueId,
+    /// The wait the refused claim NAMED — frequently stale, which is frequently the reason.
+    pub claimed_wait_seq: u64,
+    pub reason_code: String,
+}
+
+/// M11 #160: one overdue stage, raised by a sweep.
+///
+/// `episode_seq` is the STAGE-ENTRY event's sequence and therefore the episode's identity: one
+/// exception per episode, ever. A re-entry (a redrive, a returned wait) is a NEW episode with a
+/// fresh deadline and is exception-eligible again. The alternative grain — per episode per
+/// `as_of` — re-fires on every sweep and trains operators to ignore the channel, which is the
+/// cry-wolf failure this project has already paid for once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OverdueException {
+    pub execution_id: OpaqueId,
+    pub node: OpaqueId,
+    pub episode_seq: u64,
+    /// The claim whose clearance lapsed, when the overdue stage was a claimed one. Absent for an
+    /// un-claimed wait that expired — the state that motivated this milestone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_seq: Option<u64>,
+}
+
+/// M11 #160: the sweep, journaled with the instant it judged against.
+///
+/// `as_of` is an ARGUMENT the caller supplies and the journal records — never a clock the sweep
+/// reads for itself. That is what makes the exception set a pure function of the log: replay
+/// recomputes the identical set because both the deadlines and the judging instant are journal
+/// data. A sweep that read `SystemTime` would make replay disagree with the original run, which
+/// is the defect this whole family is built to avoid.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SweepPerformed {
+    pub execution_id: OpaqueId,
+    pub as_of: PersistedTimestamp,
 }
 
 impl EventKind {

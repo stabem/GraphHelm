@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use graphhelm_protocols::{
     EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared, ExecutionId,
     ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion, PersistedTimestamp,
-    PolicyWaiver, ProjectId, RepositoryScope, SimulationStatus, WorkspaceId,
+    PolicyWaiver, ProjectId, RepositoryScope, SimulationStatus, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -135,6 +135,116 @@ pub enum EvidenceAvailability {
     Deleted,
 }
 
+/// M11 #160: one stage a node passed through in the customs pipeline.
+///
+/// The enum is OPEN TO GROWTH by design: lane 1 mints only the stages lane 1 produces, and the
+/// DLQ lane adds its own. Declaring variants here that nothing emits would put a legal-but-never-
+/// produced value in front of every reader — a confusion this project has already paid for, so
+/// consumers must treat this as a growing enum rather than a closed world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomsStage {
+    /// The node parked and a wait was minted (this entry's `at_sequence` IS that wait's identity).
+    Parked,
+    /// Testimony recorded against the open wait. Releases nothing.
+    Claimed,
+    /// Countersigned — the only stage that releases a dependent.
+    Cleared,
+    /// Clearance withheld with a reason; the claim is spent, the node stays parked.
+    Rejected,
+    /// The command layer would not accept the claim; state unchanged, trail kept.
+    Refused,
+    /// A stage deadline lapsed and a sweep said so.
+    Overdue,
+}
+
+/// M11 #160: one line of a node's customs history, in log order.
+///
+/// This is the fold-derived timeline #163 renders. It is append-only and derived: no reader may
+/// write it, and a projection rehydrated without replay does not carry it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomsScan {
+    /// Envelope sequence of the event that produced this entry.
+    pub at_sequence: u64,
+    pub stage: CustomsStage,
+    /// The claim this entry is about, when it is about one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_seq: Option<u64>,
+    /// Registry reason — ONLY for stages where this timeline is the fact's sole owner.
+    ///
+    /// A REFUSED claim belongs here because the CONTAINER SHAPE matches its cardinality, not
+    /// merely because it lacks a claim identity (J's sharpening of my first argument, and the
+    /// durable version of it). A refusal has no CLAIM identity — no claim was accepted — only a
+    /// WAIT identity: the sequence the refused claim NAMED. And many refusals can name one wait:
+    /// a bad attempt, a retry, another bad attempt. A map keyed by wait would be last-wins and
+    /// would erase the earlier refusals — the overwrite defect this project spent M09 hunting,
+    /// where a last-per-X map is asked a per-N question. This field is a `Vec`, ordered, and
+    /// many-refusals-per-wait is exactly the shape a Vec holds correctly.
+    ///
+    /// A REJECTED or CLEARED claim has an outcome record keyed by `claim_seq` (#161) — one
+    /// lookup, no choice — and that record owns its reason. This entry carries the pointer
+    /// (`claim_seq`) and not a copy.
+    ///
+    /// The rule behind the split, argued by J against my first shape: two structures recording
+    /// one fact is duplicated STATE, which is worse than duplicated code because a later replay
+    /// can make the copies disagree. The test that settles who owns a fact is which structure
+    /// answers the question WITHOUT re-deriving: "what happened to the claim at sequence N" is
+    /// answered by a claim-keyed map in one lookup, and by this node-keyed timeline only after a
+    /// node lookup, a filter, and a choice of which entry wins — and that choice is exactly what
+    /// diverges. So the outcome lives there, and the timeline points at it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+    /// When THIS stage's patience ran out, for the stages that start a clock (parked, claimed).
+    ///
+    /// Computed ONCE, here, at fold time — never recomputed by a renderer. The instant is
+    /// `occurred_at` of the event that entered the stage plus the duration the node declared, so
+    /// every consumer reads the same number instead of three surfaces each doing the arithmetic
+    /// their own way. That is the same one-derivation-many-call-sites shape `ready_set` has, and
+    /// it is here for the same reason: a deadline recomputed per surface is a deadline that will
+    /// eventually disagree with itself.
+    ///
+    /// `None` means the node declared no budget for this stage — absent stays absent, and no
+    /// implicit patience is invented. (It is ALSO None on every entry today, because the spec
+    /// block the durations come from is still an open decision: a live `completion:` field
+    /// already carries a different meaning, so the budget's home is escalated rather than
+    /// guessed. Consumers should render "no deadline declared", not "not yet implemented".)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<PersistedTimestamp>,
+}
+
+/// M11 #160: one open wait, with the instant its patience runs out.
+///
+/// `deadline` is `None` when the node declared no `wait_within_seconds` budget — absent stays
+/// absent, and no implicit patience is ever invented for a wait that did not ask for one. A wait
+/// with no deadline is visible to the sweep and never overdue, which is a DECLARED gap rather
+/// than a silent one: the load-time warning names such nodes at authoring time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenWait {
+    /// Envelope sequence of the event that parked this wait — the wait's identity AND its
+    /// stage-entry point, which are deliberately the same number (§2b': one arithmetic).
+    pub at_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<PersistedTimestamp>,
+}
+
+/// M11 #160: a claim in quarantine — testimony recorded, clearance owed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenClaim {
+    pub node: String,
+    /// The wait this claim answered, carried so a clearance can find the node's open wait even
+    /// after later events.
+    pub completes_wait_seq: u64,
+    /// Stage-entry sequence for the CLAIMED stage: the claim's own sequence on first entry, and
+    /// the redrive's sequence after a re-entry (the fold rebases; the testimony stands, only the
+    /// clock restarts).
+    pub stage_entered_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<PersistedTimestamp>,
+}
+
 /// Pure replay result rebuilt only from the safe journal projection.
 ///
 /// `Option<T>` tolerates an absent key on its own; serde only special-cases `Option`. A collection
@@ -171,6 +281,47 @@ pub struct ExecutionProjection {
     pub applied_drafts: Vec<String>,
     pub waivers: Vec<PolicyWaiver>,
     pub node_states: BTreeMap<String, NodeState>,
+    /// M11 #160: the OPEN wait per node, identified by the envelope sequence of the event that
+    /// parked it.
+    ///
+    /// Sequence-as-identity, for the reason M09 chose it for wake leases: a node re-parks
+    /// (`WaitingInput` on `NeedsInput` is the state machine's own arm), so a name identifies the
+    /// NODE but never the WAIT. A claim naming a superseded wait is refused instead of silently
+    /// answering whichever wait is open now — the trap this map exists to make detectable.
+    ///
+    /// DERIVED, never stored: valid on a replayed projection only, exactly like
+    /// `armed_at_sequence`. A projection rehydrated from a digest without replay does not carry
+    /// it, and no reader may treat its absence as "no wait".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub open_waits: BTreeMap<String, OpenWait>,
+    /// M11 #160: claims awaiting clearance, keyed by the CLAIM's own envelope sequence.
+    ///
+    /// A claim in here is quarantined testimony: recorded, not believed. It releases nothing —
+    /// the node stays `WaitingInput` until a clearance arrives, which is the whole thesis of the
+    /// customs pipeline and the thing `the_downstream_of_a_claimed_wait_is_not_ready` guards.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub open_claims: BTreeMap<u64, OpenClaim>,
+    /// M11 #160: episodes that have already raised an overdue exception, by stage-entry
+    /// sequence. One exception per episode, ever; a re-entry is a new episode.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub exception_marked: BTreeSet<u64>,
+    /// M11 #160: the per-node customs timeline (#163 renders it; the fold owns it).
+    ///
+    /// Bounded by the same node guard as every other per-node map, and by a per-node entry cap:
+    /// a history is evidence, but an unbounded one is a memory exhaustion vector wearing
+    /// evidence's clothes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub customs_scans: BTreeMap<String, Vec<CustomsScan>>,
+    /// M11 #161: who may countersign, AS OF THE FOLD'S CURRENT POSITION.
+    ///
+    /// Read this field only as "membership at the cursor". While the fold walks it is exactly
+    /// the registry at the event being folded, which is why validating in place is correct and
+    /// free. AFTER the fold it means membership AT HEAD, and answering "could X sign at
+    /// sequence N?" from it for any earlier N is the last-state-answering-a-per-sequence-question
+    /// defect (M09 #88's named cause, one layer up). The journal answers that question; a replay
+    /// to N is how you ask it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub clearance_registry: BTreeMap<String, WireHash>,
     pub simulation_status: Option<SimulationStatus>,
     pub evidence_availability: BTreeMap<ScopedEvidenceId, EvidenceAvailability>,
     pub legal_holds: BTreeSet<ScopedEvidenceId>,
@@ -768,6 +919,32 @@ impl ProjectionGeneration {
 /// `MAX_READY_SET`. `graphhelm_execution` pins that relationship in a test.
 pub const MAX_PROJECTION_NODES: usize = 10_000;
 
+/// Appends one line to a node's customs timeline, bounded (#160).
+///
+/// The per-node cap is `MAX_PROJECTION_NODES` reused as an entry bound: it is the same order of
+/// magnitude the projection already accepts per node-keyed structure, and picking a second,
+/// smaller number here would invent a limit nobody derived.
+fn record_scan(
+    projection: &mut ExecutionProjection,
+    node: &str,
+    scan: CustomsScan,
+) -> Result<(), ReplayError> {
+    if projection.customs_scans.len() >= MAX_PROJECTION_NODES
+        && !projection.customs_scans.contains_key(node)
+    {
+        return Err(ReplayError::LimitExceeded);
+    }
+    let history = projection
+        .customs_scans
+        .entry(node.to_owned())
+        .or_default();
+    if history.len() >= MAX_PROJECTION_NODES {
+        return Err(ReplayError::LimitExceeded);
+    }
+    history.push(scan);
+    Ok(())
+}
+
 fn apply_projection_event(
     projection: &mut ExecutionProjection,
     active_legal_holds: &mut BTreeSet<(ScopedEvidenceId, String)>,
@@ -918,7 +1095,213 @@ fn apply_projection_event(
                 };
                 projection.identical_outcomes.insert(node.clone(), run);
             }
+            // M11 #160: parking MINTS a wait whose identity is this envelope's sequence, and
+            // re-parking SUPERSEDES the previous one under the same node name. Leaving the old
+            // entry would let a claim answer a wait that is no longer open — the stale-rendezvous
+            // trap, which the refusal path exists to catch precisely because this map makes it
+            // detectable. Any other next_state closes the wait: the node is no longer waiting.
+            if payload.next_state == NodeState::WaitingInput {
+                if projection.open_waits.len() >= MAX_PROJECTION_NODES
+                    && !projection.open_waits.contains_key(&node)
+                {
+                    return Err(ReplayError::LimitExceeded);
+                }
+                projection.open_waits.insert(
+                    node.clone(),
+                    OpenWait {
+                        at_sequence: event.sequence,
+                        deadline: None,
+                    },
+                );
+                record_scan(
+                    projection,
+                    &node,
+                    CustomsScan {
+                        at_sequence: event.sequence,
+                        stage: CustomsStage::Parked,
+                        claim_seq: None,
+                        reason_code: None,
+                        deadline: None,
+                    },
+                )?;
+            } else {
+                projection.open_waits.remove(&node);
+            }
             projection.node_states.insert(node, payload.next_state);
+        }
+        EventKind::CompletionClaimed(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            let node = payload.node.to_string();
+            // A claim naming a wait that is not the node's OPEN wait is not an uninterpretable
+            // journal — it is a mistake the command layer should have refused, and if it reached
+            // the log the honest fold answer is to record it as spent testimony against nothing
+            // rather than to poison every later replay. Corrupt is reserved for logs that cannot
+            // be READ; this one reads fine and says something false. (M09's refusal rule.)
+            let answers_open_wait = projection
+                .open_waits
+                .get(&node)
+                .is_some_and(|wait| wait.at_sequence == payload.completes_wait_seq);
+            if projection.open_claims.len() >= MAX_PROJECTION_NODES {
+                return Err(ReplayError::LimitExceeded);
+            }
+            if answers_open_wait {
+                projection.open_claims.insert(
+                    event.sequence,
+                    OpenClaim {
+                        node: node.clone(),
+                        completes_wait_seq: payload.completes_wait_seq,
+                        stage_entered_at: event.sequence,
+                        deadline: None,
+                    },
+                );
+                record_scan(
+                    projection,
+                    &node,
+                    CustomsScan {
+                        at_sequence: event.sequence,
+                        stage: CustomsStage::Claimed,
+                        claim_seq: Some(event.sequence),
+                        reason_code: None,
+                        deadline: None,
+                    },
+                )?;
+            }
+            // NOTE, load-bearing: nothing here touches `node_states`. A claim does NOT release a
+            // dependent; only a clearance does. This absence IS the feature.
+        }
+        EventKind::CompletionCleared(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            // A clearance naming a sequence that is not a claim IS uninterpretable: the
+            // countersignature has no testimony under it, and no later reader can decide what was
+            // cleared. That is the Corrupt case, and it is the only one in this family.
+            let Some(claim) = projection.open_claims.remove(&payload.claim_seq) else {
+                return Err(ReplayError::Corrupt);
+            };
+            // THE release, and the only one: the fold performs the transition itself so
+            // `ready_set(spec, states)` keeps its signature and BOTH drivers inherit readiness
+            // with zero edits — one derivation, two call sites, neither of them changed.
+            projection.open_waits.remove(&claim.node);
+            record_scan(
+                projection,
+                &claim.node,
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::Cleared,
+                    claim_seq: Some(payload.claim_seq),
+                    reason_code: None,
+                    deadline: None,
+                },
+            )?;
+            projection
+                .node_states
+                .insert(claim.node, NodeState::Succeeded);
+        }
+        EventKind::CompletionRejected(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            // Same interpretability rule as clearance: a rejection with no claim under it cannot
+            // be read. The claim is spent; the node stays parked, waiting for testimony that
+            // clears.
+            let Some(claim) = projection.open_claims.remove(&payload.claim_seq) else {
+                return Err(ReplayError::Corrupt);
+            };
+            record_scan(
+                projection,
+                &claim.node,
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::Rejected,
+                    claim_seq: Some(payload.claim_seq),
+                    // The reason belongs to the claim's outcome record (#161), reachable through
+                    // claim_seq. Copying it here would be the second writer of one fact.
+                    reason_code: None,
+                    deadline: None,
+                },
+            )?;
+        }
+        EventKind::CompletionRefused(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            // A recorded refusal changes NO state — that is its point. The node stays parked and
+            // the trail stays legible: the journal shows the attempt, its target and its reason.
+            record_scan(
+                projection,
+                payload.node.as_str(),
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::Refused,
+                    claim_seq: None,
+                    reason_code: Some(payload.reason_code.clone()),
+                    deadline: None,
+                },
+            )?;
+        }
+        EventKind::OverdueException(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            if projection.exception_marked.len() >= MAX_PROJECTION_NODES {
+                return Err(ReplayError::LimitExceeded);
+            }
+            // Idempotency grain is the EPISODE (the stage-entry sequence), so a later sweep at any
+            // as_of raises nothing more for it. A re-entry mints a new episode and is eligible
+            // again — deliberate, and the reason an advisory exception nobody acts on does not
+            // re-fire within its episode.
+            projection.exception_marked.insert(payload.episode_seq);
+            record_scan(
+                projection,
+                payload.node.as_str(),
+                CustomsScan {
+                    at_sequence: event.sequence,
+                    stage: CustomsStage::Overdue,
+                    claim_seq: payload.claim_seq,
+                    reason_code: None,
+                    deadline: None,
+                },
+            )?;
+        }
+        EventKind::SweepPerformed(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            // The sweep's own record. `as_of` is journal data, never a clock read: that is what
+            // makes a replayed sweep reproduce the identical exception set.
+        }
+        EventKind::ClearanceIdentityRegistered(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            if projection.clearance_registry.len() >= MAX_PROJECTION_NODES
+                && !projection
+                    .clearance_registry
+                    .contains_key(payload.identity.as_str())
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            // Re-registering an identity REPLACES its fingerprint: a rotation is a register with
+            // new key material, and the last one before a clearance is the one that clearance is
+            // judged against. Same overwrite discipline as a re-arm replacing a lease.
+            projection.clearance_registry.insert(
+                payload.identity.as_str().to_owned(),
+                payload.key_fingerprint.clone(),
+            );
+        }
+        EventKind::ClearanceIdentityRevoked(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            // Revoking an identity that is not registered is a faithfully recorded mistake, not
+            // an uninterpretable log: it reads fine and says something useless. Corrupt stays
+            // reserved for logs that cannot be READ (the M09 refusal rule).
+            projection
+                .clearance_registry
+                .remove(payload.identity.as_str());
         }
         EventKind::ExecutionCompleted(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
@@ -1437,7 +1820,7 @@ mod tests {
             BTreeMap::new(),
         )
         .unwrap();
-        let node = PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![], None)
+        let node = PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![], None, None)
             .unwrap();
         let topology = PersistedTopology::new(
             OpaqueId::parse("graph-1").unwrap(),

@@ -4183,7 +4183,7 @@ mod limit_tests {
             BTreeMap::new(),
         )
         .unwrap();
-        let node = PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![], None)
+        let node = PersistedNode::new(NodeType::Tool, Optionality::Required, vec![], vec![], None, None)
             .unwrap();
         let topology = PersistedTopology::new(
             OpaqueId::parse("graph-1").unwrap(),

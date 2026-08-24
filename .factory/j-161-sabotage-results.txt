@@ -1,0 +1,43 @@
+base: 97b2030255884bcf050b6de0651ba7be53524dca   dir: D:/graphhelm-target-j161
+=== S0-control ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.17s
+--- end S0-control
+APPLIED S1
+=== S1 ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... FAILED
+thread 'the_identity_registry_folds_deterministically_and_revocation_removes' (64064) panicked at core\events\tests\execution_projection.rs:1560:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.13s
+error: test failed, to rerun pass `-p graphhelm-events --test execution_projection`
+--- end S1
+APPLIED S2
+=== S2 ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... FAILED
+thread 'the_identity_registry_folds_deterministically_and_revocation_removes' (76304) panicked at core\events\tests\execution_projection.rs:1566:5:
+assertion `left == right` failed: a rotation with no revocation between the two registrations keeps the LAST fingerprint, which is the only assertion here that first-write-wins can fail: {"auditor-a": WireHash("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "auditor-b": WireHash("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"), "auditor-d": WireHash("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")}
+  left: Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.11s
+error: test failed, to rerun pass `-p graphhelm-events --test execution_projection`
+--- end S2
+APPLIED S3
+=== S3 ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... FAILED
+thread 'the_identity_registry_folds_deterministically_and_revocation_removes' (23824) panicked at core\events\tests\execution_projection.rs:1555:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.13s
+error: test failed, to rerun pass `-p graphhelm-events --test execution_projection`
+--- end S3
+STRIPPED 16 lines (the two assertions added by ac4fba2)
+APPLIED S1
+=== S1-prime-old-assertions ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.13s
+--- end S1-prime-old-assertions
+APPLIED S2
+=== S2-prime-old-assertions ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.12s
+--- end S2-prime-old-assertions
+=== S0-control-restored ===
+test the_identity_registry_folds_deterministically_and_revocation_removes ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.13s
+--- end S0-control-restored

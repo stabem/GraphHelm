@@ -630,6 +630,25 @@
       },
       "additionalProperties": false
     },
+    "clearanceIdentityRegistered": {
+      "type": "object",
+      "required": ["executionId", "identity", "keyFingerprint"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "identity": {"$ref": "#/$defs/opaqueId"},
+        "keyFingerprint": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "clearanceIdentityRevoked": {
+      "type": "object",
+      "required": ["executionId", "identity"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "identity": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
     "gateFinding": {
       "type": "object",
       "required": ["severity", "claim", "evidence", "remediation"],
@@ -972,6 +991,24 @@
             "data": {"$ref": "#/$defs/gateCertified"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "clearance_identity_registered"},
+            "data": {"$ref": "#/$defs/clearanceIdentityRegistered"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "clearance_identity_revoked"},
+            "data": {"$ref": "#/$defs/clearanceIdentityRevoked"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -1008,7 +1045,9 @@
     {"properties": {"kind": {"properties": {"type": {"const": "wake_lease"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "wake_lease_consumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "gate_verdict"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "gate_certified"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "gate_certified"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_registered"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_revoked"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

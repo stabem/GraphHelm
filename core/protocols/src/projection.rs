@@ -294,6 +294,68 @@ impl<'de> Deserialize<'de> for PersistedBudgets {
     }
 }
 
+/// M11 #160: the customs budgets, carried THROUGH publication so the fold can see them.
+///
+/// This exists because of the same defect `PersistedNode::timeout_seconds` was added for, one
+/// milestone earlier: the durations are declared in the graph (`completion.customs.budgets`) and
+/// persistence dropped them, so nothing downstream could derive a deadline from what the author
+/// had already said. The fold reads the SEALED version, not the authoring one, so a budget that
+/// stops at the store is a budget the sweep can never enforce — and an unenforceable stage budget
+/// is the parked-forever state this milestone exists to end, wearing a declaration.
+///
+/// Durations, never instants. The fold adds one to the `occurred_at` of the event that entered
+/// the stage, which keeps ONE clock — the envelope's — for the whole family (M09's
+/// `matures_in_seconds` reasoning, and the reason an instant on the wire was rejected here).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedCustoms {
+    wait_within_seconds: u64,
+    clearance_within_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dlq_within_seconds: Option<u64>,
+}
+
+impl PersistedCustoms {
+    #[must_use]
+    pub const fn new(
+        wait_within_seconds: u64,
+        clearance_within_seconds: u64,
+        dlq_within_seconds: Option<u64>,
+    ) -> Self {
+        Self {
+            wait_within_seconds,
+            clearance_within_seconds,
+            dlq_within_seconds,
+        }
+    }
+
+    #[must_use]
+    pub const fn wait_within_seconds(&self) -> u64 {
+        self.wait_within_seconds
+    }
+
+    #[must_use]
+    pub const fn clearance_within_seconds(&self) -> u64 {
+        self.clearance_within_seconds
+    }
+
+    /// `None` is an ABSENCE, never a zero: dead-letter occupancy raises no time exception unless
+    /// the author asked for one.
+    #[must_use]
+    pub const fn dlq_within_seconds(&self) -> Option<u64> {
+        self.dlq_within_seconds
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawPersistedCustoms {
+    wait_within_seconds: u64,
+    clearance_within_seconds: u64,
+    #[serde(default)]
+    dlq_within_seconds: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedNode {
@@ -315,6 +377,20 @@ pub struct PersistedNode {
     /// downstream as `unknown`, which is the only honest verdict for work nobody bounded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     timeout_seconds: Option<u64>,
+    /// M11 #160: the customs stage budgets, or `None` when the node declared no customs block.
+    ///
+    /// `skip_serializing_if` is REQUIRED and is not tidiness — it is the same law that governs
+    /// the field above. Replay re-serializes each stored event and compares against the stored
+    /// bytes, so an always-emitted `null` would change the canonical bytes of every graph version
+    /// already published and break their hash chains. Absence therefore stays ABSENCE.
+    ///
+    /// NAMED GAP (#172): no test would currently catch getting that wrong. Opening a committed
+    /// store does re-serialize and compare — a real guard — but no committed journal contains a
+    /// `graph_version_published` event, so no stored bytes exercise this struct. The protection
+    /// here is the precedent's technique plus review, and saying so is better than a green suite
+    /// implying coverage that does not exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    customs: Option<PersistedCustoms>,
 }
 
 #[derive(Deserialize)]
@@ -330,6 +406,8 @@ struct RawPersistedNode {
     /// one.
     #[serde(default)]
     timeout_seconds: Option<u64>,
+    #[serde(default)]
+    customs: Option<RawPersistedCustoms>,
 }
 
 impl PersistedNode {
@@ -339,6 +417,7 @@ impl PersistedNode {
         controls: Vec<PersistedControl>,
         content_slot_ids: Vec<OpaqueId>,
         timeout_seconds: Option<u64>,
+        customs: Option<PersistedCustoms>,
     ) -> Result<Self, PersistenceError> {
         if controls.len() > 64 || content_slot_ids.len() > 64 || !all_unique(&content_slot_ids) {
             return Err(PersistenceError::new("node"));
@@ -349,7 +428,16 @@ impl PersistedNode {
             controls,
             content_slot_ids,
             timeout_seconds,
+            customs,
         })
+    }
+
+    /// The customs budgets the author declared, or `None`. An absence, never a default: a node
+    /// with no customs block keeps today's behaviour, and the load-time warning is what makes
+    /// that gap loud at authoring time rather than silent at runtime.
+    #[must_use]
+    pub const fn customs(&self) -> Option<PersistedCustoms> {
+        self.customs
     }
 
     /// The bound the user declared, or `None` when they declared none. `None` is an
@@ -390,6 +478,13 @@ impl TryFrom<RawPersistedNode> for PersistedNode {
             raw.controls,
             raw.content_slot_ids,
             raw.timeout_seconds,
+            raw.customs.map(|customs| {
+                PersistedCustoms::new(
+                    customs.wait_within_seconds,
+                    customs.clearance_within_seconds,
+                    customs.dlq_within_seconds,
+                )
+            }),
         )
     }
 }

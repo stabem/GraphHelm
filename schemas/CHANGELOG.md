@@ -1,5 +1,31 @@
 # Schema Changelog
 
+## node 1.0.0 - `completion.customs` added
+
+What a completion CLAIM must present, and how long each customs stage may park:
+`requiresEvidence` plus `budgets.{waitWithinSeconds, clearanceWithinSeconds, dlqWithinSeconds?}`.
+
+**Why nested inside `completion` rather than a sibling key.** `completion` already existed on
+nodes with a different meaning — a completion CONTRACT (`requires`/`forbids`), declared in this
+schema, carried by three checked-in example graphs, and consumed by the governor's content
+externalizer. Customs is the same question one layer down: `requires` says what makes the node
+complete, customs says what a claim of completion must PROVE and how long each stage may wait.
+Nesting keeps that parentage, stays additive (nothing existing changes meaning or validity), and
+leaves a future unification of `requires` with `requiresEvidence` a local refactor instead of a
+schema migration. Making it a sibling would have created two confusable top-level keys about
+completing.
+
+**Why strict inside and permissive outside.** `customs` sets `additionalProperties: false` and
+requires both stage budgets, because a misspelled budget name that silently defaults reads
+exactly like a stage with infinite patience — which is the parked-forever failure this milestone
+exists to end. The surrounding block keeps the permissiveness it has always had: tightening
+`requires`/`forbids` would change the validity of graphs that work today, and that is a separate
+decision for whoever owns that field.
+
+**Why `dlqWithinSeconds` is optional.** Absent means dead-letter occupancy raises no time
+exception. The dead-letter state IS the exception — something already fired to route work there —
+so a second timer on it is escalation policy, not a default anyone chose.
+
 ## event-envelope 1.0.0 - `wakeLeaseConsumed.capturedArming` added
 
 Which arming a consumption was FOR: the sequence of the `wake_lease` event the sweep read when

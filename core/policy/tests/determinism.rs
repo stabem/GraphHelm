@@ -17,10 +17,16 @@ const DISTINCT_KEYS: usize = 16;
 
 fn resolve_in_a_fresh_process() -> Vec<u8> {
     let binary = assert_cmd::cargo::cargo_bin!("resolve_once");
-    let output = Command::new(&binary)
+    // The path is rendered BEFORE the spawn because the spawn consumes it. Clippy's literal
+    // suggestion here (drop the `&`) moves `binary` into `Command::new`, and the panic below
+    // still borrows it to name what failed to start - so the suggested edit does not compile.
+    // Keeping the diagnostic matters more than the shortest diff: this message is the only thing
+    // that says WHICH binary was missing when the harness cannot start.
+    let shown = binary.display().to_string();
+    let output = Command::new(binary)
         .arg(DISTINCT_KEYS.to_string())
         .output()
-        .unwrap_or_else(|error| panic!("HARNESS: could not spawn {}: {error}", binary.display()));
+        .unwrap_or_else(|error| panic!("HARNESS: could not spawn {shown}: {error}"));
 
     assert!(
         output.status.success(),

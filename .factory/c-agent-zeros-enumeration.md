@@ -1,3 +1,8 @@
+> **PROVENANCE: this document is cited as the evidence behind the zero-claims audit in the M10 defect-class section.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # The zeros, enumerated
 
 Follow-up to the M09 gate red, where a harness that never started a test reported three clean

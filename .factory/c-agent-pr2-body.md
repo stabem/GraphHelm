@@ -1,3 +1,8 @@
+> **PROVENANCE: this document became the body of PR 2, which closed #74.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 Closes #74
 
 A sleeper is rung, wakes, and re-arms — on the same rendezvous, because our agents use fixed

@@ -1,3 +1,8 @@
+> **PROVENANCE: this document became #119 (wake_mis_burns surfaced to no operator).**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # #119 — surfacing `wake_mis_burns`
 
 **Design only. Base: main `6193f5c`.** Every file:line re-derived against that commit. Boundary with

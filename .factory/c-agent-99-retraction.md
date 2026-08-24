@@ -1,3 +1,8 @@
+> **PROVENANCE: this document became the retraction posted on PR #99.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 ## Retraction: this PR's body asserts a gate defect that does not exist
 
 The body of this PR says the gate result was *"content-verified, because the exit code carries no

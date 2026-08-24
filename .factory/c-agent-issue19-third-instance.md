@@ -1,3 +1,8 @@
+> **PROVENANCE: this document became a comment on #19 (third instance at an unregistered site).**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 ## Third instance of class 1, at an unregistered site
 
 Observed 2026-08-19 on the M09 gate (`issue-m09-arming-the-alarm`, merged tip `d10916b`).

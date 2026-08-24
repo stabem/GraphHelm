@@ -1,3 +1,8 @@
+> **PROVENANCE: this document became the design behind PR 2, which closed #74.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # PR 2 design: the arming-identity discriminator
 
 Issue #74. Written before any code, so the shape can be attacked while attacking it is cheap.

@@ -1,3 +1,8 @@
+> **PROVENANCE: this document sealed the predictions for #83 before its run.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # #83 — predictions SEALED before any run
 
 **Base: main `0f4e7fe`.** Design v2 `1a9b6819…` (B-approved), B freeze `a72214ac…`.

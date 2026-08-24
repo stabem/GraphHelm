@@ -1,3 +1,8 @@
+> **PROVENANCE: this document became the implementation of #83.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # #83 — resume atomicity against drive()'s setup failure
 
 **Base: main `0f4e7fe`.** Every file:line is re-derived against that commit, not carried from the

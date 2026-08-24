@@ -1,3 +1,8 @@
+> **PROVENANCE: this draft became #71 — *a consumption can be recorded against a lease a rival already burned*.**
+> Established by title match against `gh issue list --state all`, not from memory. Written here
+> because the derived issue carries the content and never the source's name: provenance is the
+> strong relation and the one grep cannot see, so only the author can record it.
+
 ## What is wrong
 
 The wake sweep's recorder decides a lease is still live from one read of the stream, then

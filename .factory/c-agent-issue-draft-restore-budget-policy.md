@@ -1,3 +1,8 @@
+> **PROVENANCE: this draft became #81 — *The restore path's fixed per-step timeouts make the gate flaky*.**
+> Established by title match against `gh issue list --state all`, not from memory. Written here
+> because the derived issue carries the content and never the source's name: provenance is the
+> strong relation and the one grep cannot see, so only the author can record it.
+
 The restore path's fixed per-step timeouts make the gate flaky, and report the timeout as corruption
 
 Split out of #19. That issue registers flaky *tests*; this one is about the *policy* that makes them

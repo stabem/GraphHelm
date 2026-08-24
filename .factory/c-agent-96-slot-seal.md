@@ -1,3 +1,8 @@
+> **PROVENANCE: this document sealed the slot for the #96 run; its digest is quoted in the PR body.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # #96 slot — predictions SEALED before any cargo
 
 **sha-at-launch: `6e9c0fe2a0ad6db74904b0689932fb2afbb44be1`** (branch `issue-96-driver-failure-split`).

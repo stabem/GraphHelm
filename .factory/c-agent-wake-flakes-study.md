@@ -1,3 +1,8 @@
+> **PROVENANCE: this document is cited as the evidence behind the #74 draft, the M10 defect-class section, and another agent prediction ledger.**
+> Provenance is the strong relation and the one grep cannot see: the derived artefact carries the
+> content and never the source's name, so only the author can record it. Established against
+> `gh issue list --state all` and the PRs, not from memory.
+
 # C Agent — mechanism study: the two wake_http flakes
 
 Read-only study on branch `issue-m09-arming-the-alarm` (tip 53d212d), checked out as

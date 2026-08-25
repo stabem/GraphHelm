@@ -12,6 +12,7 @@ members = [
   "core/execution",
   "core/gateway",
   "core/runtime",
+  "core/extension-host",
   "core/tool-broker",
   "adapters/sealed-key-provider",
   "adapters/postgres-event-store",

@@ -973,6 +973,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-extension-host"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-schema",
+ "hex",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+[[package]]
 name = "graphhelm-gateway"
 version = "0.1.0"
 dependencies = [

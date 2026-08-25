@@ -1,0 +1,14 @@
+[package]
+name = "graphhelm-extension-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphhelm-schema = { path = "../schema" }
+
+[dev-dependencies]
+sha2.workspace = true
+hex.workspace = true
+tempfile.workspace = true

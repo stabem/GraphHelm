@@ -1354,6 +1354,27 @@ fn the_advisory_field_doc_names_each_field_and_its_wake_condition() {
          or removed -- the wake condition already fired, delete the stale entry): {orphaned:?}"
     );
 
+    // #347: the third copy. #318 tagged the population in the schema, #339 made the
+    // wake_conditions map answer back to it -- and the doc PROSE, the artifact a human actually
+    // reads to learn a field's status, still answered to nothing. On promotion the map's check goes
+    // red and the bullet above it keeps saying ADVISORY with a wake condition that already fired.
+    //
+    // Set equality in both directions, both remainders printed: the same shape as the two checks
+    // this file already carries, applied to the copy that had no guard.
+    let doc_labels = advisory_fields_the_doc_labels(doc);
+    assert!(
+        !doc_labels.is_empty(),
+        "HARNESS-BROKE: the extractor found no ADVISORY bullets at all, so the comparison below would pass against an empty set -- the bullet shape changed, or the doc slice is wrong"
+    );
+    let undocumented: Vec<&String> = advisory.difference(&doc_labels).collect();
+    let stale: Vec<&String> = doc_labels.difference(&advisory).collect();
+    assert!(
+        undocumented.is_empty() && stale.is_empty(),
+        "the doc's ADVISORY bullets and the schema's advisory set must match exactly.
+  advisory in the schema with no ADVISORY bullet (a reader cannot learn why it is advisory): {undocumented:?}
+  bullets still calling a field ADVISORY after promotion (the wake condition already fired -- rewrite the bullet to its new verdict): {stale:?}"
+    );
+
     for field in &advisory {
         let wake_condition = wake_conditions[field.as_str()];
         assert!(
@@ -1459,4 +1480,22 @@ fn the_sidecar_names_a_non_empty_advisory_field_set() {
          not been added yet, or the extraction path itself is broken (non-empty-first: an empty \
          set passes every equality check vacuously)"
     );
+}
+
+/// The field names the #285 doc block itself LABELS advisory, extracted from the bullet shape the
+/// block already uses uniformly: `- ` + a backticked field + exactly `: ADVISORY.`.
+///
+/// Anchored at the bullet, not searched free-text, and that is the whole difference between this
+/// and a brittle scan: a continuation line, a wrapped sentence, or the word ADVISORY appearing in
+/// prose cannot produce a name, because none of them begin a bullet. The cost of the anchoring is
+/// stated where it lives -- if the block ever adopts a second bullet shape, this returns fewer
+/// names and the set comparison below fails LOUDLY rather than silently under-reporting.
+fn advisory_fields_the_doc_labels(doc: &str) -> std::collections::BTreeSet<String> {
+    doc.lines()
+        .filter_map(|line| {
+            let bullet = line.trim_start().strip_prefix("/// - `")?;
+            let (field, rest) = bullet.split_once('`')?;
+            rest.starts_with(": ADVISORY.").then(|| field.to_owned())
+        })
+        .collect()
 }

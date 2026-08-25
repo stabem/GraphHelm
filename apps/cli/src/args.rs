@@ -92,7 +92,22 @@ pub enum DevelopmentCommand {
     /// Render an owner-facing presentation from a task result (#219's renderer, exposed here).
     Present,
     /// Compile a context capsule (#222/#273's compiler, exposed here).
-    CompileContext,
+    CompileContext {
+        /// Token budget the compiled capsule must fit within.
+        ///
+        /// Defaults to zero so the argument-free invocation keeps its existing meaning: with no
+        /// required sections the required budget is zero, which fits any budget, so the
+        /// degenerate capsule still compiles and the existence-parity guard still passes.
+        #[arg(long, default_value_t = 0)]
+        budget: usize,
+        /// A required context section. Repeatable.
+        ///
+        /// Required context is never dropped to fit: if it does not fit, the command refuses.
+        /// Trimming it would return a capsule, under budget, missing evidence the caller was
+        /// required to see.
+        #[arg(long = "require")]
+        require: Vec<String>,
+    },
     /// Propose content for governed memory and report the admission verdict (#220's admission,
     /// exposed here).
     MemoryPropose,

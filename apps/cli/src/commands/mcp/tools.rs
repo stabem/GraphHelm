@@ -197,10 +197,29 @@ fn present_schema() -> serde_json::Value {
 }
 
 fn compile_context_schema() -> serde_json::Value {
-    // No fields yet: #223's existence-slice always compiles the empty/degenerate capsule.
-    // Capsule content becomes a real argument when the behavioral-parity guard (blueprint §6
-    // item 2) wires this to actual sections.
-    object_schema(serde_json::json!({}), &[])
+    // `budget` and `require` are what make the budget refusal reachable from this surface (#393).
+    // Both are optional: omitting them is the pre-#393 call, which compiles the degenerate
+    // capsule, and the existence-parity guard still sends exactly that.
+    //
+    // Capsule CONTENT is still not an argument here. `require` sizes the budget decision and does
+    // not become capsule sections -- those are a closed vocabulary and choosing which one caller
+    // input lands in is behavioral-parity work (blueprint §6 item 2), not a side effect of this.
+    object_schema(
+        serde_json::json!({
+            "budget": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Token budget the capsule must fit within. Required context that \
+                                does not fit is refused, never trimmed.",
+            },
+            "require": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Required context sections. Never dropped to fit.",
+            },
+        }),
+        &[],
+    )
 }
 
 fn memory_propose_schema() -> serde_json::Value {
@@ -743,11 +762,25 @@ pub(crate) fn call(
             Some(&key),
             if_match,
         )),
-        // #223 existence-slice: no required arguments yet (see compile_context_schema).
+        // Forwards `budget` and `require` so the budget refusal is reachable here too (#393).
+        // Both default to the pre-#393 degenerate call, so a caller that sends neither gets what
+        // it always got. The refusal needs no special handling below: the route answers 422 with
+        // `ok: false`, and the shared tail already turns a non-ok envelope into `isError: true`
+        // with the envelope as the content -- which is where a tool-execution failure belongs,
+        // rather than in a JSON-RPC protocol error.
         "compile_context" => Ok(api.request(
             "POST",
             &url::segment_path(&["v1", "development", "context"]),
-            Some(&serde_json::json!({})),
+            Some(&serde_json::json!({
+                "budget": arguments
+                    .get("budget")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                "require": arguments
+                    .get("require")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            })),
             Some(&key),
             if_match,
         )),

@@ -1195,11 +1195,56 @@ pub(super) async fn development_present() -> Response {
     respond_outcome(crate::commands::development::run_present())
 }
 
-/// `POST /v1/development/context`: #222/#273's context compiler over HTTP. #223
-/// existence-slice — no request body is read yet, matching the CLI and MCP surfaces (see
-/// `crate::commands::development::run_compile_context`'s own doc).
-pub(super) async fn development_compile_context() -> Response {
-    respond_outcome(crate::commands::development::run_compile_context())
+/// `POST /v1/development/context`: #222/#273's context compiler over HTTP.
+///
+/// Reads `budget` and `require` and refuses required context that cannot fit, the same decision
+/// the CLI makes -- through the SAME oracle, `development::compile_context_decision`, so the two
+/// surfaces cannot drift into disagreeing about whether one input fits.
+///
+/// **The status comes from `development_refusal_http_status`, not from `respond_outcome`.** That
+/// generic mapping sends every exit code above 3 to 500, and the allocated refusal exit code is
+/// 32 -- so reusing it would have served a well-formed request that simply cannot be honoured at
+/// the given budget as an internal server error, which is a lie about whose fault it is.
+///
+/// An absent or empty body keeps its previous meaning rather than becoming a 400. The
+/// existence-parity guard posts `{}` here, and so does every caller written before #393; a change
+/// that turned those into failures would break a surface contract older than the budget.
+pub(super) async fn development_compile_context(body: Bytes) -> Response {
+    let payload: serde_json::Value = if body.is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(_) => {
+                return bad_request(
+                    "development.compile-context",
+                    "the request body is not valid JSON",
+                    "/",
+                );
+            }
+        }
+    };
+    let budget = usize::try_from(payload["budget"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX);
+    let require: Vec<String> = payload["require"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    match crate::commands::development::compile_context_decision(budget, &require) {
+        Ok(digest) => respond_outcome(Outcome::success(
+            "development.compile-context",
+            serde_json::json!({"digest": digest}),
+        )),
+        Err((code, message)) => respond(
+            crate::commands::development::development_refusal_http_status(code),
+            crate::commands::development::context_refusal(code, message).output,
+        ),
+    }
 }
 
 /// `GET /v1/development/accounting`: a context-accounting receipt over HTTP. #223

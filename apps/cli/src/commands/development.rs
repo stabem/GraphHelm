@@ -1,7 +1,7 @@
 //! CLI adapter for the development-contract Runtime services (#223).
 
 use axum::http::StatusCode;
-use graphhelm_protocols::DevelopmentRefusalCode;
+use graphhelm_protocols::{DevelopmentRefusalCode, Diagnostic};
 
 use crate::output::Outcome;
 
@@ -100,25 +100,97 @@ pub fn run_present() -> Outcome {
 
 /// Compile a context capsule from #222/#273's Runtime compiler, over the CLI surface.
 ///
-/// **Existence-slice, not the full feature.** Capsule id, version, and sections are always the
-/// empty/degenerate case here (`"", 1, &[]`) -- there is no file argument yet for real capsule
-/// content, and adding one is behavioral-parity work (blueprint §6 item 2), not the
-/// existence-parity guard this command exists to give the three adapters something real to agree
-/// on. `compile_capsule` never refuses (it has no `Result` return at all -- any input compiles to
-/// SOME bytes), so there is nothing here that could exercise a refusal path yet either.
+/// **The budget is consulted before anything is compiled (#393).** `fit_within_budget` decides
+/// this and always has; what was missing was a caller. Measured at base `9e90a29`, it had zero
+/// call sites under `apps/` and no production caller anywhere -- its only non-test occurrence in
+/// `core/` was its own definition. The command reached past it to `compile_capsule`, a pure
+/// serializer with no budget parameter and no `Result`, so it compiled a capsule without ever
+/// asking whether the capsule fit.
+///
+/// **Required context is refused, never trimmed.** The asymmetry is `fit_within_budget`'s own:
+/// optional context is droppable and its drops are counted, required context is not droppable at
+/// any budget. An implementation that trims required items to fit returns a capsule, under
+/// budget, with every number healthy and without the evidence the caller was required to see.
+///
+/// The refusal carries the ALLOCATED code rather than a freshly minted CLI one. The envelope
+/// schema that owns this vocabulary says why: codes needed by consuming tasks are allocated
+/// there "rather than invented downstream, because a consumer minting its own code is how two
+/// vocabularies drift while both look correct". So `wire_name()` is the diagnostic's code.
+///
+/// **SEALED, because an argument that reaches only half the command invites the wrong reading:**
+/// `--require` sizes the budget decision and does NOT become capsule content. Capsule id,
+/// version and sections remain the degenerate case, and wiring caller input into the capsule's
+/// declared sections is behavioral-parity work (blueprint §6 item 2). Sections are a closed
+/// vocabulary -- `projectKernel`, `task`, `node`, `evidence`, `dependencyOutputs`,
+/// `agentExperience` -- and choosing which one required items land in is that item's decision to
+/// make, not a side effect of giving this command a budget. `--optional` is unexposed for the
+/// same reason, so the `Fits { dropped_optional }` half is not reachable from this surface yet.
 ///
 /// Reports the compiled capsule's digest, not its raw bytes: `compile_capsule`'s own wire format
 /// is an internal length-prefixed encoding (see its doc comment), not something meant to travel
 /// as a JSON value. The digest is real, computed proof the compiler ran, in a shape every surface
 /// can already carry.
 #[must_use]
-pub fn run_compile_context() -> Outcome {
-    let bytes = graphhelm_runtime::context_compiler::compile_capsule("", 1, &[]);
-    let digest = graphhelm_runtime::context_compiler::base_digest(&bytes);
-    Outcome::success(
-        "development.compile-context",
-        serde_json::json!({"digest": digest}),
-    )
+pub fn run_compile_context(budget: usize, require: &[String]) -> Outcome {
+    match compile_context_decision(budget, require) {
+        Ok(digest) => Outcome::success(
+            COMPILE_CONTEXT_COMMAND,
+            serde_json::json!({"digest": digest}),
+        ),
+        Err((code, message)) => context_refusal(code, message),
+    }
+}
+
+const COMPILE_CONTEXT_COMMAND: &str = "development.compile-context";
+
+/// The budget decision itself, in the vocabulary each surface maps FROM.
+///
+/// **One oracle, two mappings, and the split is the point.** The CLI turns a refusal into an exit
+/// code and HTTP turns the same refusal into a status, and those two mappings are deliberately
+/// different -- exit codes are injective, HTTP statuses are deliberately not. Letting each
+/// surface ask `fit_within_budget` for itself would be a duplicated oracle: two call sites that
+/// can drift into disagreeing about whether the same input fits. Letting HTTP reuse the CLI's
+/// finished `Outcome` fails the other way, because `respond_outcome` maps every exit code above
+/// 3 to 500 -- the allocated refusal code 32 would have been served as an internal server error,
+/// which is a lie about whose fault it is. Measured: that is what happened before this split.
+pub fn compile_context_decision(
+    budget: usize,
+    require: &[String],
+) -> Result<String, (DevelopmentRefusalCode, String)> {
+    match graphhelm_runtime::context_compiler::fit_within_budget(require, &[], budget) {
+        graphhelm_runtime::context_compiler::BudgetOutcome::Refused { code, expansion } => Err((
+            code,
+            format!(
+                "required context needs a budget of {} and {budget} was given; required \
+                     context is never dropped to fit",
+                expansion.required_budget
+            ),
+        )),
+        graphhelm_runtime::context_compiler::BudgetOutcome::Fits { .. } => {
+            let bytes = graphhelm_runtime::context_compiler::compile_capsule("", 1, &[]);
+            Ok(graphhelm_runtime::context_compiler::base_digest(&bytes))
+        }
+    }
+}
+
+/// The refusal envelope both surfaces publish, so the body cannot differ between them.
+///
+/// The exit code is set here rather than at the CLI call site so that it travels with the
+/// envelope: a surface that ignores it (HTTP does, in favour of the status) is choosing to, and a
+/// surface that forgets it cannot silently fall back to `domain`'s generic 2.
+#[must_use]
+pub fn context_refusal(code: DevelopmentRefusalCode, message: String) -> Outcome {
+    let mut refusal = Outcome::domain(
+        COMPILE_CONTEXT_COMMAND,
+        vec![Diagnostic::error(
+            code.wire_name(),
+            message,
+            "/require",
+            COMPILE_CONTEXT_COMMAND,
+        )],
+    );
+    refusal.exit_code = development_refusal_exit_code(code);
+    refusal
 }
 
 /// Propose content for governed memory and report the admission verdict, over the CLI surface.
@@ -242,19 +314,19 @@ pub fn run_accounting() -> Outcome {
 /// every()` - the same list that generates the enum and its wire spelling (core/protocols/src/
 /// development.rs), so a new refusal code gets a new exit code automatically and two codes can
 /// never collide by construction, not by enumeration kept in sync by hand.
+///
+/// **Wired in #393 by `run_compile_context`, and the `expect(dead_code)` that stood here is gone
+/// rather than silenced.** That is the attribute working as designed: it was `expect` and not
+/// `allow` precisely so that the first real caller would have to remove it instead of leaving a
+/// stale suppression behind.
+///
+/// Its stated reason had also gone half-false without going red. It said the Runtime services
+/// these codes come from "have not landed yet" and named #222 among them -- but #222's
+/// `context_compiler::fit_within_budget` had landed, with its own tests, and was refusing with
+/// `ContextBudgetInsufficient` for anyone who called it. What had not landed was a CALLER. A
+/// suppression whose justification decays silently is the same class as a comment that goes
+/// false without going red, which is why this note replaces it rather than merely deleting it.
 #[must_use]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "not yet wired into any command dispatch - the Runtime services these codes \
-                  come from (#219/#221/#222/#213/#212) have not landed yet, so there is no real \
-                  call site to wire it into outside this file's own tests. #expect (not #allow) \
-                  so wiring it in later demands removing this rather than leaving a stale \
-                  suppression. cfg_attr(not(test), ...) because the test build DOES use it - a \
-                  bare #expect there would itself be unfulfilled and fail the same -D warnings."
-    )
-)]
 pub fn development_refusal_exit_code(code: DevelopmentRefusalCode) -> i32 {
     let ordinal = DevelopmentRefusalCode::every()
         .iter()
@@ -281,18 +353,18 @@ pub fn development_refusal_exit_code(code: DevelopmentRefusalCode) -> i32 {
 /// consumer that reads the body (which every JSON API consumer does) gets the exact refusal:
 /// a consumer that only inspects the status code gets the right coarse category and nothing
 /// misleading.
+///
+/// **Wired in #393 by `serve::routes::development_compile_context`, and its `expect(dead_code)`
+/// is gone rather than silenced** -- the same retirement its sibling above went through, for the
+/// same reason: `expect` was chosen over `allow` precisely so the first real caller would have to
+/// remove it. Its stated reason had gone stale in the same way too, saying the Runtime services
+/// these codes come from had not landed when #222's `fit_within_budget` had.
+///
+/// The route calls this instead of `respond_outcome`, and that is not a preference. That generic
+/// mapping sends every exit code above 3 to 500, so the allocated refusal exit code 32 would have
+/// been served as an internal server error -- the deliberate non-injectivity described above is
+/// only safe because the exact refusal still travels in the body.
 #[must_use]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "not yet wired into any route handler - serve/routes.rs entered #223's scope \
-                  via Scope amendment 2, but the Runtime services these codes come from have not \
-                  landed yet. #expect so wiring it in later demands removing this rather than \
-                  leaving a stale suppression. cfg_attr(not(test), ...): see the sibling function \
-                  above for why a bare #expect would be unfulfilled in the test build."
-    )
-)]
 pub fn development_refusal_http_status(code: DevelopmentRefusalCode) -> StatusCode {
     match code {
         DevelopmentRefusalCode::UnknownMajorVersion

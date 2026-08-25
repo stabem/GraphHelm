@@ -170,11 +170,6 @@ fn parse_response(text: &str) -> std::io::Result<RawResponse> {
     })
 }
 
-fn get_json(url: &str, token: &str) -> Value {
-    let response = raw_request(url, Some(token)).unwrap();
-    serde_json::from_str(&response.body).unwrap_or(Value::Null)
-}
-
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -390,15 +385,93 @@ fn certify(serve: &GateServe, gate: &str) -> std::process::Output {
         .unwrap()
 }
 
-fn event_kinds(serve: &GateServe, execution: &str) -> Vec<String> {
-    let events = get_json(
-        &format!("{}/v1/executions/{execution}/events?after=0", serve.base),
-        &serve.token,
+/// The collapse this file's instrument used to perform, demonstrated rather than described.
+///
+/// The events endpoint answers these two situations DIFFERENTLY, and the difference is the whole
+/// diagnosis in #237:
+///
+///   * a malformed execution id  -> a failure status, with no `data.events` at all
+///   * a well-formed unknown id  -> 200, with `data.events` present and empty
+///
+/// The old helper turned BOTH into `[]`, and turned a genuinely empty stream into `[]` as well.
+/// Three different facts about the server, one observable — which is why re-running the flaky test
+/// could never separate its five candidate causes.
+///
+/// This guard fails if that distinction is ever lost again: if the malformed id starts answering
+/// 200, or the unknown id stops carrying an `events` array.
+#[test]
+fn the_events_endpoint_distinguishes_a_refusal_from_a_genuinely_empty_stream() {
+    let directory = tempfile::tempdir().unwrap();
+    let serve = gate_serve(directory.path(), "exec-gate-http-distinguish");
+
+    // Over `OpaqueId`'s documented 128-character cap (see serve/mod.rs), so it fails id parsing
+    // for a reason that does not depend on guessing the allowed character set - and it stays a
+    // legal HTTP path, which a space would not: a space breaks the request LINE, and the test would
+    // then be measuring the HTTP parser rather than the endpoint.
+    let too_long = "e".repeat(200);
+    let malformed = raw_request(
+        &format!("{}/v1/executions/{too_long}/events?after=0", serve.base),
+        Some(&serve.token),
+    )
+    .expect("the malformed-id request completes");
+    assert_ne!(
+        malformed.status, 200,
+        "a malformed execution id must NOT answer 200 - answering 200 here is what let a refusal read back as an empty event list: {}",
+        malformed.body
     );
-    events["data"]["events"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
+
+    let unknown = raw_request(
+        &format!(
+            "{}/v1/executions/exec-gate-http-nobody/events?after=0",
+            serve.base
+        ),
+        Some(&serve.token),
+    )
+    .expect("the unknown-id request completes");
+    assert_eq!(
+        unknown.status, 200,
+        "a well-formed but unknown execution is not an error, it is an empty stream: {}",
+        unknown.body
+    );
+    let parsed: Value =
+        serde_json::from_str(&unknown.body).expect("the unknown-id response is JSON");
+    assert!(
+        parsed["data"]["events"].is_array(),
+        "an empty stream must still carry an `events` ARRAY - absence and emptiness are different facts and the helper now refuses to conflate them: {parsed}"
+    );
+    assert_eq!(
+        parsed["data"]["events"].as_array().map_or(1, Vec::len),
+        0,
+        "nobody has written to this stream: {parsed}"
+    );
+}
+
+/// The events read is a SECOND request, issued after `resume` has already answered. Every way it
+/// could fail used to collapse into the same empty vector: a non-200, an error envelope, a body
+/// that is not JSON, and a genuinely empty page were indistinguishable — `get_json` never looked at
+/// the status and `unwrap_or_default()` turned all of them into `[]`.
+///
+/// That is why #237 could not be diagnosed THROUGH this helper: five different causes produced one
+/// observable, so no number of re-runs could separate them. Each failure mode now panics naming
+/// which one it was, and "absent" is distinguished from "empty" because they are different facts
+/// about the server.
+fn event_kinds(serve: &GateServe, execution: &str) -> Vec<String> {
+    let url = format!("{}/v1/executions/{execution}/events?after=0", serve.base);
+    let response = raw_request(&url, Some(&serve.token))
+        .unwrap_or_else(|error| panic!("the events request did not complete: {error} ({url})"));
+    assert_eq!(
+        response.status, 200,
+        "the events endpoint answered {} rather than 200; an error here used to read back as an empty event list: {}",
+        response.status, response.body
+    );
+    let parsed: Value = serde_json::from_str(&response.body)
+        .unwrap_or_else(|error| panic!("the events body is not JSON ({error}): {}", response.body));
+    let events = parsed["data"]["events"].as_array().unwrap_or_else(|| {
+        panic!(
+            "the events response carries no `data.events` ARRAY; absent is not the same as empty, and reading one as the other is what made this failure undiagnosable: {parsed}"
+        )
+    });
+    events
         .iter()
         .map(|event| {
             let kind = event["kind"]["type"].as_str().unwrap_or("?").to_owned();

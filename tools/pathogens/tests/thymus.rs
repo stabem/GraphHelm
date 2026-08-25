@@ -6,9 +6,9 @@
 use std::collections::BTreeSet;
 
 use pathogens::{
-    CandidateGate, Deliverable, DiffSummary, Specimen, UselessnessMode, certification_is_current,
-    certify, correctness_battery, is_defeated_on_its_axis, paired_trivial_gate,
-    reject_everything_gate, suite, suite_digest,
+    CandidateGate, Deliverable, DiffSummary, GeometrySpecimen, RefusalCause, Specimen,
+    UselessnessMode, certification_is_current, certify, correctness_battery,
+    is_defeated_on_its_axis, paired_trivial_gate, reject_everything_gate, suite, suite_digest,
 };
 
 fn all_modes() -> Vec<UselessnessMode> {
@@ -194,5 +194,63 @@ fn certification_refusal_names_the_gate() {
             .any(|id| id.contains("blank-screen")),
         "the blank screen fooled it: {:?}",
         refusal.fooled_by
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The floor: a suite with no specimens must never certify.
+// ---------------------------------------------------------------------------------------------
+
+/// An empty suite REFUSES, and says why.
+///
+/// The production change that would make this fail: removing the emptiness check from `certify`.
+/// Before it existed, an empty suite made `fooled_by` empty, so the function fell through to
+/// `Ok(Certification { specimens: 0 })` — a gate certified against no pathogens at all, which is
+/// the certification-that-certifies-nothing of #294 promoted to a feature.
+///
+/// **Why the cause is a field rather than `fooled_by.is_empty()`.** Emptiness would technically
+/// discriminate, because a real refusal always names at least one specimen. But the CLI renders a
+/// refusal as *"the candidate passed pathogens {fooled_by:?}"*, so the empty case would print
+/// **"the candidate passed pathogens []"** — actively false, since the gate passed nothing and
+/// there was nothing to pass. Two distinct causes flattened into one legal value is how a boundary
+/// loses the distinction that mattered.
+#[test]
+fn an_empty_suite_refuses_instead_of_certifying_vacuously() {
+    let empty: Vec<GeometrySpecimen> = Vec::new();
+    let refusal = certify(reject_everything_gate().as_ref(), &empty)
+        .expect_err("an empty suite must not certify");
+
+    assert_eq!(refusal.gate_id, "reject-everything");
+    assert_eq!(
+        refusal.cause,
+        RefusalCause::EmptySuite,
+        "the refusal must name the empty suite as the cause, not imply the gate was fooled"
+    );
+    assert!(
+        refusal.fooled_by.is_empty(),
+        "nothing fooled the gate; `fooled_by` keeps its exact meaning"
+    );
+}
+
+/// The floor must NOT fire on a real suite — otherwise `certify` refuses everything and the test
+/// above passes for a reason that has nothing to do with emptiness.
+#[test]
+fn a_real_suite_still_certifies() {
+    certify(reject_everything_gate().as_ref(), &suite())
+        .expect("the bred suite must still certify a gate that rejects everything");
+}
+
+/// And a genuine refusal must still report the gate being fooled, not the new cause.
+///
+/// Without this, `cause: EmptySuite` on every refusal would satisfy the first test while
+/// destroying the distinction it was added to make.
+#[test]
+fn a_gate_that_is_fooled_reports_a_different_cause_than_an_empty_suite() {
+    let refusal = certify(correctness_battery().as_ref(), &suite())
+        .expect_err("the correctness battery is fooled by the bred suite");
+    assert_eq!(refusal.cause, RefusalCause::GatePassedSpecimens);
+    assert!(
+        !refusal.fooled_by.is_empty(),
+        "a gate-passed refusal must name what fooled it"
     );
 }

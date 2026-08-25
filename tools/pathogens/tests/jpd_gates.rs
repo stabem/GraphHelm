@@ -82,9 +82,14 @@ fn the_verification_gate_rejects_every_specimen_in_its_suite() {
 #[test]
 fn every_shipped_specimen_genuinely_defeats_its_axis() {
     let suite = jpd_suite();
+    // Guards the LOOP below, not `certify`: a `for` over an empty collection asserts nothing and
+    // the test passes having checked no specimen at all. `certify`'s own empty-suite floor does
+    // NOT make this redundant, because this test never calls `certify` -- the two guard different
+    // things and the original message here conflated them, which is what nearly got this deleted
+    // when the floor landed.
     assert!(
         !suite.is_empty(),
-        "HARNESS-BROKE: an empty suite certifies nothing and passes"
+        "HARNESS-BROKE: the shipped suite is empty, so the loop below checks nothing"
     );
     for specimen in &suite {
         assert!(

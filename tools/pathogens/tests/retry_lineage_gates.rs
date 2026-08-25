@@ -226,7 +226,14 @@ fn the_gate_refuses_the_negative_fixture_and_accepts_the_positive() {
 #[test]
 fn every_specimen_defeats_the_axis_it_names() {
     let suite = retry_lineage_suite();
-    assert!(!suite.is_empty(), "an empty suite certifies vacuously");
+    // Guards the LOOP below, not `certify`: a `for` over an empty collection asserts nothing.
+    // `certify`'s empty-suite floor does NOT make this redundant -- this test never calls
+    // `certify` -- and the old message said "certifies vacuously", which described a different
+    // mechanism and nearly got this deleted as redundant when the floor landed.
+    assert!(
+        !suite.is_empty(),
+        "HARNESS-BROKE: the suite is empty, so the loop below checks nothing"
+    );
     for specimen in &suite {
         assert!(
             is_defeated_on_its_axis(specimen),

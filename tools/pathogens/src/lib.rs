@@ -251,6 +251,20 @@ pub struct CertificationRefusal {
     pub gate_id: String,
     /// The specimens that fooled it.
     pub fooled_by: Vec<String>,
+    /// Why certification was refused.
+    pub cause: RefusalCause,
+}
+
+/// Why a certification was refused.
+///
+/// A CLOSED set. Kept apart from `fooled_by` because the two causes are different KINDS of
+/// failure: one is a fact about the GATE, the other about the SUITE handed to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefusalCause {
+    /// The gate passed at least one specimen; `fooled_by` names them.
+    GatePassedSpecimens,
+    /// The suite held no specimens, so nothing ever attacked the gate.
+    EmptySuite,
 }
 
 /// The bred suite: exactly ten specimens, one per uselessness mode, deterministic.
@@ -365,6 +379,21 @@ where
     E: Serialize,
     A: Serialize,
 {
+    // A suite with no specimens cannot fool a gate, so `fooled_by` comes back empty and this
+    // function used to fall through to `Ok` -- certifying a gate against nothing at all. The
+    // count was recorded as `specimens: 0` and nothing refused.
+    //
+    // Enforced HERE rather than at each call site, and that is the point: two test files had
+    // already hand-written this check (`jpd_gates.rs`, `retry_lineage_gates.rs`), both of them
+    // mine. Finding one hole twice and patching it locally both times is how the third caller
+    // inherits it -- the one who never knew to look.
+    if suite.is_empty() {
+        return Err(CertificationRefusal {
+            gate_id: gate.id().to_owned(),
+            fooled_by: Vec::new(),
+            cause: RefusalCause::EmptySuite,
+        });
+    }
     let fooled_by: Vec<String> = suite
         .iter()
         .filter(|specimen| gate.evaluate(&specimen.evidence).passed)
@@ -380,6 +409,7 @@ where
         Err(CertificationRefusal {
             gate_id: gate.id().to_owned(),
             fooled_by,
+            cause: RefusalCause::GatePassedSpecimens,
         })
     }
 }

@@ -147,7 +147,29 @@ pub fn run(events: &Path, execution: Option<&str>, gate: &str) -> Outcome {
     // it as `opaqueId` whose pattern excludes `/`. Keying this registry on `id()` would stamp an
     // event the schema rejects. Measured, not assumed.
     let Some(outcome) = certify_registered(gate) else {
-        return refuse(&registry_refusal(), "/gate");
+        // TWO facts, deliberately not flattened into one message. They have opposite audiences
+        // and opposite repairs:
+        //
+        //   not registered          -> the OPERATOR mistyped an id. Fix: use a registered one,
+        //                              so the message names them.
+        //   registered, no adapter  -> the registry and the dispatch disagree. The operator did
+        //                              nothing wrong and CANNOT fix it; a developer must add the
+        //                              arm. Naming the registry here would be a refusal that
+        //                              contradicts itself -- "no gate by that id is registered
+        //                              (the registry is closed: ...<that very id>)".
+        //
+        // Not hypothetical: a half-applied edit in this branch produced exactly the second state.
+        // (Found by L.)
+        return if REGISTERED_GATES.contains(&gate) {
+            refuse(
+                &format!(
+                    "gate '{gate}' is advertised by the registry but has no certification adapter: this binary's registry and dispatch disagree, which is a defect here rather than in the request"
+                ),
+                "/gate",
+            )
+        } else {
+            refuse(&registry_refusal(), "/gate")
+        };
     };
     let certification = match outcome {
         Ok(certification) => certification,

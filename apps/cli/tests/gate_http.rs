@@ -596,11 +596,23 @@ fn an_unknown_gate_is_refused_with_the_registry_code() {
 /// The production change that would make this fail: writing gate ids back into the `--gate` doc
 /// comment in `args.rs`.
 ///
-/// **Why the help text is the worst place to list them.** It is what the operator reads FIRST,
-/// before running anything; it lives in a DIFFERENT FILE from the check that decides membership;
-/// and clap renders it from a doc comment, which is a compile-time literal that cannot be derived
-/// from the registry. So it cannot be kept in sync by construction — only by memory. Removing the
-/// enumeration removes the need for the sync, which is the version that does not age.
+/// **Why the enumeration is removed rather than derived -- corrected after being measured.**
+///
+/// An earlier version of this comment said the list "cannot be derived because clap renders a
+/// compile-time literal". That is true of the DOC COMMENT and FALSE of the arg:
+/// `PossibleValuesParser::new(...)` derives it, and adds shell completions. (Found by L.)
+///
+/// I ran it rather than conceding on argument, and the real reason is the trade it makes.
+/// Deriving the values moves rejection into clap, BEFORE this command runs, so the structured
+/// `GHCLI018_GATE_INVALID` diagnostic -- with its `path` and `source`, machine-readable --
+/// disappears entirely: stdout comes back EMPTY and
+/// `an_unknown_gate_is_refused_with_the_registry_code` fails. It also re-enumerates the gates in
+/// `--help`: derived, but enumerated.
+///
+/// So the enumeration stays out because deriving it costs the CLI's structured refusal contract,
+/// not because deriving is impossible. Right call, wrong reason -- and a wrong reason stored in a
+/// TEST is harder to revisit than one written loose, which is why it is corrected here and not
+/// only in the pull request.
 #[test]
 fn the_help_text_does_not_enumerate_the_gate_registry() {
     let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -620,9 +632,9 @@ fn the_help_text_does_not_enumerate_the_gate_registry() {
     );
     assert!(
         !help.contains("gate-geometry"),
-        "the help text enumerates the registry, so it goes stale the day a gate is added and \
-         cannot be derived from the registry because clap renders a compile-time literal. \
-         got: {help}"
+        "the help text enumerates the registry, so it goes stale the day a gate is added; \
+         deriving it via PossibleValuesParser is possible but costs the structured \
+         GHCLI018_GATE_INVALID refusal. got: {help}"
     );
 }
 

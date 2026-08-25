@@ -1181,6 +1181,13 @@ pub(super) async fn development_present() -> Response {
     respond_outcome(crate::commands::development::run_present())
 }
 
+/// `POST /v1/development/context`: #222/#273's context compiler over HTTP. #223
+/// existence-slice — no request body is read yet, matching the CLI and MCP surfaces (see
+/// `crate::commands::development::run_compile_context`'s own doc).
+pub(super) async fn development_compile_context() -> Response {
+    respond_outcome(crate::commands::development::run_compile_context())
+}
+
 // -------------------------------------------------------------------------------------------
 // Milestone 05g Task 3: the wake lease's HTTP surface — the SLEEPER-ONLY half. POST arms the
 // caller's own lease (idempotent, the three headers); GET reads it. No route rings: the ring

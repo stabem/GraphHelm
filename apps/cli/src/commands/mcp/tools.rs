@@ -20,7 +20,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 17] = [
+const TOOLS: [ToolSpec; 18] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -123,6 +123,13 @@ const TOOLS: [ToolSpec; 17] = [
                       /v1/development/present). #223 existence-slice: no result argument yet.",
         schema: present_schema,
     },
+    ToolSpec {
+        name: "compile_context",
+        description: "Compile a context capsule and report its digest (POST \
+                      /v1/development/context). #223 existence-slice: no capsule content \
+                      argument yet.",
+        schema: compile_context_schema,
+    },
 ];
 
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -165,6 +172,13 @@ fn present_schema() -> serde_json::Value {
     // No fields yet, for the same reason as resolve_contract_schema: #223's existence-slice
     // renders a fixed no-decision result. The task result becomes a real argument when the
     // behavioral-parity guard (blueprint section 6 item 2) wires this to actual task outcomes.
+    object_schema(serde_json::json!({}), &[])
+}
+
+fn compile_context_schema() -> serde_json::Value {
+    // No fields yet: #223's existence-slice always compiles the empty/degenerate capsule.
+    // Capsule content becomes a real argument when the behavioral-parity guard (blueprint §6
+    // item 2) wires this to actual sections.
     object_schema(serde_json::json!({}), &[])
 }
 
@@ -692,6 +706,14 @@ pub(crate) fn call(
         "present" => Ok(api.request(
             "POST",
             &url::segment_path(&["v1", "development", "present"]),
+            Some(&serde_json::json!({})),
+            Some(&key),
+            if_match,
+        )),
+        // #223 existence-slice: no required arguments yet (see compile_context_schema).
+        "compile_context" => Ok(api.request(
+            "POST",
+            &url::segment_path(&["v1", "development", "context"]),
             Some(&serde_json::json!({})),
             Some(&key),
             if_match,

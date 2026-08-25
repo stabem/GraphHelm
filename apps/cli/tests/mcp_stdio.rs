@@ -513,7 +513,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 }
 
 #[test]
-fn tools_list_names_exactly_the_sixteen_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_eighteen_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -545,11 +545,16 @@ fn tools_list_names_exactly_the_sixteen_tools_with_closed_schemas() {
             "wake_wait",
             "probe",
             "resolve_contract",
-            "memory_status"
+            "memory_status",
+            "present",
+            "compile_context"
         ],
-        "exactly the sixteen tools, in order, and NOTHING else — no credential tool exists by \
-         design (omission is the enforcement); #223 added resolve_contract after probe, then \
-         memory_status after it"
+        "exactly the eighteen tools, in order, and NOTHING else — no credential tool exists by \
+         design (omission is the enforcement); #223 added resolve_contract, memory_status, \
+         present, then compile_context, each after the one before it. NOTE: this list was found \
+         out of date on main (stopped at memory_status, missing present -- #357 added the tool \
+         but not this pin) while resolving this merge; corrected here alongside adding \
+         compile_context, not a defect introduced by this change."
     );
     for tool in &tools {
         let schema = &tool["inputSchema"];

@@ -91,6 +91,8 @@ pub enum DevelopmentCommand {
     MemoryStatus,
     /// Render an owner-facing presentation from a task result (#219's renderer, exposed here).
     Present,
+    /// Compile a context capsule (#222/#273's compiler, exposed here).
+    CompileContext,
 }
 
 #[derive(Debug, Args)]

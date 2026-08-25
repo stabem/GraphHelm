@@ -79,6 +79,15 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
         // to write the decision down; this is it, in the place decisions now live.
         http_probe_path: "/v1/development/present",
     },
+    FamilySurfaces {
+        cli: "compile-context",
+        mcp: "compile_context",
+        http_method: "POST",
+        // "compile-context" -> "/v1/development/context": the CLI/MCP names the ACTION
+        // ("compile"), the HTTP path names the RESOURCE it acts on ("context") -- the same
+        // verb-noun split `resolve-contract` above uses, under the same REST convention.
+        http_probe_path: "/v1/development/context",
+    },
 ];
 
 /// Where one operation family lives on each of the three surfaces.

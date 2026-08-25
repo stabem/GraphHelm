@@ -98,6 +98,29 @@ pub fn run_present() -> Outcome {
     )
 }
 
+/// Compile a context capsule from #222/#273's Runtime compiler, over the CLI surface.
+///
+/// **Existence-slice, not the full feature.** Capsule id, version, and sections are always the
+/// empty/degenerate case here (`"", 1, &[]`) -- there is no file argument yet for real capsule
+/// content, and adding one is behavioral-parity work (blueprint §6 item 2), not the
+/// existence-parity guard this command exists to give the three adapters something real to agree
+/// on. `compile_capsule` never refuses (it has no `Result` return at all -- any input compiles to
+/// SOME bytes), so there is nothing here that could exercise a refusal path yet either.
+///
+/// Reports the compiled capsule's digest, not its raw bytes: `compile_capsule`'s own wire format
+/// is an internal length-prefixed encoding (see its doc comment), not something meant to travel
+/// as a JSON value. The digest is real, computed proof the compiler ran, in a shape every surface
+/// can already carry.
+#[must_use]
+pub fn run_compile_context() -> Outcome {
+    let bytes = graphhelm_runtime::context_compiler::compile_capsule("", 1, &[]);
+    let digest = graphhelm_runtime::context_compiler::base_digest(&bytes);
+    Outcome::success(
+        "development.compile-context",
+        serde_json::json!({"digest": digest}),
+    )
+}
+
 /// Maps a `DevelopmentRefusalCode` to a distinct CLI exit code.
 ///
 /// Injective by construction: base offset (20, clear of the existing 0/2/3/4 success/domain/

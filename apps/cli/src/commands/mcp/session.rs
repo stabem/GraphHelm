@@ -23,6 +23,18 @@ pub(crate) struct SessionState {
     /// The loopback-only API client (Task 3). The tool table (Task 5) drives it.
     #[allow(dead_code)]
     pub(crate) client: Option<super::client::ApiClient>,
+    /// #213: the presented per-contribution capability, the package it was minted against, and
+    /// where every decision this gate makes is recorded. All three present or all three absent
+    /// — `mod.rs::build_client` refuses the mixed cases before the session ever starts.
+    /// `package_root` is re-validated fresh on every `tools/call`, never cached, so a package
+    /// edited mid-session immediately stales a token minted before the edit (blueprint T2).
+    pub(crate) capability: Option<CapabilityConfig>,
+}
+
+pub(crate) struct CapabilityConfig {
+    pub(crate) token: graphhelm_tool_broker::mcp_capability::McpCapabilityToken,
+    pub(crate) package_root: std::path::PathBuf,
+    pub(crate) audit_log: std::path::PathBuf,
 }
 
 impl SessionState {
@@ -31,6 +43,7 @@ impl SessionState {
             initialized: false,
             nonce,
             client: None,
+            capability: None,
         }
     }
 
@@ -40,6 +53,67 @@ impl SessionState {
         self.client = Some(client);
         self
     }
+
+    /// Attaches the #213 capability config, opt-in by presence.
+    pub(crate) fn with_capability(mut self, capability: CapabilityConfig) -> Self {
+        self.capability = Some(capability);
+        self
+    }
+}
+
+/// #213: re-validates the package FRESH (never a cached digest — blueprint T2) and runs the
+/// pure pipeline. A package that no longer validates at all refuses closed under the SAME code
+/// as a digest mismatch: there is no trustworthy fresh digest to compare, so nothing proceeds,
+/// and the audit trail records one meaningful reason rather than a second ad hoc failure shape.
+fn check_capability(
+    token: &graphhelm_tool_broker::mcp_capability::McpCapabilityToken,
+    package_root: &std::path::Path,
+    tool_name: &str,
+    actor: &str,
+) -> Result<(), graphhelm_tool_broker::mcp_capability::McpCapabilityRefusal> {
+    let package_digest = graphhelm_schema::validate_extension_package(package_root)
+        .map(|validated| validated.package_digest)
+        .unwrap_or_default(); // never equals a real "sha256:..." token digest -> StaleDigest
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    graphhelm_tool_broker::mcp_capability::authorize_mcp_call(
+        token,
+        tool_name,
+        actor,
+        &package_digest,
+        now,
+    )
+}
+
+/// Appends one redacted decision line. Fails CLOSED: if the record cannot be written, the
+/// call is refused rather than allowed to proceed unaudited (an unaudited allow is functionally
+/// an ungoverned one, the same gap #213 exists to close).
+fn record_and_append(
+    audit_log: &std::path::Path,
+    actor: &str,
+    contribution_id: &str,
+    package_digest: &str,
+    tool_name: &str,
+    decision: &Result<(), graphhelm_tool_broker::mcp_capability::McpCapabilityRefusal>,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let record = graphhelm_tool_broker::mcp_capability::record_call(
+        actor,
+        contribution_id,
+        package_digest,
+        tool_name,
+        decision,
+    );
+    let line = serde_json::to_string(&record)
+        .map_err(|_| "the audit record could not be serialized".to_owned())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_log)
+        .map_err(|_| "the capability audit log could not be opened".to_owned())?;
+    writeln!(file, "{line}").map_err(|_| "the capability audit log could not be written".to_owned())
 }
 
 /// The method table. `ping` and `initialize` are answerable at any time; everything else
@@ -95,6 +169,33 @@ pub(crate) fn handle(
                     message: "the server has no API client configured".to_owned(),
                 };
             };
+            if let Some(capability) = state.capability.as_ref() {
+                let decision = check_capability(
+                    &capability.token,
+                    &capability.package_root,
+                    name,
+                    &client.actor,
+                );
+                if let Err(write_error) = record_and_append(
+                    &capability.audit_log,
+                    &client.actor,
+                    &capability.token.contribution_id,
+                    &capability.token.package_digest,
+                    name,
+                    &decision,
+                ) {
+                    return HandlerOutcome::Error {
+                        code: super::rpc::INVALID_REQUEST,
+                        message: format!("capability refused: {write_error}"),
+                    };
+                }
+                if let Err(refusal) = decision {
+                    return HandlerOutcome::Error {
+                        code: super::rpc::INVALID_REQUEST,
+                        message: format!("capability refused: {refusal}"),
+                    };
+                }
+            }
             super::tools::call(client, &state.nonce, rpc_id, name, &arguments)
         }
         _ => HandlerOutcome::Error {

@@ -85,6 +85,15 @@ pub fn run(command: TopLevel) -> Outcome {
         },
         TopLevel::Extension(extension_args) => match extension_args.command {
             ExtensionCommand::Validate { package } => extension::run(&package),
+            ExtensionCommand::MintMcpToken {
+                package,
+                contribution,
+                actor,
+                ttl_seconds,
+            } => extension::run_mint_mcp_token(&package, &contribution, &actor, ttl_seconds),
+            ExtensionCommand::RevokeMcpToken { token_file } => {
+                extension::run_revoke_mcp_token(&token_file)
+            }
         },
         TopLevel::Events(events) => match events.command {
             EventsCommand::Verify {

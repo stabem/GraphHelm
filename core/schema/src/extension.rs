@@ -458,6 +458,21 @@ impl PackageGrants {
     }
 }
 
+/// One contribution's own declared authority, surfaced (never re-derived) from what the
+/// validator already parsed and checked. `surfaces` is the closed-allowlist-checked claim about
+/// which MCP tools / CLI commands this contribution drives (§`MCP_TOOLS`/`CLI_COMMANDS` above);
+/// consumers that need only the MCP subset intersect it themselves rather than this type
+/// filtering it, so a consumer added later is not silently handed a narrower view than the one
+/// the manifest actually declares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedContribution {
+    pub id: String,
+    pub surfaces: Vec<String>,
+    pub effects: Vec<String>,
+    pub permissions: Vec<String>,
+    pub required_capabilities: Vec<String>,
+}
+
 /// Validated, presentation-neutral summary of an extension package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedExtensionPackage {
@@ -465,6 +480,7 @@ pub struct ValidatedExtensionPackage {
     pub version: String,
     pub contribution_count: usize,
     pub package_digest: String,
+    pub contributions: Vec<ValidatedContribution>,
 }
 
 /// Validate an extension package using only local, bounded resources.
@@ -484,6 +500,7 @@ pub fn validate_extension_package(
                 .to_owned(),
             contribution_count: records.len(),
             package_digest: package_digest(&manifest, &records),
+            contributions: validated_contributions(&manifest),
         }),
         Err(()) => {
             let mut diagnostics = collector.into_diagnostics();
@@ -497,6 +514,29 @@ pub fn validate_extension_package(
             Err(diagnostics)
         }
     }
+}
+
+/// Reads `spec.contracts.contributions` back through the SAME `Contribution` deserialization the
+/// validator already ran, rather than a second hand-rolled JSON reader — a re-parse of already-
+/// validated bytes cannot drift from what the validator itself checked, which a parallel reader
+/// of the same field names could.
+fn validated_contributions(manifest: &serde_json::Value) -> Vec<ValidatedContribution> {
+    manifest["spec"]["contracts"]["contributions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|value| {
+            let contribution: Contribution = serde_json::from_value(value.clone())
+                .expect("every contribution here already passed validation");
+            ValidatedContribution {
+                id: contribution.id,
+                surfaces: contribution.surfaces,
+                effects: contribution.effects,
+                permissions: contribution.permissions,
+                required_capabilities: contribution.requires.capabilities,
+            }
+        })
+        .collect()
 }
 
 fn validate_package(

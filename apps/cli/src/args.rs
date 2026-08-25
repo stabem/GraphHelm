@@ -49,6 +49,27 @@ pub struct ExtensionArgs {
 pub enum ExtensionCommand {
     /// Validates extension.json and every declared contribution in a local package directory.
     Validate { package: PathBuf },
+    /// #213: mints one per-contribution MCP capability token, allowed_tools frozen from the
+    /// named contribution's own declared `surfaces` at this instant. Prints the token as JSON
+    /// to stdout (the caller redirects to a file); this command never writes one itself.
+    MintMcpToken {
+        #[arg(long)]
+        package: PathBuf,
+        /// The contribution id, exactly as declared in `extension.json`'s `contributions[]`.
+        #[arg(long)]
+        contribution: String,
+        #[arg(long)]
+        actor: String,
+        #[arg(long = "ttl-seconds")]
+        ttl_seconds: u64,
+    },
+    /// #213: flips `revoked` on a presented token file's JSON and prints the result to stdout
+    /// -- every other bound field is untouched. The caller decides where the revoked bytes
+    /// land (overwrite in place, or a new file); this command never writes one itself.
+    RevokeMcpToken {
+        #[arg(long = "token-file")]
+        token_file: PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -68,6 +89,30 @@ pub struct McpArgs {
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
     #[arg(long = "actor-type", default_value = "agent")]
     pub actor_type: String,
+    /// File holding one per-contribution MCP capability token (#213), JSON, matching
+    /// `graphhelm_tool_broker::mcp_capability::McpCapabilityToken`'s wire shape. Opt-in by
+    /// PRESENCE, not by `--actor-type`: `--actor-type agent` is the default for ordinary chat
+    /// sessions with no contribution to scope, so requiring this flag there would refuse the
+    /// common case, not the threat. The party that decides whether an extension contribution's
+    /// session gets this flag is whatever harness launches `graphhelm mcp` on the
+    /// contribution's behalf -- never the contribution's own declared config, since that would
+    /// let a hostile contribution simply omit the flag and keep today's unrestricted access.
+    /// When present, requires `--package` (the digest every presented tool call is checked
+    /// fresh against); when absent, every tool is reachable exactly as before #213.
+    #[arg(long = "capability-token-file")]
+    pub capability_token_file: Option<PathBuf>,
+    /// The extension package this session's capability token was minted against (required
+    /// alongside `--capability-token-file`). Its digest is recomputed fresh on every tool call,
+    /// never cached for the session's lifetime -- a package edited mid-session immediately
+    /// stales any token minted before the edit (#213 blueprint T2).
+    #[arg(long = "package")]
+    pub package: Option<PathBuf>,
+    /// Append-only JSONL audit trail (required alongside `--capability-token-file`): one
+    /// redacted `McpCapabilityAuditRecord` per tool call, allowed or refused. Never call
+    /// arguments, never the token's own bytes. Read with `jq` or any line-oriented JSON tool; a
+    /// dedicated reader/summarizer command is a named follow-up, not built by #213.
+    #[arg(long = "capability-audit-log")]
+    pub capability_audit_log: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

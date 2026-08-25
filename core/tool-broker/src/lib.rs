@@ -10,5 +10,6 @@
 pub mod call;
 pub mod effect;
 pub mod lease;
+pub mod mcp_capability;
 pub mod path;
 pub mod record;

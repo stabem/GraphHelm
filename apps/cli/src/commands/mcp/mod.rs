@@ -68,12 +68,46 @@ fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
             "/actorType",
         ));
     }
+    if args.capability_token_file.is_some() && args.package.is_none() {
+        return Err(refuse(
+            "--capability-token-file requires --package: the digest every presented tool call \
+             is checked fresh against (#213)",
+            "/package",
+        ));
+    }
+    if args.capability_token_file.is_some() && args.capability_audit_log.is_none() {
+        return Err(refuse(
+            "--capability-token-file requires --capability-audit-log: every decision this \
+             gate makes is recorded, allowed or refused (#213)",
+            "/capabilityAuditLog",
+        ));
+    }
     Ok(client::ApiClient::new(
         args.url.clone(),
         token,
         args.actor.clone(),
         args.actor_type.clone(),
     ))
+}
+
+/// #213: reads the presented capability token from `--capability-token-file`, refusing before
+/// any protocol byte on a missing/unreadable/unparseable file -- the same fail-closed shape as
+/// the bearer token read above, never a silent "no capability" fallback.
+fn read_capability_token(
+    path: &std::path::Path,
+) -> Result<graphhelm_tool_broker::mcp_capability::McpCapabilityToken, Outcome> {
+    let bytes = std::fs::read(path).map_err(|_| {
+        refuse(
+            "--capability-token-file does not name a readable file",
+            "/capabilityTokenFile",
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|_| {
+        refuse(
+            "--capability-token-file does not hold a valid capability token",
+            "/capabilityTokenFile",
+        )
+    })
 }
 
 pub fn run(args: &McpArgs) -> Outcome {
@@ -92,6 +126,21 @@ pub fn run(args: &McpArgs) -> Outcome {
         .collect::<String>();
 
     let mut state = session::SessionState::new(nonce).with_client(api);
+    if let Some(token_path) = &args.capability_token_file {
+        let token = match read_capability_token(token_path) {
+            Ok(token) => token,
+            Err(outcome) => return outcome,
+        };
+        // build_client already refused capability_token_file without package/audit_log.
+        state = state.with_capability(session::CapabilityConfig {
+            token,
+            package_root: args.package.clone().expect("checked by build_client"),
+            audit_log: args
+                .capability_audit_log
+                .clone()
+                .expect("checked by build_client"),
+        });
+    }
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     match rpc::run(stdin.lock(), &mut stdout, session::handle, &mut state) {

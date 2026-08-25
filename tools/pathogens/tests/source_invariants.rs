@@ -182,13 +182,25 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         !offends(between),
         "spacing between two literals is ordinary Rust"
     );
+    // PRECONDITION, and NOT the one its two neighbours use. Theirs assert `.contains("   ")`
+    // because their property is "carries a run OUTSIDE any literal". This fixture's property is
+    // the OPPOSITE -- the run must be INSIDE the literal, or `has_run_in_literal` answers false
+    // and the exemption below is never consulted. `.contains("   ")` cannot tell the difference:
+    // degrade this line to `//      let s = "ab";` and the run migrates out of the literal while
+    // `contains` stays true, which is exactly the degradation that silences the exemption.
+    // Copying the neighbours here would have looked right and measured nothing. (Found by B.)
+    let comment = r#"//   let s = "a          b";"#;
+    assert!(
+        has_run_in_literal(comment),
+        "the comment fixture stopped carrying a run inside its literal, so the exemption is no longer what makes the assertion below pass"
+    );
     assert!(
         // The comment exemption must be REACHED to be observed. An earlier fixture here
         // was `"///   a doc comment whose indent is an intentional list"` -- a line with no
         // string literal in it at all, so `has_run_in_literal` answered `false` before the
         // exemption was ever consulted and the assertion passed whether the exemption
         // worked or not. Found by sabotaging `is_line_comment` and watching nothing go red.
-        !offends(r#"//   let s = "a          b";"#),
+        !offends(comment),
         "comments are excluded: their indentation is often deliberate"
     );
     // A NEGATIVE assertion goes vacuous when its fixture loses the property under test: if this

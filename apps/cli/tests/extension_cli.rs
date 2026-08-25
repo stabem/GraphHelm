@@ -1263,24 +1263,27 @@ fn an_array_host_views_still_validates() {
     );
 }
 
-/// Pins the advisory decisions themselves (blueprint §2): any value for these four fields
-/// currently validates, so a future accidental enforcement attempt is a visible test change,
-/// never a silent behavior shift landing without anyone noticing the field started mattering.
+/// Pins the advisory decisions themselves (blueprint §2): any value for a field the schema
+/// tags advisory currently validates, so a future accidental enforcement attempt is a visible
+/// test change, never a silent behavior shift landing without anyone noticing the field started
+/// mattering. The population is the schema's, not a fourth hand-written copy of it (#318) --
+/// only the hostile VALUE below is chosen per test, since "any value" is the claim being made
+/// and the exact string carries no meaning.
 #[test]
-fn format_version_missing_capability_result_composition_and_activation_are_read_and_ignored() {
-    for (field, value) in [
-        ("formatVersion", json!("not-a-real-version")),
-        ("missingCapabilityResult", json!("ignore")),
-        ("composition", json!("merge")),
-        ("activation", json!("on-discovery")),
-    ] {
+fn every_schema_advisory_field_is_read_and_ignored() {
+    let advisory = contracts_fields_by_status(&extension_schema(), "advisory");
+    assert!(
+        !advisory.is_empty(),
+        "non-empty-first: see the sentinel test above"
+    );
+    for field in &advisory {
         let mut fixture = valid_package();
-        fixture.manifest["spec"]["contracts"][field] = value.clone();
+        fixture.manifest["spec"]["contracts"][field] = json!("clearly-not-a-real-value");
         fixture.write_manifest();
         let output = fixture.run();
         assert!(
             output.status.success(),
-            "{field} is advisory and must not be enforced yet, got: {}",
+            "{field} is schema-tagged advisory and must not be enforced yet, got: {}",
             String::from_utf8_lossy(&output.stdout)
         );
     }
@@ -1293,8 +1296,24 @@ fn format_version_missing_capability_result_composition_and_activation_are_read_
 /// identical to explained) reproduced one file over. Mirrors
 /// `development_sabotage.rs::the_doc_declares_every_criterion_it_does_not_prove`'s pattern:
 /// read the real source text, assert each expected fragment is actually there.
+///
+/// #318: the FIELD NAMES this loop checks come from the schema, not a third hand-written copy.
+/// The wake-condition PROSE cannot come from the schema (it is English reasoning, not data) --
+/// it stays a hand-written map here, one entry per schema-tagged field. A fifth advisory field
+/// added to the schema without a matching entry in this map fails loudly (`expect` below),
+/// rather than being silently skipped the way a `for` loop over a separate hand array would be.
 #[test]
 fn the_advisory_field_doc_names_each_field_and_its_wake_condition() {
+    let wake_conditions = std::collections::BTreeMap::from([
+        (
+            "formatVersion",
+            "a real design need for a contracts-format version appears",
+        ),
+        ("missingCapabilityResult", "that registry is built"),
+        ("composition", "a documented behavioral distinction"),
+        ("activation", "#212 lands its state machine"),
+    ]);
+
     let source = fs::read_to_string(repository_root().join("core/schema/src/extension.rs"))
         .expect("core/schema/src/extension.rs is readable from apps/cli's tests");
     let doc = source
@@ -1306,15 +1325,34 @@ fn the_advisory_field_doc_names_each_field_and_its_wake_condition() {
              unrenamed",
         );
 
-    for (field, wake_condition) in [
-        (
-            "formatVersion",
-            "a real design need for a contracts-format version appears",
-        ),
-        ("missingCapabilityResult", "that registry is built"),
-        ("composition", "a documented behavioral distinction"),
-        ("activation", "#212 lands its state machine"),
-    ] {
+    let advisory = contracts_fields_by_status(&extension_schema(), "advisory");
+    assert!(
+        !advisory.is_empty(),
+        "non-empty-first: see the sentinel test above"
+    );
+
+    // L's finding on #339: the loop below only ever checked advisory ⊆ wake_conditions.keys()
+    // (a missing entry panics) -- never the reverse. The live case for the reverse is
+    // PROMOTION, not rename: the day an advisory field flips to enforced/structural, its
+    // wake_conditions entry becomes orphaned -- a wake condition that ALREADY FIRED, describing
+    // a state the system has left -- and this test would keep passing forever on the stale
+    // paragraph. Set equality in both directions, both remainders printed
+    // (closed-vocabulary-guard-pattern), catches both a new field with no entry and a stale
+    // entry for a field no longer advisory.
+    let wake_condition_keys: std::collections::BTreeSet<String> =
+        wake_conditions.keys().map(|&key| key.to_owned()).collect();
+    let missing: Vec<&String> = advisory.difference(&wake_condition_keys).collect();
+    let orphaned: Vec<&String> = wake_condition_keys.difference(&advisory).collect();
+    assert!(
+        missing.is_empty() && orphaned.is_empty(),
+        "wake_conditions and the schema's advisory set must match exactly -- schema fields with \
+         no registered wake condition (a new advisory field, #318's whole point): {missing:?}; \
+         wake_conditions entries for fields no longer advisory (promoted to enforced/structural, \
+         or removed -- the wake condition already fired, delete the stale entry): {orphaned:?}"
+    );
+
+    for field in &advisory {
+        let wake_condition = wake_conditions[field.as_str()];
         assert!(
             doc.contains(&format!("`{field}`")),
             "the doc never names `{field}`, so a reader cannot find why it is advisory"
@@ -1325,4 +1363,96 @@ fn the_advisory_field_doc_names_each_field_and_its_wake_condition() {
              the reasoning leaves every test green -- #285's own defect, reproduced here"
         );
     }
+}
+
+// -------------------------------------------------------------------------------------------
+// #318: the advisory field list above was hand-written in three places (this pin test, the
+// doc-guard test, and the doc comment) with nothing tying them together -- a fifth advisory
+// field added later without being added to all three would be invisible to both guards, each
+// measuring a population its own author wrote (L's finding on #315). The only non-circular
+// authority for "which /spec/contracts fields exist" is the manifest schema itself
+// (schemas/extension.schema.json) -- read here as the source, never re-typed
+// (closed-vocabulary-guard-pattern).
+// -------------------------------------------------------------------------------------------
+
+fn extension_schema() -> Value {
+    serde_json::from_str(
+        &fs::read_to_string(repository_root().join("schemas/extension.schema.json"))
+            .expect("schemas/extension.schema.json is readable"),
+    )
+    .expect("schemas/extension.schema.json is valid JSON")
+}
+
+/// Every property name `/spec/contracts` declares, regardless of its `x-graphhelm-status` (or
+/// lack of one) -- the full set `contracts_fields_by_status` partitions.
+fn contracts_field_names(schema: &Value) -> std::collections::BTreeSet<String> {
+    schema
+        .pointer("/properties/spec/properties/contracts/properties")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Reads `/spec/contracts`'s declared properties and returns the names tagged with the given
+/// `x-graphhelm-status` annotation -- an inert JSON Schema vendor extension (unknown keywords
+/// are ignored by validation, so this adds no new enforcement) that exists purely so this
+/// extraction has something real to read instead of a fourth hand-written copy.
+fn contracts_fields_by_status(schema: &Value, status: &str) -> std::collections::BTreeSet<String> {
+    schema
+        .pointer("/properties/spec/properties/contracts/properties")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(_, sub_schema)| sub_schema["x-graphhelm-status"] == status)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// L's finding on #339: `contracts_fields_by_status` only sees a property if it carries a
+/// RECOGNIZED `x-graphhelm-status`. A property added to `/spec/contracts` with no tag (or a
+/// typo'd one) indexes to `Null`, matches none of "advisory"/"enforced"/"structural", and
+/// silently drops out of every population this file derives from the schema -- while
+/// `extension validate` still accepts it (`additionalProperties: true`). This is #318's own
+/// defect ("population is the instrument") one layer up: the schema is meant to be the one
+/// non-circular authority, but only for the properties it remembers to tag. This does NOT close
+/// the schema's own residual gap: `core/schema/src/extension.rs` reads `contracts.get(...)` for
+/// specific field names directly (`publication`, `hostViews`, `artifactFlows`) -- a field a
+/// future validator reads this way without ever adding it to the schema's `properties` stays
+/// invisible to this whole scheme, schema-tagged or not. That is a second authority, untouched
+/// by this test.
+#[test]
+fn every_contracts_property_carries_a_recognized_status() {
+    let schema = extension_schema();
+    let all = contracts_field_names(&schema);
+    assert!(
+        !all.is_empty(),
+        "non-empty-first: /spec/contracts declared zero properties -- extraction is broken"
+    );
+    let tagged: std::collections::BTreeSet<String> = ["advisory", "enforced", "structural"]
+        .into_iter()
+        .flat_map(|status| contracts_fields_by_status(&schema, status))
+        .collect();
+    let untagged: Vec<&String> = all.difference(&tagged).collect();
+    let unexpected: Vec<&String> = tagged.difference(&all).collect();
+    assert!(
+        untagged.is_empty() && unexpected.is_empty(),
+        "every declared /spec/contracts property must carry x-graphhelm-status in \
+         {{advisory, enforced, structural}} -- untagged or mistagged: {untagged:?}; tagged but \
+         not a real property (should be impossible by construction, name the bug if non-empty): \
+         {unexpected:?}"
+    );
+}
+
+#[test]
+fn the_schema_names_a_non_empty_advisory_field_set() {
+    let advisory = contracts_fields_by_status(&extension_schema(), "advisory");
+    assert!(
+        !advisory.is_empty(),
+        "no /spec/contracts property in schemas/extension.schema.json is tagged \
+         x-graphhelm-status: advisory -- either the tagging has not been added yet, or the \
+         extraction path itself is broken (non-empty-first: an empty set passes every equality \
+         check vacuously)"
+    );
 }

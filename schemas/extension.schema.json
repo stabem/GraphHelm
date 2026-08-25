@@ -25,7 +25,22 @@
         "type": {"enum": ["capability-provider", "tool", "skill-package", "agent-package", "model-adapter", "evaluator", "policy-pack", "retriever", "document-materializer", "sandbox-adapter", "trigger", "visualizer", "deployment-adapter", "dream-strategy"]},
         "capabilities": {"type": "array", "items": {"type": "string"}},
         "permissions": {"type": "object", "additionalProperties": true},
-        "contracts": {"type": "object", "additionalProperties": true},
+        "contracts": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "formatVersion": {"x-graphhelm-status": "advisory"},
+            "activation": {"x-graphhelm-status": "advisory"},
+            "composition": {"x-graphhelm-status": "advisory"},
+            "missingCapabilityResult": {"x-graphhelm-status": "advisory"},
+            "publication": {"x-graphhelm-status": "enforced"},
+            "hostViews": {"x-graphhelm-status": "enforced"},
+            "contributions": {"x-graphhelm-status": "structural"},
+            "entryFamilies": {"x-graphhelm-status": "structural"},
+            "artifactFlowFormat": {"x-graphhelm-status": "structural"},
+            "artifactFlows": {"x-graphhelm-status": "structural"}
+          }
+        },
         "runtime": {"type": "object", "required": ["kind", "isolationMinimum"], "properties": {"kind": {"enum": ["oci", "wasi", "process", "http", "grpc", "mcp", "data"]}, "isolationMinimum": {"enum": ["tier_0", "tier_1", "tier_2", "tier_3"]}}, "additionalProperties": true},
         "compatibility": {"type": "object", "additionalProperties": true},
         "telemetry": {"type": "object", "additionalProperties": true}

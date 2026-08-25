@@ -715,7 +715,17 @@ fn catalog_rejects_schema_identity_swapped_under_a_different_key() {
 #[test]
 fn formatting_only_change_keeps_catalog_hash_valid() {
     let resources = catalog_with_equivalent_reformatted_schema();
-    assert!(validate_catalog(&resources).ok);
+    let report = validate_catalog(&resources);
+    assert!(
+        report.ok,
+        "a formatting-only rewrite must not invalidate the canonical digest: {}",
+        report
+            .diagnostics
+            .iter()
+            .map(|d| format!("{} at {}: {}", d.code, d.path, d.message))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
 }
 
 // Prevents parsers from accepting an incompatible catalog wire format.

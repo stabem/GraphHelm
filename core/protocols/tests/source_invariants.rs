@@ -127,19 +127,38 @@ fn authored_strings_carry_no_collapsed_indentation() {
 /// claims to make. `tests/` is where every instance of this class lives, so a walk that lost that
 /// root would leave the scan above silently green -- disabled and passing.
 ///
-/// This crate has only TWO files under `tests/`, which makes the root assertion carry more of the
-/// weight than usual: a lost `tests/` root costs the floor just two files out of fourteen, so the
-/// floor alone could be satisfied by a walk that never reached the root where every instance of
-/// this class lives.
+/// This crate reaches the state where the root assertions matter before any of the others, and
+/// the reason is about GROWTH rather than today's counts.
+///
+/// **An earlier version of this paragraph argued it with wrong arithmetic.** It said a lost
+/// `tests/` root costs the floor "just two files out of fourteen", so the floor alone could be
+/// satisfied. Two commits were mixed: eleven and two are the counts BEFORE this guard existed and
+/// sum to thirteen, while fourteen is the count WITH it, the third file under `tests/` being this
+/// one. The real drop is 14 to 11, which is below the floor, so the floor does fire and the claim
+/// was false -- against the sabotage evidence in the same pull request. (Found by N.)
+///
+/// What is true is the trajectory. `src/` stands at eleven; three more files there restore the
+/// count to fourteen with `tests/` lost, and then the floor passes and only the root assertion
+/// below speaks. Three is ordinary growth for a crate this size, and it is the smallest gap of
+/// the five crates carrying this guard -- `core/extension-host` needs four, `core/graph` five,
+/// `core/governor` eight, `core/events` seventeen.
 #[test]
 fn the_scan_covers_both_roots_of_the_crate() {
     let found = sources();
-    assert!(
-        found.len() >= 14,
-        "HARNESS-BROKE: the walk found only {} source files, so the scan above reads far less \
-         than this crate",
-        found.len()
-    );
+    // ORDER IS LOAD-BEARING HERE, and it is the reverse of the obvious one -- so this note sits
+    // at the site that ARMS it, because moving the cheap numeric check back to the top is exactly
+    // the kind of tidying that looks like an improvement.
+    //
+    // The floor is this crate's EXACT file count, so losing either root drops the count below it.
+    // With the floor first, it answers every lost-root case and these two assertions never run:
+    // the file would credit a check that cannot fire, and nobody would learn whether it worked.
+    // (Found by N, reviewing #391 and #392, after my own sabotage cells had to LOWER the floor
+    // before a root assertion could be heard -- which I had read as staging rather than as the
+    // symptom it was.)
+    //
+    // Roots first, so the specific diagnosis wins: a lost root says which root, instead of a
+    // count the reader has to work backwards from. A walk that reached both roots but shrank
+    // still fails the floor below, exactly as before.
     assert!(
         found.iter().any(|(path, _)| path.starts_with("src")),
         "HARNESS-BROKE: the walk reached no file under src/ at all"
@@ -149,5 +168,11 @@ fn the_scan_covers_both_roots_of_the_crate() {
         "HARNESS-BROKE: the walk reached no file under tests/, so it is covering only one of its \
          two roots -- and tests/ is where every instance of this class lives, so the scan above \
          would be silently green"
+    );
+    assert!(
+        found.len() >= 14,
+        "HARNESS-BROKE: the walk found only {} source files, so the scan above reads far less \
+         than this crate",
+        found.len()
     );
 }

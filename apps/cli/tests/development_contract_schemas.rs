@@ -184,20 +184,124 @@ fn the_envelope_shape_matches_the_schema() {
     );
 }
 
-/// `ArtifactBinding` requires all five verified properties, so a binding cannot be partly checked.
+/// `ArtifactBinding` requires EVERY verified property, so a binding cannot be partly checked.
 ///
-/// Five required fields is what makes the five separate guards possible later; a binding that
-/// permits any of them to be absent can be satisfied while four of the five checks are gone.
+/// A binding that permits any property to be absent can be satisfied while something it was
+/// supposed to pin is missing — the point is that no subset is admissible, which is a claim about
+/// ALL of them rather than about how many there are.
+///
+/// **Required for two different reasons, and conflating them is what produced the wrong count.**
+/// Measured against `verify_binding`:
+///
+/// * **six are COMPARED**: `scope`, `schemaId`, `schemaVersion`, `producer`, `digest`,
+///   `snapshots`. These are what a check reads to decide whether a candidate matches a reference.
+/// * **two are IDENTITY and compared by nothing**: `artifactId` and `documentVersion`. They say
+///   WHICH artifact, at which version, the binding is about. A binding without them pins nothing
+///   — but no comparison reads them, so no refusal code can name them.
+///
+/// An earlier version of this note said the eight collapse to five checks "because some checks
+/// read more than one field". That explains six to five; it does not explain eight to six, and it
+/// quietly assumed every required property exists because a check needs it. For a quarter of this
+/// binding that is false. (Found by L, on the correction to the correction.)
+///
+/// **The count that used to be in this sentence said "five" while the binding had eight (#272).**
+/// It is not corrected to "eight": a hand-maintained integer in unguarded prose is the defect,
+/// not the particular integer, and the sentence never needed one. The same reasoning removed the
+/// hand-listed field array below.
+///
+/// **The properties are DERIVED from the schema, not transcribed.** The previous form iterated a
+/// literal array of eight names and asserted each was required. That is count-robust, which is
+/// why it survived review, but it is a second hand-maintained copy of one vocabulary and it only
+/// checks one direction: a NINTH property added to the binding and left optional satisfies every
+/// one of its assertions, because none of them is about the ninth. Comparing the two sets makes
+/// the assertion say what the doc above says.
 #[test]
 fn a_binding_cannot_be_partially_specified() {
     let schema = envelope_schema();
-    let required: BTreeSet<String> = schema["$defs"]["artifactBinding"]["required"]
+    let binding = &schema["$defs"]["artifactBinding"];
+
+    let required = required_set(binding);
+    let properties: BTreeSet<String> = binding["properties"]
+        .as_object()
+        .expect("artifactBinding declares properties")
+        .keys()
+        .cloned()
+        .collect();
+
+    // The floor is the binding's REAL width, not a number chosen to sit comfortably under it.
+    // `> 3` was the first version and it tolerated FIVE silent removals: the set comparison below
+    // stays green while both sides shrink together, so a floor with slack is exactly the check
+    // that cannot see the shrinkage it exists to catch.
+    //
+    // Its cost is that a legitimate removal now edits this number, which is the plausible-looking
+    // edit a floor is supposed to resist. So the rule beside it: **change this only in the same
+    // commit as the property that caused it, and name that property here.**
+    assert!(
+        properties.len() >= 8,
+        "HARNESS-BROKE: artifactBinding declares {} properties and this guard was written against \
+         8. If a property was legitimately removed, lower this in the same commit and name it; \
+         otherwise the set comparison below is reading a binding that has silently narrowed",
+        properties.len()
+    );
+    assert_eq!(
+        required,
+        properties,
+        "a binding may be satisfied while some verified property is absent. Optional here: \
+         {:?}; required but not a declared property: {:?}",
+        properties.difference(&required).collect::<Vec<_>>(),
+        required.difference(&properties).collect::<Vec<_>>()
+    );
+}
+
+fn required_set(definition: &serde_json::Value) -> BTreeSet<String> {
+    definition["required"]
         .as_array()
-        .expect("artifactBinding declares required properties")
+        .expect("the definition declares required properties")
         .iter()
         .map(|value| value.as_str().expect("required holds strings").to_owned())
+        .collect()
+}
+
+/// The derived comparison catches what the hand-listed one could not.
+///
+/// Without this, replacing the array with a set comparison is a refactor nobody has shown to add
+/// anything — and "the new test passes" says nothing, because the old one passed too. So the
+/// defect is constructed and both rules are run over it: a binding carrying a property that is
+/// NOT required.
+///
+/// The old form is reproduced here rather than described, because a description of a deleted rule
+/// is a claim nothing checks. It is run over the same counterexample and shown to accept it.
+#[test]
+fn the_derived_comparison_rejects_an_optional_property_the_old_field_list_accepted() {
+    let sabotaged = serde_json::json!({
+        "properties": {
+            "artifactId": {"type": "string"},
+            "schemaId": {"type": "string"},
+            "documentVersion": {"type": "string"},
+            "schemaVersion": {"type": "string"},
+            "digest": {"type": "string"},
+            "scope": {"type": "object"},
+            "producer": {"type": "string"},
+            "snapshots": {"type": "array"},
+            // The ninth: declared, and quietly optional.
+            "reviewedBy": {"type": "string"},
+        },
+        "required": [
+            "artifactId", "schemaId", "documentVersion", "schemaVersion",
+            "digest", "scope", "producer", "snapshots"
+        ],
+    });
+
+    let required = required_set(&sabotaged);
+    let properties: BTreeSet<String> = sabotaged["properties"]
+        .as_object()
+        .expect("the counterexample declares properties")
+        .keys()
+        .cloned()
         .collect();
-    for field in [
+
+    // THE OLD RULE, verbatim in behaviour: every hand-listed name is required.
+    let old_rule_accepts = [
         "artifactId",
         "schemaId",
         "documentVersion",
@@ -206,12 +310,21 @@ fn a_binding_cannot_be_partially_specified() {
         "scope",
         "producer",
         "snapshots",
-    ] {
-        assert!(
-            required.contains(field),
-            "a binding may not omit {field:?}: every verified property is required"
-        );
-    }
+    ]
+    .iter()
+    .all(|field| required.contains(*field));
+    assert!(
+        old_rule_accepts,
+        "HARNESS-BROKE: the counterexample was supposed to satisfy the OLD rule. If it does not, \
+         it proves nothing about what the new rule adds"
+    );
+
+    // THE NEW RULE rejects it.
+    assert_ne!(
+        required, properties,
+        "the derived comparison accepted a binding with an optional property, so it adds nothing \
+         over the field list it replaced"
+    );
 }
 
 /// The coverage vocabulary agrees on both sides, and is CLOSED.
@@ -297,7 +410,22 @@ fn an_identical_binding_verifies() {
     assert_eq!(verify_binding(&reference_binding(), &reference), Ok(()));
 }
 
-/// Five cells, one per verified property, each with the mutation only it can catch.
+/// One cell per CHECK `verify_binding` performs, each with the mutation only it can catch.
+///
+/// "Per check", not "per property", and the distinction is the one that produced #272's finding.
+///
+/// The binding has EIGHT required fields and `verify_binding` makes FIVE comparisons, and the
+/// arithmetic between them has two steps rather than one:
+///
+/// * **eight to six**: `artifactId` and `documentVersion` are compared by NOTHING. They identify
+///   which artifact the binding is about; no check reads them, so no refusal names them.
+/// * **six to five**: the schema comparison reads `schemaId` and `schemaVersion` together, under
+///   one code.
+///
+/// An earlier doc a few hundred lines up read the five as a count of properties and told the
+/// reader the binding had five of those. Two vocabularies share the adjective "verified", they
+/// have different sizes, and — the part that is easy to miss — **different membership**: two
+/// required properties are in neither check.
 #[test]
 fn a_scope_mismatch_is_refused_under_its_own_code() {
     let reference = reference_binding();

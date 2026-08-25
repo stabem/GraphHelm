@@ -116,9 +116,9 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_moves() {
             let mut record = MemoryRecord::at(*state);
             if apply_transition(&mut record, *transition).is_ok() {
                 enforced.insert((
-                    wire_state(*state),
-                    wire_transition(*transition),
-                    wire_state(record.state()),
+                    state.wire_name().to_owned(),
+                    transition.wire_name().to_owned(),
+                    record.state().wire_name().to_owned(),
                 ));
             } else {
                 refused += 1;
@@ -143,56 +143,4 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_moves() {
         "the shipped policy and the Runtime disagree about which moves are allowed. Left is what \
          `apply_transition` actually does, right is what memory-transition.yaml declares."
     );
-}
-
-/// The wire spelling used by the shipped policy, for a state.
-///
-/// **Written here because `MemoryState` has none.** It is built by `closed_vocabulary!`'s arm
-/// WITHOUT wire literals, so unlike `DevelopmentRefusalCode` — whose every variant carries its own
-/// `=> "spelling"` — it has `every()` and `Debug` and nothing that names it on a wire. `Debug` is
-/// not a contract: it changes with a rename and with a derive, and neither would fail a test that
-/// leaned on it.
-///
-/// So this maps explicitly. **Two claims live here and only the first is true today — J's review
-/// of #360, and they are worth keeping apart because the second is the one a reader rounds up to.**
-///
-/// **TRUE: drift is caught.** Rename on ONE side — the policy, or this map — and the comparison
-/// above finds unequal sets and names the pair.
-///
-/// **NOT TRUE: the spelling is guarded.** A CO-drift passes. Rename `provisional` in
-/// `memory-transition.yaml` *and* in this function together and every test here stays green, because
-/// nothing else in the repository names these spellings. Measured, with a control:
-///
-/// * `policies/memory-transition.yaml` has **no reader at all** outside its manifest declaration —
-///   `run_memory_status` is its first consumer — so nothing validates it against
-///   `schemas/memory-transition.schema.json`, which does declare the enum.
-/// * The control that makes that absence real rather than a bad search: the SIBLING policy,
-///   `memory-admission.yaml`, **does** have readers, and `core/governor/tests/memory.rs` binds its
-///   vocabulary three ways (schema, enum, hand-written list). That test can exist because
-///   `MemoryRefusalCode` carries `wire_name()`. `MemoryState` cannot join it for exactly the reason
-///   this function exists.
-///
-/// **So the cure upstream is not tidiness, it is the missing guard**: wire literals on `MemoryState`
-/// and `MemoryTransition`, the way the development vocabularies already have them, would let the
-/// state vocabulary be bound the same three ways and would close the co-drift. It belongs to
-/// `core/governor`, which #223 does not have in scope.
-fn wire_state(state: MemoryState) -> String {
-    match state {
-        MemoryState::Provisional => "provisional",
-        MemoryState::Published => "published",
-        MemoryState::Superseded => "superseded",
-        MemoryState::Withdrawn => "withdrawn",
-    }
-    .to_owned()
-}
-
-/// The wire spelling used by the shipped policy, for a transition. See [`wire_state`] for why this
-/// exists here rather than on the type.
-fn wire_transition(transition: MemoryTransition) -> String {
-    match transition {
-        MemoryTransition::Publish => "publish",
-        MemoryTransition::Supersede => "supersede",
-        MemoryTransition::Withdraw => "withdraw",
-    }
-    .to_owned()
 }

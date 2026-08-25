@@ -377,27 +377,38 @@ pub fn capture_memory(
 
 closed_vocabulary! {
     /// The states a memory record can be in.
+    ///
+    /// The wire spellings are the AUTHORITATIVE side shared with
+    /// `policies/memory-transition.yaml` and `schemas/memory-transition.schema.json`; all three
+    /// are compared in both directions in `tests/memory.rs` (#362). Before this, the enum had
+    /// `every()` and `Debug` and nothing that named it on a wire -- `apps/cli/tests/
+    /// development_cli.rs` carried a hand-written `wire_state` map as a stopgap, removed now that
+    /// the type carries its own spelling.
     MemoryState {
         /// Captured and admitted, not yet published.
-        Provisional,
+        Provisional => "provisional",
         /// Published and in the default view.
-        Published,
+        Published => "published",
         /// Replaced by a later record.
-        Superseded,
+        Superseded => "superseded",
         /// Withdrawn from use. Still auditable: withdrawal closes USE, never the record.
-        Withdrawn,
+        Withdrawn => "withdrawn",
     }
 }
 
 closed_vocabulary! {
     /// The transitions a memory record can be asked to make.
+    ///
+    /// The wire spellings are the AUTHORITATIVE side shared with
+    /// `policies/memory-transition.yaml` and `schemas/memory-transition.schema.json`; see
+    /// [`MemoryState`]'s own doc for why this arm replaces the un-spelled one (#362).
     MemoryTransition {
         /// Provisional becomes published.
-        Publish,
+        Publish => "publish",
         /// Published is replaced by a later record.
-        Supersede,
+        Supersede => "supersede",
         /// Published leaves the default view.
-        Withdraw,
+        Withdraw => "withdraw",
     }
 }
 

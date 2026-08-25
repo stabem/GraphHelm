@@ -700,3 +700,172 @@ fn the_shipped_fixtures_are_accepted_and_refused_for_their_own_reasons() {
         );
     }
 }
+
+/// #362: the state vocabulary written out BY HAND, for the same reason as `REFUSAL_CODE_NAMES`:
+/// it is the only witness that can contradict the generated one. Deliberately not derived.
+const STATE_WIRE_NAMES: [&str; 4] = ["provisional", "published", "superseded", "withdrawn"];
+
+/// #362: the transition vocabulary written out BY HAND, for the same reason as
+/// `STATE_WIRE_NAMES`.
+const TRANSITION_WIRE_NAMES: [&str; 3] = ["publish", "supersede", "withdraw"];
+
+/// A minimal YAML list reader: everything under `header` (e.g. `"states:"`) indented as
+/// `  - item`, stopping at the first non-list, non-blank, non-comment line. Matches the shape
+/// `every_refusal_code_is_declared_in_the_shipped_policy_and_the_reverse` reads inline above;
+/// factored out here because this file reads TWO lists (`states:`, `transitions:`) out of the
+/// SAME document rather than one out of its own.
+fn parse_yaml_list(text: &str, header: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line.starts_with(header) {
+            inside = true;
+            continue;
+        }
+        if inside {
+            match line.strip_prefix("  - ") {
+                Some(item) => items.push(item.trim().to_owned()),
+                None if line.trim().is_empty() || line.trim_start().starts_with('#') => {}
+                None => break,
+            }
+        }
+    }
+    items
+}
+
+/// #362: `MemoryState` and `MemoryTransition` now carry wire spellings, closing the co-drift gap
+/// named in `apps/cli/tests/development_cli.rs`'s former `wire_state`/`wire_transition`
+/// functions -- removed by that change, since the guard that made them a stopgap now exists
+/// here instead.
+///
+/// Binds BOTH vocabularies against the shipped policy, in both directions, the same shape
+/// `every_refusal_code_is_declared_in_the_shipped_policy_and_the_reverse` uses for
+/// `MemoryRefusalCode` above.
+#[test]
+fn every_memory_state_and_transition_is_declared_in_the_shipped_policy_and_the_reverse() {
+    let policy = std::fs::read_to_string(
+        "../../extensions/builtin/graphhelm-development-contracts/policies/memory-transition.yaml",
+    )
+    .expect("HARNESS-BROKE: the shipped policy file is not readable from the crate root");
+
+    let states_declared = parse_yaml_list(&policy, "states:");
+    let transitions_declared = parse_yaml_list(&policy, "transitions:");
+
+    assert!(
+        !states_declared.is_empty() && !transitions_declared.is_empty(),
+        "HARNESS-BROKE: no states or transitions were parsed out of the policy, so the \
+         comparison below would pass against an empty set"
+    );
+
+    let states_compiled: Vec<String> = MemoryState::every()
+        .iter()
+        .map(|state| state.wire_name().to_owned())
+        .collect();
+    let transitions_compiled: Vec<String> = MemoryTransition::every()
+        .iter()
+        .map(|transition| transition.wire_name().to_owned())
+        .collect();
+
+    for (what, compiled, declared) in [
+        ("state", &states_compiled, &states_declared),
+        ("transition", &transitions_compiled, &transitions_declared),
+    ] {
+        let missing_from_policy: Vec<&String> =
+            compiled.iter().filter(|c| !declared.contains(c)).collect();
+        let missing_from_enum: Vec<&String> =
+            declared.iter().filter(|c| !compiled.contains(c)).collect();
+
+        assert!(
+            missing_from_policy.is_empty() && missing_from_enum.is_empty(),
+            "the compiled {what} vocabulary and the shipped policy disagree.
+  compiled ({}): {compiled:?}
+  declared ({}): {declared:?}
+  compiled but NOT in the policy: {missing_from_policy:?}
+  in the policy but NOT compiled: {missing_from_enum:?}",
+            compiled.len(),
+            declared.len()
+        );
+    }
+}
+
+/// #362: the shipped SCHEMA is a third declaration of the state and transition vocabularies, and
+/// the reason a co-drift (renaming a spelling in the policy AND in the enum together) is caught:
+/// the schema is a spelling nobody touches for a policy or Rust-side rename, so it is the
+/// independent witness the two-way bind above cannot provide alone.
+#[test]
+fn the_schema_the_enum_and_the_hand_written_list_are_one_state_and_transition_vocabulary() {
+    let schema = package_json("schemas/memory-transition.schema.json");
+
+    let from_schema_states: Vec<String> = schema["$defs"]["state"]["enum"]
+        .as_array()
+        .expect("HARNESS-BROKE: the schema has no $defs/state/enum to read")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("HARNESS-BROKE: a state in the schema is not a string")
+                .to_owned()
+        })
+        .collect();
+    let from_schema_transitions: Vec<String> = schema["$defs"]["transition"]["enum"]
+        .as_array()
+        .expect("HARNESS-BROKE: the schema has no $defs/transition/enum to read")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("HARNESS-BROKE: a transition in the schema is not a string")
+                .to_owned()
+        })
+        .collect();
+
+    assert!(
+        !from_schema_states.is_empty() && !from_schema_transitions.is_empty(),
+        "HARNESS-BROKE: the schema declared no states or transitions, so every comparison below \
+         would pass against an empty set"
+    );
+
+    let compiled_states: Vec<String> = MemoryState::every()
+        .iter()
+        .map(|state| state.wire_name().to_owned())
+        .collect();
+    let compiled_transitions: Vec<String> = MemoryTransition::every()
+        .iter()
+        .map(|transition| transition.wire_name().to_owned())
+        .collect();
+    let hand_states: Vec<String> = STATE_WIRE_NAMES.iter().map(|n| (*n).to_owned()).collect();
+    let hand_transitions: Vec<String> = TRANSITION_WIRE_NAMES
+        .iter()
+        .map(|n| (*n).to_owned())
+        .collect();
+
+    for (left_name, left, right_name, right) in [
+        ("schema", &from_schema_states, "compiled", &compiled_states),
+        ("hand-written", &hand_states, "schema", &from_schema_states),
+        (
+            "schema",
+            &from_schema_transitions,
+            "compiled",
+            &compiled_transitions,
+        ),
+        (
+            "hand-written",
+            &hand_transitions,
+            "schema",
+            &from_schema_transitions,
+        ),
+    ] {
+        let only_left: Vec<&String> = left.iter().filter(|v| !right.contains(v)).collect();
+        let only_right: Vec<&String> = right.iter().filter(|v| !left.contains(v)).collect();
+        assert!(
+            only_left.is_empty() && only_right.is_empty(),
+            "the {left_name} and {right_name} state/transition vocabularies disagree.
+  {left_name} ({}): {left:?}
+  {right_name} ({}): {right:?}
+  in {left_name} but NOT in {right_name}: {only_left:?}
+  in {right_name} but NOT in {left_name}: {only_right:?}",
+            left.len(),
+            right.len()
+        );
+    }
+}

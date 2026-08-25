@@ -20,7 +20,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 16] = [
+const TOOLS: [ToolSpec; 17] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -117,6 +117,12 @@ const TOOLS: [ToolSpec; 16] = [
                       no record id, because nothing persists a memory record yet.",
         schema: memory_status_schema,
     },
+    ToolSpec {
+        name: "present",
+        description: "Render the owner-facing presentation of a task result (POST \
+                      /v1/development/present). #223 existence-slice: no result argument yet.",
+        schema: present_schema,
+    },
 ];
 
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -152,6 +158,13 @@ fn memory_status_schema() -> serde_json::Value {
     // shipped transition policy, which takes no parameter. A record id would be the argument, and
     // nothing persists a record to name -- see `commands::development::run_memory_status` for the
     // measurement and for when the id returns.
+    object_schema(serde_json::json!({}), &[])
+}
+
+fn present_schema() -> serde_json::Value {
+    // No fields yet, for the same reason as resolve_contract_schema: #223's existence-slice
+    // renders a fixed no-decision result. The task result becomes a real argument when the
+    // behavioral-parity guard (blueprint section 6 item 2) wires this to actual task outcomes.
     object_schema(serde_json::json!({}), &[])
 }
 
@@ -674,6 +687,14 @@ pub(crate) fn call(
             None,
             None,
             None,
+        )),
+        // #223 existence-slice: no required arguments yet (see present_schema).
+        "present" => Ok(api.request(
+            "POST",
+            &url::segment_path(&["v1", "development", "present"]),
+            Some(&serde_json::json!({})),
+            Some(&key),
+            if_match,
         )),
         _ => unreachable!("the closed-list check above already refused unknown names"),
     };

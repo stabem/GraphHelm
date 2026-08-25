@@ -62,6 +62,23 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
         // memory-transition policy, which is real, digest-bound and schema-owned.
         http_probe_path: "/v1/development/memory",
     },
+    FamilySurfaces {
+        cli: "present",
+        mcp: "present",
+        http_method: "POST",
+        // "/v1/development/present", with NO suffix stripped and none added -- and that is a fact
+        // about this family rather than a rule about names. The other two families split a verb
+        // from a noun because their action and their resource are different words. Here they are
+        // the SAME word: the thing being done IS the thing being acted on, so the whole name is
+        // the segment.
+        //
+        // Worth stating rather than leaving to be re-derived: before this struct existed, the path
+        // was computed by dropping the text before the first hyphen. "present" has no hyphen, so
+        // that computation returned the whole name -- the right answer, reached by falling through
+        // rather than by deciding. The old `to_http_path` asked whoever brought the first exception
+        // to write the decision down; this is it, in the place decisions now live.
+        http_probe_path: "/v1/development/present",
+    },
 ];
 
 /// Where one operation family lives on each of the three surfaces.

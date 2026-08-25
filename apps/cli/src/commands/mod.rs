@@ -100,6 +100,7 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Development(development_args) => match development_args.command {
             DevelopmentCommand::ResolveContract => development::run_resolve_contract(),
             DevelopmentCommand::MemoryStatus => development::run_memory_status(),
+            DevelopmentCommand::Present => development::run_present(),
         },
         TopLevel::Events(events) => match events.command {
             EventsCommand::Verify {

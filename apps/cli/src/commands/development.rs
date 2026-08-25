@@ -64,6 +64,40 @@ pub fn run_memory_status() -> Outcome {
     Outcome::success("development.memory-status", policy)
 }
 
+/// Render the owner-facing presentation from #219's renderer, over the CLI surface.
+///
+/// **Existence-slice, not the full feature**, matching `run_resolve_contract` above: the task
+/// result is a fixed no-decision one because there is no input argument yet, and adding one is
+/// behavioral-parity work (blueprint §6 item 2) rather than the existence-parity this command
+/// exists to give the three adapters something real to agree on.
+///
+/// The renderer is CONSUMED, not reimplemented. `owner_output::render` is the exclusive producer
+/// of owner-facing bytes (its own `OWNER-FACING-BYTES-EMITTER` marker says so), and a second
+/// place that assembles those bytes would be a second oracle for what the owner sees.
+#[must_use]
+pub fn run_present() -> Outcome {
+    let result = graphhelm_runtime::owner_output::OwnerTaskResult {
+        summary: "no task supplied".to_owned(),
+        status: graphhelm_runtime::owner_output::TaskOutcome::Success,
+        owner_action_required: false,
+        decision: None,
+        evidence_limitation: None,
+        rollback: None,
+        risk_flags: graphhelm_runtime::owner_output::RiskFlags::default(),
+    };
+
+    let presentation = graphhelm_runtime::owner_output::render(&result, None)
+        .expect("a no-decision result with no risk flags always renders - see render's own guards");
+
+    Outcome::success(
+        "development.present",
+        serde_json::json!({
+            "text": String::from_utf8(presentation.to_owner_bytes())
+                .expect("the renderer emits UTF-8 slot text"),
+        }),
+    )
+}
+
 /// Maps a `DevelopmentRefusalCode` to a distinct CLI exit code.
 ///
 /// Injective by construction: base offset (20, clear of the existing 0/2/3/4 success/domain/

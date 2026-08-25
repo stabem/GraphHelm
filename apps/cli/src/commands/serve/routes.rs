@@ -1173,6 +1173,14 @@ pub(super) async fn development_memory_status() -> Response {
     respond_outcome(crate::commands::development::run_memory_status())
 }
 
+/// `POST /v1/development/present`: #219's owner-output renderer over HTTP. #223 existence-slice --
+/// no request body is read yet, matching the CLI and MCP surfaces (see
+/// `crate::commands::development::run_present`'s own doc for why a fixed task result is real
+/// behavior rather than a stub).
+pub(super) async fn development_present() -> Response {
+    respond_outcome(crate::commands::development::run_present())
+}
+
 // -------------------------------------------------------------------------------------------
 // Milestone 05g Task 3: the wake lease's HTTP surface — the SLEEPER-ONLY half. POST arms the
 // caller's own lease (idempotent, the three headers); GET reads it. No route rings: the ring

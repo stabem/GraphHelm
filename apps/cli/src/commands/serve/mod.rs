@@ -315,6 +315,7 @@ fn build_router(state: ServeState) -> Router {
             "/v1/development/memory",
             get(routes::development_memory_status),
         )
+        .route("/v1/development/present", post(routes::development_present))
         .fallback(not_found)
         // `.layer` (not `.route_layer`) wraps the fallback too: an unauthenticated request to a
         // path with no route must still be refused 401, not fall through to a 404 that would

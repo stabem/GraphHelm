@@ -89,6 +89,8 @@ pub enum DevelopmentCommand {
     ResolveContract,
     /// Report the governed memory states, transitions, and the moves policy allows (#220).
     MemoryStatus,
+    /// Render an owner-facing presentation from a task result (#219's renderer, exposed here).
+    Present,
 }
 
 #[derive(Debug, Args)]

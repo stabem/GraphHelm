@@ -143,7 +143,24 @@ fn a_record_authorizes_the_package_it_was_activated_from_and_no_other() {
 #[test]
 fn a_record_that_was_never_activated_authorizes_nothing() {
     let root = tempfile::tempdir().expect("a temp dir");
-    let never_activated = ActivationRecord::for_package_without_recorded_executable(root.path());
+
+    // EVERY constructor that does not take a claim, not just the one the first version reached.
+    // These are exactly the records that were never activated, and the list is hand-written because
+    // Rust cannot enumerate constructors -- so a constructor added later is invisible here until
+    // someone adds it, and that is the known cost of this shape rather than an oversight.
+    let unactivated: [(&str, ActivationRecord); 2] = [
+        (
+            "for_package_without_recorded_executable",
+            ActivationRecord::for_package_without_recorded_executable(root.path()),
+        ),
+        (
+            "for_package_with_recorded_executables",
+            ActivationRecord::for_package_with_recorded_executables(
+                root.path(),
+                vec![root.path().join("graphhelm")],
+            ),
+        ),
+    ];
 
     // Landmark: an activated record DOES authorize, so the refusals below are about this record
     // never having been activated rather than about `authorizes` being broken for everyone.
@@ -155,15 +172,19 @@ fn a_record_that_was_never_activated_authorizes_nothing() {
         "HARNESS-BROKE: an activated record does not authorize its own package"
     );
 
-    assert!(
-        !never_activated.authorizes(&package),
-        "a record that was never activated authorized a real package"
-    );
-
-    // The case the emptiness check exists for: both digests empty. Equality alone says yes here.
+    // The case the emptiness check exists for: both digests empty. Equality alone says yes here,
+    // and the first assertion below cannot reach it -- "" != "sha256:aaaa" holds with or without
+    // the guard, so only the empty-against-empty case tests the arm at all.
     let also_empty = validated("graphhelm-example", "1.0.0", "");
-    assert!(
-        !never_activated.authorizes(&also_empty),
-        "an unactivated record authorized a package by matching one empty digest against another"
-    );
+
+    for (constructor, record) in &unactivated {
+        assert!(
+            !record.authorizes(&package),
+            "{constructor} produced a record that authorized a real package"
+        );
+        assert!(
+            !record.authorizes(&also_empty),
+            "{constructor} produced a record that authorized a package by matching one empty              digest against another"
+        );
+    }
 }

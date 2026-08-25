@@ -23,6 +23,47 @@ pub fn run_resolve_contract() -> Outcome {
     Outcome::success("development.resolve-contract", value)
 }
 
+/// The governed memory transition policy, as shipped (#220).
+///
+/// Embedded rather than read from disk, following `core/schema/src/registry.rs`, which embeds the
+/// root schemas the same way: the binary answers offline, with no package discovery and no path to
+/// get wrong. Discovery of an installed package is #212's job and is not wired here.
+///
+/// The policy is a DECLARED contribution of the built-in package — `policies/memory-transition.yaml`,
+/// carried in `extension.json` with its own `sha256` — so what this embeds is the same artifact the
+/// package guard already binds, not a copy of it.
+const MEMORY_TRANSITION_POLICY: &str = include_str!(
+    "../../../../extensions/builtin/graphhelm-development-contracts/policies/memory-transition.yaml"
+);
+
+/// Report the governed memory vocabulary and the transitions policy allows, over the CLI surface.
+///
+/// **Existence-slice, not the full feature — and the shape of the slice was a decision.** The
+/// original scope list carried `GET /v1/development/memory/{id}`. Measured while building this:
+/// nothing persists a `MemoryRecord`. It exists only in `core/governor`, constructed in memory, so
+/// an `{id}` had nothing to resolve against. Serving it would have needed either a refusal code
+/// that does not exist (`MemoryRefusalCode` has no "not found") or a constant answer that ignores
+/// the parameter — and a parameter that cannot change the response is a lie with a route attached.
+///
+/// So the slice reads what IS real: the shipped policy. That mirrors `run_resolve_contract`, which
+/// makes a real call over an empty source list rather than returning something invented.
+///
+/// **The `{id}` returns as a FEATURE the day a store lands**, and whoever writes that store is the
+/// consumer of this sentence.
+///
+/// The policy is reported as it ships, not re-derived: the states, the transitions and the allowed
+/// moves live in one authoritative document, and restating them here would make this adapter a
+/// second producer of one vocabulary — which drifts in silence, because a rename on one side still
+/// compiles on the other.
+#[must_use]
+pub fn run_memory_status() -> Outcome {
+    let policy: serde_json::Value = serde_yaml_ng::from_str(MEMORY_TRANSITION_POLICY).expect(
+        "the shipped memory-transition policy is valid YAML - it is a checked-in, \
+                 digest-bound contribution validated by the extension package guard",
+    );
+    Outcome::success("development.memory-status", policy)
+}
+
 /// Maps a `DevelopmentRefusalCode` to a distinct CLI exit code.
 ///
 /// Injective by construction: base offset (20, clear of the existing 0/2/3/4 success/domain/

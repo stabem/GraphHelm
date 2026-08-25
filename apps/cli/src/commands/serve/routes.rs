@@ -1154,6 +1154,25 @@ pub(super) async fn development_resolve_contract() -> Response {
     respond_outcome(crate::commands::development::run_resolve_contract())
 }
 
+/// `GET /v1/development/memory`: the governed memory vocabulary and the moves policy allows.
+///
+/// **A GET, and without a record id** — the original scope list carried `/memory/{id}`. Nothing
+/// persists a `MemoryRecord`, so an id had nothing to resolve against; see
+/// `crate::commands::development::run_memory_status` for the measurement, the two alternatives that
+/// were rejected, and when the id returns.
+///
+/// It answers from the same function the CLI and MCP surfaces call, so the three cannot drift into
+/// three readings of one policy.
+///
+/// **This handler must never answer 404**, and that is a contract rather than an accident: the
+/// surface-parity guard reads a 404 from this path as "the route was never wired", which is only
+/// sound while no handler under `/v1` produces one. Today none does — the fallback is the sole
+/// source. A future id-taking version that answered 404 for an unknown record would take that
+/// distinction away from the guard.
+pub(super) async fn development_memory_status() -> Response {
+    respond_outcome(crate::commands::development::run_memory_status())
+}
+
 // -------------------------------------------------------------------------------------------
 // Milestone 05g Task 3: the wake lease's HTTP surface — the SLEEPER-ONLY half. POST arms the
 // caller's own lease (idempotent, the three headers); GET reads it. No route rings: the ring

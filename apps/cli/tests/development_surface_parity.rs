@@ -36,15 +36,33 @@ use serde_json::{Value, json};
 /// direction: it walks the REAL `development` subtree and refuses any leaf this list does not
 /// name, so the two loops together are what make this list actually closed rather than merely
 /// looking closed with one entry in it.
-const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[FamilySurfaces {
-    cli: "resolve-contract",
-    mcp: "resolve_contract",
-    http_method: "POST",
-    // "resolve-contract" -> "/v1/development/contract": the CLI/MCP names the ACTION ("resolve"),
-    // the HTTP path names the RESOURCE it acts on ("contract"), under the REST convention this
-    // codebase already uses elsewhere (`/v1/executions/{id}/start`, not `/v1/start-execution`).
-    http_probe_path: "/v1/development/contract",
-}];
+const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
+    FamilySurfaces {
+        cli: "resolve-contract",
+        mcp: "resolve_contract",
+        http_method: "POST",
+        // "resolve-contract" -> "/v1/development/contract": the CLI/MCP names the ACTION ("resolve"),
+        // the HTTP path names the RESOURCE it acts on ("contract"), under the REST convention this
+        // codebase already uses elsewhere (`/v1/executions/{id}/start`, not `/v1/start-execution`).
+        http_probe_path: "/v1/development/contract",
+    },
+    FamilySurfaces {
+        cli: "memory-status",
+        mcp: "memory_status",
+        http_method: "GET",
+        // "/v1/development/memory", and deliberately WITHOUT the `{id}` the original scope list
+        // carried. Measured while building this: nothing persists a `MemoryRecord` — it exists only
+        // in `core/governor`, constructed in memory — so an `{id}` here would have nothing to resolve
+        // against, and the only ways to serve it were a refusal code that does not exist or a constant
+        // answer that ignores the parameter. A parameter that cannot change the response is a lie with
+        // a route attached.
+        //
+        // WHEN THIS WAKES UP: `{id}` returns as a FEATURE the day a store lands, and whoever writes
+        // that store is the consumer of this sentence. Until then this reads the shipped
+        // memory-transition policy, which is real, digest-bound and schema-owned.
+        http_probe_path: "/v1/development/memory",
+    },
+];
 
 /// Where one operation family lives on each of the three surfaces.
 ///
@@ -80,10 +98,16 @@ struct FamilySurfaces {
     /// rule with one instance is the shape this whole struct exists to replace.
     ///
     /// **Where the decision wakes up:** the missing half is a domain marker on `ToolSpec` itself —
-    /// one field, and the reverse loop becomes writable. It is not added here because it changes a
-    /// production table every entry must then fill in, in a file two other families are writing
-    /// this round. It belongs to whoever next edits `ToolSpec`, and this comment is the note they
-    /// should find when they do.
+    /// one field, and the reverse loop becomes writable. It is scheduled as the first item of the
+    /// next round rather than added here, because it changes a production table every entry must
+    /// then fill in, in a file other families are writing.
+    ///
+    /// **And before harmonising this field with `cli`: do not.** The two are kebab and snake of one
+    /// word today, and a guard asserting that relation was considered and refused — **a convention
+    /// with one instance does not distinguish itself from a coincidence.** Enforcing it now would
+    /// pin an accident and refuse the first family that legitimately needs a different tool name.
+    /// If a second and third family arrive spelling it the same way, the convention has earned a
+    /// guard; until then this field is a declaration, not a derivation, and that is the point of it.
     mcp: &'static str,
     /// The HTTP method the route is registered under. Required because the probe asserts
     /// non-405, so a family served by a different verb than the probe sends fails as loudly as

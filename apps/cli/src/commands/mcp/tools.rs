@@ -20,7 +20,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 15] = [
+const TOOLS: [ToolSpec; 16] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -110,6 +110,13 @@ const TOOLS: [ToolSpec; 15] = [
                       /v1/development/contract). #223 existence-slice: no sources argument yet.",
         schema: resolve_contract_schema,
     },
+    ToolSpec {
+        name: "memory_status",
+        description: "Report the governed memory states, transitions, and the moves policy \
+                      allows (GET /v1/development/memory). Reads the shipped transition policy; \
+                      no record id, because nothing persists a memory record yet.",
+        schema: memory_status_schema,
+    },
 ];
 
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -137,6 +144,14 @@ fn resolve_contract_schema() -> serde_json::Value {
     // No fields yet: #223's existence-slice always resolves against an empty source list.
     // Sources become a real argument when the behavioral-parity guard (blueprint §6 item 2)
     // wires this to actual rule artifacts.
+    object_schema(serde_json::json!({}), &[])
+}
+
+fn memory_status_schema() -> serde_json::Value {
+    // No fields, and NOT because the arguments have not been designed yet: the operation reads the
+    // shipped transition policy, which takes no parameter. A record id would be the argument, and
+    // nothing persists a record to name -- see `commands::development::run_memory_status` for the
+    // measurement and for when the id returns.
     object_schema(serde_json::json!({}), &[])
 }
 
@@ -650,6 +665,15 @@ pub(crate) fn call(
             Some(&serde_json::json!({})),
             Some(&key),
             if_match,
+        )),
+        // A READ: GET, no body, and no idempotency key. The key exists to make a mutation safe to
+        // repeat; attaching one to a read would claim this changes something.
+        "memory_status" => Ok(api.request(
+            "GET",
+            &url::segment_path(&["v1", "development", "memory"]),
+            None,
+            None,
+            None,
         )),
         _ => unreachable!("the closed-list check above already refused unknown names"),
     };

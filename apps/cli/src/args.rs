@@ -87,6 +87,8 @@ pub struct DevelopmentArgs {
 pub enum DevelopmentCommand {
     /// Resolve layered code rules into one contract (#218's resolver, exposed here).
     ResolveContract,
+    /// Report the governed memory states, transitions, and the moves policy allows (#220).
+    MemoryStatus,
 }
 
 #[derive(Debug, Args)]

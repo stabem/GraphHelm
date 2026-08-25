@@ -1,5 +1,5 @@
 //! M06 Task 3, the certification half: the COMPOSED geometry evaluator earns the thymus
-//! receipt by rejecting all ten pathogens — and the layout grammar ALONE is REFUSED,
+//! receipt by rejecting every pathogen in the suite — and the layout grammar ALONE is REFUSED,
 //! which is the crate's second rule as a test: geometry cannot see a gutted assertion or
 //! an empty diff, so geometry alone must never gate.
 

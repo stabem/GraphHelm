@@ -1,5 +1,5 @@
-//! The thymus harness proofs: twelve green-but-useless specimens (the original ten plus
-//! the M08 interaction-cost pair), certification refused on
+//! The thymus harness proofs: the bred suite of green-but-useless specimens (the original set
+//! plus the M08 interaction-cost pair), certification refused on
 //! any pass, digest-voiding on suite growth, and the per-specimen fooling power that
 //! makes each pathogen load-bearing.
 

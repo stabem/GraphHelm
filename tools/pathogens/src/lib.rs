@@ -86,7 +86,7 @@ pub struct Deliverable {
     ///
     /// `skip_serializing_if` is REQUIRED, not stylistic (Agent B's condition): the suite
     /// digest is sha256 over the canonical JSON of the WHOLE specimen list, so without it
-    /// the ten existing specimens would start serializing `"interaction":null` and their
+    /// the specimens that already existed would start serializing `"interaction":null` and their
     /// bytes would move. The digest would then shift because the MOLD changed rather than
     /// because the suite grew — and since adding specimens voids certification anyway, that
     /// error would be invisible inside a green.
@@ -118,8 +118,11 @@ pub struct InteractionTrace {
     pub calls: Vec<InteractionCall>,
 }
 
-/// The ten ways a deliverable can be green by correctness measures and useless by
+/// The ways a deliverable can be green by correctness measures and useless by
 /// construction. One specimen per mode; the mode names the axis the specimen defeats.
+///
+/// The count is not stated, for the reason recorded on `suite()`: it said "ten" over twelve
+/// variants, which is the same wrong number the suite's own doc carried (#272).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum UselessnessMode {
     /// Claimed and backed by an artifact — the element never renders anywhere.
@@ -267,7 +270,11 @@ pub enum RefusalCause {
     EmptySuite,
 }
 
-/// The bred suite: exactly ten specimens, one per uselessness mode, deterministic.
+/// The bred suite: one specimen per uselessness mode, deterministic.
+///
+/// The size is deliberately not stated here. It said "ten" while the `vec![]` below held twelve,
+/// and `certification.specimens` is already asserted against the real count -- a number repeated
+/// in prose is a second producer of it, and the prose is the copy nothing checks (#272).
 #[must_use]
 pub fn suite() -> Vec<GeometrySpecimen> {
     vec![

@@ -1,0 +1,24 @@
+services:
+  graphhelm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: graphhelm:local
+    restart: unless-stopped
+    # Owner-directed resolution for #128: host networking keeps GraphHelm's enforced loopback-only
+    # bind intact. No container port is published and the API remains host-local.
+    network_mode: host
+    environment:
+      GRAPHHELM_API_TOKEN: "${GRAPHHELM_API_TOKEN:?set GRAPHHELM_API_TOKEN to 64 lowercase hexadecimal characters}"
+      GRAPHHELM_BIND: "127.0.0.1:8080"
+      GRAPHHELM_EVENTS_DIR: "/var/lib/graphhelm/events"
+    volumes:
+      - graphhelm-data:/var/lib/graphhelm
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  graphhelm-data:

@@ -1012,6 +1012,31 @@ same check-tier discipline (isolated dir, window declared, claim bounded to the 
 Whole-workspace clippy is better where affordable; per-crate over the touched crates is the floor.
 Docs-only and `.factory`-only PRs stay exempt.
 
+### THREE routes, not three repeats — and that distinction is what stops this being relaxed later
+
+The instance above was one cause. Two more landed the same day, **by different routes**, and the
+difference matters more than the count. Two instances of the SAME cause say *someone was careless at
+site X*. **Three instances of THREE causes say the hole is the STAGE**, not the care:
+
+| # | route | who | how it got past `check` |
+|---|---|---|---|
+| 1 | a doc comment **resurrected by a merge** — deleted on main, alive on a branch, restored by an `ours` resolution | J (#209) | orphaned doc is a lint error, not a type error |
+| 2 | a **hand-written complex signature** that passed human review | B (#253) | `type_complexity` is a lint, and the code type-checks |
+| 3 | an **inherited red crossing lanes** — red in a file the branch never touched | surfaced on #273 | the branch's own check is clean; the red belongs to main |
+
+The third route also shows the correct response: the author **left it and documented file and line**
+rather than fixing another lane's code, because collapsing it would have erased the signal that
+lane's own gate should be showing them.
+
+**Route 2 and route 3 are B's findings**, including the framing that the distinct-causes argument is
+stronger than a repeat count. Recorded under their name because the argument is what survives, and
+the argument is theirs.
+
+**Why this section exists at all:** in a month the three stories will be forgotten and only the rule
+will remain. Someone will then propose dropping the clippy step as redundant with `check`. The
+answer is not "we were careless three times" — it is that these three failures share no cause and
+share one instrument gap.
+
 ### The root cause outlives the lint, because the lint was only the DETECTOR
 
 The orphan comment was **not created by the merge**. Traced:

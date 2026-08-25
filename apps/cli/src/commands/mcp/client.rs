@@ -138,7 +138,7 @@ impl ApiClient {
         }
         let request = TransportRequest {
             method,
-            url: format!("{}{path}", self.base_url),
+            url: super::url::join(&self.base_url, path)?,
             headers,
             body: payload,
             timeout: REQUEST_TIMEOUT,

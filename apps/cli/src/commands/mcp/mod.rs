@@ -7,6 +7,7 @@ pub(crate) mod client;
 pub(crate) mod rpc;
 pub(crate) mod session;
 pub(crate) mod tools;
+pub(crate) mod url;
 
 use graphhelm_protocols::Diagnostic;
 use zeroize::Zeroizing;
@@ -39,6 +40,9 @@ fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
              [::1]); the MCP server never talks to a remote API",
             "/url",
         ));
+    }
+    if let Err(reason) = url::validate_base(&args.url) {
+        return Err(refuse(&reason, "/url"));
     }
     let token = match &args.token_file {
         Some(path) => std::fs::read_to_string(path)

@@ -6,6 +6,7 @@
 
 use super::client::{ApiClient, derive_key};
 use super::rpc::{HandlerOutcome, INVALID_PARAMS};
+use super::url;
 
 /// A deliberate, narrow heuristic (CHAT_SURFACE_SPEC §6), not a scanner: string arguments
 /// whose value starts with one of these prefixes are refused before any dispatch, and the
@@ -298,7 +299,10 @@ fn wake_wait_tool(api: &ApiClient, nonce: &str, arguments: &serde_json::Value) -
     // defect §8 promises against, and this half was the one the pair itself sleeps on.
     let live = api.request(
         "GET",
-        &format!("/v1/executions/{execution}/wake-lease?sessionId={nonce}"),
+        &format!(
+            "{}?sessionId={nonce}",
+            url::segment_path(&["v1", "executions", execution, "wake-lease"])
+        ),
         None,
         None,
         None,
@@ -450,8 +454,15 @@ pub(crate) fn call(
     let key = derive_key(nonce, rpc_id);
     let if_match = arguments.get("ifMatch").and_then(serde_json::Value::as_u64);
     let outcome = match name {
-        "status" => require(arguments, "executionId")
-            .map(|id| api.request("GET", &format!("/v1/executions/{id}"), None, None, None)),
+        "status" => require(arguments, "executionId").map(|id| {
+            api.request(
+                "GET",
+                &url::segment_path(&["v1", "executions", id]),
+                None,
+                None,
+                None,
+            )
+        }),
         "events" => require(arguments, "executionId").map(|id| {
             let mut query = String::new();
             if let Some(after) = arguments.get("after").and_then(serde_json::Value::as_u64) {
@@ -464,9 +475,12 @@ pub(crate) fn call(
                 query.push_str(&format!("limit={limit}"));
             }
             let path = if query.is_empty() {
-                format!("/v1/executions/{id}/events")
+                url::segment_path(&["v1", "executions", id, "events"])
             } else {
-                format!("/v1/executions/{id}/events?{query}")
+                format!(
+                    "{}?{query}",
+                    url::segment_path(&["v1", "executions", id, "events"])
+                )
             };
             api.request("GET", &path, None, None, None)
         }),
@@ -480,7 +494,7 @@ pub(crate) fn call(
             }
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/start"),
+                &url::segment_path(&["v1", "executions", id, "start"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -493,7 +507,7 @@ pub(crate) fn call(
             });
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/signal"),
+                &url::segment_path(&["v1", "executions", id, "signal"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -503,7 +517,7 @@ pub(crate) fn call(
             let body = serde_json::json!({"node": str_arg(arguments, "node").unwrap_or_default()});
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/approve"),
+                &url::segment_path(&["v1", "executions", id, "approve"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -516,7 +530,7 @@ pub(crate) fn call(
             };
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/pause"),
+                &url::segment_path(&["v1", "executions", id, "pause"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -530,7 +544,7 @@ pub(crate) fn call(
             }
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/resume"),
+                &url::segment_path(&["v1", "executions", id, "resume"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -539,7 +553,7 @@ pub(crate) fn call(
         "cancel" => require(arguments, "executionId").map(|id| {
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/cancel"),
+                &url::segment_path(&["v1", "executions", id, "cancel"]),
                 Some(&serde_json::json!({})),
                 Some(&key),
                 if_match,
@@ -565,7 +579,7 @@ pub(crate) fn call(
             }
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/wake-lease"),
+                &url::segment_path(&["v1", "executions", id, "wake-lease"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -581,7 +595,7 @@ pub(crate) fn call(
             });
             api.request(
                 "POST",
-                &format!("/v1/executions/{id}/amend-budget"),
+                &url::segment_path(&["v1", "executions", id, "amend-budget"]),
                 Some(&body),
                 Some(&key),
                 if_match,
@@ -590,7 +604,10 @@ pub(crate) fn call(
         "wake_status" => require(arguments, "executionId").map(|id| {
             api.request(
                 "GET",
-                &format!("/v1/executions/{id}/wake-lease?sessionId={nonce}"),
+                &format!(
+                    "{}?sessionId={nonce}",
+                    url::segment_path(&["v1", "executions", id, "wake-lease"])
+                ),
                 None,
                 None,
                 None,
@@ -599,7 +616,7 @@ pub(crate) fn call(
         "routes" => Ok(match str_arg(arguments, "manifest") {
             Some(manifest) => api.request(
                 "GET",
-                &format!("/v1/gateway/routes?manifest={manifest}"),
+                &format!("/v1/gateway/routes?manifest={}", url::query_value(manifest)),
                 None,
                 None,
                 None,
@@ -607,9 +624,9 @@ pub(crate) fn call(
             None => api.request("GET", "/v1/gateway/routes", None, None, None),
         }),
         "probe" => require(arguments, "route").map(|route| {
-            let mut path = format!("/v1/gateway/probe?route={route}");
+            let mut path = format!("/v1/gateway/probe?route={}", url::query_value(route));
             if let Some(manifest) = str_arg(arguments, "manifest") {
-                path.push_str(&format!("&manifest={manifest}"));
+                path.push_str(&format!("&manifest={}", url::query_value(manifest)));
             }
             api.request("GET", &path, None, None, None)
         }),

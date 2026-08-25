@@ -1146,6 +1146,14 @@ pub(super) async fn gateway_probe(
     }
 }
 
+/// `POST /v1/development/contract`: #218's code-rule resolver over HTTP. #223 existence-slice —
+/// no request body is read yet, matching the CLI and MCP surfaces (see
+/// `crate::commands::development::run_resolve_contract`'s own doc for why an empty source list
+/// is real behavior, not a stub).
+pub(super) async fn development_resolve_contract() -> Response {
+    respond_outcome(crate::commands::development::run_resolve_contract())
+}
+
 // -------------------------------------------------------------------------------------------
 // Milestone 05g Task 3: the wake lease's HTTP surface — the SLEEPER-ONLY half. POST arms the
 // caller's own lease (idempotent, the three headers); GET reads it. No route rings: the ring

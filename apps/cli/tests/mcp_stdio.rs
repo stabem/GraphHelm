@@ -513,7 +513,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 }
 
 #[test]
-fn tools_list_names_exactly_the_fourteen_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_fifteen_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -543,10 +543,11 @@ fn tools_list_names_exactly_the_fourteen_tools_with_closed_schemas() {
             "wake_status",
             "amend_budget",
             "wake_wait",
-            "probe"
+            "probe",
+            "resolve_contract"
         ],
-        "exactly the fourteen tools, in order, and NOTHING else — no credential tool exists by \
-         design (omission is the enforcement)"
+        "exactly the fifteen tools, in order, and NOTHING else — no credential tool exists by \
+         design (omission is the enforcement); #223 added resolve_contract after probe"
     );
     for tool in &tools {
         let schema = &tool["inputSchema"];

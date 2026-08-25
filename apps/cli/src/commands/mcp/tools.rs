@@ -20,7 +20,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 14] = [
+const TOOLS: [ToolSpec; 15] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -104,6 +104,12 @@ const TOOLS: [ToolSpec; 14] = [
         description: "Probe one gateway route's health (GET /v1/gateway/probe).",
         schema: probe_schema,
     },
+    ToolSpec {
+        name: "resolve_contract",
+        description: "Resolve the code-rule contract from layered rule sources (POST \
+                      /v1/development/contract). #223 existence-slice: no sources argument yet.",
+        schema: resolve_contract_schema,
+    },
 ];
 
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -125,6 +131,13 @@ fn mutating_schema(mut properties: serde_json::Value, required: &[&str]) -> serd
                         refused with 409 and the current head when the store moved past it.",
     });
     object_schema(properties, required)
+}
+
+fn resolve_contract_schema() -> serde_json::Value {
+    // No fields yet: #223's existence-slice always resolves against an empty source list.
+    // Sources become a real argument when the behavioral-parity guard (blueprint §6 item 2)
+    // wires this to actual rule artifacts.
+    object_schema(serde_json::json!({}), &[])
 }
 
 fn execution_only_schema() -> serde_json::Value {
@@ -630,6 +643,14 @@ pub(crate) fn call(
             }
             api.request("GET", &path, None, None, None)
         }),
+        // #223 existence-slice: no required arguments yet (see resolve_contract_schema).
+        "resolve_contract" => Ok(api.request(
+            "POST",
+            &url::segment_path(&["v1", "development", "contract"]),
+            Some(&serde_json::json!({})),
+            Some(&key),
+            if_match,
+        )),
         _ => unreachable!("the closed-list check above already refused unknown names"),
     };
 

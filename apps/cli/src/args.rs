@@ -21,6 +21,11 @@ pub enum TopLevel {
     Schema(SchemaArgs),
     /// Extension package operations. Validation is offline and never installs or activates.
     Extension(ExtensionArgs),
+    /// Development-contract Runtime services (#223), exposed identically here, over MCP, and
+    /// over HTTP. This surface is under construction: the existence-parity guard in
+    /// `apps/cli/tests/development_surface_parity.rs` is what keeps the three adapters honest
+    /// about which operation families actually exist as it grows.
+    Development(DevelopmentArgs),
     Events(EventsArgs),
     Execution(ExecutionArgs),
     Gateway(GatewayArgs),
@@ -70,6 +75,18 @@ pub enum ExtensionCommand {
         #[arg(long = "token-file")]
         token_file: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct DevelopmentArgs {
+    #[command(subcommand)]
+    pub command: DevelopmentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DevelopmentCommand {
+    /// Resolve layered code rules into one contract (#218's resolver, exposed here).
+    ResolveContract,
 }
 
 #[derive(Debug, Args)]

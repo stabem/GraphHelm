@@ -1,3 +1,4 @@
+mod development;
 mod draft;
 mod events;
 mod execution;
@@ -24,8 +25,9 @@ use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
-    CredentialCommand, DraftCommand, EventsCommand, ExecutionCommand, ExtensionCommand,
-    GatewayCommand, GraphCommand, QualityCommand, SchemaCommand, ToolCommand, TopLevel,
+    CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
+    ExtensionCommand, GatewayCommand, GraphCommand, QualityCommand, SchemaCommand, ToolCommand,
+    TopLevel,
 };
 use crate::output::Outcome;
 
@@ -94,6 +96,9 @@ pub fn run(command: TopLevel) -> Outcome {
             ExtensionCommand::RevokeMcpToken { token_file } => {
                 extension::run_revoke_mcp_token(&token_file)
             }
+        },
+        TopLevel::Development(development_args) => match development_args.command {
+            DevelopmentCommand::ResolveContract => development::run_resolve_contract(),
         },
         TopLevel::Events(events) => match events.command {
             EventsCommand::Verify {

@@ -4,14 +4,66 @@
 //! test).
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
+
+/// Every `.rs` file under `src/`, discovered by WALKING the directory.
+///
+/// **The population is the directory, not a list.** A hand-written list guards the file that MOVES
+/// and is blind to the file that is ADDED, and nothing says so. Demonstrated before this change: a
+/// probe file written to BREAK the invariant below was invisible to the hand-listed guard.
+fn sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = Vec::new();
+    walk(&root, &mut found);
+    found.sort();
+    found
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            (name, text)
+        })
+        .collect()
+}
+
+/// The walk must reach the whole crate.
+///
+/// The floor is the REAL count, not a round number below it: a floor set loosely tolerates exactly
+/// the silent shrinkage this guard exists to stop. **Lowering it is legitimate only alongside a
+/// NAMED removal in the same change.** The landmarks are the second half -- a count can be met by
+/// the wrong files.
+#[test]
+fn the_scan_covers_the_whole_crate() {
+    let found = sources();
+    assert!(
+        found.len() >= 13,
+        "HARNESS-BROKE: the walk found {} source files; this crate has 13. If one was \
+         deleted, lower this floor in the same change that removes it and name the file here",
+        found.len()
+    );
+    for landmark in ["lib.rs", "retrieval.rs"] {
+        assert!(
+            found.iter().any(|(name, _)| name == landmark),
+            "HARNESS-BROKE: {landmark} is known to exist and is absent from the walk"
+        );
+    }
+}
 const EXECUTION_MANIFEST: &str = include_str!("../../execution/Cargo.toml");
-const LIB: &str = include_str!("../src/lib.rs");
-const EXECUTOR: &str = include_str!("../src/executor.rs");
-const PORTS: &str = include_str!("../src/ports.rs");
-const PROMPT: &str = include_str!("../src/prompt.rs");
-const CLASSIFY: &str = include_str!("../src/classify.rs");
-const DRIVER: &str = include_str!("../src/driver.rs");
-const EVIDENCE: &str = include_str!("../src/evidence.rs");
 
 /// The `[dependencies]` table only, stopping at the next `[section]` header.
 fn production_dependencies(manifest: &str) -> &str {
@@ -67,15 +119,7 @@ fn the_runtime_crate_never_names_an_adapter() {
 #[test]
 fn no_source_file_spawns_processes_or_speaks_http() {
     // tokio and async are this crate's point; subprocesses and HTTP are the adapters'.
-    for (name, source) in [
-        ("lib.rs", LIB),
-        ("executor.rs", EXECUTOR),
-        ("ports.rs", PORTS),
-        ("prompt.rs", PROMPT),
-        ("classify.rs", CLASSIFY),
-        ("driver.rs", DRIVER),
-        ("evidence.rs", EVIDENCE),
-    ] {
+    for (name, source) in sources() {
         for token in ["std::process", "ureq", "axum"] {
             assert!(!source.contains(token), "{name} must not contain {token}");
         }

@@ -7,12 +7,68 @@
 //! fail loudly the first time it stops being true.
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
-const LIB: &str = include_str!("../src/lib.rs");
-const EFFECT: &str = include_str!("../src/effect.rs");
-const PATH: &str = include_str!("../src/path.rs");
-const CALL: &str = include_str!("../src/call.rs");
-const LEASE: &str = include_str!("../src/lease.rs");
-const RECORD: &str = include_str!("../src/record.rs");
+
+/// Every `.rs` file under `src/`, discovered by WALKING the directory.
+///
+/// **The population is the directory, not a list.** A hand-written list guards the file that MOVES
+/// and is blind to the file that is ADDED, and nothing says so. That is not a prediction: this
+/// crate's `mcp_capability.rs` arrived in `6b0b058` (#307) while this guard had not been touched
+/// since `9d15bf4` (#47), so the invariant below simply never ran on it -- and a probe file written
+/// to BREAK the invariant passed unnoticed before this change.
+fn sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = Vec::new();
+    walk(&root, &mut found);
+    found.sort();
+    found
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            (name, text)
+        })
+        .collect()
+}
+
+/// The walk must reach the whole crate.
+///
+/// The floor is the REAL count, not a round number below it: a floor set loosely is a floor that
+/// tolerates exactly the silent shrinkage this guard exists to stop. **Lowering it is legitimate
+/// only alongside a NAMED removal in the same change** -- if a file was deleted, say which.
+///
+/// The landmark is the second half: a count can be met by the wrong files.
+#[test]
+fn the_scan_covers_the_whole_crate() {
+    let found = sources();
+    assert!(
+        found.len() >= 7,
+        "HARNESS-BROKE: the walk found {} source files; this crate has 7. If one was deleted, \
+         lower this floor in the same change that removes it and name the file here",
+        found.len()
+    );
+    for landmark in ["lib.rs", "mcp_capability.rs"] {
+        assert!(
+            found.iter().any(|(name, _)| name == landmark),
+            "HARNESS-BROKE: {landmark} is known to exist and is absent from the walk"
+        );
+    }
+}
 
 /// The `[dependencies]` table only, stopping at the next `[section]` header.
 ///
@@ -133,15 +189,8 @@ fn the_tool_broker_crate_depends_on_exactly_the_declared_crates() {
 /// source files.
 #[test]
 fn no_source_file_performs_io_or_reads_a_clock_or_randomness() {
-    for (name, source) in [
-        ("lib.rs", LIB),
-        ("effect.rs", EFFECT),
-        ("path.rs", PATH),
-        ("call.rs", CALL),
-        ("lease.rs", LEASE),
-        ("record.rs", RECORD),
-    ] {
-        let code = code_only(source);
+    for (name, source) in sources() {
+        let code = code_only(&source);
         for forbidden in [
             "std::fs",
             "std::net",

@@ -7,11 +7,65 @@
 //! fail loudly the first time it stops being true.
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
-const LIB: &str = include_str!("../src/lib.rs");
-const MANIFEST_SRC: &str = include_str!("../src/manifest.rs");
-const TAXONOMY: &str = include_str!("../src/taxonomy.rs");
-const ELIGIBILITY: &str = include_str!("../src/eligibility.rs");
-const CALL: &str = include_str!("../src/call.rs");
+
+/// Every `.rs` file under `src/`, discovered by WALKING the directory.
+///
+/// **The population is the directory, not a list.** A hand-written list guards the file that MOVES
+/// and is blind to the file that is ADDED, and nothing says so. Demonstrated before this change: a
+/// probe file written to BREAK the invariant below was invisible to the hand-listed guard.
+fn sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = Vec::new();
+    walk(&root, &mut found);
+    found.sort();
+    found
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            (name, text)
+        })
+        .collect()
+}
+
+/// The walk must reach the whole crate.
+///
+/// The floor is the REAL count, not a round number below it: a floor set loosely tolerates exactly
+/// the silent shrinkage this guard exists to stop. **Lowering it is legitimate only alongside a
+/// NAMED removal in the same change.** The landmarks are the second half -- a count can be met by
+/// the wrong files.
+#[test]
+fn the_scan_covers_the_whole_crate() {
+    let found = sources();
+    assert!(
+        found.len() >= 5,
+        "HARNESS-BROKE: the walk found {} source files; this crate has 5. If one was \
+         deleted, lower this floor in the same change that removes it and name the file here",
+        found.len()
+    );
+    for landmark in ["lib.rs", "manifest.rs"] {
+        assert!(
+            found.iter().any(|(name, _)| name == landmark),
+            "HARNESS-BROKE: {landmark} is known to exist and is absent from the walk"
+        );
+    }
+}
 
 /// The `[dependencies]` table only, stopping at the next `[section]` header.
 ///
@@ -132,14 +186,8 @@ fn the_gateway_crate_depends_on_exactly_the_declared_crates() {
 /// the concrete I/O types still catches an adapter that lands in this crate by mistake.
 #[test]
 fn no_source_file_performs_io_or_reads_a_clock_or_randomness() {
-    for (name, source) in [
-        ("lib.rs", LIB),
-        ("manifest.rs", MANIFEST_SRC),
-        ("taxonomy.rs", TAXONOMY),
-        ("eligibility.rs", ELIGIBILITY),
-        ("call.rs", CALL),
-    ] {
-        let code = code_only(source);
+    for (name, source) in sources() {
+        let code = code_only(&source);
         for forbidden in [
             "std::fs",
             "std::time",

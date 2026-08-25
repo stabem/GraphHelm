@@ -431,6 +431,145 @@ fn tools_call_proceeds_past_the_capability_gate_when_the_tool_is_allowlisted() {
     assert_eq!(records[0]["decision"]["outcome"], "allowed");
 }
 
+/// #341: the two tests above prove the capability gate refuses/allows `approve` and `signal`
+/// specifically -- they say nothing about the other 12 tools the server actually serves. The
+/// gate's own code is structurally centralized (one `tools/call` match arm, checked before any
+/// per-tool dispatch -- see `session.rs`), so a per-tool bypass is not the live risk; an
+/// UNTESTED population is. This reads the real `tools/list` reply -- never the `TOOLS` const,
+/// never a hand-typed array -- so a tool silently added or removed from that list changes what
+/// this test covers without anyone needing to update it (population-is-the-instrument, #318's
+/// sibling discipline applied to this subsystem).
+fn real_tool_population() -> Vec<String> {
+    let session = mcp_session_with(
+        &["--url", "http://127.0.0.1:9", "--actor", "agent-x"],
+        &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &[
+            initialize_request(1),
+            initialized_notification(),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        ],
+    );
+    session.replies[1]["result"]["tools"]
+        .as_array()
+        .expect("tools/list must reply with a \"tools\" array")
+        .iter()
+        .map(|tool| {
+            tool["name"]
+                .as_str()
+                .expect("each listed tool has a string \"name\"")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
+    let population = real_tool_population();
+    // non-empty-is-not-a-control: asserted BEFORE the sweep below, as its own assertion. A
+    // broken extraction (wrong JSON pointer, over-restrictive filter) would otherwise yield an
+    // empty population, and a `for` loop over zero items makes every assertion in that loop
+    // pass vacuously -- this test would report green while checking nothing.
+    assert!(
+        !population.is_empty(),
+        "tools/list returned no tools -- either the server or this extraction is broken"
+    );
+    // A shrinking population is exactly as invisible to a bare non-empty check as an empty
+    // one would be to no check at all: naming today's real count catches a tool quietly
+    // dropped from tools/list, not only a tool added.
+    assert!(
+        population.len() >= 14,
+        "expected at least 14 tools (today's real count); got {}: {population:?}",
+        population.len()
+    );
+
+    // Negative sweep: an EMPTY capability allowlist must refuse every single tool the server
+    // actually serves -- one session, one subprocess, one tools/call per population member.
+    let package = two_contribution_package();
+    let directory = TempDir::new().unwrap();
+    let token_path = write_token_file(directory.path(), &approver_token(&package.root, &[]));
+    let audit_log = directory.path().join("audit.jsonl");
+    let args = gated_session_args(
+        &package.root,
+        token_path.to_str().unwrap(),
+        "agent-x",
+        audit_log.to_str().unwrap(),
+    );
+    let mut lines = vec![initialize_request(1), initialized_notification()];
+    for (index, name) in population.iter().enumerate() {
+        lines.push(json!({
+            "jsonrpc": "2.0",
+            "id": 2 + index as u64,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": {}}
+        }));
+    }
+    let session = mcp_session_with(&args, &[("GRAPHHELM_API_TOKEN", "test-token")], &lines);
+    assert_eq!(
+        session.replies.len(),
+        1 + population.len(),
+        "one reply for initialize, then one per tools/call: {:?}",
+        session.replies
+    );
+    for (name, reply) in population.iter().zip(session.replies[1..].iter()) {
+        assert!(
+            reply.get("error").is_some(),
+            "{name} was called with an EMPTY capability allowlist and must be refused, got: \
+             {reply}"
+        );
+        let message = reply["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("capability") || message.contains("allow"),
+            "{name}'s refusal must name the capability gate, not a downstream error: {message}"
+        );
+    }
+    let records = read_jsonl(&audit_log);
+    assert_eq!(records.len(), population.len(), "{records:?}");
+    assert!(
+        records
+            .iter()
+            .all(|record| record["decision"]["code"] == "tool_not_allowlisted"),
+        "every one of the {} calls must be refused for the SAME reason (empty allowlist), not \
+         a mix: {records:?}",
+        population.len()
+    );
+
+    // Positive control: with the SAME population, a NON-empty allowlist containing one real
+    // name must actually pass the gate. Without this arm, the sweep above cannot tell "the
+    // gate correctly checks every tool" from "the gate refuses unconditionally regardless of
+    // the allowlist" (instrument-speaks-is-not-subject-exists) -- both would look identical
+    // from the negative sweep alone.
+    let allowed_name = population[0].as_str();
+    let control_directory = TempDir::new().unwrap();
+    let control_token_path = write_token_file(
+        control_directory.path(),
+        &approver_token(&package.root, &[allowed_name]),
+    );
+    let control_audit_log = control_directory.path().join("audit.jsonl");
+    let control_args = gated_session_args(
+        &package.root,
+        control_token_path.to_str().unwrap(),
+        "agent-x",
+        control_audit_log.to_str().unwrap(),
+    );
+    mcp_session_with(
+        &control_args,
+        &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &[
+            initialize_request(1),
+            initialized_notification(),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": allowed_name, "arguments": {}}}),
+        ],
+    );
+    let control_records = read_jsonl(&control_audit_log);
+    assert_eq!(control_records.len(), 1, "{control_records:?}");
+    assert_eq!(
+        control_records[0]["decision"]["outcome"], "allowed",
+        "positive control: {allowed_name} IS on the allowlist and must pass the gate -- {:?}",
+        control_records
+    );
+}
+
 // -------------------------------------------------------------------------------------------
 // `graphhelm extension mint-mcp-token` / `revoke-mcp-token`: the operator tooling that
 // actually produces the files the session-wiring tests above consume. Prints JSON to stdout,

@@ -28,7 +28,7 @@ const COLLATION_SENSITIVE_ORDER_KEYS: &[&str] = &[
     "grantee_name",
 ];
 
-/// Every `.rs` file under `src/`, walked.
+/// Every source this adapter writes SQL in: `.rs` under `src/`, and `.sql` under `migrations/`.
 ///
 /// **Only this one invariant takes a walk, and the reason is which question it asks.** Eight of the
 /// nine tests in this file name a specific file because they assert the shape of specific code --
@@ -43,22 +43,37 @@ const COLLATION_SENSITIVE_ORDER_KEYS: &[&str] = &[
 /// Both sort by `last_sequence`, which is numeric and not in the list below, so this lands green --
 /// but `projection_name` IS collation-sensitive, and `projection.rs` is precisely the file that
 /// would one day order by it.
+///
+/// **`migrations/` is here for the same reason and it was missed for the same one (#387).** The
+/// rule says *wherever it writes it*, and the walk stopped at `src/`; `0002`, `0003` and `0004`
+/// were not even reachable as consts, so no test in this file had ever read them. What made the
+/// gap visible is that `0004_scope_guard.sql:23` already carries a hand-written `COLLATE "C"` --
+/// someone knew the rule reached there, and nothing checked it.
+///
+/// **What this extension does NOT buy, stated because a walk looks like coverage.** No live
+/// migration clause is matched by `COLLATION_SENSITIVE_ORDER_KEYS` today: the three are
+/// `ORDER BY sequence` twice and `ORDER BY c.relname`, and none of those is in the list. So the
+/// collation loop's pass over `migrations/` is CAPACITY, not necessity, and its falsifier is the
+/// floor-and-landmark test below rather than the loop itself. Planting a fixture `.sql` to
+/// manufacture a red would be planting a defect to keep a guard honest; the honest form is to say
+/// so here.
 fn sql_sources() -> Vec<(String, String)> {
-    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    fn walk(dir: &std::path::Path, extension: &str, out: &mut Vec<std::path::PathBuf>) {
         let entries =
             std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                walk(&path, extension, out);
+            } else if path.extension().is_some_and(|found| found == extension) {
                 out.push(path);
             }
         }
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut found = Vec::new();
-    walk(&root, &mut found);
+    walk(&crate_root.join("src"), "rs", &mut found);
+    walk(&crate_root.join("migrations"), "sql", &mut found);
     found.sort();
     found
         .into_iter()
@@ -83,12 +98,13 @@ fn sql_sources() -> Vec<(String, String)> {
 fn the_collation_scan_covers_the_whole_adapter() {
     let found = sql_sources();
     assert!(
-        found.len() >= 11,
-        "HARNESS-BROKE: the walk found {} source files; this adapter has 11. If one was deleted, \
-         lower this floor in the same change that removes it and name the file here",
+        found.len() >= 15,
+        "HARNESS-BROKE: the walk found {} sources; this adapter has 15 (11 under src/, 4 under \
+         migrations/). If one was deleted, lower this floor in the same change that removes it \
+         and name the file here",
         found.len()
     );
-    for landmark in ["backup.rs", "projection.rs"] {
+    for landmark in ["backup.rs", "projection.rs", "0004_scope_guard.sql"] {
         assert!(
             found.iter().any(|(name, _)| name == landmark),
             "HARNESS-BROKE: {landmark} is known to exist and is absent from the walk"
@@ -107,6 +123,25 @@ fn text_orderings_pin_the_c_collation() {
                 .take(400)
                 .take_while(|character| *character != '\n')
                 .collect();
+            // Skipping is the right answer for an ordering over a column that is not
+            // collation-sensitive -- and `0004_scope_guard.sql:23` is the case worth writing down,
+            // because it LOOKS like one this loop should have caught. It orders by
+            // `pg_class.relname`, which is `name`, and it carries a hand-written `COLLATE "C"`.
+            //
+            // MEASURED on PostgreSQL 13, 16 and 17, in throwaway clusters: `name` has
+            // `pg_type.typcollation = C`, and ordering a `name` column by default is byte-identical
+            // to ordering it `COLLATE "C"` -- with a POSITIVE CONTROL, because the first run used
+            // the image's libc `en_US.utf8` on musl, where even `text` orders identically under
+            // both and the comparison proves nothing. Under `COLLATE "en-US-x-icu"` the `text`
+            // control DIVERGES, and under the same ICU collation a `name` column also diverges --
+            // so `name` can be collated otherwise, and its agreement with C is a property of the
+            // type's default collation rather than an inability to be ordered any other way.
+            //
+            // So `relname` is deliberately NOT in the list: the pin at `0004:23` is a no-op, correct
+            // and harmless and not load-bearing. Adding `relname` here would make this loop demand
+            // a `COLLATE "C"` that changes nothing, on every catalog ordering anyone ever writes.
+            // (#387. The judgement travelled with its own evidence rather than inside a mechanical
+            // population fix.)
             let Some(key) = COLLATION_SENSITIVE_ORDER_KEYS
                 .iter()
                 .find(|key| clause.contains(**key))

@@ -43,9 +43,24 @@ const NOT_GATE_MACHINERY: &str = "README.md";
 
 /// Every frozen prefix, named one assertion at a time, on purpose.
 ///
-/// **The list is a `const` inside `freeze_violation` with exactly one reader** -- measured, not
-/// assumed. A pull request that only removes a prefix touches `core/quality/` alone, which is a
-/// clean gate-only diff.
+/// **The list is a `const` declared INSIDE `freeze_violation`, so no other reader is possible** --
+/// by scope, not by search. The compiler refuses `graphhelm_quality::GATE_MACHINERY` with `E0425`;
+/// a grep can only report what it happened to look at, and this needs no grep. That is also why
+/// both tests here ASK the function rather than compare against a copied list: asking is the only
+/// access there is. A pull request that only removes a prefix touches `core/quality/` alone, which
+/// is a clean gate-only diff.
+///
+/// **The scope argument covers Rust, and only Rust.** A shell script or a CI file that hardcoded
+/// these same prefixes by value would not be a READER of this constant, and `E0425` says nothing
+/// about it -- it would simply hold a stale copy that drifts. Named here rather than left to the
+/// pull request that added this paragraph, because a limit recorded only in a PR body is gone the
+/// moment the PR merges.
+///
+/// **And the set is not hypothetically mobile -- it has already moved once, unwatched.**
+/// `.factory/h-agent-211-surface-blueprint.md:92` records it as `[&str; 3]`; it is `[&str; 4]`
+/// today. A seal in that same document points AT this constant (line 407) and noticed the growth
+/// in neither direction. The set moves, things are aimed at it, and nobody was looking. (Found by
+/// N while reviewing #402.)
 ///
 /// **What a removal is NOT is silent, and the "before" measurement said so rather than confirming
 /// what was expected.** Every one of the four is caught today. But the coverage is INCIDENTAL, and

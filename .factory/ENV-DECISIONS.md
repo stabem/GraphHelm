@@ -1605,3 +1605,72 @@ list is the mute file.** This is that lesson applied before the second occurrenc
 It does not prevent a red `main`; all four above would still have landed. What changes is that each
 would have been named within minutes by the person holding the context to fix it, instead of days
 later by someone who first has to prove it was not theirs.
+
+---
+
+## ED-18, LANDING-POINT AMENDMENT — ADDENDUM (K): the instance that EXCLUDES composition, and why one of those beats four that do not
+
+The landing-point amendment records four red mains and a discriminator from M: was the red in a file
+the culpable commit **touched**, or one it never saw? All four were in files their own author had
+open, so three of the four read as *"the author did not run it"* rather than composition.
+
+**That discriminator is an indicator, not a proof, and the entry says so** — *touched the file* is not
+*introduced the warning*; an edit nearby or a toolchain bump gives the same signature.
+
+**K supplied the instance that settles it, and refused to be counted as a fifth of the wrong kind.**
+
+    the four        MAIN landing red
+    K's case        a BRANCH red that NEVER landed
+
+Same mechanism — the author did not run the neighbouring crate — in a different state of the world.
+K's sixth declaration site was red **from the base of the branch**, with no merge anywhere near it.
+
+**That is a control, not another example.** If composition were the cause, K's case could not exist:
+nothing composed, and the red was there from the first commit. The four are each compatible with
+*both* hypotheses and are separated only by an indicator; **K's is separated by construction.**
+
+> **An instance that can only exist under one of two hypotheses is worth more than four that are
+> compatible with both.** Piling it onto the four would have weakened the argument it settles — the
+> pile was of a different thing.
+
+**Credited to K**, who declined the citation as first written. Refusing to be counted in someone
+else's evidence, on the grounds that it makes their argument weaker, is the rarer half of this: the
+easy move was to accept a flattering tally.
+
+**Practical consequence for anyone extending this register:** when collecting instances for a claim,
+sort them by **what each one excludes**, not by how many there are. A count answers "how often"; only
+a discriminating case answers "which cause" — and it is the second question that decides where the
+check belongs.
+
+### THE LANDING CHECK ALSO RUNS `cargo fmt --all -- --check`, and here is the measurement that added it
+
+The landing check as first written ran workspace clippy. **Measured the same day: `main` was
+fmt-dirty in SEVENTEEN files across EIGHT commits**, including main's own tip, across several lanes.
+
+**The cause was not eight ignored reds. The check had never run at all.**
+
+    ci/gate.ps1:641      Invoke-Stage 'rustfmt' { cargo fmt --all -- --check }   <- the stage EXISTS
+    .git/hooks/          12 files, ALL of them .sample                           <- no hook, ever
+    core.hooksPath       unset, local AND global
+    worktree hooks path  resolves to that same empty directory
+
+The full gate runs **only when a human invokes it inside a slot window**. Pushes never passed through
+`fmt --all`, and the per-lane ED-18 commands are focused ones that do not include a global format
+check.
+
+**This is the worst variant of a check that does not gate: the stage is DECLARED in the script, so
+everyone assumes something executes it.** A missing stage would have been noticed. A present but
+unwired stage is invisible precisely because reading the script confirms it exists.
+
+**Rule: the landing check runs `cargo fmt --all -- --check` alongside the workspace clippy.** Seconds
+of cost, at the point where there is exactly one suspect, closing the class that accumulated those
+seventeen files.
+
+**Deliberately NOT adopted: a heavy pre-push hook.** The full gate on every push does not scale, and
+the slot protocol exists for that. The landing point is the cheap place, which is this amendment's
+whole argument.
+
+**How the seventeen were found is itself the pattern.** A peer's independent read reported three —
+what THEIR run surfaced. A first extraction here reported one, because the regex cut the path at the
+first `:` and Windows paths are `\?\D:\...`. **Two wrong counts from the instrument before the
+right one from the tree**, and the number was one command away from being published inside a hotfix.

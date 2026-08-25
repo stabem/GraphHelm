@@ -42,6 +42,44 @@ fn run_memory_status() -> Value {
     })
 }
 
+fn run_accounting() -> Value {
+    let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["development", "accounting"])
+        .output()
+        .expect("the built binary runs `development accounting`");
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout was not the JSON envelope ({error}): {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+/// The provenance field on the wire is the type's own spelling, not `Debug`'s.
+///
+/// #381: `run_accounting`'s only real branch (#223's existence-slice has no execution to account
+/// for yet) always reports `CostProvenance::Unavailable`. Before this issue, the adapter rendered
+/// it with `format!("{:?}", ...)`, so this field's value on CLI stdout, the MCP tool result, and
+/// `GET /v1/development/accounting` was `"Unavailable"` -- Rust's `Debug` spelling, changing with
+/// any rename or hand-written `Debug` impl and pinned by nothing. This hardcodes the wire spelling
+/// independently of `CostProvenance::Unavailable.wire_name()`'s own definition (pinned separately
+/// in `core/runtime/tests/context_accounting.rs`), so the two have to agree rather than one
+/// deriving the other -- a rename on either side fails the pin that did not move.
+#[test]
+fn accounting_reports_the_provenance_wire_spelling_not_the_debug_rendering() {
+    let envelope = run_accounting();
+    assert_eq!(
+        envelope["ok"], true,
+        "the command did not succeed: {envelope}"
+    );
+    assert_eq!(envelope["command"], "development.accounting");
+    assert_eq!(
+        envelope["data"]["totalTokens"]["provenance"], "unavailable",
+        "the provenance field is not `CostProvenance::Unavailable`'s wire spelling. If this reads \
+         `\"Unavailable\"`, the adapter is still rendering `Debug` output instead of `wire_name()`."
+    );
+}
+
 /// The command answers with the shipped policy, not a restatement of it.
 ///
 /// The production change this catches: transcribing the vocabulary into the adapter. A hand-copied

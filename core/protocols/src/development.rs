@@ -35,6 +35,13 @@ pub const DEVELOPMENT_API_MAJOR: u16 = 1;
 /// construction - which the doc on that guard had already stated, two lines above the flaw.
 ///
 /// One list generates all three, so there is nothing left to keep in sync.
+///
+/// `#[macro_export]` (#381): path-visible outside this crate as `graphhelm_protocols::
+/// wire_vocabulary!`, so a closed vocabulary declared in another crate can use the same one-list
+/// generator instead of writing a second, hand-listed `wire_name`. No new dependency edge is
+/// needed for this: any crate reaching for it either already depends on `graphhelm-protocols` for
+/// its wire types, or has no business declaring a wire vocabulary at all.
+#[macro_export]
 macro_rules! wire_vocabulary {
     ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $wire:literal),+ $(,)? }) => {
         $(#[$meta])*

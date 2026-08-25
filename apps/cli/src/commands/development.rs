@@ -294,14 +294,7 @@ pub fn run_accounting() -> Outcome {
             "totalTokens": {
                 "observed": field.observed(),
                 "measured": field.is_measured(),
-                // GAP, upstream and out of this PR's scope (N's review of #380): this is
-                // `{:?}` of a Debug-only enum on the wire. Nothing pins the variant spelling --
-                // a rename of e.g. `Unavailable` changes this public response silently, with
-                // every test here still green. The fix belongs in
-                // `core/runtime/src/context_accounting.rs` (a stable wire name for
-                // `CostProvenance`, the same shape `DevelopmentRefusalCode::wire_name()` already
-                // gives its own enum), tracked separately.
-                "provenance": format!("{:?}", field.provenance()),
+                "provenance": field.provenance().wire_name(),
             },
         }),
     )

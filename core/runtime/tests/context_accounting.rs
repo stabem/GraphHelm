@@ -211,6 +211,27 @@ fn a_measured_cost_names_the_component_that_observed_it() {
     assert!(matches!(derived.provenance(), CostProvenance::Derived));
 }
 
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before writing it: **any string here that is
+/// not exactly what `CostProvenance::X.wire_name()` says** -- a value drifting from what the type
+/// declares while this stays hand-written and correct only by coincidence, or the type's own
+/// spelling drifting while nothing else in the repository names it.
+///
+/// #381: `CostProvenance` carried no wire spelling at all, and the one caller that puts it on a
+/// public surface (`run_accounting`, `apps/cli/src/commands/development.rs`) rendered it with
+/// `format!("{:?}", ...)` -- Rust's `Debug` output, which is not a contract and changes with a
+/// rename or a hand-written `Debug` impl (this repository already writes one of those elsewhere:
+/// `core/governor/src/materialize.rs:50`). This pins the wire literal at its source, independently
+/// of the adapter -- see `apps/cli/tests/development_cli.rs`'s
+/// `accounting_reports_the_provenance_wire_spelling_not_the_debug_rendering` for the second,
+/// independent pin at the actual public surface. Both are hand-written literals, not derived from
+/// each other, so a rename on either side fails the one that did not move.
+#[test]
+fn cost_provenance_wire_names_are_the_lowercase_variant_spelling() {
+    assert_eq!(CostProvenance::Measured.wire_name(), "measured");
+    assert_eq!(CostProvenance::Derived.wire_name(), "derived");
+    assert_eq!(CostProvenance::Unavailable.wire_name(), "unavailable");
+}
+
 // ---------------------------------------------------------------------------------------------
 // The named trap: a receipt that counts capsules which never ran.
 // ---------------------------------------------------------------------------------------------

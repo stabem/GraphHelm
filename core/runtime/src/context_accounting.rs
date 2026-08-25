@@ -121,16 +121,26 @@ pub(crate) fn push_segment(out: &mut String, value: &str) {
     out.push_str(value);
 }
 
-/// How a cost number came to exist. The three states have different consequences, so they are three
-/// values rather than a boolean plus a convention.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CostProvenance {
-    /// Observed at the site that performed the work.
-    Measured,
-    /// Computed from measured fields. Carries no observer.
-    Derived,
-    /// The runtime cannot see this number. **Not zero.**
-    Unavailable,
+use graphhelm_protocols::wire_vocabulary;
+use serde::{Deserialize, Serialize};
+
+wire_vocabulary! {
+    /// How a cost number came to exist. The three states have different consequences, so they are
+    /// three values rather than a boolean plus a convention.
+    ///
+    /// **Wire literals, not `Debug`** (#381): this value reaches CLI stdout, the MCP tool result,
+    /// and `GET /v1/development/accounting` through `run_accounting`
+    /// (`apps/cli/src/commands/development.rs`), which used to render it with
+    /// `format!("{:?}", ...)`. `Debug` is not a contract -- it changes with a rename and with a
+    /// hand-written `Debug` impl, and this repository already writes one of those elsewhere
+    /// (`core/governor/src/materialize.rs:50`). `wire_vocabulary!` is the same generator
+    /// `DevelopmentKind`/`DevelopmentRefusalCode` already use, reached from here without a new
+    /// dependency edge since `graphhelm-runtime` already depends on `graphhelm-protocols`.
+    CostProvenance {
+        Measured => "measured",
+        Derived => "derived",
+        Unavailable => "unavailable",
+    }
 }
 
 /// One cost line in an accounting receipt, carrying its own provenance.

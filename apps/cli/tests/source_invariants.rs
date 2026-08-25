@@ -8,6 +8,11 @@
 //! inside the literal, and `cargo fmt` joins the pieces into one line. The source reads plausibly
 //! while the operator reads `a waiter waits on its OWN                  lease`.
 
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tools/source-invariants/detect.rs"
+));
+
 use std::path::{Path, PathBuf};
 
 /// Every `.rs` file under `src/`, discovered by WALKING the directory.
@@ -52,32 +57,21 @@ fn sources() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Whether this line carries a run of three or more spaces inside a STRING LITERAL.
+/// This crate's exemption, composed on top of the shared detection.
 ///
-/// **Only the odd-index segments of `split('"')` are literal bodies.** The even ones are the code
-/// between and after literals, and inspecting those made the first version fire on ordinary Rust:
-/// a trailing aligned comment (`let s = "ok"; //   note`) and plain spacing between two literals
-/// (`let a = "x";        let b = "y";`) both tripped it. A guard that fires on legitimate code is
-/// the guard the next person relaxes -- which is the exact failure this file was written to avoid,
-/// so it is now covered by its own tests below. (Found by L.)
+/// The detection lives in `tools/source-invariants/detect.rs` and is included by value; only
+/// the EXEMPTION is a property of this crate, which is why the two are separate functions
+/// there. Composing them here rather than importing a bundled predicate is what lets the
+/// exemption be asserted to be doing work, instead of merely having a subject.
 ///
-/// Three spaces rather than two: two after a full stop is a writing convention.
-///
-/// **TWIN COPY: `tools/pathogens/tests/source_invariants.rs` holds a byte-identical predicate.**
-/// It cannot be deduplicated: `tools/pathogens` is GATE_MACHINERY and `apps/cli` is not, so M06
-/// forbids one branch touching both. Fix one, fix the other -- that is exactly how this
-/// predicate's false-positive bug reached two crates: it was copied, and a duplicated ORACLE
-/// diverges in silence rather than loudly. **If a THIRD crate needs this, extract a shared
-/// dev-only helper instead of a third copy** -- twin pointers do not scale to N, and N copies of
-/// one predicate drift.
-fn offending_literal(line: &str) -> bool {
-    let body = line.trim_start_matches(' ');
-    if body.starts_with("//") {
-        return false;
-    }
-    body.split('"')
-        .enumerate()
-        .any(|(index, part)| index % 2 == 1 && part.contains("   "))
+/// Adopting the shared file also replaces this crate's own copy, which split on every `"`
+/// and therefore mis-read escapes: `\"` shifted the parity of everything after it, and the
+/// obvious repair for that broke the mirror case. Those defects were fixed once, in one
+/// place, and this crate inherits the fix rather than needing it applied a second time --
+/// which is the entire argument for the shared file, and is exactly what the twin pointer
+/// deleted here predicted would go wrong.
+fn offends(line: &str) -> bool {
+    !is_line_comment(line) && has_run_in_literal(line)
 }
 
 #[test]
@@ -87,7 +81,7 @@ fn operator_strings_carry_no_collapsed_indentation() {
         .flat_map(|(path, text)| {
             text.lines()
                 .enumerate()
-                .filter(|(_, line)| offending_literal(line))
+                .filter(|(_, line)| offends(line))
                 .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim_start()))
         })
         .collect();
@@ -103,13 +97,20 @@ fn operator_strings_carry_no_collapsed_indentation() {
 ///
 /// Without this, a `read_dir` that returned almost nothing would satisfy the assertion above while
 /// scanning nothing -- the vacuous pass that the previous `include_str!` list was chosen to avoid.
-/// The floor is the replacement for that property, and it is deliberately well below the current
-/// count so ordinary growth does not trip it.
+/// The floor is the replacement for that property, and it is the REAL count rather than a number
+/// chosen to be comfortably under it. A floor with slack tolerates exactly the silent shrinkage it
+/// exists to catch: at `>= 40` against 57 files, sixteen could vanish without a word.
+///
+/// The cost is that a legitimate removal now edits this number, which is the plausible-looking edit
+/// a floor is supposed to resist. So the rule beside it: **lower this only in the same commit as
+/// the removal that caused it, and name the removed file.** The landmark below and this count then
+/// fail on different work, which is the whole reason for keeping both -- lowering a threshold is a
+/// plausible edit, deleting a named assertion is a visible one.
 #[test]
 fn the_scan_covers_the_whole_crate() {
     let found = sources();
     assert!(
-        found.len() >= 40,
+        found.len() >= 57,
         "HARNESS-BROKE: the walk found only {} source files, so the scan above reads far less \
          than this crate",
         found.len()
@@ -126,20 +127,44 @@ fn the_scan_covers_the_whole_crate() {
 /// complaining is a guard that stops working.
 #[test]
 fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
+    // PRECONDITION for the two cases below, and it is not ceremony. Their fixture property
+    // is "this line CARRIES a run of three or more spaces, outside any literal". Lose one
+    // space to an edit and `!offends(..)` collapses to `!false` and passes having measured
+    // nothing -- and it would keep passing with the even-segment bug back in place, which is
+    // the exact defect these two cells exist to catch. The pair is tight in both directions:
+    // if the run vanished the precondition fails, and if it moved INSIDE a literal `offends`
+    // becomes true and the assertion fails.
+    let aligned = r#"let s = "ok"; //   aligned trailing comment"#;
     assert!(
-        !offending_literal(r#"let s = "ok"; //   aligned trailing comment"#),
-        "a trailing aligned comment after a literal is ordinary Rust"
+        aligned.contains("   "),
+        "the aligned-comment fixture stopped carrying a run, so the assertion below measures nothing"
     );
     assert!(
-        !offending_literal(r#"let a = "x";        let b = "y";"#),
+        !offends(aligned),
+        "a trailing aligned comment after a literal is ordinary Rust"
+    );
+
+    let between = r#"let a = "x";        let b = "y";"#;
+    assert!(
+        between.contains("   "),
+        "the between-literals fixture stopped carrying a run, so the assertion below measures nothing"
+    );
+    assert!(
+        !offends(between),
         "spacing between two literals is ordinary Rust"
     );
     assert!(
-        !offending_literal("///   a doc comment whose indent is an intentional list"),
+        // The comment exemption must be REACHED to be observed. This fixture was
+        // `"///   a doc comment whose indent is an intentional list"` -- a line with no
+        // string literal in it at all, so `has_run_in_literal` answered `false` before the
+        // exemption was ever consulted and the assertion passed whether the exemption
+        // worked or not. Found by sabotaging `is_line_comment` against the pathogens copy
+        // of this same fixture and watching nothing go red.
+        !offends(r#"//   let s = "a          b";"#),
         "comments are excluded: their indentation is often deliberate"
     );
     assert!(
-        offending_literal(r#"    "a real defect with          collapsed indent","#),
+        offends(r#"    "a real defect with          collapsed indent","#),
         "the defect itself must still be caught"
     );
 }

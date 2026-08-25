@@ -1,0 +1,34 @@
+{
+  "id": "capsule-s4",
+  "version": 1,
+  "nodeId": "node-auth-review",
+  "objective": "review the authentication middleware for token expiry handling",
+  "sections": {
+    "projectKernel": [
+      "GraphHelm: evidence-first harness"
+    ],
+    "task": [
+      "review auth middleware"
+    ],
+    "node": [
+      "core/auth/middleware.rs"
+    ],
+    "evidence": [
+      "line 42: `if now < exp` - off-by-one on expiry boundary"
+    ],
+    "dependencyOutputs": [
+      "lint: clean"
+    ],
+    "agentExperience": [
+      "prior review flagged the same boundary"
+    ]
+  },
+  "tokenBudget": {
+    "allocated": 4000,
+    "expandableTo": 16000
+  },
+  "provenance": [
+    "compressed from 3 source files at snapshot-a"
+  ],
+  "dependencyHash": "sha256:aaaa"
+}

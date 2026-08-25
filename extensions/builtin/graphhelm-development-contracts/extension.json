@@ -664,6 +664,213 @@
             "capabilities": [],
             "observers": []
           }
+        },
+        {
+          "id": "fixture/journeys-capture-disabled-certifies",
+          "kind": "fixture",
+          "path": "fixtures/journeys/capture-disabled-certifies.json",
+          "sha256": "sha256:37611907864b81d7438b0861c01394436667333823270988fe29edd1f448915b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/journeys-capture-enabled-certifies",
+          "kind": "fixture",
+          "path": "fixtures/journeys/capture-enabled-certifies.json",
+          "sha256": "sha256:31508f5e1b4cc6752073c9237fa840a4e8bf2516143620098b8d23233a97f4a4",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s1b-observer-is-the-actor-contract-observer-independent",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s1b-observer-is-the-actor/contract-observer-independent.json",
+          "sha256": "sha256:1c19da46f782e60e585ad96d74bdddbf272236d2106779d88227240cf9b99445",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s1b-observer-is-the-actor-contract-observer-is-the-actor",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s1b-observer-is-the-actor/contract-observer-is-the-actor.json",
+          "sha256": "sha256:c1cd9118a4d6a217bb0eefd62937169892db817af7e9b77981d7afa11a452b73",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s2-false-structural-absence-evidence-claims-complete",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s2-false-structural-absence/evidence-claims-complete.json",
+          "sha256": "sha256:df75463072b537264812836e199868addac48339be32d4d6104b657f6757381b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s2-false-structural-absence-evidence-unknown-token",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s2-false-structural-absence/evidence-unknown-token.json",
+          "sha256": "sha256:7d9fc0614dba401b296b5134ed14a682b824241a0cf6b28c7eba0fa74a260815",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s2-false-structural-absence-producer-record",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s2-false-structural-absence/producer-record.json",
+          "sha256": "sha256:5eea3ba8a5ef4459a8c5c65c3a14eb963a2c2b3fec63ccda34019c2ab915aac1",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s4-unsafe-compression-capsule-declares-exclusion",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s4-unsafe-compression/capsule-declares-exclusion.json",
+          "sha256": "sha256:ff4b568c245bb3b28579a40555a9628add04a307ddfc791f4f9f39c04ac21a76",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s4-unsafe-compression-capsule-drops-silently",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s4-unsafe-compression/capsule-drops-silently.json",
+          "sha256": "sha256:8ceaf1d555cb58ab55d4c39628d4b037fd6c47794b647e7729a94ed01af8924d",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s4-unsafe-compression-capsule-intact",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s4-unsafe-compression/capsule-intact.json",
+          "sha256": "sha256:db876439dd5d9fc242b9a3c58332efd0b040fdd5d5246f6117ba4e514361737a",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s4-unsafe-compression-evidence-cites-dropped-content",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s4-unsafe-compression/evidence-cites-dropped-content.json",
+          "sha256": "sha256:1456d11f5b7148bc0f39c6088319af0a38437cce7b9a30f6d0ad23c322f3f5f6",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s5a-secret-capture-evidence-carries-marker",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s5a-secret-capture/evidence-carries-marker.json",
+          "sha256": "sha256:900b01b48893670e9ceb22e04dcc9422be19008efdc23364284cc06695feaaed",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/sabotage-s5a-secret-capture-markers",
+          "kind": "fixture",
+          "path": "fixtures/sabotage/s5a-secret-capture/markers.json",
+          "sha256": "sha256:a77ae5fd769da774cfa55e9e0bf58b10072ac34dfd3579200c7377d8bc8c9177",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/graphs-development-contracts-self-validation.fixtures",
+          "kind": "fixture",
+          "path": "graphs/development-contracts-self-validation.fixtures.json",
+          "sha256": "sha256:4bfdc8093c0697a3862f618fcfa07dbed0698617397d4fe786e1f7ac5056f13c",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "graph/development-contracts-self-validation",
+          "kind": "graph",
+          "path": "graphs/development-contracts-self-validation.yaml",
+          "sha256": "sha256:f5ece60eefaac235d9fbfe5f7d7174a9af69b8a455862313d8020c27a44d6d56",
+          "effects": [
+            "artifact.local.write"
+          ],
+          "permissions": [
+            "package.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate"
+          ],
+          "family": "development-contracts"
         }
       ]
     },

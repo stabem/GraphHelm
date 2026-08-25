@@ -1,0 +1,22 @@
+{
+  "id": "capsule-s4",
+  "version": 1,
+  "nodeId": "node-auth-review",
+  "objective": "review the authentication middleware for token expiry handling",
+  "sections": {
+    "projectKernel": [],
+    "task": [],
+    "node": [],
+    "evidence": [],
+    "dependencyOutputs": [],
+    "agentExperience": []
+  },
+  "tokenBudget": {
+    "allocated": 4000,
+    "expandableTo": 16000
+  },
+  "provenance": [
+    "compressed from 3 source files at snapshot-a"
+  ],
+  "dependencyHash": "sha256:aaaa"
+}

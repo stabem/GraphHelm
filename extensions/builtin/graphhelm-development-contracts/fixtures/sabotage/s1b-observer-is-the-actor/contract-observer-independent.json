@@ -1,0 +1,68 @@
+{
+  "contractId": "journey/checkout-s1b",
+  "version": 1,
+  "title": "Checkout completes and the receipt is durable",
+  "taskScope": "owner completes a checkout and can later read the receipt back",
+  "actors": [
+    {
+      "actorId": "agent/checkout-driver",
+      "name": "Checkout driver",
+      "goal": "complete a checkout end to end",
+      "accessNeeds": [
+        "browser session"
+      ]
+    }
+  ],
+  "preconditions": [
+    "a seeded cart exists"
+  ],
+  "steps": [
+    {
+      "stepId": "step/submit-order",
+      "actorId": "agent/checkout-driver",
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Place order",
+          "role": "button"
+        }
+      },
+      "expectedStates": [
+        "loading",
+        "success"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 30,
+        "visibleError": "the order could not be placed",
+        "safeStop": "no payment is captured and the cart is left intact",
+        "recoveryAction": null,
+        "prohibitedSideEffects": [
+          "capturing payment without a receipt"
+        ]
+      }
+    }
+  ],
+  "promises": [
+    {
+      "promiseId": "promise/receipt-durable",
+      "stepId": "step/submit-order",
+      "statement": "the receipt is readable after the run ends",
+      "requiredFact": "state_persisted",
+      "requiredEvidenceKinds": [
+        "durable_readback"
+      ],
+      "requiredObserverCapability": "observer/durable-store-reader",
+      "statesToObserve": [
+        "success"
+      ],
+      "maxEvidenceAgeSeconds": 300
+    }
+  ],
+  "riskSignals": [
+    "irreversible_effect"
+  ],
+  "outOfScope": [
+    "payment provider internals"
+  ]
+}

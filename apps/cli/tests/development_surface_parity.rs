@@ -90,6 +90,52 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
     },
 ];
 
+/// The tools that are deliberately NOT development operations -- the exceptions that make
+/// `every_real_mcp_tool_is_classified` below a closed question rather than an open one.
+///
+/// **Hand-written on purpose, never derived.** Computing this as `tools/list` minus
+/// [`DEVELOPMENT_OPERATION_FAMILIES`] would make the completeness guard a tautology: the list
+/// would agree with the real surface by construction and could never disagree with it. What is
+/// written here is a CLAIM -- "these fourteen are not development operations" -- and the two
+/// guards below check that claim against the real built binary in both directions.
+///
+/// **What the arity does and does not do.** `[&str; 14]` forces this LITERAL to hold fourteen
+/// entries. It does not force those fourteen to be the right ones, or the complete set -- that is
+/// exactly the trap #272 names for hand-sized vocabulary arrays. The arity is a tripwire that
+/// makes an edit here deliberate; the completeness comes from
+/// `every_real_mcp_tool_is_classified` and `every_named_exception_still_names_a_real_tool`, not
+/// from the number. Do not read the 14 as the guarantee.
+///
+/// **The `MCP_TOOLS` coincidence -- measured, and deliberately NOT bound.**
+/// `core/schema/src/extension.rs`'s `MCP_TOOLS` currently holds exactly these same fourteen
+/// strings. That is a coincidence of today, not a shared definition, and no test asserts the two
+/// are equal. `MCP_TOOLS` is a narrow allowlist of the domain surface a skill journey may claim
+/// to drive, documented there as deliberately NOT the full surface, with mutating and destructive
+/// operations excluded on purpose. This list is the complement of the development families over
+/// the WHOLE tool surface. The day a destructive tool is added the two diverge correctly: it
+/// belongs here and must never enter `MCP_TOOLS`. A guard asserting equality would fire on that
+/// correct divergence and pressure the next reader to "fix" it by widening the allowlist, turning
+/// a safety boundary into bookkeeping.
+///
+/// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
+/// alphabetical, so a reader can diff the two surfaces by eye.
+const NON_DEVELOPMENT_TOOLS: [&str; 14] = [
+    "start",
+    "status",
+    "events",
+    "signal",
+    "approve",
+    "pause",
+    "resume",
+    "cancel",
+    "routes",
+    "wake_arm",
+    "wake_status",
+    "amend_budget",
+    "wake_wait",
+    "probe",
+];
+
 /// Where one operation family lives on each of the three surfaces.
 ///
 /// **These were derived from the family's own name until this struct existed, and that stopped
@@ -460,6 +506,95 @@ fn every_real_cli_development_leaf_is_a_declared_family() {
              does not name. Either it was never added to the const (this test's whole reason to \
              exist), or it is a leaf the forward test above never checked against MCP/HTTP at \
              all -- add it to DEVELOPMENT_OPERATION_FAMILIES in this file."
+        );
+    }
+}
+
+/// **The other half of the reverse direction, and a different population from the CLI loop above.**
+///
+/// `every_real_cli_development_leaf_is_a_declared_family` walks the real `development` CLI subtree
+/// -- so it only ever sees leaves that are ALREADY under `development`. It cannot see a tool that
+/// was added to the MCP surface and never given a development home, because such a tool is not in
+/// the subtree it walks. This loop starts from the whole real tool surface instead, and asks of
+/// EVERY tool: is it accounted for?
+///
+/// The production change this catches: a nineteenth tool added to `TOOLS` and classified nowhere.
+/// Today that is completely silent -- the forward loop checks only what
+/// `DEVELOPMENT_OPERATION_FAMILIES` names, and the CLI reverse loop checks only the `development`
+/// subtree, so an unclassified tool falls between them and every test in the repository stays
+/// green.
+///
+/// **XOR, not "at least one".** Being in both lists is also red: a tool named by a family AND
+/// excepted here means two owners disagree about what it is, and the more permissive reading
+/// (it is fine, something covers it) is the one a reader reaches for.
+#[test]
+fn every_real_mcp_tool_is_classified() {
+    let tools = real_mcp_tool_names();
+
+    // non-empty-is-not-a-control: asserted as its own assertion, BEFORE the sweep. A broken
+    // stdio round trip would otherwise yield an empty population and make every check below
+    // pass over zero items.
+    assert!(
+        !tools.is_empty(),
+        "HARNESS-BROKE: tools/list returned no tools at all, so the classification sweep below \
+         would pass vacuously over zero tools"
+    );
+    assert!(
+        !DEVELOPMENT_OPERATION_FAMILIES.is_empty(),
+        "HARNESS-BROKE: DEVELOPMENT_OPERATION_FAMILIES is empty, so every tool below would be \
+         reported as an unclassified tool rather than as the classification gap this test is for"
+    );
+
+    for tool in &tools {
+        let claimed_by_family = DEVELOPMENT_OPERATION_FAMILIES
+            .iter()
+            .any(|family| family.mcp == tool.as_str());
+        let claimed_as_exception = NON_DEVELOPMENT_TOOLS.contains(&tool.as_str());
+
+        assert!(
+            claimed_by_family || claimed_as_exception,
+            "{tool:?} is a real MCP tool that nothing classifies: no entry in \
+             DEVELOPMENT_OPERATION_FAMILIES names it, and NON_DEVELOPMENT_TOOLS does not except \
+             it. Either it belongs to a development operation family (add it to \
+             DEVELOPMENT_OPERATION_FAMILIES, which also puts it under the three-surface parity \
+             check) or it deliberately does not (add it to NON_DEVELOPMENT_TOOLS and raise its \
+             arity). Not choosing is what this test exists to refuse."
+        );
+        assert!(
+            !(claimed_by_family && claimed_as_exception),
+            "{tool:?} is claimed BOTH by a development operation family and by \
+             NON_DEVELOPMENT_TOOLS. Those are opposite claims about the same tool, and the \
+             permissive reading -- that something covers it -- is the one a reader reaches for. \
+             Remove whichever entry is wrong."
+        );
+    }
+}
+
+/// The direction the sweep above structurally cannot see: a stale exception.
+///
+/// `every_real_mcp_tool_is_classified` iterates the REAL surface, so an entry in
+/// `NON_DEVELOPMENT_TOOLS` naming a tool that no longer exists is never visited by it -- the loop
+/// simply never reaches that name. A removed or renamed tool would leave a dead exception behind,
+/// and the dead entry would go on silently excusing a name nothing serves.
+///
+/// Same shape, and the same reasoning, as `MCP_TOOLS`'s own subset policy in
+/// `core/schema/src/extension.rs`: the dangerous direction is naming a surface that does not
+/// exist.
+#[test]
+fn every_named_exception_still_names_a_real_tool() {
+    let tools = real_mcp_tool_names();
+    assert!(
+        !tools.is_empty(),
+        "HARNESS-BROKE: tools/list returned no tools at all, so every exception below would be \
+         reported as stale rather than checked"
+    );
+
+    for exception in NON_DEVELOPMENT_TOOLS {
+        assert!(
+            tools.iter().any(|tool| tool == exception),
+            "NON_DEVELOPMENT_TOOLS excepts {exception:?}, but the real tools/list has no such \
+             tool. The entry outlived the tool it excepted -- a rename or a removal left it \
+             behind. Real tools seen: {tools:?}"
         );
     }
 }

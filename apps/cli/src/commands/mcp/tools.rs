@@ -1,8 +1,15 @@
-//! The fourteen tools: a static table over Public Runtime API requests and the local wake wait —
+//! The tool table: a static table over Public Runtime API requests and the local wake wait —
 //! each description names the API call it maps to (§6 parity in the tool's own metadata),
 //! every input schema is closed (`additionalProperties: false`), and no credential tool
 //! exists by design (rule 5; §6 "no secret through chat" — omission is the enforcement, the
 //! closed-list test its guard).
+//!
+//! **No count is stated here on purpose.** This prose said "fourteen" while `TOOLS` held
+//! eighteen, having drifted as each development operation family landed (#372, the class #272
+//! names). The population lives in the array's own arity, and
+//! `apps/cli/tests/development_surface_parity.rs` is what keeps that population honest: every
+//! tool there must be a declared development family or a named exception. Prose cannot be
+//! guarded, so it no longer carries a number to be wrong about.
 
 use super::client::{ApiClient, derive_key};
 use super::rpc::{HandlerOutcome, INVALID_PARAMS};

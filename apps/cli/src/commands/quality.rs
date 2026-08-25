@@ -57,6 +57,26 @@ fn certify_retry_lineage() -> Result<pathogens::Certification, pathogens::Certif
     )
 }
 
+/// **This array is why the registry cannot disagree with itself, and the history is worth keeping.**
+///
+/// #313 split the refusal below into two, because two states existed: an operator mistyping an id,
+/// and the registry disagreeing with the dispatch -- a defect the operator could not fix. The
+/// second produced a refusal that CONTRADICTED ITSELF, naming the refused id inside the list of
+/// what is registered. Not hypothetical: a half-applied edit produced exactly that state, and a
+/// guard caught it. (Found by L.)
+///
+/// Pairing the id WITH its certifier in one tuple retired that whole class. An id without a
+/// certifier is not caught here -- it cannot be WRITTEN: there is no field for it.
+/// `certify_registered` searches these entries and `registered_ids` maps over them, so the two
+/// predicates are exact complements and "registered but no adapter" has no state to occupy.
+///
+/// The reasoning lives HERE, on the thing that creates the property, rather than on the refusal
+/// that merely benefits from it. A defensive arm for a dead state rots: it carries a string
+/// nothing can render, so nothing goes red when someone edits it -- which nearly happened to that
+/// very string, via a line continuation the formatter collapsed. (L's refinement.)
+///
+/// **If id and certifier are ever separated again, the split must come back.** L's finding holds
+/// for that shape; the shape is what changed, not the finding.
 const REGISTRY: [(&str, Certifier); 2] = [
     ("gate-geometry", certify_geometry),
     ("gate-retry-lineage", certify_retry_lineage),
@@ -170,29 +190,9 @@ pub fn run(events: &Path, execution: Option<&str>, gate: &str) -> Outcome {
     // it as `opaqueId` whose pattern excludes `/`. Keying this registry on `id()` would stamp an
     // event the schema rejects. Measured, not assumed.
     let Some(outcome) = certify_registered(gate) else {
-        // TWO facts, deliberately not flattened into one message. They have opposite audiences
-        // and opposite repairs:
-        //
-        //   not registered          -> the OPERATOR mistyped an id. Fix: use a registered one,
-        //                              so the message names them.
-        //   registered, no adapter  -> the registry and the dispatch disagree. The operator did
-        //                              nothing wrong and CANNOT fix it; a developer must add the
-        //                              arm. Naming the registry here would be a refusal that
-        //                              contradicts itself -- "no gate by that id is registered
-        //                              (the registry is closed: ...<that very id>)".
-        //
-        // Not hypothetical: a half-applied edit in this branch produced exactly the second state.
-        // (Found by L.)
-        return if registered_ids().contains(&gate) {
-            refuse(
-                &format!(
-                    "gate '{gate}' is advertised by the registry but has no certification adapter: this binary's registry and dispatch disagree, which is a defect here rather than in the request"
-                ),
-                "/gate",
-            )
-        } else {
-            refuse(&registry_refusal(), "/gate")
-        };
+        // One fact, and that is a property of REGISTRY rather than of this site: the
+        // invariant is recorded above the array.
+        return refuse(&registry_refusal(), "/gate");
     };
     let certification = match outcome {
         Ok(certification) => certification,

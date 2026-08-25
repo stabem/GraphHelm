@@ -173,11 +173,11 @@ impl EvidenceGate<JpdEvidence> for VerificationResultGate {
 fn finding_for(axis: JpdFailureAxis) -> String {
     match axis {
         JpdFailureAxis::CapabilityMissingUnderClaimedSuccess => {
-            "a result claiming success reports gate.status = capability_missing: the capability              that would have judged it never ran"
+            "a result claiming success reports gate.status = capability_missing: the capability that would have judged it never ran"
                 .to_owned()
         }
         JpdFailureAxis::FlakyClaimedAsProven => {
-            "a run classified flaky_pass is presented as proven; flaky success is not proven              success"
+            "a run classified flaky_pass is presented as proven; flaky success is not proven success"
                 .to_owned()
         }
     }

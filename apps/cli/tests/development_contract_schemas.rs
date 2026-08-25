@@ -98,6 +98,87 @@ fn the_refusal_vocabulary_is_in_the_same_order_on_both_sides() {
     );
 }
 
+/// The refusal vocabulary in the order PUBLISHED at `ac6e746`, which is the anchor the pair
+/// cannot move.
+///
+/// The cell above compares the schema to the type and is right to. But **both of its sides are
+/// read out of this working tree**, so a reorder applied to BOTH in one edit — an alphabetiser, a
+/// formatter, a merge resolved by sorting — leaves them equal and that cell green while every
+/// consumer that reads the list positionally silently renumbers.
+///
+/// The property here is not "the two sides agree". It is **append-only**, which is a claim about
+/// HISTORY, and history is not visible to either side of a comparison drawn entirely from the
+/// working tree. This list is that history, written down once so a reorder has to argue with
+/// something that did not move.
+///
+/// **LIMIT, stated so it is not discovered later:** a frozen prefix protects only what is in it.
+/// Codes appended after this list are unordered relative to each other until someone promotes them
+/// into it. That is a real gap and a smaller one than it closes — but it makes this guard a HABIT
+/// rather than self-maintaining: extend this list when a lane's codes land. The alternative,
+/// deriving the published order from git history inside the test, is stronger and considerably
+/// more expensive.
+const PUBLISHED_ORDER: [&str; 20] = [
+    "unknown_major_version",
+    "schema_invalid",
+    "scope_mismatch",
+    "binding_schema_mismatch",
+    "binding_producer_mismatch",
+    "binding_digest_mismatch",
+    "binding_snapshot_missing",
+    "artifact_too_large",
+    "cardinality_violation",
+    "digest_mismatch",
+    "negative_claim_unverified",
+    "index_stale",
+    "context_budget_insufficient",
+    "code_rule_conflict",
+    "code_rule_precedence_unresolved",
+    "code_rule_source_unavailable",
+    "code_rule_waiver_invalid",
+    "unsafe_compression",
+    "required_citation_missing",
+    "citation_unresolved",
+];
+
+/// A reorder must argue with something outside the pair.
+///
+/// Appending a code needs no edit here: the new code lands after this prefix and the assertion
+/// still holds. Changing the order of anything already published is what forces an edit to this
+/// list — which turns a reorder from a diff nobody looks at twice into a deliberate, reviewable
+/// act.
+#[test]
+fn the_published_refusal_order_is_append_only() {
+    let from_schema: Vec<String> = envelope_schema()["$defs"]["refusalCode"]["enum"]
+        .as_array()
+        .expect("$defs/refusalCode/enum is an array")
+        .iter()
+        .map(|value| value.as_str().expect("a string").to_owned())
+        .collect();
+
+    // NON-EMPTY FIRST. A schema slice that resolved to nothing would make the comparison below
+    // pass against an empty head, which is the vacuous form of this whole check.
+    assert!(
+        !from_schema.is_empty(),
+        "HARNESS-BROKE: the refusalCode enum read as empty, so the prefix comparison below would \
+         compare nothing against nothing"
+    );
+
+    let published: Vec<&str> = from_schema
+        .iter()
+        .take(PUBLISHED_ORDER.len())
+        .map(String::as_str)
+        .collect();
+
+    assert_eq!(
+        published.as_slice(),
+        PUBLISHED_ORDER.as_slice(),
+        "the PUBLISHED prefix of the refusal vocabulary changed. Appending is the only permitted \
+         change and needs no edit here; a reorder of anything already published renumbers every \
+         consumer that reads this list positionally. If the change is deliberate, editing \
+         PUBLISHED_ORDER is how it becomes visible."
+    );
+}
+
 /// The same discipline for the nine kinds.
 #[test]
 fn the_kind_vocabulary_is_one_set_on_both_sides() {

@@ -329,17 +329,54 @@ fn renaming_a_rule_cannot_change_whether_an_incomparable_pair_is_found() {
     // language-scoped and module-scoped rules are incomparable with each other and BOTH dominated
     // by the wide one, so whether they ever meet depends on which the fold happens to be holding.
     //
-    // The fold's order is the sorted rule ID. So RENAMING a rule -- an edit with no semantic
-    // content whatsoever -- decides whether step 7 fires. That is the defect: the same rule set
-    // resolves two ways depending on what its rules are called.
+    // The fold's order is the sorted rule ID, so RENAMING a rule -- an edit with no semantic
+    // content whatsoever -- would decide whether step 7 fires. That was the defect: the same rule
+    // set resolving two ways depending on what its rules are called.
+    //
+    // **It no longer works that way, and the comment used to say otherwise.** The refusal this
+    // test observes does not come from step 7 at all. It comes from the PRE-PASS in
+    // `resolve_code_contract` that scans every pair before the fold and sorts the pair it names,
+    // which is what makes the outcome independent of the naming. Step 7 is never reached for this
+    // fixture.
+    //
+    // Measured, not read: three sabotages were needed to find this. The first two changed the
+    // refusal variant at the step 7 site and the test stayed GREEN -- not because it was blind,
+    // but because that branch never executes here. **The pre-pass is the load-bearing half**, and
+    // it is what a future regression would have to break for this cell to matter.
     let wide_first = incomparable_triple("rule-w", "rule-x", "rule-y");
     let narrow_first = incomparable_triple("rule-c", "rule-a", "rule-b");
 
     let first = resolve_code_contract(&wide_first, clock());
     let second = resolve_code_contract(&narrow_first, clock());
 
-    assert!(
-        first.is_err() && second.is_err(),
-        "the same three rules resolved differently under two namings.\n  wide-first:   {first:?}\n  narrow-first: {second:?}\nIncomparability is a property of a PAIR, so it cannot depend on which rule the fold is holding when the pair comes up"
+    // The property is that the same PAIR is found, named by ROLE rather than by identifier. Both
+    // namings must refuse the same way about the same two rules -- the language-scoped one and the
+    // module-scoped one -- whatever those two happen to be called.
+    //
+    // `first.is_err() && second.is_err()` was weaker than the message it carried: one naming could
+    // refuse `Conflict` and the other `PrecedenceUnresolved` and this cell would stay green while
+    // the property was dead.
+    //
+    // And `assert_eq!(first, second)` is NOT the repair, which is worth writing down because it is
+    // the obvious one and it is wrong. The refusal carries the rule NAMES, and the names differ by
+    // construction -- renaming them is the entire experiment. Measured before this was written: it
+    // fails today on `["rule-x", "rule-y"]` vs `["rule-a", "rule-b"]`, a difference that is the
+    // fixture working rather than a defect. Each side is pinned to its own role-mapped
+    // expectation instead.
+    let refuses_about = |language: &str, module: &str| {
+        Err(ResolutionRefusal::PrecedenceUnresolved {
+            conflict_key: "coverage".to_owned(),
+            rules: vec![language.to_owned(), module.to_owned()],
+        })
+    };
+    assert_eq!(
+        first,
+        refuses_about("rule-x", "rule-y"),
+        "the wide-first naming did not refuse about the language/module pair. Incomparability is a property of a PAIR, so it cannot depend on which rule the fold is holding when the pair comes up"
+    );
+    assert_eq!(
+        second,
+        refuses_about("rule-a", "rule-b"),
+        "the narrow-first naming did not refuse about the language/module pair. Same three rules, different names, and the same pair must come out"
     );
 }

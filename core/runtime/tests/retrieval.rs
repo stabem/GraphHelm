@@ -217,7 +217,8 @@ fn an_extraction_gap_zero_refuses_rather_than_claiming_absence() {
     // again.
     assert!(
         !graphhelm_runtime::retrieval::source_fallback_available(),
-        "bounded source fallback now exists, so this arm asserts the wrong thing: rewrite it to          assert the fallback was ATTEMPTED and failed, not that there was nothing to try"
+        "bounded source fallback now exists, so this arm asserts the wrong thing: rewrite it \
+         to assert the fallback was ATTEMPTED and failed, not that there was nothing to try"
     );
 }
 
@@ -866,7 +867,8 @@ fn a_stale_and_over_budget_response_refuses_as_stale_not_as_over_budget() {
         RetrievalOutcome::Refused {
             code: DevelopmentRefusalCode::IndexStale
         },
-        "a stale binding invalidates the coordinates that produced this payload, so it is reported          ahead of the payload being too large: the caller repairs what the refusal names"
+        "a stale binding invalidates the coordinates that produced this payload, so it is \
+         reported ahead of the payload being too large: the caller repairs what the refusal names"
     );
 }
 
@@ -907,14 +909,17 @@ fn f1_a_claim_found_under_partial_coverage_carries_that_coverage() {
     );
     assert_ne!(
         partial, complete,
-        "identical hits under different coverage are DIFFERENT facts: a partial search returning          these hits reports a floor, a complete one reports a total, and a caller handed the bare          hit list cannot tell which it was given"
+        "identical hits under different coverage are DIFFERENT facts: a partial search \
+         returning these hits reports a floor, a complete one reports a total, and a caller \
+         handed the bare hit list cannot tell which it was given"
     );
 
     match partial {
         RetrievalOutcome::Claim { coverage, .. } => assert_eq!(
             coverage,
             CoverageState::Partial,
-            "the claim must carry the coverage it was found under, not the coverage the consumer              hopes for"
+            "the claim must carry the coverage it was found under, not the coverage the \
+                 consumer hopes for"
         ),
         other => panic!("expected a claim carrying Partial coverage, got {other:?}"),
     }
@@ -984,7 +989,9 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
         assert_eq!(
             actual,
             value.trim(),
-            "policy row {key} declares {} and the compiler produced {actual}: for a consumer that              loads this artifact the table IS the contract, so a drifted row is a lie in the              artifact, not a stale comment",
+            "policy row {key} declares {} and the compiler produced {actual}: for a consumer \
+                 that loads this artifact the table IS the contract, so a drifted row is a lie \
+                 in the artifact, not a stale comment",
             value.trim()
         );
         seen.insert(state);
@@ -1008,7 +1015,8 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
     assert_eq!(
         seen,
         expected,
-        "HARNESS-BROKE: the policy table must cover every coverage state -- missing          {:?}, unexpected {:?}",
+        "HARNESS-BROKE: the policy table must cover every coverage state -- missing {:?}, \
+         unexpected {:?}",
         expected.difference(&seen).collect::<Vec<_>>(),
         seen.difference(&expected).collect::<Vec<_>>()
     );

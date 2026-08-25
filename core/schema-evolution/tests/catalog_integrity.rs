@@ -297,8 +297,19 @@ fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
     assert_eq!(release.catalog.release_version, Version::new(1, 0, 0));
     assert_eq!(current.catalog.schemas.len(), 15);
     assert_eq!(release.catalog.schemas.len(), 15);
-    assert!(validate_catalog(&current).ok);
-    assert!(validate_catalog(&release).ok);
+    for (label, resources) in [("current", &current), ("release", &release)] {
+        let report = validate_catalog(resources);
+        assert!(
+            report.ok,
+            "{label} catalog failed validation: {}",
+            report
+                .diagnostics
+                .iter()
+                .map(|d| format!("{} at {}: {}", d.code, d.path, d.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
 
     for name in SAFE_SCHEMA_NAMES {
         assert_eq!(

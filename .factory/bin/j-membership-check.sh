@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Merge membership check (J). Usage: membership.sh <main-ref> <result-ref> [expected-new...]
 #
+# WHO RUNS THIS, AND WHEN. It is a gate on merges that touch a closed vocabulary or the extension
+# manifest, and the sequence is: the author pushes the re-merge -> J runs this and posts the result
+# on the PR as `## Merge membership check (J)` -> only then does the orchestrator merge. The report
+# names the main sha it was measured against and is void once main moves, because a check that does
+# not name its base is worse than none: it looks like coverage.
+#
+# The consumer is a person at a particular moment, and that is the context that disappears first
+# once the moment is full - so it is written here rather than remembered. (Asked for by L.)
+#
 # FOUR tests, because each answers a question the others cannot:
 #   LOST      comm -23  -- nothing main had may be missing        (the merge-loss question)
 #   GAINED    comm -13  -- what appeared must be what was declared (guards a third-branch import)

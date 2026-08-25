@@ -11,5 +11,19 @@ extensions/builtin/graphhelm-jpd/**/*.md text eol=lf
 extensions/builtin/graphhelm-development-contracts/*.json text eol=lf
 extensions/builtin/graphhelm-development-contracts/**/*.json text eol=lf
 extensions/builtin/graphhelm-development-contracts/**/*.md text eol=lf
+# schemas/*.json is DELIBERATELY ABSENT from this file, and the absence is load-bearing.
+#
+# Those documents are pinned by a CANONICAL digest, not a raw one: schema_digest() in
+# core/schema-evolution/src/canonical.rs parses the JSON, canonicalises it, and hashes THAT. So the
+# line endings cannot affect the pin. Measured on schemas/event-envelope.schema.json:
+#
+#     raw sha256    LF fe7ee629...   CRLF ef8d3521...   <- raw hashing sees the difference
+#     canonical     LF b45ddada...   CRLF b45ddada...   <- the catalog pin does not
+#
+# The extension packages above are the opposite case: GHEX005 binds the RAW contribution bytes, so
+# without their eol=lf rules a Windows checkout rewrites them and every contribution digest fails.
+#
+# Do not add schemas/*.json here by analogy with them. It would be harmless, and it would be a
+# wrong model made durable - and a wrong model that does not hurt is the kind that survives.
 # M06 demonstrations: recorded artifacts commit byte-exact (checksummed).
 docs/acceptance/demos/** -text

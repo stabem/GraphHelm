@@ -1,29 +1,48 @@
 use serde::{Deserialize, Serialize};
 
-/// Runtime node states with exact, stable snake-case wire names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeState {
-    Draft,
-    /// A Governor-proposed expansion, visible before approval and never scheduled.
+wire_vocabulary! {
+    /// Runtime node states with exact, stable snake-case wire names.
     ///
-    /// Approval to [`NodeState::Ready`] is its only legal exit. That single exit is what
-    /// guarantees a ghost consumes no execution budget while it is still a proposal.
-    Ghost,
-    Linting,
-    Ready,
-    Queued,
-    Running,
-    WaitingInput,
-    WaitingCapacity,
-    Paused,
-    Blocked,
-    Succeeded,
-    Failed,
-    Waived,
-    Skipped,
-    Cancelled,
-    Invalidated,
+    /// **Declared through the vocabulary macro so `every()` comes from the same list as the enum
+    /// (#408).** Four consumers used to carry `const [NodeState; 16]` arrays, hand-typed and
+    /// independently maintained. The size annotation only forces the LITERAL to hold sixteen
+    /// entries; it says nothing about those sixteen being the current set.
+    ///
+    /// Measured, by adding a seventeenth variant to this enum and building the workspace: the
+    /// compiler reported ONE error, a non-exhaustive match in `core/execution/src/attention.rs`.
+    /// **None of the four arrays failed.** Each kept sixteen entries, matched its own annotation,
+    /// compiled, and silently stopped being exhaustive. The drift was never invisible -- it was
+    /// incompletely signalled, which is worse, because the one loud site makes the author believe
+    /// they have been told everything.
+    ///
+    /// The wire spellings were `#[serde(rename_all = "snake_case")]` before and are per-variant
+    /// literals now, which is what the macro's own doc argues for: serde is a third producer of
+    /// these strings, and left to a naming convention it can drift from `wire_name` without any
+    /// equality cell noticing. `every_node_state_serialises_as_its_wire_name` in
+    /// `tests/wire_roundtrip.rs` checks all sixteen against each other, closing the sampling gap
+    /// that covered four of them.
+    NodeState {
+        Draft => "draft",
+        /// A Governor-proposed expansion, visible before approval and never scheduled.
+        ///
+        /// Approval to [`NodeState::Ready`] is its only legal exit. That single exit is what
+        /// guarantees a ghost consumes no execution budget while it is still a proposal.
+        Ghost => "ghost",
+        Linting => "linting",
+        Ready => "ready",
+        Queued => "queued",
+        Running => "running",
+        WaitingInput => "waiting_input",
+        WaitingCapacity => "waiting_capacity",
+        Paused => "paused",
+        Blocked => "blocked",
+        Succeeded => "succeeded",
+        Failed => "failed",
+        Waived => "waived",
+        Skipped => "skipped",
+        Cancelled => "cancelled",
+        Invalidated => "invalidated",
+    }
 }
 
 /// What happened to a node, as reported by the executor or the owner.

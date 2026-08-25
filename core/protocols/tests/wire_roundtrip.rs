@@ -104,19 +104,115 @@ fn normative_add_edge_uses_value_without_path() {
     assert!(encoded.get("path").is_none());
 }
 
-#[test]
-fn normative_states_statuses_and_event_kinds_have_exact_wire_names() {
-    let states = [
-        (NodeState::Draft, "draft"),
-        (NodeState::Ghost, "ghost"),
-        (NodeState::WaitingInput, "waiting_input"),
-        (NodeState::WaitingCapacity, "waiting_capacity"),
-        (NodeState::Invalidated, "invalidated"),
-    ];
-    for (state, expected) in states {
-        assert_eq!(serde_json::to_value(state).unwrap(), expected);
-    }
+/// The sixteen wire spellings, written out BY HAND from the enum declaration.
+///
+/// DELIBERATELY NOT GENERATED, and this is the same argument `core/governor/tests/memory.rs` makes
+/// for `STATE_NAMES` since #362. It looks exactly like the duplication this repository keeps
+/// removing, and it is the opposite: **serde's spelling and `wire_name()`'s spelling both expand
+/// from the SAME `$wire` literal in `wire_vocabulary!`**, so any check that compares those two is
+/// comparing a value with itself and is green by construction. `Ghost => "ghostx"` satisfies it.
+///
+/// These names are the only statement in this file that can CONTRADICT the generated one. A reader
+/// who deletes them as redundant would be applying the house rule correctly and removing the sole
+/// independent witness. Update them by reading the enum, never by copying from a failure message.
+///
+/// (Found by N reviewing #408: the cell below was written to justify moving `NodeState` onto
+/// per-variant literals, and could not have caught a mistyped literal. The move is right; the
+/// evidence offered for it was not.)
+const NODE_STATE_WIRE_NAMES: [&str; 16] = [
+    "draft",
+    "ghost",
+    "linting",
+    "ready",
+    "queued",
+    "running",
+    "waiting_input",
+    "waiting_capacity",
+    "paused",
+    "blocked",
+    "succeeded",
+    "failed",
+    "waived",
+    "skipped",
+    "cancelled",
+    "invalidated",
+];
 
+/// The hand-read spellings against the generated ones, IN BOTH DIRECTIONS.
+///
+/// A one-way check passes when the generated list grows, and a message reporting only two counts
+/// invites the next reader to "fix" the hand-written side in whichever direction turns it green --
+/// so each side's difference is named separately.
+#[test]
+fn the_hand_read_wire_spellings_agree_with_the_generated_ones() {
+    let generated: Vec<&str> = NodeState::every()
+        .iter()
+        .map(|state| state.wire_name())
+        .collect();
+
+    let missing_from_generated: Vec<&&str> = NODE_STATE_WIRE_NAMES
+        .iter()
+        .filter(|name| !generated.contains(*name))
+        .collect();
+    let missing_from_hand: Vec<&&str> = generated
+        .iter()
+        .filter(|name| !NODE_STATE_WIRE_NAMES.contains(name))
+        .collect();
+
+    assert!(
+        missing_from_generated.is_empty() && missing_from_hand.is_empty(),
+        "the wire spellings disagree with the hand-read declaration.\n  \
+         hand-written ({}): {NODE_STATE_WIRE_NAMES:?}\n  \
+         generated ({}): {generated:?}\n  \
+         hand-written but NOT generated: {missing_from_generated:?}\n  \
+         generated but NOT hand-written: {missing_from_hand:?}",
+        NODE_STATE_WIRE_NAMES.len(),
+        generated.len()
+    );
+}
+
+/// Serde APPLIES the rename and reads it back — which is NOT a check on the spelling.
+///
+/// **Stated narrowly because the first version of this doc claimed more than the code does.** It
+/// compares `to_value(state)` against `wire_name()`, and both expand from the same `$wire` literal
+/// in the macro, so a mistyped literal moves both sides together and this stays green. What it
+/// does prove is that the `#[serde(rename = ...)]` the macro emits is actually honoured — a derive
+/// or attribute change that dropped it would show up here — and that whatever serde emits is
+/// something serde will accept back.
+///
+/// The spelling itself is guarded by [`NODE_STATE_WIRE_NAMES`] above, which has an independent
+/// origin. Both cells iterate `every()`, so they are exhaustive by construction: a variant added
+/// tomorrow is covered without anyone remembering.
+#[test]
+fn every_node_state_serialises_as_its_wire_name_and_reads_back() {
+    for state in NodeState::every() {
+        let encoded = serde_json::to_value(state).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::Value::String(state.wire_name().to_owned()),
+            "{state:?} serialises as {encoded} but wire_name() reports {:?}. serde and wire_name \
+             are two producers of one spelling, and this is where they are compared",
+            state.wire_name()
+        );
+        let decoded: NodeState = serde_json::from_value(encoded.clone())
+            .unwrap_or_else(|e| panic!("{state:?} emits {encoded} which serde will not read: {e}"));
+        assert_eq!(
+            decoded, *state,
+            "{state:?} did not survive a round trip through {encoded}"
+        );
+    }
+}
+
+/// `NodeState` is no longer sampled here, and its five entries were REPLACED rather than dropped.
+///
+/// They were a hand-written witness against serde's output, which is the right shape — but a
+/// sample of five out of sixteen. [`NODE_STATE_WIRE_NAMES`] is the same witness over all sixteen,
+/// and the chain closes through the round-trip cell: hand agrees with `wire_name`, `wire_name`
+/// agrees with serde, so hand agrees with serde. Keeping five of them here as well would leave two
+/// cells covering one property with no stated division of labour, which is how a reader ends up
+/// improving the weaker one. (#408, N's review.)
+#[test]
+fn normative_statuses_and_event_kinds_have_exact_wire_names() {
     // All thirteen, not a sample. The point of this loop is pinning snake_case conversion, and
     // leaving NeedsInput out while pinning its sibling NeedsCapacity would miss exactly the
     // multi-word case it exists to catch.

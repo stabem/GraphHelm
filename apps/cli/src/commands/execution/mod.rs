@@ -627,24 +627,7 @@ fn state_counts(node_states: &BTreeMap<String, NodeState>) -> BTreeMap<&'static 
 
 /// Every `NodeState`, exhaustively — the match in [`node_state_label`] is the compiler's
 /// guarantee that a new state gets a label; this list is the guarantee it gets a BUCKET.
-const ALL_NODE_STATES: [NodeState; 16] = [
-    NodeState::Draft,
-    NodeState::Ghost,
-    NodeState::Linting,
-    NodeState::Ready,
-    NodeState::Queued,
-    NodeState::Running,
-    NodeState::WaitingInput,
-    NodeState::WaitingCapacity,
-    NodeState::Paused,
-    NodeState::Blocked,
-    NodeState::Succeeded,
-    NodeState::Failed,
-    NodeState::Waived,
-    NodeState::Skipped,
-    NodeState::Cancelled,
-    NodeState::Invalidated,
-];
+const ALL_NODE_STATES: &[NodeState] = NodeState::every();
 
 /// The operator's triage view (Task 2, 04f), now FILTERED out of the one shared answer
 /// instead of recomputed: `core/execution`'s `attention` owns the predicate (M07 F1), so

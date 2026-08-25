@@ -6,24 +6,7 @@ use graphhelm_protocols::{
 };
 use proptest::prelude::*;
 
-const STATES: [NodeState; 16] = [
-    NodeState::Draft,
-    NodeState::Ghost,
-    NodeState::Linting,
-    NodeState::Ready,
-    NodeState::Queued,
-    NodeState::Running,
-    NodeState::WaitingInput,
-    NodeState::WaitingCapacity,
-    NodeState::Paused,
-    NodeState::Blocked,
-    NodeState::Succeeded,
-    NodeState::Failed,
-    NodeState::Waived,
-    NodeState::Skipped,
-    NodeState::Cancelled,
-    NodeState::Invalidated,
-];
+const STATES: &[NodeState] = NodeState::every();
 
 fn agent_node() -> GraphNode {
     GraphNode {

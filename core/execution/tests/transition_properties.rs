@@ -2,24 +2,7 @@ use graphhelm_execution::{ExecutionError, NodeOutcome, TransitionRequest, apply_
 use graphhelm_protocols::NodeState;
 use proptest::prelude::*;
 
-const STATES: [NodeState; 16] = [
-    NodeState::Draft,
-    NodeState::Ghost,
-    NodeState::Linting,
-    NodeState::Ready,
-    NodeState::Queued,
-    NodeState::Running,
-    NodeState::WaitingInput,
-    NodeState::WaitingCapacity,
-    NodeState::Paused,
-    NodeState::Blocked,
-    NodeState::Succeeded,
-    NodeState::Failed,
-    NodeState::Waived,
-    NodeState::Skipped,
-    NodeState::Cancelled,
-    NodeState::Invalidated,
-];
+const STATES: &[NodeState] = NodeState::every();
 
 const OUTCOMES: [NodeOutcome; 13] = [
     NodeOutcome::Started,

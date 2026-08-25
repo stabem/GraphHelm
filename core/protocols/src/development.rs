@@ -36,7 +36,7 @@ pub const DEVELOPMENT_API_MAJOR: u16 = 1;
 ///
 /// One list generates all three, so there is nothing left to keep in sync.
 macro_rules! wire_vocabulary {
-    ($(#[$meta:meta])* $name:ident { $($variant:ident => $wire:literal),+ $(,)? }) => {
+    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $wire:literal),+ $(,)? }) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         pub enum $name {
@@ -45,7 +45,7 @@ macro_rules! wire_vocabulary {
             // serialise as one spelling while `wire_name` and the schema use another — two
             // serialisers of one closed vocabulary, disagreeing. The equality cells cannot see it:
             // they compare `wire_name` against the schema and never exercise serde.
-            $(#[serde(rename = $wire)] $variant),+
+            $($(#[$vmeta])* #[serde(rename = $wire)] $variant),+
         }
 
         impl $name {

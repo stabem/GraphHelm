@@ -204,24 +204,7 @@ mod tests {
     use graphhelm_protocols::{EdgeType, GraphEdge, GraphNode, NodeState, NodeType, Optionality};
     use std::collections::BTreeMap;
 
-    const ALL_STATES: [NodeState; 16] = [
-        NodeState::Draft,
-        NodeState::Ghost,
-        NodeState::Linting,
-        NodeState::Ready,
-        NodeState::Queued,
-        NodeState::Running,
-        NodeState::WaitingInput,
-        NodeState::WaitingCapacity,
-        NodeState::Paused,
-        NodeState::Blocked,
-        NodeState::Succeeded,
-        NodeState::Failed,
-        NodeState::Waived,
-        NodeState::Skipped,
-        NodeState::Cancelled,
-        NodeState::Invalidated,
-    ];
+    const ALL_STATES: &[NodeState] = NodeState::every();
 
     fn agent_node() -> GraphNode {
         GraphNode {
@@ -431,7 +414,7 @@ mod tests {
     /// will dispatch has to accept a `Started` outcome, or it proposes work that fails.
     #[test]
     fn every_dispatchable_state_accepts_a_start() {
-        for state in ALL_STATES {
+        for state in ALL_STATES.iter().copied() {
             if !is_dispatchable(state) {
                 continue;
             }
@@ -507,7 +490,7 @@ mod tests {
     #[test]
     fn only_ready_nodes_are_dispatchable() {
         let spec = spec(&["a"], &[]);
-        for state in ALL_STATES {
+        for state in ALL_STATES.iter().copied() {
             let ready = ready_set(&spec, &states(&[("a", state)])).unwrap();
             assert_eq!(
                 ready.contains("a"),

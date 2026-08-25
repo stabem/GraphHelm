@@ -22,44 +22,67 @@ use crate::output::Outcome;
 
 const COMMAND: &str = "quality.certify";
 
-/// The closed registry: CLI-facing gate id -> the certification that id runs.
+/// The closed registry: ONE array, each id paired with the certification that id runs.
 ///
-/// Returns `None` for an unregistered id, which is what makes admission and dispatch THE SAME
-/// OPERATION. A name that has no arm here cannot be admitted, because admission is this lookup.
+/// **There is no second list.** The refusal message maps over these entries and the lookup
+/// searches them, so *advertised* and *certifiable* are the SAME SET by construction rather than
+/// two lists held equal by a guard. The mismatch a guard would have caught -- a name advertised
+/// with no adapter, or an adapter absent from the message -- is not detected here, it is
+/// **inexpressible**: there is nowhere to write it.
 ///
-/// Adding a gate means adding an arm, and the arm carries its own suite -- there is no generic
-/// "certify anything" door. That is a property rather than an obstacle: `certify` over an EMPTY
-/// suite has no pathogen to be fooled by, so an open door would stamp a gate nothing ever attacked.
+/// Admission is the lookup, so a name with no entry cannot be admitted.
 ///
-/// The suites carry different evidence types and cannot be hoisted into one variable. Load-bearing
-/// rather than awkward: wiring an arm to its neighbour's suite is a TYPE ERROR, not a green
-/// certification stamped about a different gate.
+/// Adding a gate means adding an entry, and the entry carries its own suite: there is no generic
+/// "certify anything" door. `certify` over an EMPTY suite has no pathogen to be fooled by, so an
+/// open door would stamp a gate nothing ever attacked.
+///
+/// The key is the CLI-facing id, deliberately NOT the gate's own `id()`. `RetryLineageGate::id()`
+/// is `graphhelm-jpd/retry-lineage-validator` -- the evaluatorId the JPD policy declares -- and it
+/// contains `/`, which `GateCertified.gate_id` REFUSES: the event schema types it as `opaqueId`,
+/// whose pattern excludes `/`. Keying this registry on `id()` would stamp an event the schema
+/// rejects. Measured, not assumed.
+type Certifier = fn() -> Result<pathogens::Certification, pathogens::CertificationRefusal>;
+
+/// Each certifier names its OWN gate and suite. Kept as separate functions rather than closures so
+/// that cross-wiring one to its neighbour's suite is a compile error: the evidence types differ,
+/// so `certify(&GeometryGate, &retry_lineage_suite())` is `error[E0308]`, measured.
+fn certify_geometry() -> Result<pathogens::Certification, pathogens::CertificationRefusal> {
+    pathogens::certify(&GeometryGate, &pathogens::suite())
+}
+
+fn certify_retry_lineage() -> Result<pathogens::Certification, pathogens::CertificationRefusal> {
+    pathogens::certify(
+        &pathogens::retry_lineage::RetryLineageGate,
+        &pathogens::retry_lineage::retry_lineage_suite(),
+    )
+}
+
+const REGISTRY: [(&str, Certifier); 2] = [
+    ("gate-geometry", certify_geometry),
+    ("gate-retry-lineage", certify_retry_lineage),
+];
+
+/// The registered ids, in registry order.
+fn registered_ids() -> Vec<&'static str> {
+    REGISTRY.iter().map(|(id, _)| *id).collect()
+}
+
+/// Look the gate up and run its certification. `None` means no entry -- which is also what makes
+/// admission and dispatch the same operation.
 fn certify_registered(
     gate: &str,
 ) -> Option<Result<pathogens::Certification, pathogens::CertificationRefusal>> {
-    match gate {
-        "gate-geometry" => Some(pathogens::certify(&GeometryGate, &pathogens::suite())),
-        "gate-retry-lineage" => Some(pathogens::certify(
-            &pathogens::retry_lineage::RetryLineageGate,
-            &pathogens::retry_lineage::retry_lineage_suite(),
-        )),
-        _ => None,
-    }
+    REGISTRY
+        .iter()
+        .find(|(id, _)| *id == gate)
+        .map(|(_, run)| run())
 }
-
-/// The registered ids, for the refusal message only.
-///
-/// This is a SECOND statement of the arms above and cannot be soldered to them in Rust -- `match`
-/// needs literal patterns. So it is held equal by OBSERVATION instead, in both directions:
-/// `every_registered_id_actually_certifies` (this list is not wider than the arms) and
-/// `the_refusal_names_every_gate_that_actually_certifies` (the arms are not wider than this list).
-const REGISTERED_GATES: [&str; 2] = ["gate-geometry", "gate-retry-lineage"];
 
 /// The refusal, naming what IS registered.
 fn registry_refusal() -> String {
     format!(
         "no runnable gate by that id is registered (the registry is closed: {})",
-        REGISTERED_GATES.join(", ")
+        registered_ids().join(", ")
     )
 }
 const GATE_INVALID: &str = "GHCLI018_GATE_INVALID";
@@ -135,7 +158,7 @@ impl pathogens::CandidateGate for GeometryGate {
 pub fn run(events: &Path, execution: Option<&str>, gate: &str) -> Outcome {
     // Admission IS dispatch: one lookup, so the two cannot disagree.
     //
-    // The earlier shape asked `REGISTERED_GATES.contains(&gate)` and then chose an adapter in a
+    // The earlier shape asked `registered_ids().contains(&gate)` and then chose an adapter in a
     // separate `match`. Those are two statements of one fact, and the duplication they replaced
     // was LOAD-BEARING: when a single literal both admitted and dispatched, a name could not be
     // admitted without an adapter. Splitting them re-opened that gap one level up. (Found by L.)
@@ -160,7 +183,7 @@ pub fn run(events: &Path, execution: Option<&str>, gate: &str) -> Outcome {
         //
         // Not hypothetical: a half-applied edit in this branch produced exactly the second state.
         // (Found by L.)
-        return if REGISTERED_GATES.contains(&gate) {
+        return if registered_ids().contains(&gate) {
             refuse(
                 &format!(
                     "gate '{gate}' is advertised by the registry but has no certification adapter: this binary's registry and dispatch disagree, which is a defect here rather than in the request"

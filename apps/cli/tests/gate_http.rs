@@ -637,15 +637,19 @@ fn the_help_text_does_not_enumerate_the_gate_registry() {
          GHCLI018_GATE_INVALID refusal. got: {help}"
     );
 }
-
-/// Every gate that ACTUALLY certifies must be named in the refusal message.
+/// Every gate that actually certifies must be named in the refusal message.
 ///
-/// The population is discovered by driving the binary rather than read from a constant, because
-/// `apps/cli` has no `[lib]` and a test cannot import one. That is the better guard anyway: it
-/// checks what the operator sees.
+/// **What this still covers, now that the registry is ONE array.** Membership is structural: the
+/// message maps over the same entries the lookup searches, so *advertised* and *certifiable*
+/// cannot diverge -- there is nowhere to write the divergence. What remains testable here is that
+/// the message RENDERS those ids at all, which a formatting change could still break.
 ///
-/// The production change that would make this fail: adding a registry entry while leaving the
-/// refusal message's own literal list alone.
+/// **Kept rather than deleted, and the population is the reason.** This iterates a candidate list
+/// written in the test, which is a third statement of the registry and can only find gates it
+/// already names: a new arm this list does not mention would slip past it. That was a real gap
+/// while two lists existed. It is not a gap now, but the test is left in place with its limit
+/// stated instead of removed on the strength of an argument -- a check retired because a new
+/// invariant "makes it unnecessary" is the shape that goes wrong when the invariant later moves.
 #[test]
 fn the_refusal_names_every_gate_that_actually_certifies() {
     let directory = tempfile::tempdir().unwrap();
@@ -734,8 +738,14 @@ fn the_retry_lineage_gate_certifies_with_its_own_suite() {
 ///   yet the message claims it is registered -- a refusal that contradicts itself);
 /// * `the_refusal_names_every_gate_that_actually_certifies`: the arms are not wider than the list.
 ///
-/// The production change that would make this fail: adding an id to `REGISTERED_GATES` without
-/// adding its arm to `certify_registered`.
+/// **What would make this fail, restated for the single-array registry.** No longer "an id
+/// advertised with no adapter": that pairing is structural now, so the mismatch is inexpressible
+/// rather than caught. What still fails here is a registry entry whose certification does not
+/// SUCCEED -- a gate its own suite fools, or a suite that came back empty.
+///
+/// The previous wording named `REGISTERED_GATES`, a symbol this branch deleted. A test whose
+/// stated failure mode has become IMPOSSIBLE is worse than one merely out of date, because the
+/// next reader reasons from it and concludes the test covers something it cannot.
 #[test]
 fn every_advertised_gate_actually_certifies() {
     let directory = tempfile::tempdir().unwrap();

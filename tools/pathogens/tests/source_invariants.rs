@@ -8,6 +8,11 @@
 //! inside the literal, and `cargo fmt` joins the pieces into one line. The source reads plausibly
 //! while the reader gets `flaky success is not proven              success`.
 
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tools/source-invariants/detect.rs"
+));
+
 /// Every `.rs` file under `src/`, discovered by WALKING the directory.
 ///
 /// **The population is the directory, not a list.** A hand-written list guards the file that
@@ -46,39 +51,6 @@ fn sources() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Whether this line carries a run of whitespace inside a string literal.
-///
-/// **`html:` lines are exempt, and the exemption is principled rather than convenient.** Those
-/// literals are the rendered-surface FIXTURES of the geometry pathogens, and `suite_digest` is a
-/// sha256 over the serialized suite -- so "tidying" their whitespace would change the digest and
-/// void every recorded geometry certification with the corpus semantically unchanged. An operator
-/// who watches certifications fall for a cosmetic reason learns the signal is noisy, and a
-/// mechanism that cries wolf is ignored on the day it is right.
-///
-/// The exemption is by ROLE, not by file: everything else in `lib.rs` stays scanned, so a genuine
-/// message defect there is still caught.
-/// Whether this line carries a run of three or more spaces inside a STRING LITERAL.
-///
-/// Detection only -- no exemptions. Split from the role check so the exemption below can be
-/// asserted to be doing work, rather than merely to have a subject.
-///
-/// Only the ODD-index segments of `split('"')` are literal BODIES; the even ones are the code
-/// between and after literals. Inspecting those made the first version fire on ordinary Rust: a
-/// trailing aligned comment, and plain spacing between two literals. (Found by L.)
-///
-/// **TWIN COPY: `apps/cli/tests/source_invariants.rs` holds a byte-identical predicate.** It
-/// cannot be deduplicated here: `tools/pathogens` is GATE_MACHINERY and `apps/cli` is not, so M06
-/// forbids one branch touching both. Fix one, fix the other -- that is exactly how this
-/// predicate's false-positive bug reached two crates: it was copied, and a duplicated ORACLE
-/// diverges in silence. **If a THIRD crate needs this, extract a shared dev-only helper instead of
-/// a third copy** -- twin pointers do not scale to N, and N copies of one predicate drift.
-fn has_run_in_literal(line: &str) -> bool {
-    line.trim_start_matches(' ')
-        .split('"')
-        .enumerate()
-        .any(|(index, part)| index % 2 == 1 && part.contains("   "))
-}
-
 /// Lines whose runs are deliberate and must not be reported.
 ///
 /// Comments: their indentation is often an intentional list.
@@ -90,8 +62,7 @@ fn has_run_in_literal(line: &str) -> bool {
 ///
 /// Exempt by ROLE, not by file: every other line of `lib.rs` stays scanned.
 fn is_exempt(line: &str) -> bool {
-    let body = line.trim_start_matches(' ');
-    body.starts_with("//") || body.starts_with("html:")
+    is_line_comment(line) || line.trim_start_matches(' ').starts_with("html:")
 }
 
 fn offends(line: &str) -> bool {
@@ -154,12 +125,23 @@ fn the_html_exemption_actually_suppresses_something() {
 ///
 /// Without this, a `read_dir` returning almost nothing would satisfy the scan above while reading
 /// no source at all -- the vacuous pass a hand-written list was originally chosen to avoid. The
-/// floor is the replacement for that property.
+/// floor is the replacement for that property, and it is the REAL count rather than a number left
+/// comfortably under it. A floor with slack tolerates precisely the silent shrinkage it exists to
+/// catch.
+///
+/// The cost is that a legitimate removal now edits this number, which is the plausible-looking
+/// edit a floor is supposed to resist. So the rule beside it: **lower this only in the same commit
+/// as the removal that caused it, and name the removed file.**
+///
+/// The named files below are the other half and they are not redundant with the count: the count
+/// is mute about WHICH file went missing, and a named assertion is mute about a file ADDED and
+/// never scanned. Lowering a threshold is a plausible edit; deleting a named assertion is a
+/// visible one, so the two fail on different work and neither is a substitute for the other.
 #[test]
 fn the_scan_covers_the_whole_crate() {
     let found = sources();
     assert!(
-        found.len() >= 3,
+        found.len() >= 4,
         "HARNESS-BROKE: the walk found only {} source files in this crate",
         found.len()
     );
@@ -174,16 +156,39 @@ fn the_scan_covers_the_whole_crate() {
 /// The predicate itself, because it decides what everything else in this file means.
 #[test]
 fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
+    // PRECONDITION for the two cases below, and it is not ceremony. Their fixture property
+    // is "this line CARRIES a run of three or more spaces, outside any literal". Lose one
+    // space to an edit and `!offends(..)` collapses to `!false` and passes having measured
+    // nothing -- and it would keep passing with the even-segment bug back in place, which is
+    // the exact defect these two cells exist to catch. The pair is tight in both directions:
+    // if the run vanished the precondition fails, and if it moved INSIDE a literal `offends`
+    // becomes true and the assertion fails.
+    let aligned = r#"let s = "ok"; //   aligned trailing comment"#;
     assert!(
-        !offends(r#"let s = "ok"; //   aligned trailing comment"#),
-        "a trailing aligned comment after a literal is ordinary Rust"
+        aligned.contains("   "),
+        "the aligned-comment fixture stopped carrying a run, so the assertion below measures nothing"
     );
     assert!(
-        !offends(r#"let a = "x";        let b = "y";"#),
+        !offends(aligned),
+        "a trailing aligned comment after a literal is ordinary Rust"
+    );
+
+    let between = r#"let a = "x";        let b = "y";"#;
+    assert!(
+        between.contains("   "),
+        "the between-literals fixture stopped carrying a run, so the assertion below measures nothing"
+    );
+    assert!(
+        !offends(between),
         "spacing between two literals is ordinary Rust"
     );
     assert!(
-        !offends("///   a doc comment whose indent is an intentional list"),
+        // The comment exemption must be REACHED to be observed. An earlier fixture here
+        // was `"///   a doc comment whose indent is an intentional list"` -- a line with no
+        // string literal in it at all, so `has_run_in_literal` answered `false` before the
+        // exemption was ever consulted and the assertion passed whether the exemption
+        // worked or not. Found by sabotaging `is_line_comment` and watching nothing go red.
+        !offends(r#"//   let s = "a          b";"#),
         "comments are excluded: their indentation is often deliberate"
     );
     // A NEGATIVE assertion goes vacuous when its fixture loses the property under test: if this

@@ -141,6 +141,12 @@ fn is_line_comment(line: &str) -> bool {
 /// It exists so that no test has to write this path by hand. A hand-written literal would
 /// be a fourth independent spelling of something already spelled three times, and would
 /// drift exactly as the other three can.
+///
+/// **The failure mode is LOUD, and saying so is part of the seal.** If this path ever stops
+/// resolving inside the repository, the carrier's `strip_prefix(root).expect(..)` panics
+/// with its own message rather than quietly passing -- so the residual here is BOUNDED, not
+/// open-ended. A reader who meets a seal cannot tell a limitation that shouts from one that
+/// stays silent, and the two are worth completely different amounts of worry. (Named by L.)
 #[allow(dead_code)]
 fn shared_predicate_self_path() -> &'static str {
     file!()

@@ -44,6 +44,14 @@ fn a_second_claim_is_refused_while_the_first_is_held_and_granted_after_it_is_rel
 /// Every prefix of the durable write sequence is checked, not one hand-picked crash point. A crash
 /// test that chooses its own boundary tests the boundary the author thought of.
 ///
+/// WHAT THIS DOES NOT PROVE, stated here because the test's NAME claims more than its reach: this
+/// asserts a property of the ORDER declared by `activation_steps()`, which is a Vec. It does not
+/// observe a single write to disk, and it cannot: no filesystem is touched anywhere in this test.
+/// A caller that performs the steps in a different order than the one declared here would violate
+/// the invariant with this guard still green. What the guard holds is that the DECLARED order is a
+/// safe one; what it does not hold is that anyone follows it. The site that performs the writes
+/// inherits that obligation, and no comment substitutes for the guard that will live there.
+///
 /// The production change this catches: retiring the previous version before recording the new one.
 /// Both orders complete identically; they differ only in what a crash leaves behind, and one of
 /// them leaves a machine with NO active version -- which is not a rollback, it is an outage.
@@ -120,5 +128,42 @@ fn a_record_authorizes_the_package_it_was_activated_from_and_no_other() {
     assert!(
         !record.authorizes(&other_version),
         "a record minted for one package authorized a different one that merely validates"
+    );
+}
+
+/// A record that was never activated authorizes NOTHING, including a package whose digest is also
+/// empty.
+///
+/// The constructors that build a record from a path alone -- the ones discovery uses -- leave the
+/// digest empty and are reachable without holding a claim. The emptiness check in `authorizes` was
+/// written for exactly that and never exercised, so deleting it left every test green while an
+/// unactivated record began authorizing any package that also carried an empty digest.
+///
+/// The production change this catches: dropping the `is_empty` arm, or comparing with `==` alone.
+#[test]
+fn a_record_that_was_never_activated_authorizes_nothing() {
+    let root = tempfile::tempdir().expect("a temp dir");
+    let never_activated = ActivationRecord::for_package_without_recorded_executable(root.path());
+
+    // Landmark: an activated record DOES authorize, so the refusals below are about this record
+    // never having been activated rather than about `authorizes` being broken for everyone.
+    let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
+    let package = validated("graphhelm-example", "1.0.0", "sha256:aaaa");
+    let activated = ActivationRecord::activate(&claim, &package, root.path().join("graphhelm"));
+    assert!(
+        activated.authorizes(&package),
+        "HARNESS-BROKE: an activated record does not authorize its own package"
+    );
+
+    assert!(
+        !never_activated.authorizes(&package),
+        "a record that was never activated authorized a real package"
+    );
+
+    // The case the emptiness check exists for: both digests empty. Equality alone says yes here.
+    let also_empty = validated("graphhelm-example", "1.0.0", "");
+    assert!(
+        !never_activated.authorizes(&also_empty),
+        "an unactivated record authorized a package by matching one empty digest against another"
     );
 }

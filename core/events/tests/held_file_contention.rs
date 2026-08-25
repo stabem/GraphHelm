@@ -98,6 +98,21 @@ fn hold_without_share_delete(path: &Path) -> File {
         .expect("a handle on an existing file opens")
 }
 
+/// Holds a file the way an exclusive reader does: no sharing at all. `open_child_file` asks only
+/// for `GENERIC_READ` and never for `DELETE`, so the #340 mechanism cannot make it fail — but a
+/// handle that shares NOTHING refuses it outright, and that is deterministic.
+///
+/// Measured before it was relied on: a `FileShare::None` open is itself refused while another
+/// handle is open with sharing, which is why this must be taken before the store opens, and why
+/// the same fixture cannot be built for `link_retained_file_between` (see #311).
+fn hold_exclusively(path: &Path) -> File {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)
+        .expect("an exclusive handle on an existing file opens")
+}
+
 /// One real evidence blob from the copied archive, with the precondition asserted rather than
 /// assumed: an empty `blobs/` would make every test below pass while holding nothing at all.
 fn a_blob_in(events: &Path) -> PathBuf {
@@ -196,6 +211,60 @@ fn an_orphan_temp_nobody_holds_is_still_deleted() {
         !orphan.exists(),
         "an abandoned temp is exactly what reconcile exists to remove"
     );
+}
+
+/// `open_child_file` is the sibling `local.rs:3203` had all along, thirty lines away and carrying
+/// the same override: every failed open becomes an integrity verdict unless the caller was
+/// creating. It named itself in #311's capture at run 63 of 300, and then a 300-run budget went
+/// clean — so this fixture stops waiting for the race and makes the site fire on purpose.
+///
+/// Measured, not argued: with `journal.jsonl` held by a handle that shares nothing, the open is
+/// refused with `SHARING_VIOLATION(32)` — no `DELETE` access requested anywhere, which is exactly
+/// why #340's mechanism could not explain this site.
+///
+/// **A file another process holds is a statement about the machine, not about the bytes.** No
+/// bytes were read, so nothing can disagree with what it should be — the crate's own
+/// `From<io::Error>` already answers `Storage` for every `?`, and this site overrides that.
+#[test]
+fn a_file_held_without_sharing_is_a_storage_error_not_an_integrity_verdict() {
+    let control = tempfile::tempdir().unwrap();
+    let control_events = archive_copy(control.path());
+    open(&control_events).expect("CONTROL: the archive opens when no handle is held");
+
+    let directory = tempfile::tempdir().unwrap();
+    let events = archive_copy(directory.path());
+    let _held = hold_exclusively(&events.join("journal.jsonl"));
+
+    match open(&events) {
+        Err(EventRepositoryError::Storage) => {}
+        Err(other) => panic!(
+            "a file another handle holds is contention, not corruption, and must not reach the \
+             caller as an integrity verdict: {other:?}"
+        ),
+        Ok(_) => panic!("the store opened, so the held file never reached the site under test"),
+    }
+}
+
+/// The other half, and the one that must NOT move: a genuinely missing `journal.jsonl` **is** an
+/// integrity signal, and the fix above must not buy its quiet by silencing this.
+///
+/// Green before the change and green after. It asserts the wire code rather than the variant on
+/// purpose — the refusal is raised by a different site than the one under test, and pinning the
+/// variant would pin which site answers instead of the property that matters.
+#[test]
+fn a_missing_journal_is_still_an_integrity_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = archive_copy(directory.path());
+    std::fs::remove_file(events.join("journal.jsonl")).expect("the journal is removable");
+
+    match open(&events) {
+        Err(error) => assert_eq!(
+            error.code(),
+            "GHE005_INTEGRITY_FAILURE",
+            "a missing journal is damage, and must keep saying so: {error:?}"
+        ),
+        Ok(_) => panic!("a store with no journal must refuse to open"),
+    }
 }
 
 /// The semantics, asserted directly rather than described in a comment: a held orphan is DEFERRED,

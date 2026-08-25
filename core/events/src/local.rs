@@ -3143,7 +3143,7 @@ fn open_child_file(
     _path: &Path,
     name: &str,
     write: bool,
-    create_new: bool,
+    create: bool,
 ) -> Result<File, EventRepositoryError> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
@@ -3151,20 +3151,38 @@ fn open_child_file(
     let name = CString::new(name).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
     let mut flags = if write { libc::O_RDWR } else { libc::O_RDONLY };
     flags |= libc::O_CLOEXEC | libc::O_NOFOLLOW;
-    if create_new {
+    if create {
         flags |= libc::O_CREAT | libc::O_EXCL;
     }
     // SAFETY: retained directory descriptor and NUL-terminated child are valid.
     let descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags, 0o600) };
     if descriptor < 0 {
-        return Err(if create_new {
-            EventRepositoryError::Storage
-        } else {
-            EventRepositoryError::Integrity
-        });
+        return Err(open_failure(create, &std::io::Error::last_os_error()));
     }
     // SAFETY: descriptor is fresh and uniquely owned.
     Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+/// What a FAILED OPEN means, in one place because both `cfg` arms need the same answer and the
+/// two of them drifting is exactly how this defect survived: `open_child_file` kept the flattening
+/// for months while its neighbour thirty lines away was being fixed (#311, #326).
+///
+/// `Integrity` is a verdict about BYTES — that what was read disagrees with what it should be. A
+/// failed open reads no bytes, so it is almost always a statement about the MACHINE instead:
+/// contention, a denied handle, a share conflict. Those belong to `Storage`, which is what the
+/// crate's own `From<std::io::Error>` already answers for every `?`; this site used to override it.
+///
+/// The one exception is real and worth keeping. When the caller is NOT creating, the layout says
+/// the child must already exist, so `NotFound` **is** damage and keeps its integrity verdict.
+/// Measured: a missing `journal.jsonl` is in fact refused earlier, by `classify_layout`
+/// (`local.rs:2595`), so this arm is a second line rather than the only one — but narrowing it
+/// would be buying quiet by silencing a real signal, and that is the trade this refuses to make.
+fn open_failure(create: bool, error: &std::io::Error) -> EventRepositoryError {
+    if !create && error.kind() == std::io::ErrorKind::NotFound {
+        EventRepositoryError::Integrity
+    } else {
+        EventRepositoryError::Storage
+    }
 }
 
 #[cfg(windows)]
@@ -3192,13 +3210,7 @@ fn open_child_file(
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path.join(name))
-        .map_err(|_| {
-            if create {
-                EventRepositoryError::Storage
-            } else {
-                EventRepositoryError::Integrity
-            }
-        })?;
+        .map_err(|error| open_failure(create, &error))?;
     validate_opened_regular(&file)?;
     Ok(file)
 }
@@ -3875,6 +3887,36 @@ mod limit_tests {
     };
 
     use super::*;
+
+    /// `open_failure`'s OTHER arm, reached directly — because nothing else reaches it.
+    ///
+    /// Found by K reviewing #366: the integration guard for a missing `journal.jsonl` never
+    /// arrives here. `classify_layout` refuses first (`local.rs:2595`), so that cell would stay
+    /// green even if this arm regressed to `Storage`. An arm that is *true* and never *asked* is
+    /// the same defect this whole arc is about, one level up — so the call goes straight at the
+    /// function, where the arm is the only thing that can answer.
+    #[test]
+    fn a_child_that_does_not_exist_is_an_integrity_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("objects");
+        std::fs::create_dir(&path).unwrap();
+        let handle = open_directory(&path).unwrap();
+
+        // CONTROL: an existing child opens through the same call, or the refusal below would not
+        // be about absence at all.
+        std::fs::write(path.join("present.json"), b"x").unwrap();
+        open_child_file(&handle, &path, "present.json", false, false)
+            .expect("CONTROL: an existing child opens");
+
+        assert!(
+            matches!(
+                open_child_file(&handle, &path, "absent.json", false, false),
+                Err(EventRepositoryError::Integrity)
+            ),
+            "not creating means the layout says the child must exist, so its ABSENCE is damage \
+             and keeps the integrity verdict"
+        );
+    }
 
     #[test]
     fn retained_temp_inode_is_published_even_after_name_replacement() {

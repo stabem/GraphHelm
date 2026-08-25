@@ -1783,7 +1783,8 @@ fn the_customs_timeline_records_each_stage_once_in_log_order() {
     );
     assert_ne!(
         cleared_seq, claim_seq,
-        "the arrangement must give the clearance its own sequence or the assertion above is          satisfied by coincidence"
+        "the arrangement must give the clearance its own sequence or the assertion above \
+         is satisfied by coincidence"
     );
 }
 
@@ -2141,11 +2142,14 @@ fn a_refused_clearance_leaves_a_pointer_in_the_nodes_timeline_not_a_copy() {
     assert_eq!(
         entry.stage,
         CustomsStage::Rejected,
-        "a withheld clearance is Rejected, never Cleared: Cleared is the only stage that releases          a dependent, and this one released nothing"
+        "a withheld clearance is Rejected, never Cleared: Cleared is the only stage that \
+         releases a dependent, and this one released nothing"
     );
     assert_eq!(
         entry.reason_code, None,
-        "the timeline carries the POINTER (claim_seq) and not a copy of the reason: the outcome          record keyed by that claim owns it, and two structures holding one fact can disagree          after a replay"
+        "the timeline carries the POINTER (claim_seq) and not a copy of the reason: the \
+         outcome record keyed by that claim owns it, and two structures holding one fact \
+         can disagree after a replay"
     );
     assert_eq!(
         projection.clearances.get(&claim_seq),
@@ -2195,7 +2199,8 @@ fn a_machine_replay_clearance_needs_no_registered_identity() {
 
     assert!(
         projection.clearance_registry.is_empty(),
-        "precondition: NOBODY is registered, or this measures nothing about membership being          irrelevant here: {:?}",
+        "precondition: NOBODY is registered, or this measures nothing about membership \
+         being irrelevant here: {:?}",
         projection.clearance_registry
     );
     assert_eq!(

@@ -569,12 +569,12 @@ fn every_real_mcp_tool_is_classified() {
 
         assert!(
             claimed_by_family || claimed_as_exception,
-            "{tool:?} is a real MCP tool that nothing classifies: no entry in \
-             DEVELOPMENT_OPERATION_FAMILIES names it, and NON_DEVELOPMENT_TOOLS does not except \
-             it. Either it belongs to a development operation family (add it to \
-             DEVELOPMENT_OPERATION_FAMILIES, which also puts it under the three-surface parity \
-             check) or it deliberately does not (add it to NON_DEVELOPMENT_TOOLS and raise its \
-             arity). Not choosing is what this test exists to refuse."
+            "{tool:?} is a real MCP tool that nothing classifies. Does it belong to a \
+             development operation family? If YES, add it to DEVELOPMENT_OPERATION_FAMILIES -- \
+             that also puts it under the three-surface parity check, which is the point. \
+             NON_DEVELOPMENT_TOOLS is only for tools that are NOT development operations; \
+             putting it there instead makes this red go away without answering the question, \
+             and nothing downstream will notice."
         );
         assert!(
             !(claimed_by_family && claimed_as_exception),

@@ -1457,6 +1457,34 @@ there were **2**. The closing line's own text says *"my WAIT-DECLARED of 13:47:1
     WAIT-SATISFIED        1       1          1       0
     YIELD                 1       1          1       0
 
+### EVERY NUMBER ABOVE IS A SNAPSHOT OF A LIVE FILE, AND THAT IS WHY TWO CAREFUL AGENTS COULD NOT AGREE
+
+The table was corrected three times by two agents. The third round did not converge, and checking
+why produced the rule that supersedes the argument:
+
+    START substring, M's measurement   186
+    START substring, A's measurement   189      (+3 in the interval)
+    writers in that interval           B (7 lines), K (4 lines)
+
+**`check-activity.log` is append-only and six lanes write to it continuously.** M and A were
+counting **different states of the same file.** Neither table was wrong; **neither carried its
+instant**, so neither could be reconciled with the other, and the disagreement looked like a
+methodology dispute when it was arithmetic on two populations.
+
+**Rule: any count of this log carries the instant it was taken and the total line count at that
+instant**, or it is not a measurement:
+
+    2026-08-24T15:44Z, file at 440 lines: START substring 189, prefix 177, transposed 1
+
+Without those two numbers, a count of a growing file is a claim about a population that no longer
+exists, and **two honest agents will produce two honest incompatible tables forever.**
+
+**This is why the prose columns below are illustrative and not authoritative.** They show the SHAPE
+of the defect — substring over-counts, field under-counts — and the shape is stable. The absolute
+figures are not, and quoting them as if they were is the same error one level up.
+
+### The correction history, kept because it is the evidence
+
 **`NOTE` was first computed as 9 and that was wrong, by this entry's own rule.** `prose =
 substring − prefix` assumes ONE line shape. Seven of those nine are `ORCH NOTE` lines — **markers in
 a different shape, not prose.** True prose is 2. The first table was built by the exact method this
@@ -1509,6 +1537,18 @@ that looks like a clean bill** — and that one is worse, because a zero reads a
    — **real markers that field-3 extraction misses**, because field 3 on those lines is `lane #223`.
    "Other: 3" in a report is a bag that anything fits in, and the thing inside it here was more of
    the very defect being measured.
+
+   **SAMPLING A BUCKET IS NOT OPENING IT (M).** The other agent had the same three lines in their
+   own "other: 41", **read the first 12, found them benign, and declared the bucket benign.** The
+   three were at the end. Sampling the head of a category and pronouncing on the category is the
+   same population defect one level up — and it catches precisely the person who already knows the
+   rule, because knowing it feels like having applied it.
+
+   **The cost was not a wrong count. It was a MISSING ROW.** That agent's published sweep script
+   never counted agent F at all: on transposed lines field 2 is free text and field 3 is prose, so
+   the extractor sees no marker and **drops the agent entirely**. A missing row reads as *"F never
+   ran"* — under-reporting wearing the face of a clean bill. It also hid an orphaned `END` of F's
+   that had been invisible for as long as the script existed.
 2. **State which shapes a count covered**, or it is not a measurement.
 3. **Separate exact matches from annotated ones from prose**, because collapsing them produces a
    number that means three things.

@@ -586,3 +586,182 @@ fn an_unknown_gate_is_refused_with_the_registry_code() {
         "nothing was stamped: {stdout}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The gate registry is enumerated in exactly ONE place.
+// ---------------------------------------------------------------------------------------------
+
+/// `--help` must not enumerate the registry.
+///
+/// The production change that would make this fail: writing gate ids back into the `--gate` doc
+/// comment in `args.rs`.
+///
+/// **Why the help text is the worst place to list them.** It is what the operator reads FIRST,
+/// before running anything; it lives in a DIFFERENT FILE from the check that decides membership;
+/// and clap renders it from a doc comment, which is a compile-time literal that cannot be derived
+/// from the registry. So it cannot be kept in sync by construction — only by memory. Removing the
+/// enumeration removes the need for the sync, which is the version that does not age.
+#[test]
+fn the_help_text_does_not_enumerate_the_gate_registry() {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["quality", "certify", "--help"])
+        .output()
+        .unwrap();
+    let help = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Positive control: prove the help was actually rendered before concluding anything from an
+    // absence. An empty capture would satisfy the assertion below while measuring nothing.
+    assert!(
+        help.contains("--gate"),
+        "HARNESS-BROKE: `certify --help` did not render the --gate flag; got: {help}"
+    );
+    assert!(
+        !help.contains("gate-geometry"),
+        "the help text enumerates the registry, so it goes stale the day a gate is added and \
+         cannot be derived from the registry because clap renders a compile-time literal. \
+         got: {help}"
+    );
+}
+
+/// Every gate that ACTUALLY certifies must be named in the refusal message.
+///
+/// The population is discovered by driving the binary rather than read from a constant, because
+/// `apps/cli` has no `[lib]` and a test cannot import one. That is the better guard anyway: it
+/// checks what the operator sees.
+///
+/// The production change that would make this fail: adding a registry entry while leaving the
+/// refusal message's own literal list alone.
+#[test]
+fn the_refusal_names_every_gate_that_actually_certifies() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution = "exec-registry-single-source";
+    let serve = gate_serve(directory.path(), execution);
+    // The stream must exist before certification can stamp onto it -- the precondition every
+    // other test in this file establishes. Without it nothing certifies and the loop below is
+    // vacuous, which is exactly what the HARNESS-BROKE assert caught.
+    let (status, _) = start(&serve, execution, "registry-single-source-start");
+    assert_eq!(status, 200);
+    let refusal = certify(&serve, "gate-does-not-exist");
+    let message = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refusal.stdout),
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+
+    let mut certifying = Vec::new();
+    for id in ["gate-geometry", "gate-retry-lineage"] {
+        if certify(&serve, id).status.success() {
+            certifying.push(id);
+            assert!(
+                message.contains(id),
+                "{id} certifies but the refusal does not name it; the operator sees only this \
+                 message. got: {message}"
+            );
+        }
+    }
+    // Without this, a binary where NOTHING certifies would satisfy the loop vacuously.
+    assert!(
+        !certifying.is_empty(),
+        "HARNESS-BROKE: no candidate gate certified at all, so the loop above asserted nothing"
+    );
+}
+
+/// The registry's SECOND entry certifies through the same command, with its own suite.
+///
+/// This is what makes the single-source registry load-bearing rather than tidy: until a second
+/// entry existed, the refusal message and the check could disagree without anyone noticing.
+#[test]
+fn the_retry_lineage_gate_certifies_with_its_own_suite() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution = "exec-retry-lineage-registered";
+    let serve = gate_serve(directory.path(), execution);
+    let (status, _) = start(&serve, execution, "retry-lineage-registered-start");
+    assert_eq!(status, 200);
+
+    let output = certify(&serve, "gate-retry-lineage");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "gate-retry-lineage must certify: {stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_str(&stdout).expect("certify emits json");
+    // The envelope is {ok, command, data, diagnostics}; the payload lives under `data`. Read
+    // from the refusal JSON this command already printed, not assumed.
+    assert_eq!(body["data"]["gateId"], "gate-retry-lineage");
+    assert!(
+        body["data"]["specimens"]
+            .as_u64()
+            .is_some_and(|count| count > 0),
+        "a registered gate must carry a NON-EMPTY suite -- certify refuses an empty one, so a \
+         zero here would mean the dispatch handed over the wrong suite entirely: {body}"
+    );
+
+    // The two gates must not share a suite digest. A registry entry copied from its neighbour and
+    // left wired to the neighbour's suite would certify happily and stamp the WRONG immunity --
+    // green, plausible, and about a different gate.
+    let geometry = certify(&serve, "gate-geometry");
+    let geometry_body: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&geometry.stdout)).expect("json");
+    assert_ne!(
+        body["data"]["suiteDigest"], geometry_body["data"]["suiteDigest"],
+        "two gates certified against the same suite means one entry is wired to the other's"
+    );
+}
+
+/// Every id the refusal message advertises must actually certify.
+///
+/// The other half of the set equality. `certify_registered`'s `match` needs literal patterns, so
+/// the message's list cannot be soldered to the arms in Rust -- it is held equal by OBSERVATION in
+/// both directions instead:
+///
+/// * this test: the advertised list is not WIDER than the arms (a name with no arm is refused,
+///   yet the message claims it is registered -- a refusal that contradicts itself);
+/// * `the_refusal_names_every_gate_that_actually_certifies`: the arms are not wider than the list.
+///
+/// The production change that would make this fail: adding an id to `REGISTERED_GATES` without
+/// adding its arm to `certify_registered`.
+#[test]
+fn every_advertised_gate_actually_certifies() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution = "exec-advertised-certifies";
+    let serve = gate_serve(directory.path(), execution);
+    let (status, _) = start(&serve, execution, "advertised-certifies-start");
+    assert_eq!(status, 200);
+
+    // The advertised list is read from the binary's own refusal, not from a constant the test
+    // cannot import: `apps/cli` has no `[lib]`. So this measures what the OPERATOR is told.
+    let refusal = certify(&serve, "gate-not-registered-at-all");
+    let message = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refusal.stdout),
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    let advertised: Vec<String> = message
+        .split("the registry is closed: ")
+        .nth(1)
+        .expect("the refusal states the registry")
+        .split(['"', ')'])
+        .next()
+        .expect("the list is delimited")
+        .split(", ")
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty())
+        .collect();
+
+    // Non-emptiness first: an empty list makes the loop below assert nothing.
+    assert!(
+        !advertised.is_empty(),
+        "HARNESS-BROKE: parsed no gate ids out of the refusal; got: {message}"
+    );
+    for id in &advertised {
+        assert!(
+            certify(&serve, id).status.success(),
+            "the refusal advertises {id} as registered, but it does not certify -- the message \
+             promises a gate the dispatch has no arm for"
+        );
+    }
+}

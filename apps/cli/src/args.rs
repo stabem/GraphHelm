@@ -130,7 +130,13 @@ pub enum QualityCommand {
         events: PathBuf,
         #[arg(long)]
         execution: Option<String>,
-        /// The registered gate id (closed registry: gate-geometry).
+        /// The registered gate id. The registry is closed; an unrecognised id is refused and
+        /// the refusal names what IS registered.
+        ///
+        /// Deliberately does NOT enumerate the gates. clap renders this from a compile-time
+        /// literal, so it cannot be derived from the registry and could only be kept in sync by
+        /// memory -- in a different file from the check that decides membership, and read by the
+        /// operator BEFORE anything runs. The refusal message is the single place that enumerates.
         #[arg(long)]
         gate: String,
     },

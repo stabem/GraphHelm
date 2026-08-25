@@ -347,12 +347,14 @@ fn an_undeclared_customs_budget_stays_absent_and_never_becomes_zero() {
         serde_json::from_value(value.clone()).expect("a pre-customs node still deserializes");
     assert!(
         node.customs().is_none(),
-        "no declaration is not a budget of zero — a stage nobody bounded has NO deadline, and          reading absence as zero would make every historical stage instantly overdue"
+        "no declaration is not a budget of zero — a stage nobody bounded has NO deadline, and \
+         reading absence as zero would make every historical stage instantly overdue"
     );
     assert_eq!(
         serde_json::to_value(&node).unwrap(),
         value,
-        "and it re-serializes byte-identically: every graph version already published must keep          its hash, which an always-emitted null would break"
+        "and it re-serializes byte-identically: every graph version already published must keep \
+         its hash, which an always-emitted null would break"
     );
 }
 

@@ -1210,9 +1210,16 @@ fn cli_and_mcp_surface_allowlists_stay_a_subset_of_the_real_derived_surface() {
 
     // MCP_TOOLS names the Public Runtime API's tool surface, not a clap subcommand tree - `mcp`
     // itself is a real, leaf CLI command (no further subcommands), so the same --help walk that
-    // derives CLI_COMMANDS's world cannot also derive MCP_TOOLS's. What IS checkable from here,
-    // cheaply: `mcp` itself must still be a real command, since MCP_TOOLS's whole premise is that
-    // requests arrive through it.
+    // derives CLI_COMMANDS's world cannot also derive MCP_TOOLS's. What this cell checks is that
+    // `mcp` itself is still a real command, since MCP_TOOLS's whole premise is that requests
+    // arrive through it.
+    //
+    // This used to read "what IS checkable from here, cheaply", which was true about --help and
+    // false about the environment, and the difference held the existence check open (#231): the
+    // tool surface is a static table in the same binary, and the binary lists it on request. The
+    // subset property now lives in
+    // `every_mcp_tools_entry_names_a_tool_the_binary_actually_serves` below. Measured while
+    // writing it: rename a tool and THIS cell stays green.
     assert!(
         real_commands.contains("mcp"),
         "MCP_TOOLS assumes the `mcp` CLI command exists to carry these tool calls, but the real \
@@ -1221,6 +1228,100 @@ fn cli_and_mcp_surface_allowlists_stay_a_subset_of_the_real_derived_surface() {
     assert!(
         !mcp_tools.is_empty(),
         "MCP_TOOLS should not be empty while `mcp` names it as the transport"
+    );
+}
+
+/// The real tool surface, read from the BINARY rather than derived from `--help`.
+///
+/// The server answers `tools/list` from its own static table before any request reaches the API,
+/// so the URL points at a port nothing listens on: the names are a property of the build, and
+/// involving a live server would make this test depend on something it is not measuring.
+fn real_mcp_tool_names() -> Vec<String> {
+    let mut input = String::new();
+    for line in [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "surface-existence", "version": "0"}}}),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    ] {
+        input.push_str(&line.to_string());
+        input.push('\n');
+    }
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
+        .env("GRAPHHELM_API_TOKEN", "test-token")
+        .write_stdin(input)
+        .timeout(std::time::Duration::from_secs(30))
+        .output()
+        .expect("the mcp server runs to EOF");
+
+    let reply = String::from_utf8(output.stdout)
+        .expect("stdout is UTF-8")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|value| value["id"] == json!(2))
+        .expect("the session answers tools/list with id 2");
+
+    reply["result"]["tools"]
+        .as_array()
+        .expect("tools/list returns an array of tools")
+        .iter()
+        .map(|tool| {
+            tool["name"]
+                .as_str()
+                .expect("every tool carries a name")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// Every name in `MCP_TOOLS` resolves to a tool the binary actually serves.
+///
+/// **This is the half the guard above states it cannot reach, and the statement is about `--help`
+/// rather than about the environment (#231).** `MCP_TOOLS` is not a clap subcommand tree, so the
+/// `--help` walk genuinely cannot derive it — but the tool surface is a static table in the same
+/// binary, and the binary will list it on request. The subset property the CLI half enjoys is
+/// therefore available here too, by asking the server instead of the parser.
+///
+/// What the gap cost while it was open: rename a tool in `commands/mcp/tools.rs` and `MCP_TOOLS`
+/// keeps naming the old one. The membership test passes, a skill declaring the dead tool
+/// validates, and the check reports success while proving the opposite of its stated purpose.
+///
+/// **SUBSET, never equality, and that is a decision somebody already recorded.**
+/// `apps/cli/tests/development_surface_parity.rs` documents why the two lists must not be bound
+/// as equal: `MCP_TOOLS` is a narrow allowlist of the domain surface a skill journey may claim to
+/// drive, with mutating and destructive operations excluded ON PURPOSE. The day a destructive tool
+/// is added, the two diverge CORRECTLY, and an equality guard would fire on that correct
+/// divergence and pressure the next reader to widen the allowlist to silence it -- turning a
+/// safety boundary into bookkeeping.
+///
+/// One direction has neither problem. A name in `MCP_TOOLS` that no tool answers to is wrong under
+/// every reading of that boundary: the allowlist may be narrower than the surface, never other
+/// than it.
+#[test]
+fn every_mcp_tools_entry_names_a_tool_the_binary_actually_serves() {
+    let (_, mcp_tools) = graphhelm_schema::__surface_allowlists_for_testing();
+    let real = real_mcp_tool_names();
+
+    assert!(
+        real.len() > 1,
+        "HARNESS-BROKE: the binary listed {} tools, so the subset check below would be nearly \
+         vacuous. tools/list did not answer with the real table: {real:?}",
+        real.len()
+    );
+
+    let dead: Vec<&str> = mcp_tools
+        .iter()
+        .copied()
+        .filter(|declared| !real.iter().any(|name| name == declared))
+        .collect();
+
+    assert!(
+        dead.is_empty(),
+        "MCP_TOOLS names {dead:?}, which the binary does not serve -- renamed or removed in \
+         commands/mcp/tools.rs without updating the allowlist. A skill journey declaring one of \
+         these validates against a tool that cannot be called.\nserved: {real:?}"
     );
 }
 

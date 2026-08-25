@@ -146,7 +146,7 @@ fn the_html_exemption_actually_suppresses_something() {
 
     assert!(
         !suppressed.is_empty(),
-        "HARNESS-BROKE: no `html:` line carries a run, so the exemption in `is_exempt` suppresses          nothing. Either the fixtures were reformatted -- in which case remove the exemption          rather than leave it looking load-bearing -- or the scan stopped reaching lib.rs"
+        "HARNESS-BROKE: no `html:` line carries a run, so the exemption in `is_exempt` suppresses nothing. Either the fixtures were reformatted -- in which case REMOVE the exemption rather than leave it looking load-bearing -- or the scan stopped reaching lib.rs"
     );
 }
 
@@ -186,8 +186,20 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         !offends("///   a doc comment whose indent is an intentional list"),
         "comments are excluded: their indentation is often deliberate"
     );
+    // A NEGATIVE assertion goes vacuous when its fixture loses the property under test: if this
+    // sample stopped carrying a run, `!offends(..)` would be `!false` and pass having proved
+    // nothing. Measured, not feared -- collapsing this one string left all four tests GREEN.
+    //
+    // Its positive twin below needs no such pairing: a fixture that stops carrying a run makes
+    // `offends(..)` false and the assertion RED. That asymmetry is the rule worth keeping --
+    // guard the fixture of a NEGATIVE assertion, because only that direction fails silently.
+    let exempt_by_role = r#"        html: "<main>x</a>                   <section>","#;
     assert!(
-        !offends(r#"        html: "<main>x</a>                   <section>","#),
+        has_run_in_literal(exempt_by_role),
+        "the fixture must carry a run, or the exemption assertion below proves nothing"
+    );
+    assert!(
+        !offends(exempt_by_role),
         "digest-bearing fixtures are exempt by role"
     );
     // The false-negative case: a guard tuned until it stops complaining stops working.

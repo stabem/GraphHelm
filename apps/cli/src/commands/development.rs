@@ -121,6 +121,54 @@ pub fn run_compile_context() -> Outcome {
     )
 }
 
+/// Propose content for governed memory and report the admission verdict, over the CLI surface.
+///
+/// **Existence-slice, not the full feature**, matching its siblings: the content and the scope are
+/// fixed because there is no input argument yet, and adding one is behavioral-parity work rather
+/// than the existence-parity this command exists to give the three adapters something to agree on.
+///
+/// **It returns the VERDICT and no identifier, and that is a measurement rather than a choice.**
+/// Nothing persists a `MemoryCandidate` or a `MemoryRecord` -- both exist only in `core/governor`,
+/// built in memory -- so an id would name something no later call could resolve. The verdict is the
+/// one thing the admission path can honestly answer today: admitted, or refused with its code.
+///
+/// The admission path is CONSUMED, not restated. `capture_memory` holds the opt-in above the first
+/// boundary touch and `admit_memory_candidate` screens scope, origin and content; an adapter that
+/// re-decided any of that would be a second authority on what memory is admissible.
+#[must_use]
+pub fn run_memory_propose() -> Outcome {
+    let scope = graphhelm_protocols::DevelopmentScope {
+        workspace_id: graphhelm_protocols::WorkspaceId::parse("workspace-local")
+            .expect("a constant workspace id is valid"),
+        project_id: graphhelm_protocols::ProjectId::parse("project-local")
+            .expect("a constant project id is valid"),
+        subproject_id: None,
+        execution_id: None,
+    };
+
+    let mut touches = Vec::new();
+    let verdict = match graphhelm_governor::capture_memory(
+        graphhelm_governor::CaptureOptIn::Enabled,
+        scope.clone(),
+        "a proposal with no input argument yet",
+        &mut touches,
+    ) {
+        Ok(candidate) => match graphhelm_governor::admit_memory_candidate(&candidate, &scope) {
+            Ok(()) => serde_json::json!({ "admitted": true }),
+            Err(refusal) => serde_json::json!({
+                "admitted": false,
+                "refusedWith": refusal.code().wire_name(),
+            }),
+        },
+        Err(refusal) => serde_json::json!({
+            "admitted": false,
+            "refusedWith": refusal.code().wire_name(),
+        }),
+    };
+
+    Outcome::success("development.memory-propose", verdict)
+}
+
 /// Maps a `DevelopmentRefusalCode` to a distinct CLI exit code.
 ///
 /// Injective by construction: base offset (20, clear of the existing 0/2/3/4 success/domain/

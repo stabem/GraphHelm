@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 18] = [
+const TOOLS: [ToolSpec; 19] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -137,6 +137,13 @@ const TOOLS: [ToolSpec; 18] = [
                       argument yet.",
         schema: compile_context_schema,
     },
+    ToolSpec {
+        name: "memory_propose",
+        description: "Propose content for governed memory and report the admission verdict \
+                      (POST /v1/development/memory). Returns the verdict and no id: nothing \
+                      persists a candidate, so an id would name what cannot be fetched.",
+        schema: memory_propose_schema,
+    },
 ];
 
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -186,6 +193,12 @@ fn compile_context_schema() -> serde_json::Value {
     // No fields yet: #223's existence-slice always compiles the empty/degenerate capsule.
     // Capsule content becomes a real argument when the behavioral-parity guard (blueprint §6
     // item 2) wires this to actual sections.
+    object_schema(serde_json::json!({}), &[])
+}
+
+fn memory_propose_schema() -> serde_json::Value {
+    // No fields yet: the existence-slice proposes fixed content under a fixed scope. Content and
+    // scope become real arguments when behavioral parity wires this to caller input.
     object_schema(serde_json::json!({}), &[])
 }
 
@@ -721,6 +734,16 @@ pub(crate) fn call(
         "compile_context" => Ok(api.request(
             "POST",
             &url::segment_path(&["v1", "development", "context"]),
+            Some(&serde_json::json!({})),
+            Some(&key),
+            if_match,
+        )),
+        // A MUTATION in shape -- POST with a body and an idempotency key -- even though the
+        // existence-slice persists nothing: the verb and the key describe what this operation IS,
+        // and wiring it as a read would have to be undone the day it stores anything.
+        "memory_propose" => Ok(api.request(
+            "POST",
+            &url::segment_path(&["v1", "development", "memory"]),
             Some(&serde_json::json!({})),
             Some(&key),
             if_match,

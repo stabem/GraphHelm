@@ -93,6 +93,9 @@ pub enum DevelopmentCommand {
     Present,
     /// Compile a context capsule (#222/#273's compiler, exposed here).
     CompileContext,
+    /// Propose content for governed memory and report the admission verdict (#220's admission,
+    /// exposed here).
+    MemoryPropose,
 }
 
 #[derive(Debug, Args)]

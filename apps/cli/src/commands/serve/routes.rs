@@ -1173,6 +1173,20 @@ pub(super) async fn development_memory_status() -> Response {
     respond_outcome(crate::commands::development::run_memory_status())
 }
 
+/// `POST /v1/development/memory`: propose content for governed memory, answering with the
+/// admission verdict.
+///
+/// The same PATH as the GET above and a different VERB, because both act on one resource. The
+/// parity probe refuses 405 as well as 404, so a family wired under the wrong verb fails there as
+/// loudly as one not wired at all.
+///
+/// No identifier in the response: nothing persists a candidate, so an id would name something no
+/// later call could resolve -- see `crate::commands::development::run_memory_propose` for the
+/// measurement.
+pub(super) async fn development_memory_propose() -> Response {
+    respond_outcome(crate::commands::development::run_memory_propose())
+}
+
 /// `POST /v1/development/present`: #219's owner-output renderer over HTTP. #223 existence-slice --
 /// no request body is read yet, matching the CLI and MCP surfaces (see
 /// `crate::commands::development::run_present`'s own doc for why a fixed task result is real

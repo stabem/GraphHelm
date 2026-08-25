@@ -88,6 +88,22 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
         // verb-noun split `resolve-contract` above uses, under the same REST convention.
         http_probe_path: "/v1/development/context",
     },
+    FamilySurfaces {
+        cli: "memory-propose",
+        mcp: "memory_propose",
+        http_method: "POST",
+        // The SAME path as memory-status, under a different verb -- "/v1/development/memory" reads
+        // and is written by the two families that act on one resource. That is the REST convention
+        // this codebase already uses, and the probe can tell them apart: it refuses 404 (no route)
+        // AND 405 (route exists under another verb), so a POST family wired only as GET fails here
+        // as loudly as one not wired at all.
+        //
+        // The alternative was a sub-resource, "/v1/development/memory/proposal". Rejected on a
+        // measurement rather than on taste: nothing persists a MemoryCandidate or a MemoryRecord --
+        // both exist only in core/governor, built in memory -- so a proposal resource would be a
+        // noun that can never be fetched. A route that cannot answer GET is not a resource.
+        http_probe_path: "/v1/development/memory",
+    },
 ];
 
 /// The tools that are deliberately NOT development operations -- the exceptions that make

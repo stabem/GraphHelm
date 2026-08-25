@@ -313,7 +313,7 @@ fn build_router(state: ServeState) -> Router {
         )
         .route(
             "/v1/development/memory",
-            get(routes::development_memory_status),
+            get(routes::development_memory_status).post(routes::development_memory_propose),
         )
         .route("/v1/development/present", post(routes::development_present))
         .route(

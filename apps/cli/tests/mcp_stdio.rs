@@ -513,7 +513,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 }
 
 #[test]
-fn tools_list_names_exactly_the_eighteen_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_nineteen_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -547,14 +547,15 @@ fn tools_list_names_exactly_the_eighteen_tools_with_closed_schemas() {
             "resolve_contract",
             "memory_status",
             "present",
-            "compile_context"
+            "compile_context",
+            "memory_propose"
         ],
-        "exactly the eighteen tools, in order, and NOTHING else — no credential tool exists by \
+        "exactly the nineteen tools, in order, and NOTHING else — no credential tool exists by \
          design (omission is the enforcement); #223 added resolve_contract, memory_status, \
-         present, then compile_context, each after the one before it. NOTE: this list was found \
-         out of date on main (stopped at memory_status, missing present -- #357 added the tool \
-         but not this pin) while resolving this merge; corrected here alongside adding \
-         compile_context, not a defect introduced by this change."
+         present, compile_context, then memory_propose, each after the one before it. This pin \
+         is a LIST and not a count, so a tool added to TOOLS without a line here fails on the \
+         NAME rather than on a number -- which is what happened to present (#357 moved TOOLS \
+         and not this list, and the gate that PR chose did not run this file)."
     );
     for tool in &tools {
         let schema = &tool["inputSchema"];

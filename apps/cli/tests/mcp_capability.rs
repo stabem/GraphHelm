@@ -476,9 +476,33 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
     // A shrinking population is exactly as invisible to a bare non-empty check as an empty
     // one would be to no check at all: naming today's real count catches a tool quietly
     // dropped from tools/list, not only a tool added.
+    //
+    // #421: this said 14 while the server served 20, so six tools could be dropped and the floor
+    // would stay green -- the precise regression the comment above claims it catches. Measured:
+    // 14 WAS the real count when the floor was written (24bb6c5, #345), so this is drift and not
+    // a number taken from the wrong list.
+    //
+    // The history says what KIND of failure it is, and D measured it: the floor and all six tools
+    // that overtook it are dated 2026-08-25 -- resolve_contract (1c115b1), memory_status (e01cb5a),
+    // present (9746bd1), compile_context (846bbf4), memory_propose (508038f), accounting (a9e3a39).
+    // Set the same day, passed six times the same day. A number taken from the wrong list is a
+    // mistake made once; a number that was correct and was passed six times is missing MAINTENANCE.
+    //
+    // So the rule beside it needs BOTH directions, and the second is the load-bearing one here.
+    // The scan floors of #368/#369 carry the first: **lower this only in the same commit as the
+    // removal that caused it, and name the removed tool.** This floor rises, so it also carries:
+    // **RAISE THIS IN THE SAME COMMIT AS THE ADDITION, AND NAME THE TOOL THAT ARRIVED.** A floor
+    // pinned to a count decays by construction unless something moves it, and a rule that only
+    // moves it downward catches half the ways it goes stale.
+    //
+    // This floor stays a floor and is deliberately NOT turned into an exact set:
+    // `mcp_stdio.rs::tools_list_names_exactly_the_twenty_tools_with_closed_schemas` already pins
+    // the exact list, in order. That test is the one that says WHICH tool went missing; a second
+    // exact list here would duplicate an ORACLE rather than a mechanism, and two copies of an
+    // oracle disagree in silence.
     assert!(
-        population.len() >= 14,
-        "expected at least 14 tools (today's real count); got {}: {population:?}",
+        population.len() >= 20,
+        "expected at least 20 tools (today's real count); got {}: {population:?}",
         population.len()
     );
 

@@ -36,23 +36,71 @@ use serde_json::{Value, json};
 /// direction: it walks the REAL `development` subtree and refuses any leaf this list does not
 /// name, so the two loops together are what make this list actually closed rather than merely
 /// looking closed with one entry in it.
-const DEVELOPMENT_OPERATION_FAMILIES: &[&str] = &["resolve-contract"];
+const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[FamilySurfaces {
+    cli: "resolve-contract",
+    mcp: "resolve_contract",
+    http_method: "POST",
+    // "resolve-contract" -> "/v1/development/contract": the CLI/MCP names the ACTION ("resolve"),
+    // the HTTP path names the RESOURCE it acts on ("contract"), under the REST convention this
+    // codebase already uses elsewhere (`/v1/executions/{id}/start`, not `/v1/start-execution`).
+    http_probe_path: "/v1/development/contract",
+}];
 
-fn to_mcp_tool_name(kebab: &str) -> String {
-    kebab.replace('-', "_")
-}
-
-fn to_http_path(kebab: &str) -> String {
-    // "resolve-contract" -> "contract": the CLI/MCP names the ACTION ("resolve"), the HTTP path
-    // names the RESOURCE it acts on ("contract") under the existing REST convention this
-    // codebase already uses for its other routes (`/v1/executions/{id}/start`, not
-    // `/v1/start-execution`). Only correct for a two-word "verb-noun" family name today; the
-    // day a family needs a different split, this function is where that decision gets written
-    // down, not re-derived per call site.
-    kebab
-        .split_once('-')
-        .map_or(kebab, |(_, noun)| noun)
-        .to_owned()
+/// Where one operation family lives on each of the three surfaces.
+///
+/// **These were derived from the family's own name until this struct existed, and that stopped
+/// working at the second family.** The rule was `"verb-noun"` -> drop the verb, and it carried a
+/// SEMANTIC decision — which word names the resource — inside a lexical split. It is correct for
+/// `resolve-contract` and wrong for a `noun-verb` family, wrong for any family whose route is not
+/// `POST`, and unable to express a path parameter at all. The old `to_http_path` said as much in
+/// its own comment: *"the day a family needs a different split, this function is where that
+/// decision gets written down, not re-derived per call site."* This struct is that day, and the
+/// decision is written down per family rather than guessed from a name.
+///
+/// A rule that is only ever exercised by the one example it was written for is not a rule yet.
+struct FamilySurfaces {
+    /// The CLI subcommand under `development`, kebab-case, and the family's canonical name.
+    cli: &'static str,
+    /// The MCP tool name. Declared, not transformed from `cli`: a derived name computes the
+    /// expectation as confidently when it is wrong as when it is right, so a misnamed tool would
+    /// be reported as a MISSING one and the reader would go looking for the wrong defect.
+    ///
+    /// **Carrying it here makes half of the reverse MCP direction expressible, and the other half
+    /// is still missing — J's review of #351.** `every_real_cli_development_leaf_is_a_declared_family`
+    /// closes the reverse direction for the CLI because `development --help` enumerates exactly the
+    /// development leaves. The MCP side has no equivalent: `ToolSpec` is `{ name, description,
+    /// schema }`, and the table is flat — nothing marks a tool as belonging to this family group,
+    /// so walking it and asking "which of these should be declared here?" can only be answered by
+    /// consulting this const, which is the thing under test.
+    ///
+    /// **Recovering it from the name is not available either, and that is measured rather than
+    /// assumed:** the table already ships `status` and `wake_status`, so a family named
+    /// `memory-status` would map to `memory_status` and sit beside two existing tools whose names
+    /// no convention separates from it. A prefix rule would have to be invented, and an invented
+    /// rule with one instance is the shape this whole struct exists to replace.
+    ///
+    /// **Where the decision wakes up:** the missing half is a domain marker on `ToolSpec` itself —
+    /// one field, and the reverse loop becomes writable. It is not added here because it changes a
+    /// production table every entry must then fill in, in a file two other families are writing
+    /// this round. It belongs to whoever next edits `ToolSpec`, and this comment is the note they
+    /// should find when they do.
+    mcp: &'static str,
+    /// The HTTP method the route is registered under. Required because the probe asserts
+    /// non-405, so a family served by a different verb than the probe sends fails as loudly as
+    /// one that was never wired.
+    http_method: &'static str,
+    /// A CONCRETE path to probe, path parameters already filled in.
+    ///
+    /// Concrete rather than a template plus a value, because a template forces the prober to
+    /// invent one, and inventing it is the same class of decision the derived path was making
+    /// badly. The value need not name anything that exists: **no handler under `/v1` returns 404**
+    /// — measured across `apps/cli/src/commands/serve/`, where `NOT_FOUND` appears only in the
+    /// router's own `fallback` (`serve/mod.rs`) and in the separate HTML monitor sub-router — so a
+    /// 404 here can only mean the path matched no route. That is what makes probing a parameterised
+    /// route sound, and it is a constraint on future handlers as much as a fact about today's: a
+    /// `/v1/development` handler that answers 404 for an unknown id would make this guard unable to
+    /// tell "not wired" from "not found".
+    http_probe_path: &'static str,
 }
 
 // -------------------------------------------------------------------------------------------
@@ -314,21 +362,24 @@ fn every_declared_development_operation_family_exists_on_all_three_surfaces() {
     );
 
     for family in DEVELOPMENT_OPERATION_FAMILIES {
+        let name = family.cli;
         assert!(
-            cli_leaves.contains(&(*family).to_owned()),
-            "{family:?} is declared but `development --help` does not list it as a CLI \
+            cli_leaves.contains(&name.to_owned()),
+            "{name:?} is declared but `development --help` does not list it as a CLI \
              subcommand. Real subcommands seen: {cli_leaves:?}"
         );
 
-        let mcp_name = to_mcp_tool_name(family);
         assert!(
-            mcp_tools.contains(&mcp_name),
-            "{family:?} is declared but the real MCP tools/list has no {mcp_name:?} entry. \
-             Real tools seen: {mcp_tools:?}"
+            mcp_tools.contains(&family.mcp.to_owned()),
+            "{name:?} is declared but the real MCP tools/list has no {:?} entry. \
+             Real tools seen: {mcp_tools:?}",
+            family.mcp
         );
 
-        let http_path = format!("/v1/development/{}", to_http_path(family));
-        probe_http_route_exists(&format!("POST {http_path}"));
+        probe_http_route_exists(&format!(
+            "{} {}",
+            family.http_method, family.http_probe_path
+        ));
     }
 }
 
@@ -352,7 +403,9 @@ fn every_real_cli_development_leaf_is_a_declared_family() {
 
     for leaf in &cli_leaves {
         assert!(
-            DEVELOPMENT_OPERATION_FAMILIES.contains(&leaf.as_str()),
+            DEVELOPMENT_OPERATION_FAMILIES
+                .iter()
+                .any(|family| family.cli == leaf.as_str()),
             "{leaf:?} is a real `development` CLI subcommand that DEVELOPMENT_OPERATION_FAMILIES \
              does not name. Either it was never added to the const (this test's whole reason to \
              exist), or it is a leaf the forward test above never checked against MCP/HTTP at \

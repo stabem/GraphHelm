@@ -184,7 +184,8 @@ fn a_record_that_was_never_activated_authorizes_nothing() {
         );
         assert!(
             !record.authorizes(&also_empty),
-            "{constructor} produced a record that authorized a package by matching one empty              digest against another"
+            "{constructor} produced a record that authorized a package by matching one empty \
+             digest against another"
         );
     }
 }

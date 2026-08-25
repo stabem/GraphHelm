@@ -64,13 +64,15 @@ fn activation_refuses_a_staged_copy_whose_bytes_changed_after_verification() {
     let manifest = std::fs::read_to_string(&manifest_path).expect("read the manifest");
     assert!(
         manifest.contains(&before),
-        "HARNESS-BROKE: the manifest does not declare the digest this test replaces, so the          substitute would not validate and the refusal would come from the wrong check"
+        "HARNESS-BROKE: the manifest does not declare the digest this test replaces, so the \
+         substitute would not validate and the refusal would come from the wrong check"
     );
     std::fs::write(&manifest_path, manifest.replace(&before, &after)).expect("write the manifest");
 
     // The substitute is well-formed on its own terms.
     verify_staged(&package).expect(
-        "HARNESS-BROKE: the substituted package does not validate, so this fixture exercises the          validator rather than the verified-bytes check",
+        "HARNESS-BROKE: the substituted package does not validate, so this fixture exercises the \
+         validator rather than the verified-bytes check",
     );
 
     let second_claim = ActivationClaim::acquire(staging.path()).expect("the claim must be granted");

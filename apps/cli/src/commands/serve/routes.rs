@@ -501,7 +501,7 @@ pub(super) async fn amend_budget(
     else {
         return bad_request(
             AMEND_BUDGET_COMMAND,
-            "the request body must carry \"computedAtSequence\": an amendment the store cannot              place is refused, never guessed",
+            "the request body must carry \"computedAtSequence\": an amendment the store cannot place is refused, never guessed",
             "/computedAtSequence",
         );
     };
@@ -1217,7 +1217,7 @@ pub(super) async fn wake_lease(
         return bad_request(
             WAKE_LEASE_COMMAND,
             &format!(
-                "\"maturesInSeconds\" must be between 1 and {TEN_YEARS_SECONDS} (ten years): a                  bound of zero is not a bound, and a bound nobody will live to see is a promise                  of never wearing the shape of a date"
+                "\"maturesInSeconds\" must be between 1 and {TEN_YEARS_SECONDS} (ten years): a bound of zero is not a bound, and a bound nobody will live to see is a promise of never wearing the shape of a date"
             ),
             "/maturesInSeconds",
         );

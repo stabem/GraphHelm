@@ -91,12 +91,12 @@ const TOOLS: [ToolSpec; 14] = [
     },
     ToolSpec {
         name: "amend_budget",
-        description: "Declare how long one node may stay silent before it needs you (POST                       /v1/executions/{executionId}/amend-budget), valid from that point                       forward. Use it when `status` answers `unknown` for a node: the answer                       names this operation as its remedy. Replies with the recomputed verdict,                       so you do not have to read again to find out what changed.",
+        description: "Declare how long one node may stay silent before it needs you (POST /v1/executions/{executionId}/amend-budget), valid from that point forward. Use it when `status` answers `unknown` for a node: the answer names this operation as its remedy. Replies with the recomputed verdict, so you do not have to read again to find out what changed.",
         schema: amend_budget_schema,
     },
     ToolSpec {
         name: "wake_wait",
-        description: "Block until THIS session's armed lease rings, or until the deadline that                       lease declared. Reads GET /v1/executions/{executionId}/wake-lease                       first and takes BOTH the rendezvous and the deadline from it -- the                       caller supplies an identity, never a duration, so arming with one                       horizon and waiting on another cannot be expressed. Then it blocks                       locally; the block itself is NOT an API call, which is why this tool                       alone names the request it consults rather than the one it performs.                       Content-free by construction: the reply says THAT something happened,                       never what -- re-read the log to learn anything.",
+        description: "Block until THIS session's armed lease rings, or until the deadline that lease declared. Reads GET /v1/executions/{executionId}/wake-lease first and takes BOTH the rendezvous and the deadline from it -- the caller supplies an identity, never a duration, so arming with one horizon and waiting on another cannot be expressed. Then it blocks locally; the block itself is NOT an API call, which is why this tool alone names the request it consults rather than the one it performs. Content-free by construction: the reply says THAT something happened, never what -- re-read the log to learn anything.",
         schema: wake_wait_schema,
     },
     ToolSpec {
@@ -220,7 +220,7 @@ fn wake_arm_schema() -> serde_json::Value {
             "cursor": {"type": "integer",
                 "description": "Ring for appends AFTER this sequence; defaults to the head."},
             "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000,
-                "description": "How long quiet may last before the wait ends by itself.                                 Omit it and nothing promises to end the wait: the lease rings                                 on an append or not at all."},
+                "description": "How long quiet may last before the wait ends by itself. Omit it and nothing promises to end the wait: the lease rings on an append or not at all."},
         }),
         &["executionId", "rendezvousId"],
     )
@@ -247,7 +247,7 @@ fn amend_budget_schema() -> serde_json::Value {
             "seconds": {"type": "integer", "minimum": 1,
                 "description": "The bound YOU decide. Nothing here suggests one."},
             "computedAtSequence": {"type": "integer", "minimum": 0,
-                "description": "The frontier the verdict you are answering was computed at.                                 A stale amendment is refused with the current one."},
+                "description": "The frontier the verdict you are answering was computed at. A stale amendment is refused with the current one."},
         }),
         &["executionId", "node", "seconds", "computedAtSequence"],
     )
@@ -315,12 +315,12 @@ fn wake_wait_tool(api: &ApiClient, nonce: &str, arguments: &serde_json::Value) -
     };
     let Some(rendezvous) = lease["rendezvousId"].as_str().map(str::to_owned) else {
         return refused(
-            "refused: this session holds no live lease -- a session waits only on its own              (05g sleeper-only)",
+            "refused: this session holds no live lease -- a session waits only on its own (05g sleeper-only)",
         );
     };
     let Some(matures_at) = lease["maturesAt"].as_str() else {
         return refused(
-            "refused: this session's lease declared no bound, so nothing here promises to end              the wait -- arm again with maturesInSeconds",
+            "refused: this session's lease declared no bound, so nothing here promises to end the wait -- arm again with maturesInSeconds",
         );
     };
     let Ok(matures_at) = chrono::DateTime::parse_from_rfc3339(matures_at) else {

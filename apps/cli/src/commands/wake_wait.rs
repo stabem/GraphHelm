@@ -353,7 +353,7 @@ fn read_own_lease(
     let Some(lease) = lease else {
         return Err(refuse(
             &format!(
-                "{session_id} has no live lease on this execution: a waiter waits on its OWN                  lease, never on whichever one it finds"
+                "{session_id} has no live lease on this execution: a waiter waits on its OWN lease, never on whichever one it finds"
             ),
             "/sessionId",
         ));
@@ -362,7 +362,7 @@ fn read_own_lease(
     let Some(matures_at) = lease.matures_at else {
         return Err(refuse(
             &format!(
-                "{session_id} armed no bound, so nothing here promises to end the wait: arm                  again with maturesInSeconds"
+                "{session_id} armed no bound, so nothing here promises to end the wait: arm again with maturesInSeconds"
             ),
             "/sessionId",
         ));

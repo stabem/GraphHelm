@@ -1751,8 +1751,32 @@ impl LocalEventRepository {
                 if !is_digest_json_name(name) {
                     return Err(EventRepositoryError::UnsupportedFormat);
                 }
-                let mut file =
-                    open_child_file_for_delete(&self.blobs_handle, &self.root.join("blobs"), name)?;
+                // IN FLIGHT IS NOT ABANDONED. Reconcile exists to remove files nobody owns any
+                // more; a file another handle holds open is being written right now, and
+                // deleting it would be the bug this skip avoids. So contention here means "not
+                // plannable in this cycle" and counts as CLEAN — the fast path stays fast.
+                //
+                // Counting it as DIRTY instead was the measured alternative and it is a cliff:
+                // `is_noop()` would go false and every read open with an active writer would
+                // upgrade to the exclusive path (#311 measured opens fall from 3000-in-8.6s to
+                // 1066-in-540s under that kind of serialisation).
+                //
+                // THE PRICE, and its boundary: `is_digest_json_name` above runs BEFORE this
+                // open, so a foreign NAME still refuses every time. Only this file's CONTENT
+                // validation — and its share of `metadata_bytes` — waits for a cycle in which
+                // nobody holds it.
+                //
+                // AND THE DEFERRAL IS SILENT AND UNBOUNDED. A file held FOREVER — a handle leaked
+                // by a dead process, a scanner that never lets go — is never swept and never
+                // reported: from outside, "deferred" and "discarded" are the same observation.
+                // Nothing here counts skips or ages them, deliberately, because the alternative
+                // is the cliff above. If that case ever needs to be visible, it needs a counter
+                // or a report, NOT a change to this decision. (Named by K reviewing #340.)
+                let Some(mut file) =
+                    open_child_file_for_delete(&self.blobs_handle, &self.root.join("blobs"), name)?
+                else {
+                    return Ok(());
+                };
                 metadata_bytes = metadata_bytes
                     .checked_add(file.metadata()?.len())
                     .ok_or(EventRepositoryError::LimitExceeded)?;
@@ -1789,8 +1813,14 @@ impl LocalEventRepository {
                 if !is_owned_temp_name(name) {
                     return Err(EventRepositoryError::UnsupportedFormat);
                 }
-                let file =
-                    open_child_file_for_delete(&self.temp_handle, &self.root.join(".tmp"), name)?;
+                // Same rule as `blobs/` above, and it matters more here: a temp another handle
+                // holds is almost always a writer mid-publish, which is the one file in the
+                // repository that must NOT be swept.
+                let Some(file) =
+                    open_child_file_for_delete(&self.temp_handle, &self.root.join(".tmp"), name)?
+                else {
+                    return Ok(());
+                };
                 metadata_bytes = metadata_bytes
                     .checked_add(file.metadata()?.len())
                     .ok_or(EventRepositoryError::LimitExceeded)?;
@@ -3173,36 +3203,54 @@ fn open_child_file(
     Ok(file)
 }
 
+/// `Ok(None)` means the file is held open by someone else and cannot be planned for deletion in
+/// this cycle. Unix has no sharing-violation failure mode, so this arm never produces it.
 #[cfg(unix)]
 fn open_child_file_for_delete(
     directory: &File,
     path: &Path,
     name: &str,
-) -> Result<File, EventRepositoryError> {
-    open_child_file(directory, path, name, false, false)
+) -> Result<Option<File>, EventRepositoryError> {
+    open_child_file(directory, path, name, false, false).map(Some)
 }
 
+/// `Ok(None)` means another handle holds the file — see the call sites in `plan_reconcile` for
+/// what the scan does with that, and why it is not an error.
 #[cfg(windows)]
 fn open_child_file_for_delete(
     _directory: &File,
     path: &Path,
     name: &str,
-) -> Result<File, EventRepositoryError> {
+) -> Result<Option<File>, EventRepositoryError> {
     use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Foundation::GENERIC_READ;
+    use windows_sys::Win32::Foundation::{ERROR_SHARING_VIOLATION, GENERIC_READ};
     use windows_sys::Win32::Storage::FileSystem::{
         DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
     validate_child_name(name)?;
-    let file = std::fs::OpenOptions::new()
+    let opened = std::fs::OpenOptions::new()
         .read(true)
         .access_mode(GENERIC_READ | DELETE)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path.join(name))
-        .map_err(|_| EventRepositoryError::Integrity)?;
+        .open(path.join(name));
+    let file = match opened {
+        Ok(file) => file,
+        // Requesting `DELETE` is refused while ANY existing handle was opened without
+        // `FILE_SHARE_DELETE` — the crate's own publish path holds such a handle, and so does
+        // any antivirus, backup agent or editor on the machine. That is contention, and the
+        // caller decides what it means; it is emphatically not a verdict about the bytes.
+        Err(error) if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION as i32) => {
+            return Ok(None);
+        }
+        // Every other failure stays an error, but a STORAGE one: no bytes were read here, so
+        // nothing could disagree with what it should be, which is the only thing `Integrity`
+        // is entitled to mean. Reporting a failed open as an integrity failure is what made
+        // ordinary contention read back to callers as `GHE005_INTEGRITY_FAILURE` (#311).
+        Err(_) => return Err(EventRepositoryError::Storage),
+    };
     validate_opened_regular(&file)?;
-    Ok(file)
+    Ok(Some(file))
 }
 
 #[cfg(unix)]
@@ -3882,7 +3930,9 @@ mod limit_tests {
         std::fs::create_dir(&path).unwrap();
         let directory_handle = open_directory(&path).unwrap();
         std::fs::write(path.join("orphan.json"), b"validated").unwrap();
-        let planned = open_child_file_for_delete(&directory_handle, &path, "orphan.json").unwrap();
+        let planned = open_child_file_for_delete(&directory_handle, &path, "orphan.json")
+            .unwrap()
+            .expect("nothing else holds this fixture file, so the plan gets its handle");
         let displaced = path.join("displaced.json");
         match std::fs::rename(path.join("orphan.json"), &displaced) {
             Ok(()) => std::fs::write(path.join("orphan.json"), b"replacement").unwrap(),
@@ -3937,7 +3987,9 @@ mod limit_tests {
         std::fs::create_dir(&path).unwrap();
         std::fs::write(path.join("orphan.json"), b"validated").unwrap();
         let directory_handle = open_directory(&path).unwrap();
-        let retained = open_child_file_for_delete(&directory_handle, &path, "orphan.json").unwrap();
+        let retained = open_child_file_for_delete(&directory_handle, &path, "orphan.json")
+            .unwrap()
+            .expect("nothing else holds this fixture file, so the plan gets its handle");
         remove_reconciled_file(&directory_handle, &path, "orphan.json", retained).unwrap();
         assert_eq!(
             std::fs::read(path.join("orphan.json")).unwrap(),
@@ -5168,8 +5220,9 @@ mod limit_tests {
         std::fs::create_dir(&path).unwrap();
         let directory_handle = open_directory(&path).unwrap();
         std::fs::write(path.join("active-safe.tmp"), b"validated").unwrap();
-        let retained =
-            open_child_file_for_delete(&directory_handle, &path, "active-safe.tmp").unwrap();
+        let retained = open_child_file_for_delete(&directory_handle, &path, "active-safe.tmp")
+            .unwrap()
+            .expect("nothing else holds this fixture file, so the plan gets its handle");
         remove_planned_file(&directory_handle, &path, "active-safe.tmp", retained).unwrap();
         assert_eq!(
             std::fs::read(path.join("active-safe.tmp")).unwrap(),

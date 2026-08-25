@@ -2,8 +2,10 @@ const MIGRATION: &str = include_str!("../migrations/0001_event_evidence.sql");
 const SCOPE: &str = include_str!("../src/scope.rs");
 const JOURNAL: &str = include_str!("../src/journal.rs");
 const INTEGRITY: &str = include_str!("../src/integrity.rs");
-const BACKUP: &str = include_str!("../src/backup.rs");
-const RETENTION: &str = include_str!("../src/retention.rs");
+// `BACKUP` and `RETENTION` were here, and they are gone rather than silenced: the collation rule
+// was their only reader, and it now walks `src/` instead of naming files. A const kept alive with
+// an `#[allow(dead_code)]` would have left this file still LOOKING like it hand-lists six sources
+// while only four remain load-bearing -- and the next reader would count the list, not the uses.
 
 /// Text columns whose ordering must never depend on the database's default collation.
 ///
@@ -26,14 +28,77 @@ const COLLATION_SENSITIVE_ORDER_KEYS: &[&str] = &[
     "grantee_name",
 ];
 
+/// Every `.rs` file under `src/`, walked.
+///
+/// **Only this one invariant takes a walk, and the reason is which question it asks.** Eight of the
+/// nine tests in this file name a specific file because they assert the shape of specific code --
+/// that `scope.rs` sets three transaction-local flags, that `journal.rs` resolves idempotency
+/// before taking the stream lock, that `integrity.rs` verifies a checkpoint before inserting it.
+/// Pointing those at another file asserts nothing: there is no counterpart in it to be wrong.
+///
+/// The collation rule is different in kind. It says **any** SQL `ORDER BY` over a
+/// collation-sensitive column must pin `COLLATE "C"` -- a property of every ordering this adapter
+/// writes, wherever it writes it. A hand-list is the wrong population for that question, and it was
+/// already short: `projection.rs` carries two `ORDER BY` clauses and was not among the four named.
+/// Both sort by `last_sequence`, which is numeric and not in the list below, so this lands green --
+/// but `projection_name` IS collation-sensitive, and `projection.rs` is precisely the file that
+/// would one day order by it.
+fn sql_sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = Vec::new();
+    walk(&root, &mut found);
+    found.sort();
+    found
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            (name, text)
+        })
+        .collect()
+}
+
+/// The walk must reach the whole adapter, and must still reach the file the rule was written for.
+///
+/// The floor is the REAL count rather than a round number under it: a loose floor tolerates exactly
+/// the silent shrinkage this guard exists to stop. **Lowering it is legitimate only alongside a
+/// NAMED removal in the same change.**
+#[test]
+fn the_collation_scan_covers_the_whole_adapter() {
+    let found = sql_sources();
+    assert!(
+        found.len() >= 11,
+        "HARNESS-BROKE: the walk found {} source files; this adapter has 11. If one was deleted, \
+         lower this floor in the same change that removes it and name the file here",
+        found.len()
+    );
+    for landmark in ["backup.rs", "projection.rs"] {
+        assert!(
+            found.iter().any(|(name, _)| name == landmark),
+            "HARNESS-BROKE: {landmark} is known to exist and is absent from the walk"
+        );
+    }
+}
+
 #[test]
 fn text_orderings_pin_the_c_collation() {
-    for (name, source) in [
-        ("backup.rs", BACKUP),
-        ("retention.rs", RETENTION),
-        ("integrity.rs", INTEGRITY),
-        ("journal.rs", JOURNAL),
-    ] {
+    for (name, source) in sql_sources() {
         for (offset, _) in source.match_indices("ORDER BY ") {
             // The SQL lives inside both escaped and raw Rust string literals, so a quote is not a
             // reliable terminator. Bound the clause by its source line instead.

@@ -52,7 +52,17 @@ impl EvidenceGate<Note> for RejectsEmptyNotes {
     }
 }
 
-fn empty_note_suite() -> Vec<Specimen<Note, NoteAxis>> {
+/// A suite holding ONE specimen: a note whose text is empty.
+///
+/// Renamed from `empty_note_suite`, which read as "an empty suite of notes" -- the exact thing
+/// `certify` now refuses with `RefusalCause::EmptySuite`. It is the opposite: the suite has one
+/// member, and it is that member's TEXT that is empty.
+///
+/// The old name cost something real. While checking whether any test depended on `certify`
+/// accepting an empty suite, this was the one name that could have inverted the answer, and it
+/// had to be opened and read to rule out. A name that has to be disproved is a name that will
+/// mislead the reader who does not think to check.
+fn suite_with_one_empty_note() -> Vec<Specimen<Note, NoteAxis>> {
     vec![Specimen {
         id: "empty-note".to_owned(),
         axis: NoteAxis::Empty,
@@ -66,8 +76,8 @@ fn empty_note_suite() -> Vec<Specimen<Note, NoteAxis>> {
 /// `Deliverable` instead of an associated evidence type.
 #[test]
 fn a_gate_can_be_certified_over_evidence_that_is_not_a_deliverable() {
-    let certification =
-        certify(&RejectsEmptyNotes, &empty_note_suite()).expect("the gate rejects the specimen");
+    let certification = certify(&RejectsEmptyNotes, &suite_with_one_empty_note())
+        .expect("the gate rejects the specimen");
 
     assert_eq!(certification.gate_id, "gate/rejects-empty-notes");
     assert_eq!(certification.specimens, 1);
@@ -92,7 +102,7 @@ fn one_specimen_slipping_through_still_refuses_the_whole_certification() {
         }
     }
 
-    let refusal = certify(&PassesEverything, &empty_note_suite())
+    let refusal = certify(&PassesEverything, &suite_with_one_empty_note())
         .expect_err("a gate fooled once is not certified");
 
     assert_eq!(

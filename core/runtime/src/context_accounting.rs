@@ -5,10 +5,18 @@
 //! #222's criterion names nine things that must be counted — orientation, zero results, pages,
 //! retries, fallbacks, summaries, compiled input, output, and formatting — plus cold and amortized
 //! index cost reported separately. **This module implements the index pair and the receipt
-//! mechanism, and nothing for the other eight.** Measured rather than estimated: a
-//! case-insensitive sweep of this file for each category name returns zero for all eight, against
-//! fifteen hits for `index` and eleven for `amortiz` as the live positive control. The two hits for
-//! `output` and three for `format` are the word `format!`, not a category.
+//! mechanism, and nothing for the other eight.** Measured rather than estimated, **at `591dac7`,
+//! before this paragraph existed**: a case-insensitive sweep of this file for each category name
+//! returned zero for all eight, against **three** hits for `index` as the live positive control.
+//!
+//! **The base is named because the sentence otherwise falsifies itself**, and this one did. Naming
+//! the eight categories puts them in this file: each returns one hit today, and the claim of zero
+//! has been false since the commit that made it. Re-measured while fixing that (#428): the counts
+//! it cited for the positive control — fifteen for `index`, eleven for `amortiz` — were true at no
+//! commit at all. At `591dac7` they are three and zero; at `0754cda`, where this paragraph landed,
+//! seventeen and thirteen. They appear to be a draft's numbers, kept while the prose around them
+//! grew. `amortiz` is dropped from the control rather than re-cited: at the named base it is zero,
+//! which cannot serve as evidence that the sweep reads anything.
 //!
 //! It is written here because an undeclared gap and an implemented category read identically from
 //! outside: both are silence. A reader summing this receipt would get a number that looks total.

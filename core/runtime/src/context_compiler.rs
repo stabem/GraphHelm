@@ -12,10 +12,17 @@
 //! — capsule, version, digest — and `verify_delta_base` checks that such a record matches the base
 //! capsule offered. Nothing here applies a delta and yields a capsule.
 //!
-//! Measured rather than estimated, and with the control a zero needs: `apply_delta`,
-//! `compose_delta`, `expand_capsule` and `DeltaCapsule` return **zero files** across
+//! Measured rather than estimated, **at `13286b8`, before this paragraph existed**: `apply_delta`,
+//! `compose_delta`, `expand_capsule` and `DeltaCapsule` returned **zero files** across
 //! `core/runtime`, against **eight** hits for `Delta` in this file as the live positive control. The
-//! instrument sees delta vocabulary; what is absent is delta APPLICATION.
+//! instrument saw delta vocabulary; what was absent is delta APPLICATION.
+//!
+//! **The base is named because the sentence otherwise falsifies itself.** Naming those four symbols
+//! puts them in this file, so a present-tense "returns zero" becomes false the moment it is
+//! written — measured: each now returns one file, this one. A named base stays true forever and
+//! needs no exclusion clause; "zero outside this paragraph" would break again the day someone cites
+//! the names in a test. The guard in `tests/declared_gap_delta_application.rs` matches DECLARATION
+//! forms for the same reason.
 //!
 //! **So "retains provenance" over more than one hop is unanswered rather than unguarded.** A
 //! delta-of-a-delta is not merely untested here — it is not constructible, because a delta is not a

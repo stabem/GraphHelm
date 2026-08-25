@@ -12,6 +12,7 @@
 pub mod subject;
 
 pub mod jpd;
+pub mod retry_lineage;
 
 use std::collections::BTreeSet;
 

@@ -32,7 +32,7 @@ fn the_suite_holds_twelve_specimens_one_per_mode() {
     assert_eq!(
         bred.len(),
         12,
-        "the suite is TWELVE specimens: the original ten plus the interaction-cost pair \n         (M08). The count is pinned so growing the suite is a deliberate edit, never a drift"
+        "the suite is TWELVE specimens: the original ten plus the interaction-cost pair \n(M08). The count is pinned so growing the suite is a deliberate edit, never a drift"
     );
     let modes: BTreeSet<_> = bred.iter().map(|specimen| specimen.axis).collect();
     assert_eq!(modes.len(), 12, "one specimen per uselessness mode");
@@ -107,7 +107,7 @@ fn the_correctness_battery_itself_fails_certification_on_all_twelve() {
     assert_eq!(
         refusal.fooled_by.len(),
         12,
-        "every specimen is green by correctness measures, so all TWELVE fool the battery — \n         the two interaction-cost specimens included: one answers in six calls, the other \n         answers nothing in one, and correctness cannot see either"
+        "every specimen is green by correctness measures, so all TWELVE fool the battery — \nthe two interaction-cost specimens included: one answers in six calls, the other answers nothing in one, and correctness cannot see either"
     );
 }
 

@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 19] = [
+const TOOLS: [ToolSpec; 20] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -144,6 +144,13 @@ const TOOLS: [ToolSpec; 19] = [
                       persists a candidate, so an id would name what cannot be fetched.",
         schema: memory_propose_schema,
     },
+    ToolSpec {
+        name: "accounting",
+        description: "Report a context-accounting receipt (GET /v1/development/accounting). \
+                      #223 existence-slice: no execution id yet, and the one field reports as \
+                      unavailable rather than zero -- nothing was measured.",
+        schema: accounting_schema,
+    },
 ];
 
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -199,6 +206,12 @@ fn compile_context_schema() -> serde_json::Value {
 fn memory_propose_schema() -> serde_json::Value {
     // No fields yet: the existence-slice proposes fixed content under a fixed scope. Content and
     // scope become real arguments when behavioral parity wires this to caller input.
+    object_schema(serde_json::json!({}), &[])
+}
+
+fn accounting_schema() -> serde_json::Value {
+    // No fields yet: there is no execution to name until the existence-slice grows an id
+    // argument, which is behavioral-parity work, not this guard's job.
     object_schema(serde_json::json!({}), &[])
 }
 
@@ -747,6 +760,14 @@ pub(crate) fn call(
             Some(&serde_json::json!({})),
             Some(&key),
             if_match,
+        )),
+        // A READ: GET, no body, no idempotency key -- matching status/memory_status above.
+        "accounting" => Ok(api.request(
+            "GET",
+            &url::segment_path(&["v1", "development", "accounting"]),
+            None,
+            None,
+            None,
         )),
         _ => unreachable!("the closed-list check above already refused unknown names"),
     };

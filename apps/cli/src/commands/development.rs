@@ -176,6 +176,65 @@ pub fn run_memory_propose() -> Outcome {
     Outcome::success("development.memory-propose", verdict)
 }
 
+/// Report a context-accounting receipt, over the CLI surface.
+///
+/// **Existence-slice, not the full feature**, matching its siblings: there is no execution to
+/// account for yet, because there is no input argument yet -- wiring one to a real execution's
+/// measured costs is behavioral-parity work.
+///
+/// **The one field is marked `unavailable`, not `measured(0, ...)`, and that is the whole point
+/// of `CostField`'s three-state design (`core/runtime/src/context_accounting.rs`).** Nothing
+/// watched this call spend any tokens, because it did not run against a real execution -- and a
+/// module whose entire acceptance criterion is "an unmeasured cost must never render as zero"
+/// cannot report zero here without contradicting its own reason to exist. `unavailable` is the
+/// field this existence-slice can HONESTLY report; `measured` and `derived` both require an
+/// observation this call did not make.
+///
+/// **No identifier, and that is measured rather than assumed**, the same way `run_memory_status`
+/// and `run_memory_propose` measured theirs: `AccountingReceipt` is a plain builder value
+/// (`core/runtime/src/context_accounting.rs`), never written to the event log or any other store.
+/// `git grep AccountingReceipt` across the WHOLE workspace finds it in exactly two places besides
+/// its own module and this file: `tools/development-benchmark`'s `arm_cost`/`compare_cost`, which
+/// take a receipt already built by the caller and read it in memory (never store or serialise
+/// it) -- a second in-memory consumer, not a second producer or a store. An id would name a
+/// receipt no later call could resolve.
+#[must_use]
+pub fn run_accounting() -> Outcome {
+    let receipt = graphhelm_runtime::context_accounting::AccountingReceipt::new()
+        .with_field(
+            "total_tokens",
+            graphhelm_runtime::context_accounting::CostField::unavailable(
+                "no execution to account for yet - #223 existence-slice",
+            ),
+        )
+        .expect(
+            "`unavailable` never names the accounting module as its own observer - only a \
+                 `measured` field claiming that producer can fail `with_field`",
+        );
+
+    let field = receipt
+        .field("total_tokens")
+        .expect("the field was just added under this exact name");
+
+    Outcome::success(
+        "development.accounting",
+        serde_json::json!({
+            "totalTokens": {
+                "observed": field.observed(),
+                "measured": field.is_measured(),
+                // GAP, upstream and out of this PR's scope (N's review of #380): this is
+                // `{:?}` of a Debug-only enum on the wire. Nothing pins the variant spelling --
+                // a rename of e.g. `Unavailable` changes this public response silently, with
+                // every test here still green. The fix belongs in
+                // `core/runtime/src/context_accounting.rs` (a stable wire name for
+                // `CostProvenance`, the same shape `DevelopmentRefusalCode::wire_name()` already
+                // gives its own enum), tracked separately.
+                "provenance": format!("{:?}", field.provenance()),
+            },
+        }),
+    )
+}
+
 /// Maps a `DevelopmentRefusalCode` to a distinct CLI exit code.
 ///
 /// Injective by construction: base offset (20, clear of the existing 0/2/3/4 success/domain/

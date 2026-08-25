@@ -104,6 +104,14 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
         // noun that can never be fetched. A route that cannot answer GET is not a resource.
         http_probe_path: "/v1/development/memory",
     },
+    FamilySurfaces {
+        cli: "accounting",
+        mcp: "accounting",
+        http_method: "GET",
+        // "accounting" has no verb-noun split at all -- same shape as "present" above, the whole
+        // name is the segment because there is no separate action word.
+        http_probe_path: "/v1/development/accounting",
+    },
 ];
 
 /// The tools that are deliberately NOT development operations -- the exceptions that make

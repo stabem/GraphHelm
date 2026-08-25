@@ -1202,6 +1202,14 @@ pub(super) async fn development_compile_context() -> Response {
     respond_outcome(crate::commands::development::run_compile_context())
 }
 
+/// `GET /v1/development/accounting`: a context-accounting receipt over HTTP. #223
+/// existence-slice — no execution id is read yet, matching the CLI and MCP surfaces (see
+/// `crate::commands::development::run_accounting`'s own doc for why the one field reports as
+/// unavailable rather than zero).
+pub(super) async fn development_accounting() -> Response {
+    respond_outcome(crate::commands::development::run_accounting())
+}
+
 // -------------------------------------------------------------------------------------------
 // Milestone 05g Task 3: the wake lease's HTTP surface — the SLEEPER-ONLY half. POST arms the
 // caller's own lease (idempotent, the three headers); GET reads it. No route rings: the ring

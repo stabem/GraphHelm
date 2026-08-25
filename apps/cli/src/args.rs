@@ -96,6 +96,8 @@ pub enum DevelopmentCommand {
     /// Propose content for governed memory and report the admission verdict (#220's admission,
     /// exposed here).
     MemoryPropose,
+    /// Report a context-accounting receipt (#222/#273's accounting types, exposed here).
+    Accounting,
 }
 
 #[derive(Debug, Args)]

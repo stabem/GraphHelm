@@ -320,6 +320,10 @@ fn build_router(state: ServeState) -> Router {
             "/v1/development/context",
             post(routes::development_compile_context),
         )
+        .route(
+            "/v1/development/accounting",
+            get(routes::development_accounting),
+        )
         .fallback(not_found)
         // `.layer` (not `.route_layer`) wraps the fallback too: an unauthenticated request to a
         // path with no route must still be refused 401, not fall through to a 404 that would

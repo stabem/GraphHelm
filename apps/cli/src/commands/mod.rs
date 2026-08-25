@@ -103,6 +103,7 @@ pub fn run(command: TopLevel) -> Outcome {
             DevelopmentCommand::Present => development::run_present(),
             DevelopmentCommand::MemoryPropose => development::run_memory_propose(),
             DevelopmentCommand::CompileContext => development::run_compile_context(),
+            DevelopmentCommand::Accounting => development::run_accounting(),
         },
         TopLevel::Events(events) => match events.command {
             EventsCommand::Verify {

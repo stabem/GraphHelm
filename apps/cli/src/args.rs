@@ -561,18 +561,27 @@ pub enum EventsCommand {
         #[arg(long = "page-size")]
         page_size: Option<u32>,
     },
-    /// Writes a new encrypted backup archive. An existing target is never overwritten.
+    /// Writes a new backup archive. An existing target is never overwritten.
+    ///
+    /// `--repository` backs up a local filesystem store; `--config` backs up the configured
+    /// Postgres database. They are mutually exclusive.
     Backup {
+        #[arg(long)]
+        repository: Option<PathBuf>,
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
         output: PathBuf,
     },
-    /// Restores an authenticated archive into the configured, already-empty target database.
+    /// Restores an archive into an empty target.
     ///
-    /// The destination is the database named by the configuration's `adminUrl`. The operator
-    /// refuses to proceed unless that database is fresh, so there is no target flag to pass.
+    /// With `--config`, the destination is the database named by the configuration's `adminUrl`,
+    /// which is why no target flag is taken in that mode: the operator refuses to proceed unless
+    /// that database is fresh. With `--repository`, the destination IS that path — a local store
+    /// has no configuration naming it, so the flag that selects the mode also names the target.
     Restore {
+        #[arg(long)]
+        repository: Option<PathBuf>,
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]

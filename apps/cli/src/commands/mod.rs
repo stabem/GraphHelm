@@ -144,14 +144,24 @@ pub fn run(command: TopLevel) -> Outcome {
                 generation,
                 page_size,
             }),
-            EventsCommand::Backup { config, output } => {
+            EventsCommand::Backup {
+                repository,
+                config,
+                output,
+            } => {
                 events::backup::run(events::backup::Request {
+                    repository: repository.as_deref(),
                     config: config.as_deref(),
                     output: &output,
                 })
             }
-            EventsCommand::Restore { config, archive } => {
+            EventsCommand::Restore {
+                repository,
+                config,
+                archive,
+            } => {
                 events::restore::run(events::restore::Request {
+                    repository: repository.as_deref(),
                     config: config.as_deref(),
                     archive: &archive,
                 })

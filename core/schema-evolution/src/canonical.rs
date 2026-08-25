@@ -69,6 +69,10 @@ pub fn canonical_json(value: &Value) -> Result<Vec<u8>, EvolutionError> {
     serde_json::to_vec(&canonical).map_err(EvolutionError::CanonicalSerialization)
 }
 
+/// Computed over the canonical structure AFTER parsing (#359, measured by F): the source file's
+/// own EOL convention and whitespace never reach this function, since `value` is already a
+/// parsed `Value` by the time it arrives here -- only key order and formatting inside the
+/// document itself could move the digest, and `canonical_json` fixes both.
 pub fn schema_digest(value: &Value) -> Result<SchemaDigest, EvolutionError> {
     let canonical = canonical_json(value)?;
     Ok(SchemaDigest(format!(

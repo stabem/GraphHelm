@@ -28,6 +28,18 @@ fn sources() -> Vec<(String, String)> {
             }
         }
     }
+    // ONE ROOT, deliberately, and this is the arming site rather than the firing site -- the
+    // warning belongs where the edit would be made. The house convention (#403) is to walk `src/`
+    // AND `tests/`, and several crates here do. **Do not widen this one.**
+    //
+    // This test's own source contains every form in `APPLICATION_SURFACE`, as string literals.
+    // Adding `tests/` puts the guard inside its own population: it finds ITSELF, and the subject
+    // check reports a declared gap that has not closed.
+    //
+    // Widening it fails LOUD rather than silently, which is why this is a courtesy and not a
+    // guard: the control below names the carrier file, so a two-root walk hits `HARNESS-BROKE`
+    // before the subject is ever reached. Measured, both before and after that control was
+    // tightened. **This comment does not substitute for the control; it saves someone the trip.**
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found = Vec::new();
     walk(&root, &mut found);

@@ -503,14 +503,23 @@ fn spawn_wake_wait(events: &Path, execution: &str, session: &str) -> Child {
 /// failed downstream. Reading after `wait` cannot deadlock here: the sidecar's stderr is
 /// at most a refusal line, far below the pipe buffer.
 #[cfg(windows)]
-fn reap_with_stderr(child: &mut Child) -> (std::process::ExitStatus, String) {
+fn reap_with_diagnosis(child: &mut Child) -> (std::process::ExitStatus, String) {
     let status = child.wait().unwrap();
+    let mut reported = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        use std::io::Read as _;
+        let _ = pipe.read_to_string(&mut reported);
+    }
     let mut stderr = String::new();
     if let Some(mut pipe) = child.stderr.take() {
         use std::io::Read as _;
         let _ = pipe.read_to_string(&mut stderr);
     }
-    (status, stderr)
+    if !stderr.trim().is_empty() {
+        reported.push_str(" | stderr: ");
+        reported.push_str(stderr.trim());
+    }
+    (status, reported)
 }
 
 /// Rings the sidecar's rendezvous with the given bytes (a HOSTILE ringer may write more
@@ -764,14 +773,13 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
         })
     }) {
         // A dead child can never create the pipe: report ITS diagnosis immediately instead
-        // of burning the 10 s bound and blaming the pipe. Exit 2 (refusal) lives on stderr.
+        // of burning the 10 s bound and blaming the pipe. The diagnosis arrives on STDOUT, not
+        // stderr -- see `reported_refusal`, which measured this rather than assuming it.
         if let Some(status) = sidecar.try_wait().unwrap() {
-            let mut stderr = String::new();
-            if let Some(mut pipe) = sidecar.stderr.take() {
-                use std::io::Read as _;
-                let _ = pipe.read_to_string(&mut stderr);
-            }
-            panic!("the sidecar died before creating its rendezvous: {status:?}: {stderr}");
+            panic!(
+                "the sidecar is no longer running and its rendezvous is not present: {status:?}{}",
+                reported_refusal(&mut sidecar)
+            );
         }
         assert!(
             std::time::Instant::now() < appeared,
@@ -796,10 +804,10 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
 
     // The ring: the sidecar exits 0, promptly.
     let started = std::time::Instant::now();
-    let (sidecar_end, sidecar_stderr) = reap_with_stderr(&mut sidecar);
+    let (sidecar_end, sidecar_diagnosis) = reap_with_diagnosis(&mut sidecar);
     assert!(
         sidecar_end.success(),
-        "the sidecar must exit 0 on the ring: {sidecar_end:?}: {sidecar_stderr}"
+        "the sidecar must exit 0 on the ring: {sidecar_end:?}: {sidecar_diagnosis}"
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(10),
@@ -1852,11 +1860,35 @@ fn arm_decoy(events: &Path, execution: &str, rendezvous_id: &str) {
     store.append_atomic(&request).unwrap();
 }
 
+/// The sidecar's own diagnosis, as a suffix that disappears when there is not one.
+///
+/// It arrives on STDOUT as the refusal envelope, NOT on stderr. Measured, not assumed: `wake-wait`
+/// on an execution with no live lease exits 2, writes **0 bytes** to stderr, and puts
+/// `GHCLI017_WAKE_INVALID` on stdout. Both waits in this file previously read stderr and appended
+/// an empty string, so every dead-sidecar failure named the exit class and silently dropped the
+/// reason. Reading stdout is only sound once the child has been reaped -- which is the sole
+/// condition under which this is called.
+#[cfg(windows)]
+fn reported_refusal(child: &mut Child) -> String {
+    let mut reported = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        use std::io::Read as _;
+        let _ = pipe.read_to_string(&mut reported);
+    }
+    let reported = reported.trim();
+    if reported.is_empty() {
+        String::new()
+    } else {
+        format!(": {reported}")
+    }
+}
+
 /// Waits (bounded) for the sidecar's rendezvous to exist — the same condition-wait the
 /// choreography test uses; a fixed sleep would be a timing assumption wearing a step's
-/// clothes.
+/// clothes. Both waits now share `reported_refusal`, so the claim of sameness this comment
+/// has always made is true of the DIAGNOSIS too, not only of the polling shape.
 #[cfg(windows)]
-fn wait_for_pipe(rendezvous_id: &str) {
+fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
     let deadline = Instant::now() + Duration::from_secs(10);
     let expected = format!("graphhelm-wake-{rendezvous_id}");
     while !std::fs::read_dir("//./pipe").is_ok_and(|entries| {
@@ -1867,9 +1899,26 @@ fn wait_for_pipe(rendezvous_id: &str) {
                 .is_some_and(|name| name.eq_ignore_ascii_case(&expected))
         })
     }) {
+        // The child is asked BEFORE the deadline is judged, because a dead sidecar and a slow one
+        // are different failures and only this call can tell them apart. Without it both spend the
+        // full ten seconds and report the same sentence -- true of the pipe, useless about the
+        // cause, while the exit status sat unread the whole time (#386).
+        if let Some(status) = child.try_wait().expect("the sidecar handle is readable") {
+            // Says only what this position can KNOW: the child is gone and the name is absent.
+            // Not "exited before creating it" -- measured under load, six failures carried
+            // `exit code: 3` with `"timedOut":true`, meaning the sidecar HAD created the pipe,
+            // waited its whole lease, exited, and took the pipe with it. Only the envelope
+            // separates that from a sidecar that died early, so it is printed, not summarised.
+            panic!(
+                "the sidecar is no longer running and {expected} is not present: {status}{}",
+                reported_refusal(child)
+            );
+        }
+        // Reached only while the child is ALIVE, so this is now what it says it is: the rendezvous
+        // did not appear in time. It must keep failing -- a wait that cannot fail is not a wait.
         assert!(
             Instant::now() < deadline,
-            "the sidecar never created its rendezvous {expected}"
+            "the sidecar is still running but never created its rendezvous {expected}"
         );
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -1900,8 +1949,8 @@ fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
     start_execution(&events, directory.path(), execution);
     arm_lease_bounded(&events, execution, "rvz-88-missed", head(&events), Some(3));
     let armed_at = head(&events);
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe("rvz-88-missed");
+    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe(&mut child, "rvz-88-missed");
     // Sequence-spacer: the burn must NOT sit adjacent to the arm, or its sequence is
     // guessable by `armed + 1` (sabotage s2 proved a guessing implementation survives
     // an adjacent fixture).
@@ -1995,8 +2044,8 @@ fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
     start_execution(&events, directory.path(), execution);
     arm_lease_bounded(&events, execution, "rvz-88-rearm-a", head(&events), Some(3));
     let first_arming = head(&events);
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe("rvz-88-rearm-a");
+    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe(&mut child, "rvz-88-rearm-a");
     let consumed_at = consume_lease(
         &events,
         execution,
@@ -2073,8 +2122,8 @@ fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
     let execution = "exec-88-unreadable";
     start_execution(&events, directory.path(), execution);
     arm_lease_bounded(&events, execution, "rvz-88-unread", head(&events), Some(3));
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe("rvz-88-unread");
+    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe(&mut child, "rvz-88-unread");
     std::fs::remove_dir_all(&events)
         .expect("the sidecar dropped its handle before blocking, so the store is deletable");
 
@@ -2112,8 +2161,8 @@ fn a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis() {
     arm_lease_bounded(&events, execution, "rvz-88-mis-b", head(&events), Some(3));
     let live_arming = head(&events);
     assert!(captured_arming < live_arming);
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe("rvz-88-mis-b");
+    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe(&mut child, "rvz-88-mis-b");
     let burned_at = consume_lease(
         &events,
         execution,
@@ -2168,8 +2217,8 @@ fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
     start_execution(&events, directory.path(), execution);
     arm_lease_bounded(&events, execution, "rvz-88-cycle-a", head(&events), Some(4));
     let first_arming = head(&events);
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe("rvz-88-cycle-a");
+    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe(&mut child, "rvz-88-cycle-a");
     // Sequence-spacer, same reason as G1's: an adjacent burn is guessable by armed+1.
     arm_decoy(&events, execution, "rvz-88-decoy-cycle");
     // Cycle one: MY burn, honest, rung — the byte never crosses.
@@ -2237,8 +2286,8 @@ fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
         Some(3),
     );
     let armed_at = head(&events);
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe("rvz-88-stale-alive");
+    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    wait_for_pipe(&mut child, "rvz-88-stale-alive");
     let burned_at = consume_lease(
         &events,
         execution,

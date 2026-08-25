@@ -1196,6 +1196,38 @@ fn cli_and_mcp_surface_allowlists_stay_a_subset_of_the_real_derived_surface() {
     let (cli_commands, mcp_tools) = graphhelm_schema::__surface_allowlists_for_testing();
     let real_commands = derive_real_cli_command_paths();
 
+    // Two assertions, two DIFFERENT reasons -- neither is the other's spare copy (#249).
+    //
+    // FIRST, and it is DIAGNOSTIC rather than a vacuity guard. An empty derivation does not make
+    // the subset check below pass: `A ⊆ ∅` is vacuous only when A is empty, and A here is
+    // CLI_COMMANDS. Measured, with the derivation returning a legal empty set: the loop below
+    // marks every one of the 21 declared commands unknown and the test goes RED -- but it goes red
+    // saying "CLI_COMMANDS names a surface the real CLI does not have (renamed or removed?)" and
+    // attaches all 21 as if they were the defect. A `--help` regression is then diagnosed as an
+    // allowlist problem, with twenty-one innocent names in the report. This assertion exists so
+    // the failure names its own cause; without it the guard is not silent, it is CONFIDENTLY WRONG.
+    assert!(
+        !real_commands.is_empty(),
+        "the CLI surface derivation returned nothing, so nothing below has been compared. This is \
+         a build or `--help` regression -- clap stopped emitting a `Commands:` section, or the \
+         binary failed to run -- NOT a CLI_COMMANDS problem. Do not edit the allowlist to make \
+         this pass."
+    );
+
+    // SECOND, and this one IS the vacuity guard, on the side where vacuity actually lives. An
+    // empty CLI_COMMANDS never enters the loop, `unknown_cli` stays empty, and the test passes
+    // having compared nothing at all. Measured: with the allowlist emptied and the derivation
+    // healthy, this test was GREEN before this line existed.
+    //
+    // The MCP half of this same test has carried its twin (`!mcp_tools.is_empty()`) since it was
+    // written; the CLI half never did. The symmetry was half-built inside one function.
+    assert!(
+        !cli_commands.is_empty(),
+        "CLI_COMMANDS is empty, so the subset check below compares nothing and passes for free. \
+         The allowlist is the surface this repository claims to expose -- an empty one is not a \
+         clean bill of health"
+    );
+
     let mut unknown_cli: Vec<String> = Vec::new();
     for declared in cli_commands {
         let declared_owned = declared.to_string();

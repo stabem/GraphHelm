@@ -58,7 +58,7 @@ fn a_jpd_axis_can_say_whether_its_own_specimen_is_genuinely_defeated() {
     );
     assert!(
         !is_defeated_on_its_axis(&fraudulent),
-        "a specimen naming an axis it does not defeat must be caught: the digest sees CHANGE,          never QUALITY, so growth alone would certify a gate for catching nothing"
+        "a specimen naming an axis it does not defeat must be caught: the digest sees CHANGE, never QUALITY, so growth alone would certify a gate for catching nothing"
     );
 }
 
@@ -182,14 +182,14 @@ fn the_repositorys_negative_fixture_is_refused_by_the_gate() {
             .get("proposedResultStatus")
             .and_then(serde_json::Value::as_str),
         Some("proven"),
-        "HARNESS-BROKE: this fixture is only meaningful while it CLAIMS success; if the vocabulary          moved again, this arm is comparing against something else entirely"
+        "HARNESS-BROKE: this fixture is only meaningful while it CLAIMS success; if the vocabulary moved again, this arm is comparing against something else entirely"
     );
 
     let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
 
     assert!(
         !verdict.passed,
-        "the repository's own missing-gate-claimed-success fixture must be refused: it exists to          be refused, and a gate that passes it certifies nothing"
+        "the repository's own missing-gate-claimed-success fixture must be refused: it exists to be refused, and a gate that passes it certifies nothing"
     );
 }
 

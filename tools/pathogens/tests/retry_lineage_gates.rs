@@ -390,7 +390,7 @@ fn the_declared_policy_and_the_implemented_checks_are_the_same_set() {
     // satisfy the comparison below while proving absolutely nothing.
     assert!(
         !declared.is_empty(),
-        "HARNESS-BROKE: read zero requiredChecks from the declared policy; the equality below          would pass vacuously"
+        "HARNESS-BROKE: read zero requiredChecks from the declared policy; the equality below would pass vacuously"
     );
     assert_eq!(
         declared,

@@ -148,6 +148,6 @@ fn an_axis_can_say_whether_its_own_specimen_is_genuinely_defeated() {
     );
     assert!(
         !pathogens::is_defeated_on_its_axis(&fraudulent),
-        "a specimen claiming an axis it does not defeat must be caught: otherwise it certifies          a gate for catching nothing"
+        "a specimen claiming an axis it does not defeat must be caught: otherwise it certifies a gate for catching nothing"
     );
 }

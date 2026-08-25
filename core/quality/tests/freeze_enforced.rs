@@ -42,7 +42,7 @@ fn merge_base(root: &std::path::Path, reference: &str) -> Option<String> {
 fn base_provenance(root: &std::path::Path) -> String {
     match (merge_base(root, "origin/main"), merge_base(root, "main")) {
         (Some(remote), Some(local)) if remote != local => format!(
-            "origin/main (base {remote}); the LOCAL main disagrees (base {local}) and was              ignored — a stale local ref is a cache, never the authority"
+            "origin/main (base {remote}); the LOCAL main disagrees (base {local}) and was ignored — a stale local ref is a cache, never the authority"
         ),
         (Some(remote), _) => format!("origin/main (base {remote})"),
         (None, Some(local)) => format!("main (base {local}); origin/main did not resolve"),
@@ -96,7 +96,7 @@ fn this_branch_does_not_move_the_judge_and_the_judged_together() {
     // a DECLARED exception naming the environment — never a return that reads like approval.
     let Some(paths) = changed_paths() else {
         panic!(
-            "cannot ask whether this branch mixes the judge and the judged: git could not              answer `merge-base HEAD main`. Refusing rather than passing — an unanswerable              question is not evidence of a clean diff."
+            "cannot ask whether this branch mixes the judge and the judged: git could not answer `merge-base HEAD main`. Refusing rather than passing — an unanswerable question is not evidence of a clean diff."
         )
     };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -106,7 +106,7 @@ fn this_branch_does_not_move_the_judge_and_the_judged_together() {
     let borrowed: Vec<&str> = paths.iter().map(String::as_str).collect();
     assert!(
         freeze_violation(&borrowed).is_none(),
-        "this branch moves gate machinery and gated code together, which M06's binding          decision 5 forbids: {:?}. Measured against {}, over {} changed path(s). Split it          into two pull requests — the judge and the judged never travel in one.",
+        "this branch moves gate machinery and gated code together, which M06's binding decision 5 forbids: {:?}. Measured against {}, over {} changed path(s). Split it into two pull requests — the judge and the judged never travel in one.",
         freeze_violation(&borrowed),
         base_provenance(root),
         paths.len()

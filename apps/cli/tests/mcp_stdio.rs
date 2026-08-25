@@ -581,7 +581,7 @@ fn tools_list_names_exactly_the_eighteen_tools_with_closed_schemas() {
         // arity below and has to be argued for in a diff.
         assert!(
             tool["description"].as_str().unwrap().contains("/v1/"),
-            "{}: the description names a /v1/ request -- the one it maps to, or, for the              consult-only list, the one it consults",
+            "{}: the description names a /v1/ request -- the one it maps to, or, for the consult-only list, the one it consults",
             tool["name"]
         );
     }

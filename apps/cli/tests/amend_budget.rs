@@ -189,7 +189,7 @@ fn the_amendment_sticks_on_the_next_read_not_just_in_the_write_reply() {
         .any(|item| item["node"] == serde_json::json!("deploy"));
     assert!(
         !reverted,
-        "the next read forgot the bound the operator declared: the verdict flaps between          wake-up and I-do-not-know with nothing in the run changing: {after}"
+        "the next read forgot the bound the operator declared: the verdict flaps between wake-up and I-do-not-know with nothing in the run changing: {after}"
     );
 }
 
@@ -231,7 +231,7 @@ fn the_write_and_two_different_reads_agree_about_the_same_execution() {
     ]);
     assert_eq!(
         status["data"]["attention"], write_says,
-        "the write and the status read must not disagree about whether the operator is          needed: write={write_says} read={status}"
+        "the write and the status read must not disagree about whether the operator is needed: write={write_says} read={status}"
     );
 
     // Door two: the HTML snapshot, a different renderer over the same projection. If a
@@ -255,7 +255,7 @@ fn the_write_and_two_different_reads_agree_about_the_same_execution() {
     // milestone met a check that held for the wrong reason.
     assert!(
         !page.contains("silence NOT evaluated"),
-        "this door still reports a node as unjudged whose bound the operator just declared,          while the write said otherwise -- one execution, two answers: {page}"
+        "this door still reports a node as unjudged whose bound the operator just declared, while the write said otherwise -- one execution, two answers: {page}"
     );
 }
 

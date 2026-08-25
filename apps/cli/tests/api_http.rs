@@ -2247,12 +2247,12 @@ fn the_cli_and_the_api_report_identical_status_for_the_same_story() {
             && cli_blocked["attentionReasons"]
                 .as_array()
                 .is_some_and(|reasons| !reasons.is_empty()),
-        "the blocked moment must exercise attention or this parity proves nothing about it:          {cli_blocked}"
+        "the blocked moment must exercise attention or this parity proves nothing about it: {cli_blocked}"
     );
     assert_eq!(
         strip_parity_exceptions(cli_blocked),
         strip_parity_exceptions(api_blocked),
-        "the CLI and the API must agree at the BLOCKED moment, where attention is non-empty;          this is the half of the parity that anchors the §8 clause on surfaces not disagreeing          about whether the operator is needed"
+        "the CLI and the API must agree at the BLOCKED moment, where attention is non-empty; this is the half of the parity that anchors the §8 clause on surfaces not disagreeing about whether the operator is needed"
     );
 
     assert_eq!(
@@ -3023,7 +3023,7 @@ fn a_non_calm_answer_never_publishes_an_empty_reason_list() {
     let unevaluated = data["silenceUnevaluated"].as_array().expect("array");
     assert!(
         unevaluated.iter().any(|item| item["node"] == "deploy"),
-        "a node whose silence could not be judged must survive even when another reason          wins the headline -- outranking is not forgetting: {view}"
+        "a node whose silence could not be judged must survive even when another reason wins the headline -- outranking is not forgetting: {view}"
     );
 
     let reasons = data["attentionReasons"].as_array().expect("reasons array");

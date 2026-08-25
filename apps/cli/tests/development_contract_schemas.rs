@@ -259,7 +259,7 @@ fn a_snapshot_binding_carries_both_identities() {
         .collect();
     assert_eq!(
         required, expected,
-        "both snapshot identities are required: the freshness verdict is their relation, and one          id alone has no relation to state"
+        "both snapshot identities are required: the freshness verdict is their relation, and one id alone has no relation to state"
     );
     assert_eq!(
         binding["additionalProperties"],
@@ -564,7 +564,7 @@ fn serde_json_is_built_without_preserve_order() {
     );
     assert!(
         !serde_json_pulls_indexmap(&lock),
-        "serde_json now depends on indexmap, so preserve_order is enabled. Key order is no longer          supplied by BTreeMap, canonical_json's explicit sort becomes load-bearing, and every          digest published before this change was computed under different rules."
+        "serde_json now depends on indexmap, so preserve_order is enabled. Key order is no longer supplied by BTreeMap, canonical_json's explicit sort becomes load-bearing, and every digest published before this change was computed under different rules."
     );
 }
 
@@ -692,7 +692,7 @@ fn the_bound_closed_artifacts_are_byte_identical_to_their_pins() {
         let blob = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         assert_eq!(
             blob, pinned,
-            "{relative} changed: a bound artifact was edited rather than versioned, which is what              binding exists to prevent"
+            "{relative} changed: a bound artifact was edited rather than versioned, which is what binding exists to prevent"
         );
     }
 }
@@ -732,7 +732,7 @@ fn serde_and_wire_name_agree_on_every_vocabulary() {
             assert_eq!(
                 serialised,
                 serde_json::Value::String(wire(*item).to_owned()),
-                "{vocabulary}: serde and wire_name disagree for {item:?}. Two serialisers of one                  vocabulary means a producer can emit a value this schema refuses."
+                "{vocabulary}: serde and wire_name disagree for {item:?}. Two serialisers of one vocabulary means a producer can emit a value this schema refuses."
             );
         }
     }

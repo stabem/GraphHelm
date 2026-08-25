@@ -172,7 +172,7 @@ fn verdict_tag_is_the_only_place_these_literals_are_emitted() {
         let quoted = format!("\"{tag}\"");
         assert!(
             !outside.contains(&quoted),
-            "the literal {quoted} occurs OUTSIDE verdict_tag's body in this file. Either a second              emission path exists — in which case the domain guard above cannot see it and is no              longer sufficient — or the literal is being used for something else and this test              needs to say which."
+            "the literal {quoted} occurs OUTSIDE verdict_tag's body in this file. Either a second emission path exists — in which case the domain guard above cannot see it and is no longer sufficient — or the literal is being used for something else and this test needs to say which."
         );
     }
 }

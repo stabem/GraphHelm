@@ -153,6 +153,26 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         !offends(between),
         "spacing between two literals is ordinary Rust"
     );
+    // PRECONDITION for the comment case, and it guards a correction rather than a fixture this
+    // branch wrote. The fixture below was already repaired once, after a sabotage showed the
+    // exemption was never reached. Nothing asserted it stays repaired: tidy the run out of its
+    // inner literal and `has_run_in_literal` answers false again, the exemption goes unconsulted,
+    // and the assertion passes for exactly the reason the repair removed -- with the comment above
+    // it still explaining why that cannot happen.
+    //
+    // It composes `has_run_in_literal` instead of re-splitting on quotes. A precondition that
+    // re-implements the predicate it validates inherits that predicate's blind spots by
+    // construction, and this one would have inherited the escaped-quote bug the shared version
+    // was cured of: in `let s = "a \" b   c";` a naive split flips the parity and reads the run
+    // as being outside the literal. A second opinion assembled from the first opinion's parts is
+    // not a second opinion.
+    let commented = r#"//   let s = "a          b";"#;
+    assert!(
+        has_run_in_literal(commented),
+        "the comment fixture stopped carrying a run INSIDE a literal, so the exemption below is \
+         never reached and the assertion passes whether the exemption works or not -- which is the \
+         defect this fixture was already corrected for once"
+    );
     assert!(
         // The comment exemption must be REACHED to be observed. This fixture was
         // `"///   a doc comment whose indent is an intentional list"` -- a line with no
@@ -160,7 +180,7 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         // exemption was ever consulted and the assertion passed whether the exemption
         // worked or not. Found by sabotaging `is_line_comment` against the pathogens copy
         // of this same fixture and watching nothing go red.
-        !offends(r#"//   let s = "a          b";"#),
+        !offends(commented),
         "comments are excluded: their indentation is often deliberate"
     );
     assert!(

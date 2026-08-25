@@ -888,7 +888,7 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     );
     assert!(
         data["head"].as_u64().expect("head") >= rang_at,
-        "the head makes the cursor readable: armed at #{armed_cursor}, rang at #{rang_at}:          {answer}"
+        "the head makes the cursor readable: armed at #{armed_cursor}, rang at #{rang_at}: {answer}"
     );
     // M07 Task 6, from the blind judge's re-judgement: the doorbell rings on CONTENT only
     // (`serve/wake.rs` skips wake bookkeeping), so publishing the raw head alone let the

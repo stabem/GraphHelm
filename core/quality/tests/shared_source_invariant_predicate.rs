@@ -62,3 +62,61 @@ fn detection_and_exemption_are_independently_observable() {
     assert!(has_run_in_literal(code));
     assert!(!is_line_comment(code), "an ordinary line is not exempted");
 }
+
+/// An escaped quote inside a literal must not end the literal.
+///
+/// Without pair consumption the run below lands on an EVEN index -- read as code -- and
+/// the predicate misses a defect of exactly the kind it exists to catch. Refusal and
+/// operator messages quote things, so this is the common case rather than a corner.
+#[test]
+fn a_literal_holding_an_escaped_quote_is_still_scanned() {
+    assert!(
+        has_run_in_literal(r#"    let s = "he said \" and then          waited";"#),
+        "a run inside a literal must be caught even when the literal contains an escaped quote"
+    );
+}
+
+/// The same parity shift in the other direction: code read as a literal body.
+///
+/// One escaped quote is enough to move ordinary code onto an odd index, where alignment
+/// spacing is reported as a collapsed message. A guard that cries wolf is ignored on the
+/// day it is right, which is why this direction gets its own cell.
+#[test]
+fn an_escaped_quote_does_not_make_following_code_look_like_a_literal() {
+    assert!(
+        !has_run_in_literal(r#"    let s = "x\"";          let t = 1;"#),
+        "spacing after a literal is code, and an escaped quote must not change that"
+    );
+}
+
+/// An escaped BACKSLASH ends where it ends, and the quote after it is REAL.
+///
+/// This is the mirror of the two cells above and it exists because the obvious repair for
+/// them -- strip the substring `\"` before splitting -- reintroduces the identical defect
+/// backwards. In `"C:\\"` the bytes are `"`, `C`, `:`, `\`, `\`, `"`: the substring `\"`
+/// is present, formed by the SECOND backslash and the genuine closing quote. Removing it
+/// eats that quote, and the run in the code afterwards is reported as if it were inside a
+/// literal.
+///
+/// **This cell does not depend on the repository containing the shape.** The substring
+/// version and the pair-scanning version disagree here and agree on every line this
+/// repository holds today, so nothing measured over the corpus can tell them apart.
+/// (Found by L, on six live instances.)
+#[test]
+fn an_escaped_backslash_does_not_swallow_the_closing_quote() {
+    assert!(
+        !has_run_in_literal(r#"    let root = "C:\\";          let n = 1;"#),
+        "the quote after an escaped backslash CLOSES the literal, so the spacing that \
+         follows is code"
+    );
+}
+
+/// The same shape, in the direction where the mistake HIDES a defect rather than inventing
+/// one: after an escaped backslash, a later literal's run must still be found.
+#[test]
+fn an_escaped_backslash_does_not_hide_a_later_literals_run() {
+    assert!(
+        has_run_in_literal(r#"    let a = "C:\\"; let b = "x          y";"#),
+        "a run in a literal AFTER an escaped backslash must still be caught"
+    );
+}

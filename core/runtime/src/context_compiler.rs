@@ -4,6 +4,44 @@
 //! the capsule schema is closed (`additionalProperties: false` throughout), its sections are arrays
 //! of bare strings, and it must stay byte-identical to its pinned release copy. It has no place to
 //! put an ID and no permission to grow one.
+//!
+//! # Declared gap: deltas are verified here, never applied
+//!
+//! #222's criterion reads *"Delta/expansion retains provenance and budgets."* **This module
+//! implements the base-identity half of that and nothing else.** `DeltaProvenance` names ONE base
+//! — capsule, version, digest — and `verify_delta_base` checks that such a record matches the base
+//! capsule offered. Nothing here applies a delta and yields a capsule.
+//!
+//! Measured rather than estimated, and with the control a zero needs: `apply_delta`,
+//! `compose_delta`, `expand_capsule` and `DeltaCapsule` return **zero files** across
+//! `core/runtime`, against **eight** hits for `Delta` in this file as the live positive control. The
+//! instrument sees delta vocabulary; what is absent is delta APPLICATION.
+//!
+//! **So "retains provenance" over more than one hop is unanswered rather than unguarded.** A
+//! delta-of-a-delta is not merely untested here — it is not constructible, because a delta is not a
+//! constructible thing in this slice. There is no chain for provenance to survive, so no cell can
+//! be written that would fail if it did not.
+//!
+//! **And the criterion's other word collides with a type in this same file.** `ExpansionRequest`
+//! (below) is the budget-refusal request naming a larger `required_budget`. That is not capsule
+//! expansion; the two share a word and nothing else. A reader checking whether *expansion* is
+//! covered finds it, twenty lines from here, answering a different question — which makes this
+//! paragraph more necessary rather than less, because the gap is not merely silent, it is silent
+//! behind a name that looks like coverage.
+//!
+//! It is written here for the reason the sibling module states for its own eight: **an undeclared
+//! gap and an implemented category read identically from outside — both are silence.** The
+//! base-identity half that IS here is good, and its three-way refusal split
+//! (`DifferentCapsule` / `DifferentVersion` / `BaseRewritten`) keeps apart three causes with
+//! different remedies. Precisely because that half reads finished, nothing signals that the other
+//! half was never begun.
+//!
+//! **Condition for closing it, and who owns it.** It closes when some caller needs a delta APPLIED
+//! rather than checked — at which point `verify_delta_base` becomes the precondition of an
+//! application function rather than the whole surface, and a chain becomes constructible and
+//! therefore testable. Owner is whoever lands that caller. The shape to reuse is `DeltaProvenance`
+//! itself, which already forces a base to be named by identity, version and digest together; a
+//! chain that carried less would lose exactly the distinction `BaseRewritten` exists to make.
 
 use crate::context_accounting::push_segment;
 use sha2::{Digest, Sha256};

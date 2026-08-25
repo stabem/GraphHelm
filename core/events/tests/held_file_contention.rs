@@ -116,7 +116,9 @@ fn a_blob_in(events: &Path) -> PathBuf {
 
 /// An orphan temp of the shape reconcile owns: `blob-<64 hex>.tmp`.
 fn orphan_temp_in(events: &Path) -> PathBuf {
-    let path = events.join(".tmp").join(format!("blob-{}.tmp", "a".repeat(64)));
+    let path = events
+        .join(".tmp")
+        .join(format!("blob-{}.tmp", "a".repeat(64)));
     std::fs::write(&path, b"orphan").expect("the orphan temp is writable");
     path
 }

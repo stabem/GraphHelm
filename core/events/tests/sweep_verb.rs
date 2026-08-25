@@ -148,11 +148,16 @@ fn instant(text: &str) -> PersistedTimestamp {
 /// validating. There is no cheap slotless shortcut: any fixture in this lane that wants a deadline
 /// must carry real slots and real sealed evidence.
 ///
-/// The postgres test-support module contains exactly such a hand-built slotless publication,
-/// `graph_published_event`. It has ZERO callers, so nothing has ever run it through a validator,
-/// and it does not pass one. Lifting from it is what cost this lane its first red runs: sitting in
-/// a conformance test-support file reads as "this shape is known good", and that is a claim nobody
-/// had made.
+/// The postgres test-support module used to contain exactly such a hand-built slotless
+/// publication, `graph_published_event`, with ZERO callers — so nothing had ever run it through a
+/// validator, and it did not pass one. Lifting from it is what cost this lane its first red runs:
+/// sitting in a conformance test-support file reads as "this shape is known good", and that is a
+/// claim nobody had made.
+///
+/// **It was deleted in #266, and this paragraph is updated in the same commit** rather than left
+/// describing a function that no longer exists. The class it belonged to is now guarded instead of
+/// narrated: `apps/cli/tests/test_support_has_no_dead_helpers.rs` fails on any `pub fn` in a
+/// test-support module that nothing calls. A note like this one is a claim; that sweep is a check.
 ///
 /// ONE thing is patched before anything is hashed — the node's customs block, which is the entire
 /// point. Order matters after that: the hashes are recomputed over the patched topology FIRST,

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{collections::BTreeMap, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 
 use graphhelm_events::{
     AuthenticateRequest, AuthenticationTag, KeyError, KeyProvider, KeyProviderMetadata,
@@ -10,10 +10,9 @@ use graphhelm_events::{
 use graphhelm_postgres_event_store::{PostgresEventStore, migrate};
 use graphhelm_protocols::{
     ActorId, ContentSlot, EventKind, EvidenceId, EvidenceReference, ExecutionId, GraphImported,
-    GraphSourceKind, GraphVersionPublished, NewEvent, NodeType, OpaqueId, Optionality,
-    PersistedActor, PersistedActorType, PersistedBudgets, PersistedControl, PersistedGraphVersion,
-    PersistedGraphVersionRef, PersistedNode, PersistedTimestamp, PersistedTopology, ProjectId,
-    RawSha256, RepositoryScope, SafeKey, SafeValue, Sensitivity, WorkspaceId,
+    GraphSourceKind, GraphVersionPublished, NewEvent, OpaqueId, PersistedActor, PersistedActorType,
+    PersistedGraphVersion, PersistedGraphVersionRef, ProjectId, RawSha256, RepositoryScope,
+    Sensitivity, WorkspaceId,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -202,102 +201,6 @@ pub fn event(key: &str) -> NewEvent {
         }),
         Vec::new(),
         Vec::new(),
-    )
-}
-
-pub fn graph_published_event(key: &str, execution: &str) -> NewEvent {
-    let actor = PersistedActor::new(
-        PersistedActorType::System,
-        ActorId::parse("system.test").unwrap(),
-    );
-    let node_id = OpaqueId::parse("node-1").unwrap();
-    let completion = PersistedControl::new(
-        SafeValue::parse("graph_completion").unwrap(),
-        BTreeMap::from([(
-            SafeKey::parse("terminal.000").unwrap(),
-            SafeValue::parse("node-1").unwrap(),
-        )]),
-        BTreeMap::new(),
-        BTreeMap::from([(SafeKey::parse("terminalCount").unwrap(), 1)]),
-        BTreeMap::from([
-            (SafeKey::parse("allowWaivers").unwrap(), false),
-            (SafeKey::parse("present").unwrap(), true),
-        ]),
-    )
-    .unwrap();
-    let topology = PersistedTopology::new(
-        OpaqueId::parse("graph-1").unwrap(),
-        ExecutionId::parse(execution).unwrap(),
-        BTreeMap::new(),
-        vec![node_id.clone()],
-        BTreeMap::from([(
-            node_id,
-            PersistedNode::new(
-                NodeType::Agent,
-                Optionality::Required,
-                vec![
-                    PersistedControl::new(
-                        SafeValue::parse("agent_configuration").unwrap(),
-                        BTreeMap::from([
-                            (
-                                SafeKey::parse("agentRef").unwrap(),
-                                SafeValue::parse("refv1:cHJvamVjdC9zZWN1cml0eS1yZXZpZXdlckAz")
-                                    .unwrap(),
-                            ),
-                            (
-                                SafeKey::parse("mode").unwrap(),
-                                SafeValue::parse("ref").unwrap(),
-                            ),
-                        ]),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::from([(SafeKey::parse("present").unwrap(), true)]),
-                    )
-                    .unwrap(),
-                ],
-                vec![],
-                None,
-                // #193 gave `PersistedNode::new` a sixth parameter (customs budgets) and did
-                // not update this call site, so five postgres test targets stopped compiling
-                // while every lib still built — the break only showed under `--all-targets`.
-                //
-                // The value stays `None` on its own merits, not just to compile: this fixture
-                // predates customs, and absence here is exactly what a pre-customs stored
-                // version looks like, which is the case worth having in a fixture.
-                None,
-            )
-            .unwrap(),
-        )]),
-        vec![],
-        PersistedBudgets::default(),
-        vec![],
-        completion,
-    )
-    .unwrap();
-    let hashes = graphhelm_graph::persisted_hashes(&topology, &[]).unwrap();
-    let version = PersistedGraphVersion::new(
-        1,
-        None,
-        topology,
-        hashes.topology_hash().clone(),
-        hashes.semantic_hash().clone(),
-        vec![],
-        actor.clone(),
-        PersistedTimestamp::from_datetime(
-            chrono::DateTime::parse_from_rfc3339("2026-08-11T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    NewEvent::new(
-        OpaqueId::parse(key).unwrap(),
-        actor,
-        Sensitivity::Internal,
-        EventKind::GraphVersionPublished(Box::new(GraphVersionPublished { version })),
-        vec![],
-        vec![],
     )
 }
 

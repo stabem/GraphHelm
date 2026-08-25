@@ -186,7 +186,7 @@
         }
       ],
       "missingCapabilityResult": "unresolved",
-      "hostViews": "derived-and-deletable",
+      "hostViews": ["derived-and-deletable"],
       "contributions": [
         {
           "id": "host/claude",

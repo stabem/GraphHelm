@@ -604,6 +604,10 @@ fn validate_package(
     if diagnostics.should_stop() {
         return Err(());
     }
+    validate_contracts_fields(&manifest, diagnostics);
+    if diagnostics.should_stop() {
+        return Err(());
+    }
 
     let mut ids = BTreeSet::new();
     let mut contribution_kinds = BTreeMap::new();
@@ -1750,6 +1754,65 @@ fn contribution_artifact_flow_refs(contributions: &[(usize, Contribution)]) -> B
             format!("{}:{name}", contribution.kind)
         })
         .collect()
+}
+
+/// #285: six `spec.contracts` fields were declared in every shipped manifest and read by
+/// nothing — `additionalProperties: true` on `contracts` (`schemas/extension.schema.json`) means
+/// the schema layer never knew these keys existed either, so this is the only place any of them
+/// is ever checked. Per-field verdicts, not one shared rule (blueprint
+/// `.factory/e-agent-285-blueprint.md` §2):
+///
+/// - `publication`: ENFORCED below. A package declaring anything but `"governor-only"`
+///   misrepresents how it may be published — B's own demonstrated exploit
+///   (`"publication": "self"` validated clean before this check existed).
+/// - `hostViews`: ENFORCED below, shape only. The two shipped packages disagreed not on value but
+///   on TYPE (array vs. a bare string) — a structural contradiction independent of what the field
+///   eventually means (issue #223's territory, left untouched).
+/// - `formatVersion`: ADVISORY. No consumer exists or is planned; enforcing would be inventing
+///   significance from stylistic analogy to `apiVersion`/`DEVELOPMENT_API_MAJOR`, not from a
+///   demonstrated need. Wakes when a real design need for a contracts-format version appears.
+/// - `missingCapabilityResult`: ADVISORY. The two shipped values (`"refuse"`, `"unresolved"`) are
+///   plausible but undecided — no capability registry exists yet to make either one meaningful
+///   (`ValidatedContribution.required_capabilities` is parsed, consumed by nothing). Wakes when
+///   that registry is built.
+/// - `composition`: ADVISORY. The two shipped values (`"atomic"`, `"adaptive"`) disagree with zero
+///   documented distinction between them — enforcing a closed enum now would freeze a choice
+///   nobody has made. Wakes when `atomic` vs `adaptive` gets a documented behavioral distinction.
+/// - `activation`: ADVISORY. Issue #212 ("atomic extension installation, activation, rollback")
+///   owns this concept by name and is open, unimplemented — enforcing an enum here risks
+///   contradicting a decision #212 hasn't made yet. Wakes when #212 lands its state machine.
+fn validate_contracts_fields(manifest: &serde_json::Value, diagnostics: &mut DiagnosticCollector) {
+    if diagnostics.should_stop() {
+        return;
+    }
+    let Some(contracts) = manifest
+        .pointer("/spec/contracts")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+
+    if let Some(publication) = contracts.get("publication")
+        && publication != "governor-only"
+    {
+        diagnostics.push(error(
+            "GHEX021_PUBLICATION",
+            "publication must be \"governor-only\" -- this manifest field is a claim about how \
+             the package may be published, not an operational grant, and only that one value is \
+             recognized",
+            "/spec/contracts/publication",
+        ));
+    }
+
+    if let Some(host_views) = contracts.get("hostViews")
+        && !host_views.is_array()
+    {
+        diagnostics.push(error(
+            "GHEX022_HOST_VIEWS",
+            "hostViews must be an array",
+            "/spec/contracts/hostViews",
+        ));
+    }
 }
 
 fn validate_artifact_flows(

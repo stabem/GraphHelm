@@ -1223,3 +1223,106 @@ fn cli_and_mcp_surface_allowlists_stay_a_subset_of_the_real_derived_surface() {
         "MCP_TOOLS should not be empty while `mcp` names it as the transport"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// #285: publication, hostViews, composition were declared in every manifest's spec.contracts
+// and read by nothing. formatVersion, missingCapabilityResult, activation stay advisory
+// (blueprint .factory/e-agent-285-blueprint.md) -- pinned below so a future accidental
+// enforcement attempt is a visible test change, not a silent behavior shift.
+// -------------------------------------------------------------------------------------------
+
+#[test]
+fn a_non_governor_only_publication_is_refused() {
+    let mut fixture = valid_package();
+    fixture.manifest["spec"]["contracts"]["publication"] = json!("self");
+    fixture.write_manifest();
+    assert_domain_code(&fixture.run(), "GHEX021_PUBLICATION");
+}
+
+#[test]
+fn a_non_array_host_views_is_refused() {
+    // The real, already-shipped defect: extensions/builtin/graphhelm-jpd/extension.json declared
+    // "hostViews": "derived-and-deletable" -- a bare string, not the array shape the field's other
+    // shipped instance uses. Reproduced here rather than invented.
+    let mut fixture = valid_package();
+    fixture.manifest["spec"]["contracts"]["hostViews"] = json!("derived-and-deletable");
+    fixture.write_manifest();
+    assert_domain_code(&fixture.run(), "GHEX022_HOST_VIEWS");
+}
+
+#[test]
+fn an_array_host_views_still_validates() {
+    let mut fixture = valid_package();
+    fixture.manifest["spec"]["contracts"]["hostViews"] = json!(["derived-and-deletable"]);
+    fixture.write_manifest();
+    let output = fixture.run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// Pins the advisory decisions themselves (blueprint §2): any value for these four fields
+/// currently validates, so a future accidental enforcement attempt is a visible test change,
+/// never a silent behavior shift landing without anyone noticing the field started mattering.
+#[test]
+fn format_version_missing_capability_result_composition_and_activation_are_read_and_ignored() {
+    for (field, value) in [
+        ("formatVersion", json!("not-a-real-version")),
+        ("missingCapabilityResult", json!("ignore")),
+        ("composition", json!("merge")),
+        ("activation", json!("on-discovery")),
+    ] {
+        let mut fixture = valid_package();
+        fixture.manifest["spec"]["contracts"][field] = value.clone();
+        fixture.write_manifest();
+        let output = fixture.run();
+        assert!(
+            output.status.success(),
+            "{field} is advisory and must not be enforced yet, got: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
+
+/// L's finding on #315: the advisory decisions above are pinned as BEHAVIOR (nothing is
+/// enforced), but the REASONING for each -- the wake condition that would flip it to
+/// enforcement -- lived only in a doc comment with no reader. Deleting any one field's
+/// paragraph left every test green: #285's own defect (declared-and-unexplained reads
+/// identical to explained) reproduced one file over. Mirrors
+/// `development_sabotage.rs::the_doc_declares_every_criterion_it_does_not_prove`'s pattern:
+/// read the real source text, assert each expected fragment is actually there.
+#[test]
+fn the_advisory_field_doc_names_each_field_and_its_wake_condition() {
+    let source = fs::read_to_string(repository_root().join("core/schema/src/extension.rs"))
+        .expect("core/schema/src/extension.rs is readable from apps/cli's tests");
+    let doc = source
+        .split_once("/// #285: six `spec.contracts` fields")
+        .and_then(|(_, rest)| rest.split_once("fn validate_contracts_fields"))
+        .map(|(doc, _)| doc)
+        .expect(
+            "the #285 doc comment must still precede validate_contracts_fields, unmoved and \
+             unrenamed",
+        );
+
+    for (field, wake_condition) in [
+        (
+            "formatVersion",
+            "a real design need for a contracts-format version appears",
+        ),
+        ("missingCapabilityResult", "that registry is built"),
+        ("composition", "a documented behavioral distinction"),
+        ("activation", "#212 lands its state machine"),
+    ] {
+        assert!(
+            doc.contains(&format!("`{field}`")),
+            "the doc never names `{field}`, so a reader cannot find why it is advisory"
+        );
+        assert!(
+            doc.contains(wake_condition),
+            "the doc never states {field}'s wake condition ({wake_condition:?}), so deleting \
+             the reasoning leaves every test green -- #285's own defect, reproduced here"
+        );
+    }
+}

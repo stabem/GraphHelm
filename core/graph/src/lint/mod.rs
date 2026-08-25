@@ -124,7 +124,7 @@ pub fn lint(graph: &ExecutionGraph, source: &str) -> LintReport {
         if can_park && !declares_customs {
             warnings.push(Diagnostic::warning(
                 "GHG102_UNBOUNDED_CUSTOMS",
-                "node can park for input but declares no customs budgets, so no stage of it can                  ever go overdue",
+                "node can park for input but declares no customs budgets, so no stage of it can ever go overdue",
                 format!("/spec/nodes/{}/completion/customs", escape(id)),
                 source,
             ));

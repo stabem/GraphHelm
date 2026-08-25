@@ -2459,7 +2459,7 @@ mod tests {
         assert_eq!(
             park_under(customs_version(false)).deadline,
             None,
-            "a node that declared no budget gets NO horizon — never zero, which would put the              deadline at the instant it parked and make it overdue immediately"
+            "a node that declared no budget gets NO horizon — never zero, which would put the deadline at the instant it parked and make it overdue immediately"
         );
     }
 

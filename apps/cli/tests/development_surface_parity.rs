@@ -28,6 +28,14 @@ use serde_json::{Value, json};
 /// The canonical operation-family names this guard covers, kebab-case (the CLI's own spelling —
 /// `development <name>`). Checked NON-EMPTY first (below) so an accidentally-emptied list fails
 /// loudly rather than making every assertion in the per-family loop pass vacuously.
+///
+/// **This list's own completeness is not free — J's review of #351.** The forward loop below
+/// only visits what THIS list names, so a real CLI leaf added without a matching entry here
+/// (forgotten in the SAME missed step that would also forget the HTTP route) would be invisible
+/// to it. `every_real_cli_development_leaf_is_a_declared_family` (same file) is the other
+/// direction: it walks the REAL `development` subtree and refuses any leaf this list does not
+/// name, so the two loops together are what make this list actually closed rather than merely
+/// looking closed with one entry in it.
 const DEVELOPMENT_OPERATION_FAMILIES: &[&str] = &["resolve-contract"];
 
 fn to_mcp_tool_name(kebab: &str) -> String {
@@ -193,6 +201,16 @@ fn probe_http_route_exists(method_path: &str) {
          (or wired to a different path). Check build_router() in \
          apps/cli/src/commands/serve/mod.rs against this probe's target."
     );
+    // 405, not 404, is what a PATH-registered-under-the-wrong-METHOD returns (J's review of
+    // #351): the fallback-404 check alone would pass for a family wired as GET when the CLI/MCP
+    // surfaces call it as POST -- the path exists, just not for this verb. Both checks are
+    // needed; neither implies the other.
+    assert_ne!(
+        status, 405,
+        "{method} {path} answered 405 against the real server -- a route exists at this path but \
+         not for this method. Check build_router() registers {method}, not some other verb, for \
+         this path."
+    );
 }
 
 fn parse_startup_line(buffer: &[u8], child: &mut std::process::Child) -> Value {
@@ -311,5 +329,34 @@ fn every_declared_development_operation_family_exists_on_all_three_surfaces() {
 
         let http_path = format!("/v1/development/{}", to_http_path(family));
         probe_http_route_exists(&format!("POST {http_path}"));
+    }
+}
+
+/// THE OTHER DIRECTION — J's review of #351. The test above walks `DEVELOPMENT_OPERATION_FAMILIES`
+/// and checks each name is real; nothing in it notices a real CLI leaf that was never added to
+/// that list. A second family wired into the CLI and MCP dispatch and forgotten on BOTH the HTTP
+/// route and this list is invisible to the forward test -- forgetting the list entry is the SAME
+/// missed step as forgetting the HTTP route, not an independent one, so the two omissions land
+/// together far more often than a hand-audit would catch.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before writing it: a new CLI subcommand
+/// under `development` that never gets a line added to `DEVELOPMENT_OPERATION_FAMILIES`.
+#[test]
+fn every_real_cli_development_leaf_is_a_declared_family() {
+    let cli_leaves = real_cli_development_leaves();
+    assert!(
+        !cli_leaves.is_empty(),
+        "HARNESS-BROKE: `development --help` listed no subcommands at all, so this loop would \
+         pass vacuously over zero leaves"
+    );
+
+    for leaf in &cli_leaves {
+        assert!(
+            DEVELOPMENT_OPERATION_FAMILIES.contains(&leaf.as_str()),
+            "{leaf:?} is a real `development` CLI subcommand that DEVELOPMENT_OPERATION_FAMILIES \
+             does not name. Either it was never added to the const (this test's whole reason to \
+             exist), or it is a leaf the forward test above never checked against MCP/HTTP at \
+             all -- add it to DEVELOPMENT_OPERATION_FAMILIES in this file."
+        );
     }
 }

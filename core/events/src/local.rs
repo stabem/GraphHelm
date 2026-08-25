@@ -345,7 +345,7 @@ impl LocalEventRepository {
         failpoint: Option<LocalFailpoint>,
     ) -> Result<Self, EventRepositoryError> {
         let schemas = graphhelm_schema::repository_schema_set()
-            .map_err(|_| EventRepositoryError::Integrity)?;
+            .map_err(|_| EventRepositoryError::IntegrityAt("open:schema-set"))?;
         let root_handle = ensure_root_path(&root)?;
         let root_identity = file_identity(&root_handle)?;
         lock_root_exclusive(&root_handle)?;
@@ -368,7 +368,9 @@ impl LocalEventRepository {
             }
         };
         if file_identity(&open_directory(&root)?)? != root_identity {
-            return Err(EventRepositoryError::Integrity);
+            return Err(EventRepositoryError::IntegrityAt(
+                "open:root-identity-after-lock",
+            ));
         }
         let blobs_handle = open_child_directory(&root_handle, &root, "blobs")?;
         let blobs_identity = file_identity(&blobs_handle)?;
@@ -378,7 +380,9 @@ impl LocalEventRepository {
         let active_identity = file_identity(&active_handle)?;
         let journal = open_child_file(&root_handle, &root, "journal.jsonl", true, false)?;
         if file_identity(&open_directory(&root)?)? != root_identity {
-            return Err(EventRepositoryError::Integrity);
+            return Err(EventRepositoryError::IntegrityAt(
+                "open:root-identity-after-children",
+            ));
         }
         let lock_identity = file_identity(&lock)?;
         let journal_identity = file_identity(&journal)?;
@@ -1307,7 +1311,9 @@ impl LocalEventRepository {
         };
         let bytes = read_bounded_range(&mut journal, offset, length)?;
         if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
-            return Err(EventRepositoryError::Integrity);
+            return Err(EventRepositoryError::IntegrityAt(
+                "load_state:journal-tail-unterminated",
+            ));
         }
         self.verify_lines(&bytes, &mut ctx)?;
         let state = ctx.state.clone();

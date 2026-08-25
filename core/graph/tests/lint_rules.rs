@@ -195,7 +195,8 @@ fn a_node_that_can_park_without_customs_budgets_gets_a_stable_warning() {
             item.code == "GHG102_UNBOUNDED_CUSTOMS"
                 && item.path == "/spec/nodes/implement/completion/customs"
         }),
-        "and the SAME node with budgets declared must stop being named, or the rule is not          reading the declaration: {:?}",
+        "and the SAME node with budgets declared must stop being named, or the rule is not \
+         reading the declaration: {:?}",
         bounded.warnings
     );
 }

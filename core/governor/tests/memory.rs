@@ -64,7 +64,7 @@ fn capture_touches_nothing_when_the_project_has_not_opted_in() {
     let mut enabled_touches = Vec::new();
     let captured = capture_memory(
         CaptureOptIn::Enabled,
-        scope(),
+        &scope(),
         "a note worth keeping",
         &mut enabled_touches,
     );
@@ -101,7 +101,7 @@ fn capture_touches_nothing_when_the_project_has_not_opted_in() {
     let mut disabled_touches = Vec::new();
     let captured = capture_memory(
         CaptureOptIn::Disabled,
-        scope(),
+        &scope(),
         "a note worth keeping",
         &mut disabled_touches,
     );
@@ -338,7 +338,7 @@ fn provider_output_cannot_be_recaptured_as_a_fresh_candidate() {
     let mut touches = Vec::new();
     let captured = capture_memory(
         CaptureOptIn::Enabled,
-        scope(),
+        &scope(),
         "a note the user wrote",
         &mut touches,
     )
@@ -458,7 +458,7 @@ fn capture_refuses_secret_bearing_content_before_touching_any_boundary() {
 
     let outcome = capture_memory(
         CaptureOptIn::Enabled,
-        scope(),
+        &scope(),
         &format!("please remember my token {SENTINEL}"),
         &mut touches,
     );

@@ -146,10 +146,14 @@ pub fn run_memory_propose() -> Outcome {
         execution_id: None,
     };
 
+    // `touches` is READ, not merely passed. The API hands it over so that "touched nothing" is
+    // OBSERVABLE rather than inferred from an absent return value -- and a caller that creates the
+    // vector, lends it, and never looks at it lets the property quietly regress to the inference
+    // the mechanism exists to replace. Reported from outside by the first review of this adapter.
     let mut touches = Vec::new();
     let verdict = match graphhelm_governor::capture_memory(
         graphhelm_governor::CaptureOptIn::Enabled,
-        scope.clone(),
+        &scope,
         "a proposal with no input argument yet",
         &mut touches,
     ) {
@@ -163,6 +167,9 @@ pub fn run_memory_propose() -> Outcome {
         Err(refusal) => serde_json::json!({
             "admitted": false,
             "refusedWith": refusal.code().wire_name(),
+            // The refusal happened above the first boundary touch, and this says so from the
+            // observation rather than from the design's promise.
+            "touchedNothing": touches.is_empty(),
         }),
     };
 

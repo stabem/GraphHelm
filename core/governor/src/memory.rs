@@ -335,9 +335,13 @@ pub enum CaptureTouch {
 ///
 /// Returns [`MemoryRefusal`] when the project did not opt in, or when the content fails any check
 /// that must run before a boundary is touched.
+/// The scope is taken by REFERENCE, matching `admit_memory_candidate`. Taken by value it forced
+/// every caller into a clone, because admission needs the same scope immediately afterwards -- the
+/// first real consumer hit exactly that and the friction was reported from outside. A signature
+/// that makes its own caller clone is charging for the callee's convenience.
 pub fn capture_memory(
     opt_in: CaptureOptIn,
-    scope: DevelopmentScope,
+    scope: &DevelopmentScope,
     content: &str,
     touches: &mut Vec<CaptureTouch>,
 ) -> Result<MemoryCandidate, MemoryRefusal> {
@@ -360,9 +364,9 @@ pub fn capture_memory(
     // Capture is the path a caller actually uses. Screening only inside admission left this path
     // able to touch five boundaries with a credential in hand while every unit guard stayed green:
     // each half proven, the composition never exercised.
-    screen(&scope, &scope, MemoryOrigin::Captured, content)?;
+    screen(scope, scope, MemoryOrigin::Captured, content)?;
 
-    let candidate = MemoryCandidate::draft(scope, content);
+    let candidate = MemoryCandidate::draft(scope.clone(), content);
     touches.push(CaptureTouch::CandidateConstructed);
     touches.push(CaptureTouch::ProviderQueried);
     touches.push(CaptureTouch::LogWritten);

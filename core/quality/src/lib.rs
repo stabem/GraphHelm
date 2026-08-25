@@ -452,13 +452,19 @@ fn contrast_ratio(a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
 }
 
 /// The gate-freeze rule (M06 binding decision 5) as a pure check over a changed-path
-/// list: a change touching the GATE MACHINERY (this crate, the pathogen suite, or a
-/// stream's gate stamps) together with anything OUTSIDE it is a hard violation — the
+/// list: a change touching the GATE MACHINERY (this crate, the pathogen suite, a stream's
+/// gate stamps, or the shared source-invariant predicate, which IS a gate rather than an
+/// input to one) together with anything OUTSIDE it is a hard violation — the
 /// judge and the judged never move in one PR. Returns the offending pair for the refusal
 /// message; `None` is a clean diff.
 #[must_use]
 pub fn freeze_violation(changed_paths: &[&str]) -> Option<(String, String)> {
-    const GATE_MACHINERY: [&str; 3] = ["core/quality/", "tools/pathogens/", "docs/gates/"];
+    const GATE_MACHINERY: [&str; 4] = [
+        "core/quality/",
+        "tools/pathogens/",
+        "docs/gates/",
+        "tools/source-invariants/",
+    ];
     let is_gate = |path: &str| GATE_MACHINERY.iter().any(|prefix| path.starts_with(prefix));
     let gate_side = changed_paths.iter().find(|path| is_gate(path))?;
     let code_side = changed_paths.iter().find(|path| !is_gate(path))?;

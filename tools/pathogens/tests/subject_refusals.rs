@@ -18,21 +18,23 @@ fn fresh_measures_stale_refuses_and_the_refusal_is_not_unconditional() {
         .parent()
         .and_then(std::path::Path::parent)
         .expect("workspace root");
-    let binary = root.join("target").join("debug").join(if cfg!(windows) {
-        "graphhelm.exe"
-    } else {
-        "graphhelm"
-    });
-    if !binary.exists() {
+    // The precondition ASKS THE RESOLVER, and that is the whole point of the change. This used to
+    // repeat `<root>/target/debug` by hand, so both sides made the identical wrong assumption
+    // about where the build went and the test could not see the bug it stood next to (#349).
+    //
+    // A first attempt at the repair updated both sides to the same NEW expression and left the
+    // duplication intact — a comment claiming a repair the structure had not had (found by D
+    // reviewing #422). It also scheduled the next occurrence: when the resolver grows
+    // `build.target-dir` support, the declared limit of this very PR, a hand-written copy would
+    // not follow and the divergence would return.
+    //
+    // `measurable_binary` already answers `Absent` for "nothing built", which is exactly the
+    // question this phase asks — so the question goes to it and there is no second copy to drift.
+    if let Err(refusal @ SubjectRefusal::Absent { .. }) = measurable_binary() {
         // State that makes the question exist: nothing built. Absent must refuse by name.
-        match measurable_binary() {
-            Err(refusal @ SubjectRefusal::Absent { .. }) => {
-                assert!(refusal.to_string().contains("cannot ask"));
-                eprintln!("PHASE absent: {refusal}");
-                return;
-            }
-            other => panic!("a missing binary must be refused by name: {other:?}"),
-        }
+        assert!(refusal.to_string().contains("cannot ask"));
+        eprintln!("PHASE absent: {refusal}");
+        return;
     }
 
     // PHASE 1 — fresh: the instrument must actually MEASURE. Without this the refusal

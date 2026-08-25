@@ -100,6 +100,25 @@ fn workspace_sources(root: &Path, into: &mut Vec<PathBuf>) {
     }
 }
 
+/// Where cargo put the build, not where it puts it by default.
+///
+/// The subject used to be `<root>/target/debug` unconditionally, while the build location is
+/// configurable — so the two could point at different files with nothing noticing (#349). Under
+/// this repository's own slot discipline every lane builds into an isolated `CARGO_TARGET_DIR`,
+/// which means the hardcoded path was the ONE binary the run had certainly not refreshed.
+///
+/// The measured failure was a refusal: a stale default-path binary against today's sources. **The
+/// quiet direction is the same defect and matters more** — with a *fresh* binary sitting at the
+/// default path, the instrument reports a confident green about a product this run never built.
+///
+/// DECLARED LIMIT: this honours the `CARGO_TARGET_DIR` environment variable only. Cargo also reads
+/// `build.target-dir` from `.cargo/config.toml`, and a repository that grows one will reintroduce
+/// exactly this divergence. There is no such file here today — checked, not assumed — so the gap
+/// is named rather than covered, and the name is what a future reader needs.
+fn target_dir(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
+}
+
 /// The binary this crate measures, or a NAMED refusal. Never a silent fallback.
 ///
 /// # Errors
@@ -107,7 +126,7 @@ fn workspace_sources(root: &Path, into: &mut Vec<PathBuf>) {
 /// built binary predates a source it should contain.
 pub fn measurable_binary() -> Result<PathBuf, SubjectRefusal> {
     let root = workspace_root();
-    let binary = root.join("target").join("debug").join(if cfg!(windows) {
+    let binary = target_dir(&root).join("debug").join(if cfg!(windows) {
         "graphhelm.exe"
     } else {
         "graphhelm"

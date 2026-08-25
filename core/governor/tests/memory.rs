@@ -88,7 +88,8 @@ fn capture_touches_nothing_when_the_project_has_not_opted_in() {
     ] {
         assert!(
             enabled_touches.contains(&boundary),
-            "HARNESS-BROKE: the enabled arm never touched {boundary:?}, so the disabled arm's              silence about it proves nothing"
+            "HARNESS-BROKE: the enabled arm never touched {boundary:?}, so the disabled arm's \
+             silence about it proves nothing"
         );
     }
 

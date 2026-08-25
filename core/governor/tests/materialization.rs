@@ -566,7 +566,8 @@ fn an_unreadable_node_timeout_never_becomes_a_budget() {
         let outcome = declare(unreadable.clone());
         assert!(
             !matches!(outcome, Outcome::Carried(Some(_))),
-            "the declaration {unreadable} reached the store as a real budget ({outcome:?}); an              unreadable deadline must be refused or carried as nothing, never read as a number"
+            "the declaration {unreadable} reached the store as a real budget ({outcome:?}); an \
+             unreadable deadline must be refused or carried as nothing, never read as a number"
         );
     }
 
@@ -602,7 +603,8 @@ fn a_node_declaring_customs_budgets_publishes_and_carries_them() {
     let prepared = match try_preparation_with(Keys::default(), declare_customs) {
         Ok(prepared) => prepared,
         Err(error) => panic!(
-            "a graph declaring `completion.customs` must publish, and the governor refused it              with {error:?} — the node-completion match has not learned the key"
+            "a graph declaring `completion.customs` must publish, and the governor refused it \
+             with {error:?} — the node-completion match has not learned the key"
         ),
     };
 
@@ -644,7 +646,8 @@ fn a_node_declaring_customs_budgets_publishes_and_carries_them() {
             .get(&graphhelm_protocols::SafeKey::parse("customsProof.000").unwrap())
             .map(|value| value.as_str()),
         Some("patch"),
-        "the operator's declared evidence requirement must survive sealing, not be accepted          and dropped"
+        "the operator's declared evidence requirement must survive sealing, not be accepted \
+         and dropped"
     );
 }
 

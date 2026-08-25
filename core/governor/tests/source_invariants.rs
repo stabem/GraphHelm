@@ -55,7 +55,8 @@ const CONTENT_FREE_KEYS: &[(&str, &str)] = &[
         // WRONG and the collector must learn to read the key instead. Otherwise the graph
         // publishes and that string is never registered: content lost with no error and no
         // diagnostic, which is the exact failure this guard exists to make impossible.
-        "closed-vocabulary tokens and integers, no authored prose: proofKinds is a kind list and          budgets cross as PersistedNode::customs, not as content",
+        "closed-vocabulary tokens and integers, no authored prose: proofKinds is a kind list and \
+         budgets cross as PersistedNode::customs, not as content",
     ),
 ];
 

@@ -10,6 +10,8 @@
 //! touches only gate paths -- which is what lets all three travel in one pull request.
 //! Measured against `freeze_enforced` before it was written, not assumed.
 
+use graphhelm_quality::freeze_violation;
+
 include!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tools/source-invariants/detect.rs"
@@ -118,5 +120,98 @@ fn an_escaped_backslash_does_not_hide_a_later_literals_run() {
     assert!(
         has_run_in_literal(r#"    let a = "C:\\"; let b = "x          y";"#),
         "a run in a literal AFTER an escaped backslash must still be caught"
+    );
+}
+
+/// The frozen prefix and the file's real location must agree, and neither may be
+/// re-spelled by hand to make them.
+///
+/// The path is written independently in three places: the `GATE_MACHINERY` entry, each
+/// adopter's `include!`, and where the file actually sits. A rename fixes the include --
+/// the compiler insists -- and can silently forget the constant, at which point the
+/// predicate has left the freeze and nothing is red. A literal written here would be a
+/// FOURTH spelling and would drift the same way.
+///
+/// So neither side is spelled here. The path comes from `file!()`, which inside an
+/// included file expands to the INCLUDED file, built from the very string the `include!`
+/// used -- measured, not assumed. And gate membership is not compared against a copied
+/// list: `freeze_violation` is ASKED, so the authority is the same constant the gate
+/// itself consults.
+#[test]
+fn the_shared_predicate_lives_where_the_freeze_says_it_does() {
+    let me = repo_relative(shared_predicate_self_path());
+
+    // A landmark that is certainly NOT gate machinery. Pairing it with `me` makes
+    // `freeze_violation` answer the only question being asked: is `me` gate?
+    const NON_GATE_LANDMARK: &str = "README.md";
+
+    // CONTROL FIRST. If both paths were non-gate the call returns None, and a `None`
+    // from a broken subject would be indistinguishable from a `None` from a broken
+    // oracle. This proves the oracle discriminates before its verdict is trusted.
+    assert_eq!(
+        freeze_violation(&["docs/gates/whatever.md", NON_GATE_LANDMARK]).map(|(gate, _)| gate),
+        Some("docs/gates/whatever.md".to_owned()),
+        "CONTROL FAILED: freeze_violation did not recognise a known gate path, so its \
+         verdict on the shared predicate below means nothing"
+    );
+    assert_eq!(
+        freeze_violation(&[NON_GATE_LANDMARK, "src/other.rs"]),
+        None,
+        "CONTROL FAILED: the landmark must be non-gate, or the check below passes for \
+         the wrong reason"
+    );
+
+    assert!(
+        freeze_violation(&[me.as_str(), NON_GATE_LANDMARK]).is_some(),
+        "the shared predicate is at {me}, which GATE_MACHINERY does not cover. Either \
+         the file moved and the constant in core/quality/src/lib.rs was not updated, or \
+         the constant changed and the file was not moved. A predicate outside the freeze \
+         can be edited in the same pull request as the code it judges."
+    );
+}
+
+/// `file!()` yields the include string appended to `CARGO_MANIFEST_DIR`, with its `..`
+/// segments unresolved and its separators mixed. Resolve them and cut the repository
+/// root off the front, so what is compared is the same shape `GATE_MACHINERY` holds.
+fn repo_relative(raw: &str) -> String {
+    use std::path::{Component, Path, PathBuf};
+
+    let mut resolved = PathBuf::new();
+    for part in Path::new(raw).components() {
+        match part {
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::CurDir => {}
+            other => resolved.push(other.as_os_str()),
+        }
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("core/quality sits two levels below the repository root");
+
+    resolved
+        .strip_prefix(root)
+        .expect("the shared predicate resolves to a path inside this repository")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The escaped-backslash shape with an ALIGNED TRAILING COMMENT after it, rather than code.
+///
+/// Review named two `assert!` shapes. Only this one earns a cell: the other --
+/// `assert!(!debug.contains("C:\\"));          let t = 1;` -- is the same shape the cell
+/// above already covers, a literal ending in an escaped backslash followed by code with a
+/// run, and a second copy of an oracle is worse than none. This one lands on a different
+/// arm: alignment before a comment is the false positive the predicate was first written
+/// to avoid, and an escaped backslash must not smuggle it back in through the other door.
+#[test]
+fn an_escaped_backslash_does_not_resurrect_the_aligned_comment_false_positive() {
+    assert!(
+        !has_run_in_literal(r#"    assert!(!debug.contains("C:\\"));        // aligned"#),
+        "spacing before a trailing comment is code, with or without an escaped backslash \
+         earlier in the line"
     );
 }

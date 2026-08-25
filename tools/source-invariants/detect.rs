@@ -31,6 +31,12 @@
 //
 // Today both items qualify: the compile carrier uses both, and every one of the eight
 // guards exempts comments. (Constraint named by L.)
+//
+// DECLARED EXCEPTION, under the rule directly above. `shared_predicate_self_path` is
+// consumed only by the compile carrier in core/quality, which is the one adopter that can
+// ask `freeze_violation` anything -- every other adopter reaches this file by `include!`
+// precisely so that it needs no dependency on that crate. It therefore carries
+// `#[allow(dead_code)]` here, once, rather than eight `allow`s in eight adopters.
 
 /// Whether this line carries a run of three or more spaces inside a STRING LITERAL.
 ///
@@ -63,10 +69,27 @@
 /// every line this repository happens to contain, so a corpus difference of zero says what
 /// the CORPUS holds, never what the PREDICATE does.
 ///
-/// LIMIT, named rather than glossed: this is a line-level scan and not a Rust lexer. It
-/// does not know about raw strings, so `r#"..."#` is read as ordinary quoting and a
-/// backslash inside one is treated as an escape when it is literal. The version this
-/// replaces did not know either; nothing here makes that better, and no cell claims it.
+/// LIMIT, and it is broader than the one instance first named here: this is a line-level
+/// scan, not a Rust lexer. It does not know the language's lexical structure at all, and
+/// raw strings and character literals are two consequences of that rather than the limit
+/// itself. A seal that names one instance reads as though the instance were the boundary.
+///
+/// **Raw strings, and the trade is ASYMMETRIC rather than neutral -- corrected, because
+/// the first wording of this seal said "nothing here makes that better" and that reads as
+/// an even swap.** Inside `r#"..."#` a backslash is LITERAL, and pair consumption skips
+/// the character after it. So where a backslash sits immediately before a run of exactly
+/// three spaces, `r#"a\   b"#`, the version replaced said `true` and this one says
+/// `false` -- and `true` was right. **In that shape this predicate is strictly WORSE than
+/// the one it replaced.** It is narrow: one more space in the run and the verdict returns
+/// (the backslash eats one, the rest still qualify), and no line in this repository is
+/// positioned to differ today across 109 lines containing `r#"`. Narrow and measured is
+/// not the same as neutral, and the seal should not have implied it was.
+///
+/// **Character literals are the same limit and were not named at all.** `'"'` holds a
+/// quote that opens nothing, and both this version and the one it replaced read it as a
+/// boundary -- 18 lines here contain one, none positioned to matter. Pre-existing in both,
+/// so this is a seal and not a regression; named because an unnamed instance of a limit is
+/// indistinguishable from a limit that does not exist.
 fn has_run_in_literal(line: &str) -> bool {
     let mut inside = false;
     let mut spaces = 0_usize;
@@ -106,4 +129,19 @@ fn has_run_in_literal(line: &str) -> bool {
 /// fixtures of the guards themselves -- and belongs beside those fixtures, not here.
 fn is_line_comment(line: &str) -> bool {
     line.trim_start_matches(' ').starts_with("//")
+}
+
+/// This file's own location, as the `include!` that reached it spelled it.
+///
+/// Inside an included file `file!()` names the INCLUDED file -- measured before this was
+/// written, because the alternative (that it follows the includer) would have made the
+/// binding impossible. It resolves to `CARGO_MANIFEST_DIR` joined with the include
+/// string, `..` segments and all.
+///
+/// It exists so that no test has to write this path by hand. A hand-written literal would
+/// be a fourth independent spelling of something already spelled three times, and would
+/// drift exactly as the other three can.
+#[allow(dead_code)]
+fn shared_predicate_self_path() -> &'static str {
+    file!()
 }

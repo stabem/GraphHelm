@@ -225,6 +225,11 @@ pub fn run(command: TopLevel) -> Outcome {
             ExecutionCommand::Cancel { events, execution } => {
                 execution::cancel::run(&events, execution.as_deref())
             }
+            ExecutionCommand::Sweep {
+                events,
+                execution,
+                as_of,
+            } => execution::sweep::run(&events, execution.as_deref(), as_of.as_deref()),
         },
         TopLevel::Tool(tool_args) => match tool_args.command {
             ToolCommand::Invoke {

@@ -488,6 +488,9 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
     // Set the same day, passed six times the same day. A number taken from the wrong list is a
     // mistake made once; a number that was correct and was passed six times is missing MAINTENANCE.
     //
+    // #288 raises it a seventh time, in this same commit: sweep (62cf3d1) is the tool that
+    // arrived, per the rule two paragraphs down.
+    //
     // So the rule beside it needs BOTH directions, and the second is the load-bearing one here.
     // The scan floors of #368/#369 carry the first: **lower this only in the same commit as the
     // removal that caused it, and name the removed tool.** This floor rises, so it also carries:
@@ -496,13 +499,13 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
     // moves it downward catches half the ways it goes stale.
     //
     // This floor stays a floor and is deliberately NOT turned into an exact set:
-    // `mcp_stdio.rs::tools_list_names_exactly_the_twenty_tools_with_closed_schemas` already pins
+    // `mcp_stdio.rs::tools_list_names_exactly_the_twenty_one_tools_with_closed_schemas` already pins
     // the exact list, in order. That test is the one that says WHICH tool went missing; a second
     // exact list here would duplicate an ORACLE rather than a mechanism, and two copies of an
     // oracle disagree in silence.
     assert!(
-        population.len() >= 20,
-        "expected at least 20 tools (today's real count); got {}: {population:?}",
+        population.len() >= 21,
+        "expected at least 21 tools (today's real count); got {}: {population:?}",
         population.len()
     );
 

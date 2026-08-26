@@ -513,7 +513,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 }
 
 #[test]
-fn tools_list_names_exactly_the_twenty_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_twenty_one_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -549,14 +549,16 @@ fn tools_list_names_exactly_the_twenty_tools_with_closed_schemas() {
             "present",
             "compile_context",
             "memory_propose",
-            "accounting"
+            "accounting",
+            "sweep"
         ],
-        "exactly the twenty tools, in order, and NOTHING else — no credential tool exists by \
+        "exactly the twenty-one tools, in order, and NOTHING else — no credential tool exists by \
          design (omission is the enforcement); #223 added resolve_contract, memory_status, \
          present, compile_context, memory_propose, then accounting, each after the one before \
-         it. This pin is a LIST and not a count, so a tool added to TOOLS without a line here \
-         fails on the NAME rather than on a number -- which is what happened to present (#357 \
-         moved TOOLS and not this list, and the gate that PR chose did not run this file)."
+         it; #288 added sweep after those. This pin is a LIST and not a count, so a tool added \
+         to TOOLS without a line here fails on the NAME rather than on a number -- which is what \
+         happened to present (#357 moved TOOLS and not this list, and the gate that PR chose did \
+         not run this file)."
     );
     for tool in &tools {
         let schema = &tool["inputSchema"];
@@ -1562,5 +1564,41 @@ fn the_wait_tool_accepts_an_identity_and_never_a_rendezvous_or_a_deadline() {
     assert!(
         !properties["executionId"].is_null(),
         "the identity it does supply is the execution: {wait}"
+    );
+}
+
+/// The `sweep` tool actually reaches `POST /v1/executions/{id}/sweep` and the record lands.
+///
+/// WHY THIS EXISTS BESIDE THE COMPLETENESS GUARD RATHER THAN INSTEAD OF IT.
+/// `surface_completeness.rs` joins the tool table to the router on the route each description
+/// NAMES — metadata, not behaviour. A dispatch arm that builds a different path, or forgets the
+/// key, or drops the body, satisfies that guard completely: the description would still name the
+/// right route while the tool went somewhere else. The guard proves the verb is not MISSING; only
+/// a live call proves it is not LYING.
+#[test]
+fn the_sweep_tool_reaches_the_route_it_names_and_the_record_lands() {
+    let harness = wired("exec-mcp-sweep");
+    let before = harness.head_sequence("exec-mcp-sweep");
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!(9),
+            "sweep",
+            serde_json::json!({"executionId": "exec-mcp-sweep"}),
+        ),
+    ]);
+
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "the sweep tool call succeeds: {envelope}");
+    assert_eq!(
+        envelope["command"], "execution.sweep",
+        "the reply must come from the sweep command, which is what proves the dispatch arm went \
+         to the route the description names: {envelope}"
+    );
+    assert!(
+        harness.head_sequence("exec-mcp-sweep") > before,
+        "a sweep over a clean stream still appends its own record: {envelope}"
     );
 }

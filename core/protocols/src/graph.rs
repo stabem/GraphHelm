@@ -225,30 +225,78 @@ pub enum NodeType {
     Deploy,
     Rollback,
     ArtifactTransform,
+    /// The dead-letter node (#162/#288): where a node goes when its customs stage lapsed and the
+    /// sweep gave up on it.
+    ///
+    /// LEGAL BUT NOT PRODUCED, and this note is the whole reason the variant is declared before
+    /// anything emits it. A type table says what is LEGAL; it never says what is PRODUCED. In v1
+    /// this variant is DECLARED ONLY: no author writes it in a graph document, no driver dispatches
+    /// it, and nothing in this repository emits it. It exists so the sweep lane has a name to route
+    /// to, and so every carrier that enumerates node types learns about it in one change rather
+    /// than in seven.
+    ///
+    /// The distinction is written HERE because it cannot be recovered from anywhere else. A reader
+    /// who greps for emitters finds none — and "nothing emits this yet" and "nothing may ever emit
+    /// this" produce the identical empty result. Only the declaration site can say which.
+    ///
+    /// It joins the STRUCTURAL (refused-to-execute) set in `classify::work_kind`: a dead-lettered
+    /// node is not work waiting to happen, it is work that stopped. Putting it anywhere else would
+    /// make the scheduler treat a graveyard as a queue.
+    DeadLetter,
 }
 
-impl NodeType {
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Agent => "agent",
-            Self::Tool => "tool",
-            Self::Classifier => "classifier",
-            Self::Planner => "planner",
-            Self::Gate => "gate",
-            Self::Evaluator => "evaluator",
-            Self::Fork => "fork",
-            Self::Join => "join",
-            Self::HumanDecision => "human_decision",
-            Self::Timer => "timer",
-            Self::Trigger => "trigger",
-            Self::Subgraph => "subgraph",
-            Self::Materializer => "materializer",
-            Self::Deploy => "deploy",
-            Self::Rollback => "rollback",
-            Self::ArtifactTransform => "artifact_transform",
+// ONE SOURCE, TWO PRODUCTS — the same shape `wire_names!` uses for `EventKind`, and here for the
+// same measured reason.
+//
+// `EventKind` has `EVERY_WIRE_NAME`, and that list is why a forgotten event kind goes red BY NAME:
+// #162 was caught twice by it, at a conformance table and at a round-trip table, after its author
+// had already declared the kinds "everywhere". **`NodeType` had no equivalent.** Nothing compared
+// this enum to the schema lists, so a variant the type accepts and the schema refuses produced no
+// symptom at all — which is exactly the `customs` defect of #162, where a budget the type accepted
+// and the schema forbade made a whole feature inert while every suite stayed green.
+//
+// A hand-written const list would not fix that: it drifts, and a drifting list is worse than none
+// because it looks like coverage. The macro emits BOTH products from one list, so they cannot
+// disagree, and the match stays exhaustive — a variant missing from the list below is a COMPILE
+// ERROR, which is the half the compiler enforces rather than a reader.
+macro_rules! node_type_names {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        impl NodeType {
+            /// Every wire name this enum can produce, in declaration order.
+            ///
+            /// Derived from the same list as [`NodeType::as_str`], so the two cannot drift.
+            pub const EVERY_WIRE_NAME: &'static [&'static str] = &[$($name),+];
+
+            /// This variant's serde spelling — the string it carries in a graph document and in a
+            /// persisted topology.
+            ///
+            /// Exhaustive by construction: a variant absent from the list above fails to compile.
+            #[must_use]
+            pub const fn as_str(&self) -> &'static str {
+                match self { $(Self::$variant => $name),+ }
+            }
         }
-    }
+    };
+}
+
+node_type_names! {
+    Agent => "agent",
+    Tool => "tool",
+    Classifier => "classifier",
+    Planner => "planner",
+    Gate => "gate",
+    Evaluator => "evaluator",
+    Fork => "fork",
+    Join => "join",
+    HumanDecision => "human_decision",
+    Timer => "timer",
+    Trigger => "trigger",
+    Subgraph => "subgraph",
+    Materializer => "materializer",
+    Deploy => "deploy",
+    Rollback => "rollback",
+    ArtifactTransform => "artifact_transform",
+    DeadLetter => "dead_letter",
 }
 
 /// Whether a node is mandatory or may be bypassed through policy.

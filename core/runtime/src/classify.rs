@@ -42,5 +42,17 @@ pub fn work_kind(node_type: &NodeType) -> Result<NodeWorkKind, ExecutorRefusal> 
         | NodeType::Deploy
         | NodeType::Rollback
         | NodeType::ArtifactTransform => Err(ExecutorRefusal::Unsupported),
+        // #288: the dead-letter node joins the REFUSED set, and it belongs here for a stronger
+        // reason than the others. The rest are "this milestone does not execute them yet" — work
+        // waiting for a driver. A dead-lettered node is not waiting: it is where a node goes when
+        // its customs stage lapsed and the sweep gave up. Dispatching one would restart the very
+        // episode that was abandoned, so the refusal is permanent rather than pending.
+        //
+        // It shares an arm with the others because `ExecutorRefusal::Unsupported` is what the
+        // executor can act on today, and inventing a second refusal code here would be a
+        // vocabulary nobody consumes. The distinction is written rather than encoded, and this
+        // comment is the whole of it: if a caller ever needs to tell "not yet" from "never", that
+        // is a new refusal variant and a decision, not a rename.
+        NodeType::DeadLetter => Err(ExecutorRefusal::Unsupported),
     }
 }

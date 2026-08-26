@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 20] = [
+const TOOLS: [ToolSpec; 21] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -150,6 +150,18 @@ const TOOLS: [ToolSpec; 20] = [
                       #223 existence-slice: no execution id yet, and the one field reports as \
                       unavailable rather than zero -- nothing was measured.",
         schema: accounting_schema,
+    },
+    ToolSpec {
+        name: "sweep",
+        description: "Evaluate an execution's customs stages and journal the result (POST \
+                      /v1/executions/{executionId}/sweep): one \"sweep_performed\", plus one \
+                      \"overdue_exception\" per episode found lapsed, appended together. A sweep \
+                      that finds nothing STILL writes its record - otherwise \"no exceptions\" \
+                      and \"no sweep ever ran\" are the same absence in the log. Optional \
+                      \"asOf\" asks about a past instant and defaults to now; THE FUTURE IS \
+                      REFUSED, because a future-dated answer is indistinguishable from a real one \
+                      while permanently spending the episodes it touches.",
+        schema: sweep_schema,
     },
 ];
 
@@ -310,6 +322,16 @@ fn resume_schema() -> serde_json::Value {
             "fixtures": {"type": "string"},
         }),
         &["executionId", "file"],
+    )
+}
+
+fn sweep_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "asOf": {"type": "string"},
+        }),
+        &["executionId"],
     )
 }
 
@@ -615,6 +637,22 @@ pub(crate) fn call(
             api.request(
                 "POST",
                 &url::segment_path(&["v1", "executions", id, "signal"]),
+                Some(&body),
+                Some(&key),
+                if_match,
+            )
+        }),
+        "sweep" => require(arguments, "executionId").map(|id| {
+            // Only a supplied `asOf` travels. Sending an explicit null, or this process's own idea
+            // of "now", would replace the STORE'S clock with a second one -- and the store's is the
+            // reference the verb's future-refusal is enforced against.
+            let mut body = serde_json::json!({});
+            if let Some(as_of) = str_arg(arguments, "asOf") {
+                body["asOf"] = serde_json::json!(as_of);
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "executions", id, "sweep"]),
                 Some(&body),
                 Some(&key),
                 if_match,

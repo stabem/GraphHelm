@@ -123,7 +123,7 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 /// written here is a CLAIM -- "these fourteen are not development operations" -- and the two
 /// guards below check that claim against the real built binary in both directions.
 ///
-/// **What the arity does and does not do.** `[&str; 14]` forces this LITERAL to hold fourteen
+/// **What the arity does and does not do.** `[&str; 15]` forces this LITERAL to hold fifteen
 /// entries. It does not force those fourteen to be the right ones, or the complete set -- that is
 /// exactly the trap #272 names for hand-sized vocabulary arrays. The arity is a tripwire that
 /// makes an edit here deliberate; the completeness comes from
@@ -143,7 +143,7 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 14] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 15] = [
     "start",
     "status",
     "events",
@@ -158,6 +158,10 @@ const NON_DEVELOPMENT_TOOLS: [&str; 14] = [
     "amend_budget",
     "wake_wait",
     "probe",
+    // #288. The customs sweep is a RUNTIME verb on an execution -- it journals a
+    // sweep_performed and one overdue_exception per lapsed episode -- and has nothing to do with
+    // the development contract. It sits beside pause and cancel, not beside resolve_contract.
+    "sweep",
 ];
 
 /// Where one operation family lives on each of the three surfaces.

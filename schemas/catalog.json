@@ -66,13 +66,13 @@
       "id": "https://p50.dev/schemas/node.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/node.schema.json",
-      "sha256": "sha256:38824e473d96ac03480a385c6d04c860912b644fe7f69e3d9f066a1f0e84d1d6"
+      "sha256": "sha256:139e9489452e66b3e4c84564512765d7e601bd4eee2f5def0ae2b4a745996090"
     },
     "persisted-graph-version": {
       "id": "https://p50.dev/schemas/persisted-graph-version.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/persisted-graph-version.schema.json",
-      "sha256": "sha256:174c7cf9d7e3a9d7fe14b7dadf9fc1b7c36004197a87b42d5bb0f8f04a8723b4"
+      "sha256": "sha256:1a6980bd47eeecf8eb2bb624db0a640b0d0abb5391d1a5cb4bbd39a8215dadfb"
     },
     "policy-waiver": {
       "id": "https://p50.dev/schemas/policy-waiver.schema.json",

@@ -397,11 +397,30 @@ fn path_content_slots_are_identical_closed_1_0_0_contracts() {
     // write it went through a shell, whose backticks ate every identifier above and left the
     // prose gutted. The suite passed anyway, because the tripwire guards the DIGEST and
     // nothing guards the DEFENCE. A justification is checked by a reader or not at all.
+    //
+    // DELIBERATE (#288, 2026-08-25): it moved a third time, because the persisted node's
+    // `nodeType` enum gained `dead_letter` — the dead-letter node, declared so the sweep lane
+    // has a name to route to. LEGAL BUT NOT PRODUCED in v1: nothing emits it, no driver
+    // dispatches it, and `classify::work_kind` refuses it in the structural set.
+    //
+    // The authoring schema's `type` enum gained it in the same change, and that pairing is the
+    // trap worth recording: the two schemas name the SAME concept with DIFFERENT keys, so a
+    // sweep for one key finds two of the four files and reports success. This lane's first
+    // enumeration missed the authoring schema for exactly that reason.
+    //
+    // What is new this time is that a guard now ASKS. `NodeType` had no equivalent of
+    // `EventKind::EVERY_WIRE_NAME`, so nothing compared the Rust enum to the schema lists: a
+    // variant the type accepted and the schemas refused would have produced no symptom at all,
+    // which is the shape of the #162 `customs` defect one vocabulary over. The enum now derives
+    // its list and `as_str` from one macro, and
+    // `core/protocols/tests/node_type_vocabularies_agree.rs` compares that list against all four
+    // files. It was written FIRST and observed RED on `node.schema.json` with
+    // `missing from the schema: ["dead_letter"]` before any schema was touched.
     assert_eq!(
         schema_digest(&current.schemas["persisted-graph-version"])
             .unwrap()
             .as_str(),
-        "sha256:174c7cf9d7e3a9d7fe14b7dadf9fc1b7c36004197a87b42d5bb0f8f04a8723b4"
+        "sha256:1a6980bd47eeecf8eb2bb624db0a640b0d0abb5391d1a5cb4bbd39a8215dadfb"
     );
 }
 

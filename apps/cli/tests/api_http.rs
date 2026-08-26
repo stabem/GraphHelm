@@ -3037,3 +3037,113 @@ fn a_non_calm_answer_never_publishes_an_empty_reason_list() {
         "and every reason names its kind, not a mood: {view}"
     );
 }
+
+/// `POST /v1/executions/{id}/sweep`: the customs sweep through the API, and the retry that must
+/// change nothing.
+///
+/// THE RETRY IS THE HALF THAT DRIVES THE DESIGN. `core/events::sweep` mints its keys unique PER
+/// CALL, on purpose — its own comment says idempotence for a sweep is a property of the FOLD (one
+/// `exception_marked` per episode), not of the key, because the sweep that matters runs on a tick
+/// at a NEW instant every time against the SAME lapsed episode. That is right for the tick and
+/// wrong for this door: a key that can never repeat is classified `Absent` on every retry, so a
+/// caller replaying one HTTP request would append a SECOND `sweep_performed`. Every other mutation
+/// on this surface promises the opposite, and a surface that keeps its promise for five verbs and
+/// quietly breaks it for the sixth is worse than one that never made it.
+#[test]
+fn a_sweep_over_http_records_once_and_a_retry_appends_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-sweep";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let body = serde_json::json!({});
+    let headers = [
+        ("Idempotency-Key", "sweep-cmd-retry-1"),
+        ("X-GraphHelm-Actor", "agent-planner"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    let url = format!("{base}/v1/executions/{execution}/sweep");
+
+    let before = head_sequence(&base, &token, execution);
+    let (first_status, first_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(first_status, 200, "{first_reply}");
+    let first_head = head_sequence(&base, &token, execution);
+    assert!(
+        first_head > before,
+        "a sweep that found nothing must still have appended its own record: {first_reply}"
+    );
+
+    // The record must say the sweep came from an operator, not from the tick. That field is the
+    // only thing distinguishing a deliberate sweep from an automatic one after the fact, and this
+    // surface is the evidence for which one it was.
+    let recorded = last_event_of_kind(&base, &token, execution, "sweep_performed");
+    assert_eq!(
+        recorded["kind"]["data"]["caller"], "operator",
+        "the journal must record which surface asked: {recorded}"
+    );
+
+    let (retry_status, retry_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(
+        retry_status, 200,
+        "a full retry is success, not conflict: {retry_reply}"
+    );
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        first_head,
+        "and appends nothing — the sweep's per-call keys must not defeat the surface's own \
+         idempotency contract"
+    );
+}
+
+/// `--sweep-interval` makes the server sweep on its own, and the record says the TICK asked.
+///
+/// TWO CLAIMS, AND THE SECOND IS WHY `SweepCaller` HAS TWO VARIANTS AT ALL. That the sweep
+/// happened is the easy half. That the journal can afterwards tell an automatic sweep from a
+/// deliberate operator one is the half the field exists for — an episode spent by a tick and an
+/// episode spent by a person are different facts, and nothing else in the record distinguishes
+/// them. So `caller` is asserted to be `tick` and NOT merely present: `operator` here would mean
+/// the tick was impersonating the surface this test never used.
+///
+/// NO REQUEST IS MADE BEFORE THE POLL. The only mutation in this test is the arrangement's
+/// `cli_start`, so a `sweep_performed` appearing afterwards can have come from nothing but the
+/// tick — there is no HTTP call whose side effect could be mistaken for it.
+#[test]
+fn a_sweep_interval_makes_the_server_sweep_itself_and_the_record_says_tick() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-tick";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve_with(&events, &["--sweep-interval", "1"]);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let recorded = loop {
+        let response = get_json(
+            &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+            Some(&token),
+        );
+        let found = response["data"]["events"].as_array().and_then(|events| {
+            events
+                .iter()
+                .rev()
+                .find(|event| event["kind"]["type"] == "sweep_performed")
+                .cloned()
+        });
+        if let Some(event) = found {
+            break event;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no sweep_performed appeared within 30s of a 1s tick; the tick never ran: {response}"
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    };
+
+    assert_eq!(
+        recorded["kind"]["data"]["caller"], "tick",
+        "the tick must record itself as the tick, not as an operator: {recorded}"
+    );
+}

@@ -240,6 +240,16 @@ pub struct ServeArgs {
     /// there); given without them, it is accepted but silently unused.
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// Run the customs sweep automatically every N seconds, journalling each one as
+    /// `SweepCaller::Tick`.
+    ///
+    /// OFF UNLESS ASKED FOR, and that default is a safety property rather than caution. A tick is
+    /// a BACKGROUND WRITER: it appends to the same streams operators are mutating, so with it on
+    /// by default every existing caller that compares two head sequences across a request pair
+    /// would start seeing a third append it never made. `--sweep-interval` makes the writer a
+    /// deployment decision, and makes the tick testable without arming it for everyone.
+    #[arg(long = "sweep-interval")]
+    pub sweep_interval: Option<u64>,
     /// Append every request and the exact bytes served to this file, as JSON lines.
     ///
     /// Off unless asked for: the recorded bodies carry the operator's own execution data, so
@@ -395,6 +405,24 @@ pub enum ExecutionCommand {
         fixtures: Option<PathBuf>,
         #[arg(long)]
         execution: Option<String>,
+    },
+    /// Evaluates the stream's customs stages and journals the result: one `sweep_performed`, plus
+    /// one `overdue_exception` for every episode found lapsed, appended together.
+    ///
+    /// A sweep that finds nothing STILL writes its record. Without it, "no exceptions" and "no
+    /// sweep ever ran" are the same absence in the log.
+    ///
+    /// `--as-of` asks about a past instant and defaults to now. THE FUTURE IS REFUSED: a
+    /// future-dated answer is indistinguishable from a real one in the journal, while permanently
+    /// spending the episodes it touches -- the honest sweep arriving later would find nothing left
+    /// to raise.
+    Sweep {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
     },
     /// Cancels every non-terminal node and completes the execution as `Cancelled`. Refuses when
     /// the execution is already terminal.

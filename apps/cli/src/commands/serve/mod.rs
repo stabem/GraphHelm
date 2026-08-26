@@ -20,7 +20,7 @@ use axum::{Json, Router};
 use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EventEnvelope, OpaqueId, PersistedActor, PersistedActorType,
+    ActorId, Diagnostic, EventEnvelope, OpaqueId, PersistedActor, PersistedActorType, SweepCaller,
 };
 
 use crate::args::ServeArgs;
@@ -129,6 +129,13 @@ struct ServeState {
     /// before `drive_to_quiescence_async` starts and deregistered once it returns. `pause
     /// {"mode":"immediate"}` (STEP 5) looks a live execution up here to interrupt it.
     cancels: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// The customs sweep tick's period in seconds, or `None` for no tick at all.
+    ///
+    /// It lives on the state rather than being passed to `serve_forever` separately because the
+    /// tick is part of what this server IS once launched, not a parameter of one call -- and a
+    /// reader asking "does this deployment write on its own?" should find the answer beside the
+    /// events directory it writes to.
+    sweep_interval: Option<u64>,
     /// Where to append the read audit, when `--read-audit` asked for one. `None` - the default -
     /// means nothing is recorded at all.
     read_audit: Option<Arc<Path>>,
@@ -159,6 +166,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         sealing: sealing.map(Arc::new),
         cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         read_audit: args.read_audit.as_deref().map(Arc::from),
+        sweep_interval: args.sweep_interval,
     };
 
     let rt =
@@ -280,10 +288,67 @@ async fn serve_forever(address: SocketAddr, state: ServeState) -> Result<(), Fai
     crate::output::print(&started.output, false);
     let _ = std::io::stdout().flush();
 
+    if let Some(seconds) = state.sweep_interval {
+        tokio::spawn(sweep_tick(Arc::clone(&state.events), seconds));
+    }
+
     let app = build_router(state);
     axum::serve(listener, app)
         .await
         .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"))
+}
+
+/// Sweep every stream in the repository, forever, every `seconds`.
+///
+/// THE TICK IS THE CALLER `SweepCaller::Tick` EXISTS FOR, and it passes no idempotency key. The
+/// verb mints its own per-call key here deliberately: a tick asks the SAME question at a NEW
+/// instant every time, against the same possibly-lapsed episode, so collapsing two ticks onto one
+/// key would silently drop the second sweep. Idempotence for a tick lives in the FOLD -- one
+/// `exception_marked` per episode -- which is what makes repeating the question harmless.
+///
+/// EVERY FAILURE IS SWALLOWED, PER STREAM, ON PURPOSE. A stream this tick cannot read must not
+/// stop the tick from reaching the others, and a background writer that kills the server it lives
+/// in would turn a bookkeeping problem into an outage. What it must never do is hide a failure
+/// that CHANGED something: the verb appends its batch atomically, so a stream either gains its
+/// record or gains nothing.
+///
+/// The store is opened and dropped inside `spawn_blocking` for the same reason `ServeState` holds
+/// no cached handle: `LocalEventRepository::open` takes an OS-level exclusive lock for the
+/// handle's lifetime, and a tick holding one across its sleep would lock out every co-located CLI
+/// process between beats.
+async fn sweep_tick(events: Arc<Path>, seconds: u64) {
+    let period = std::time::Duration::from_secs(seconds.max(1));
+    loop {
+        tokio::time::sleep(period).await;
+        let events = Arc::clone(&events);
+        let _ = tokio::task::spawn_blocking(move || {
+            let Ok(store) = crate::commands::event_store(&events) else {
+                return;
+            };
+            let Ok(streams) = store.list_streams() else {
+                return;
+            };
+            let Ok(now) = store.now() else {
+                return;
+            };
+            let actor = PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-sweep-tick").expect("constant actor id is valid"),
+            );
+            for stream in streams {
+                let _ = graphhelm_events::sweep(
+                    &store,
+                    &stream.scope,
+                    stream.stream_id.as_str(),
+                    &now,
+                    &actor,
+                    SweepCaller::Tick,
+                    None,
+                );
+            }
+        })
+        .await;
+    }
 }
 
 fn build_router(state: ServeState) -> Router {
@@ -301,6 +366,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/pause", post(routes::pause))
         .route("/v1/executions/{id}/resume", post(routes::resume))
         .route("/v1/executions/{id}/cancel", post(routes::cancel))
+        .route("/v1/executions/{id}/sweep", post(routes::sweep))
         .route(
             "/v1/executions/{id}/wake-lease",
             post(routes::wake_lease).get(routes::wake_lease_status),

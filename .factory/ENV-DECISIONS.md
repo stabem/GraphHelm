@@ -1714,3 +1714,114 @@ whole argument.
 what THEIR run surfaced. A first extraction here reported one, because the regex cut the path at the
 first `:` and Windows paths are `\?\D:\...`. **Two wrong counts from the instrument before the
 right one from the tree**, and the number was one command away from being published inside a hotfix.
+
+## ED-22, CONDITIONAL-WRITE AMENDMENT (K, found by BEING the incident): a read that does not GATE the write is decoration
+
+**Measured, 2026-08-25.** K read `SLOT.lock`, the read printed
+`HELD by A Agent | 07:21:02Z | lane #311 step 1` **to K's own screen**, and K's `mv` overwrote A's
+live claim `0.2s later`. K caught it 58 seconds afterwards; A measured the damage at **zero** (his
+run reads the lock only at entry, it finished normally at 07:31:28Z, and his own release rewrote the
+file anyway). **The cost was zero and the defect is not.**
+
+ED-22 above says the claim is read-then-write and the winner cannot see who it overwrote. **That is
+still true, and this amendment says why the obvious fix does not work.** K had read ED-22 that same
+day and quoted it to two other agents. The claim command *did* read first. It printed the holder's
+name. **And it wrote anyway.**
+
+```
+head -1 SLOT.lock        <- printed "HELD by A Agent"
+cat > tmp; mv -f tmp SLOT.lock   <- ran regardless: nothing consumed the read
+```
+
+**"Read then write" is not a protocol if the read does not GATE the write.** A read whose result no
+branch consumes is a **datum with no consumer** — the same shape as an `echo` of a process count
+beside a step that proceeds either way, which this registry already records one level down. It has
+the FORM of verification and none of the function, and it is worse than no read at all, because the
+operator believes a check happened.
+
+### The rule
+
+**The claim is a CONDITIONAL write. The `if` is the mechanism; the read is only its input.**
+
+```
+read the lock
+IF it does not say FREE  ->  do not write. Report who holds it and stop.
+ELSE                     ->  write the temp, move it, THEN READ IT BACK
+```
+
+Three properties, and the third is not optional:
+
+1. the read must sit in a branch that can decline to write;
+2. the branch must be in the SAME command as the write, or the state can change between them;
+3. **the write must be read back.** K also hit the mirror of this defect the same night: a
+   15-minute-trigger correction was written to the lock, the command died behind a background cargo,
+   the write never landed, and the lock kept advertising a stale estimate for hours. **The act
+   existed and the effect did not** — and nobody checks a write they believe succeeded.
+
+### What this does NOT fix, said here so nobody reads it as solved
+
+**It is still not atomic.** Two agents can both read `FREE` and both proceed, and the loser is still
+invisible. This amendment removes the case where the winner **had the answer on screen and used it
+for nothing**; it does not remove the race. A real fix needs an atomic create (`O_EXCL`), and this
+registry already records that `New-Item` and `CreateDirectory` disagree about how atomic they are on
+this machine. **Until then, the `prev-seen` line stays the only forensic trail, and it only works
+if the claimer copies what it actually read rather than what it expected.**
+
+### The sibling failure, found by A in the same half hour
+
+A nearly published a guard that never ran: the test was invoked by the wrong module path and cargo
+printed `test result: ok. 0 passed; 62 filtered out`. **"ok" with zero tests**, and the sabotage run
+printed the same thing, so the pair proved nothing.
+
+**That one escapes the `targets == results` control**, and K's control was the one that had just
+been written: one target started, one result reported, columns agree, and **no test ran**. So the
+control needs its third element stated with it:
+
+```
+targets == results     the run finished what it started
+AND tests run > 0      the result describes something
+AND the sabotage arm differs from the subject arm
+```
+
+**AND `targets` HAS TWO SOURCES, which this paragraph did not say and should have.** A applied the
+rule as written, counted only `^     Running`, and got `targets 16 / results 17` — my own signature
+for DUPLICATION. He went looking for the self-spawning subprocess and there was none:
+
+```
+grep -c "^   Doc-tests"  ->  1
+16 Running + 1 Doc-tests = 17 results
+```
+
+**A doc-test target reports a `test result` line and never prints `Running`**, because rustdoc runs
+the examples rather than a test binary. So the definition is:
+
+```
+targets := count(^     Running) + count(^   Doc-tests)
+
+results == targets   complete
+results >  targets   DUPLICATION
+results <  targets   TRUNCATION
+```
+
+**Stated as one term, the control raises a false alarm on every workspace run containing a crate
+with doc-tests** — and a column that cries wolf stops being read, which is the failure this same
+registry records for the waiter list.
+
+**The case that produced the rule was re-measured against this, because a refinement that
+invalidates the original evidence must be checked and not assumed.** The `api_http` run that showed
+`results 11 > targets 10`:
+
+```
+Running lines    10
+Doc-tests lines   0     <- none, so the divergence was NOT this
+test result      11
+```
+
+**The duplication finding stands**, and it stands for the reason it was established by a second
+route anyway: `failed=2` for one test, because that test spawns itself as a subprocess and parent
+and child both report. **Two conclusions can both be right while one of the evidences is wrong** —
+A raised exactly that possibility, and the only way to close it was to open the log again.
+
+**Two agents, half an hour apart, both with an act that existed and an effect that did not** — a read
+that gated nothing, a test that ran nothing. Neither was caught by attention; both were caught by
+looking at output that had no business being identical.

@@ -37,6 +37,7 @@ const AMEND_BUDGET_COMMAND: &str = "execution.amend_budget";
 const PAUSE_COMMAND: &str = "execution.pause";
 const RESUME_COMMAND: &str = "execution.resume";
 const CANCEL_COMMAND: &str = "execution.cancel";
+const SWEEP_COMMAND: &str = "execution.sweep";
 const SOURCE: &str = "serve-cli";
 
 /// The events tail's default page size when `limit` is absent.
@@ -757,6 +758,78 @@ pub(super) async fn cancel(
                     Some(drive_execution_id.as_str()),
                     actor,
                     key,
+                )?)
+            })
+        },
+    )
+    .await
+}
+
+/// `POST /v1/executions/{id}/sweep`: evaluate the stream's customs stages and journal the result.
+///
+/// The body carries an optional `asOf`; absent means now, read from the STORE'S clock rather than
+/// this process's. THE FUTURE IS REFUSED by the verb itself, before it reads, computes or writes
+/// anything -- deliberately not re-checked here, because a second copy of that rule at the door
+/// can drift from the first and makes the verb's own guard unreachable from this surface.
+///
+/// `asOf` IS IN THE IDEMPOTENCY DIGEST (it is a body field, and `request_digest16` covers the
+/// body), so two requests carrying the same key and DIFFERENT instants are `Divergent` rather than
+/// silently collapsed onto the first answer. Which is right: they are different questions.
+pub(super) async fn sweep(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    // An empty body is a legal sweep -- every field is optional -- so absent bytes read as `{}`
+    // rather than as a malformed request. Anything present must still be JSON.
+    let payload: serde_json::Value = if body.is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(_) => return bad_request(SWEEP_COMMAND, "the request body is not valid JSON", "/"),
+        }
+    };
+
+    let as_of = match payload.get("asOf") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(_) => {
+            return bad_request(
+                SWEEP_COMMAND,
+                "\"asOf\" must be an RFC 3339 UTC timestamp string",
+                "/asOf",
+            );
+        }
+    };
+
+    let identity = match parse_mutation_headers(
+        &headers,
+        SWEEP_COMMAND,
+        &execution_id,
+        &payload,
+        &["sweep-performed"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        SWEEP_COMMAND,
+        identity,
+        |actor, key| {
+            Box::pin(async move {
+                Ok(execution::sweep::execute(
+                    &events,
+                    Some(drive_execution_id.as_str()),
+                    as_of.as_deref(),
+                    actor,
+                    Some(key),
                 )?)
             })
         },

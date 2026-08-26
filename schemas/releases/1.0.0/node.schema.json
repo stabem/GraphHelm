@@ -28,7 +28,8 @@
         "materializer",
         "deploy",
         "rollback",
-        "artifact_transform"
+        "artifact_transform",
+        "dead_letter"
       ]
     },
     "name": {

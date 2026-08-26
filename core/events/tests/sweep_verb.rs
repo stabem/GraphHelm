@@ -470,6 +470,7 @@ fn a_claim_past_its_clearance_instant_raises_exactly_one_exception_naming_its_ep
         &instant("2026-08-10T14:00:00Z"),
         &actor(),
         SweepCaller::Operator,
+        None,
     )
     .expect("a sweep over a readable journal must not fail");
 
@@ -568,6 +569,7 @@ fn sweep_at(repository: &LocalEventRepository, as_of: &PersistedTimestamp) -> Ve
         as_of,
         &actor(),
         SweepCaller::Operator,
+        None,
     )
     .expect("a sweep over a readable journal must not fail")
 }
@@ -955,6 +957,7 @@ fn a_sweep_asked_about_the_future_is_refused_and_spends_nothing() {
         &instant("2026-08-10T16:00:00Z"),
         &actor(),
         SweepCaller::Operator,
+        None,
     );
     assert!(
         refused.is_err(),

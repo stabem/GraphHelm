@@ -189,7 +189,8 @@
             "materializer",
             "deploy",
             "rollback",
-            "artifact_transform"
+            "artifact_transform",
+            "dead_letter"
           ]
         },
         "optionality": {"enum": ["required", "recommended", "optional"]},

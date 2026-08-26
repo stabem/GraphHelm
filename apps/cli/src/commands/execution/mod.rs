@@ -7,6 +7,7 @@ pub(super) mod resume;
 pub(super) mod signal;
 pub(super) mod start;
 pub(super) mod status;
+pub(super) mod sweep;
 pub(crate) mod wake;
 
 use std::collections::BTreeMap;

@@ -2558,6 +2558,183 @@ fn the_api_answers_the_sleep_question_and_zero_fills_every_bucket() {
     }
 }
 
+/// #248: a node this fixture-only deployment cannot answer parks in `waiting_input`, and the
+/// `start` reply must say the deployment has no real-executor wiring rather than let the reply
+/// read as an ordinary operator-facing wait.
+///
+/// `NodeState::WaitingInput` is produced by exactly one path in this codebase today --
+/// `FixtureExecutor::execute` answering `NeedsInput` for a node with no fixture
+/// (`core/simulation/src/executor.rs`) -- and `PortExecutor` (the real executor,
+/// `core/runtime/src/executor.rs`) is deliberately built to never return `NeedsInput`, so this
+/// deployment (`serve` with no `--manifest`/`--broker`/`--route`/`--staging`/`--keyring`/
+/// `--key-id`) is the only shape that can reach this state at all.
+///
+/// `deploy` (`NodeType::Deploy`) is one of `classify::work_kind`'s unsupported types, so this
+/// graph's own drive falls back to the synchronous 05a fixture-only path even if real-executor
+/// flags were somehow present -- the same shape the issue measured.
+fn assert_fixture_only_waiting_input_warning(reply: &Value, context: &str) {
+    let diagnostic = reply["diagnostics"]
+        .as_array()
+        .expect("diagnostics is always an array")
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "GHCLI021_FIXTURE_ONLY_WAITING_INPUT")
+        .unwrap_or_else(|| {
+            panic!("{context} must name fixture-only waiting_input with GHCLI021: {reply}")
+        });
+    assert_eq!(diagnostic["path"], "/", "{context}: {reply}");
+    assert_eq!(diagnostic["source"], "serve-cli", "{context}: {reply}");
+}
+
+#[test]
+fn starting_a_node_with_no_fixture_names_fixture_only_mode_in_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m248-fixture-only";
+    let (_guard, base, token) = serve(&events);
+
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    // `implementation` gets a real fixture answer and succeeds; `deploy` gets none at all, so
+    // it is the node that parks in `waiting_input`.
+    let fixtures = write_json(
+        directory.path(),
+        "m248-fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "success"}}),
+    );
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "m248-fixture-only-start"),
+            ("X-GraphHelm-Actor", "owner-m248"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+            "project": root().to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["nodeStateCounts"]["waiting_input"], 1,
+        "the fixture-free `deploy` node must be the one that parks: {reply}"
+    );
+
+    assert_fixture_only_waiting_input_warning(
+        &reply,
+        "a fresh start that parks under fixture-only mode",
+    );
+}
+
+/// #248/review follow-up: the caller can lose a successful response and repeat the exact request.
+/// The same-key retry is resolved from committed state without running the mutation again, but it
+/// must still carry the fixture-only warning that makes `waiting_input` non-ambiguous.
+#[test]
+fn a_lost_response_retry_preserves_the_fixture_only_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m248-lost-response";
+    let (_guard, base, token) = serve(&events);
+
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = write_json(
+        directory.path(),
+        "m248-retry-fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "success"}}),
+    );
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let headers = [
+        ("Idempotency-Key", "m248-lost-response-start"),
+        ("X-GraphHelm-Actor", "owner-m248"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(),
+        "fixtures": fixtures.to_str().unwrap(),
+        "mode": "supervised",
+        "project": root().to_str().unwrap(),
+    });
+
+    let (first_status, first_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(first_status, 200, "{first_reply}");
+    assert_eq!(first_reply["data"]["nodeStateCounts"]["waiting_input"], 1);
+
+    let (retry_status, retry_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(retry_status, 200, "{retry_reply}");
+    assert_eq!(retry_reply["data"]["nodeStateCounts"]["waiting_input"], 1);
+    assert_fixture_only_waiting_input_warning(
+        &retry_reply,
+        "a same-key retry after the first response was lost",
+    );
+}
+
+/// #248 (M's review of #424): `signal`'s own response never carries `nodeStateCounts` at all
+/// (measured -- `execution::signal::execute` never calls `render`), so a diagnostic keyed on
+/// that field would silently never fire here no matter the execution's real state -- exactly the
+/// "reads as normal progress" failure the diagnostic exists to close. This proves the fix (a
+/// store-truth check, not a response-shape check) actually closes that gap rather than only
+/// covering the endpoint the issue happened to measure.
+#[test]
+fn a_signal_on_a_fixture_only_parked_execution_still_names_the_mode_in_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-m248-signal-blind-spot";
+    let (_guard, base, token) = serve(&events);
+
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = write_json(
+        directory.path(),
+        "m248-signal-fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "success"}}),
+    );
+    let (start_status, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "m248-signal-start"),
+            ("X-GraphHelm-Actor", "owner-m248"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+            "project": root().to_str().unwrap(),
+        }),
+    );
+    assert_eq!(start_status, 200, "{start_reply}");
+    assert_eq!(start_reply["data"]["nodeStateCounts"]["waiting_input"], 1);
+
+    let evidence_out = directory.path().join("m248-evidence.json");
+    let (signal_status, signal_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "m248-signal-cmd"),
+            ("X-GraphHelm-Actor", "agent-planner"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &serde_json::json!({
+            "signal": signal_envelope("m248-signal-1", "no_progress"),
+            "evidenceOut": evidence_out.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(signal_status, 200, "{signal_reply}");
+    // The whole point: `signal`'s own `data` has no `nodeStateCounts` field at all, unlike
+    // `start`'s. The diagnostic still fires because it is checked against the store, not this
+    // response's own shape.
+    assert!(
+        signal_reply["data"]["nodeStateCounts"].is_null(),
+        "this test's premise is that signal's response has no nodeStateCounts field -- if this \
+         fails, the premise changed and this test needs re-deriving: {signal_reply}"
+    );
+    assert_fixture_only_waiting_input_warning(
+        &signal_reply,
+        "signal on a fixture-only-parked execution without nodeStateCounts",
+    );
+}
+
 /// M08 Task 2: the surfaces answer time through ONE subtraction, and an unevaluated
 /// silence is VISIBLE rather than rendered as calm.
 ///

@@ -819,11 +819,33 @@ impl From<execution::Failure> for MutationError {
 type MutationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<serde_json::Value, MutationError>> + Send + 'a>>;
 
+/// #248: which executor this deployment can run against. A positional `bool` here was flagged in
+/// review (M's review of #424) as easy to pass backwards silently -- the wrong value still
+/// compiles, and the failure mode would be exactly the silence this diagnostic exists to close.
+/// The enum makes the wrong value a name mismatch a reader catches at the call site, not a
+/// swapped `true`/`false` that reads the same either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExecutorWiring {
+    FixtureOnly,
+    Real,
+}
+
+impl ExecutorWiring {
+    fn from_state(state: &ServeState) -> Self {
+        if state.runtime.is_some() {
+            Self::Real
+        } else {
+            Self::FixtureOnly
+        }
+    }
+}
+
 async fn run_idempotent_mutation<'a>(
     events: &Path,
     execution: &str,
     command: &'static str,
     identity: MutationIdentity,
+    wiring: ExecutorWiring,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
     match classify_existing_keys(
@@ -832,7 +854,9 @@ async fn run_idempotent_mutation<'a>(
         &identity.keys,
         &identity.idempotency_header,
     ) {
-        Ok(KeyState::Complete) => return reply_with_current_status(events, execution, command),
+        Ok(KeyState::Complete) => {
+            return reply_with_current_status(events, execution, command, wiring);
+        }
         Ok(KeyState::Partial(stuck)) => {
             return partial_conflict_response(events, execution, command, &stuck);
         }
@@ -891,7 +915,37 @@ async fn run_idempotent_mutation<'a>(
                 std::sync::Arc::from(events),
                 execution.to_owned(),
             ));
-            respond(StatusCode::OK, Outcome::success(command, value).output)
+            let mut outcome = Outcome::success(command, value);
+            // #248: `NodeState::WaitingInput` is produced by exactly one path in this codebase
+            // today -- `FixtureExecutor::execute` answering `NeedsInput` for a node with no
+            // fixture (`core/simulation/src/executor.rs`). The real executor (`PortExecutor`,
+            // `core/runtime/src/executor.rs`) is deliberately built to never return `NeedsInput`,
+            // and an unsupported node type is refused *before* dispatch rather than parked -- so
+            // there is no other route to this state on `main` today. That makes it
+            // indistinguishable from an operator-legitimate wait ONLY while this deployment has
+            // no real-executor wiring: `ok: true`, `200`, `status: "running"` all read as normal
+            // progress. Naming the mode here, rather than refusing the mutation outright, is the
+            // smaller of the issue's two suggested fixes -- it does not risk breaking a caller
+            // that (today, only in a fixture-driven test harness) relies on the park-and-200
+            // shape for a deliberately unanswered fixture.
+            //
+            // Checked against the STORE, not against `value`'s own JSON shape: two of the nine
+            // mutation endpoints sharing this function (`signal`, `wake-lease`) never render a
+            // `nodeStateCounts` field at all (measured -- neither calls `execution::render`), so
+            // a check keyed on that field would silently never fire for them regardless of the
+            // execution's real state, which is exactly the "reads as normal progress" failure
+            // this diagnostic exists to close (M's review of #424). Re-reading the projection
+            // costs one more store open, the same shape `current_head` above already pays on
+            // every successful mutation.
+            // The check has a THIRD outcome, not just present/absent (M's second finding on
+            // #424): a store read can fail. Answering `false` there would recreate exactly the
+            // ambiguity this diagnostic exists to close -- an unreadable store reads as "no
+            // problem" the same way a genuinely calm execution does, `ok: true`/`200` either
+            // way. So a read failure gets its OWN diagnostic naming that the check could not run,
+            // rather than silently agreeing with the calm case. Narrow path (this store was just
+            // written to by the mutation above), kept non-silent anyway rather than assumed safe.
+            annotate_fixture_only(&mut outcome.output, events, execution, wiring);
+            respond(StatusCode::OK, outcome.output)
         }
         Err(MutationError::Prepared(response)) => response,
         Err(MutationError::Command(failure)) if failure.code == "GHE003_IDEMPOTENCY_CONFLICT" => {
@@ -904,7 +958,9 @@ async fn run_idempotent_mutation<'a>(
                 &identity.keys,
                 &identity.idempotency_header,
             ) {
-                Ok(KeyState::Complete) => reply_with_current_status(events, execution, command),
+                Ok(KeyState::Complete) => {
+                    reply_with_current_status(events, execution, command, wiring)
+                }
                 Ok(KeyState::Partial(stuck)) => {
                     partial_conflict_response(events, execution, command, &stuck)
                 }
@@ -1029,9 +1085,18 @@ fn classify_existing_keys(
 /// state, the same category of problem `run_idempotent_mutation`'s pre-flight check exists to
 /// avoid; "current status" is the one shape every mutation can report honestly no matter how long
 /// ago the original attempt actually committed.
-fn reply_with_current_status(events: &Path, execution: &str, command: &'static str) -> Response {
+fn reply_with_current_status(
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    wiring: ExecutorWiring,
+) -> Response {
     match execution::status::execute(events, Some(execution)) {
-        Ok(value) => respond(StatusCode::OK, Outcome::success(command, value).output),
+        Ok(value) => {
+            let mut output = Outcome::success(command, value).output;
+            annotate_fixture_only(&mut output, events, execution, wiring);
+            respond(StatusCode::OK, output)
+        }
         Err(failure) => respond_failure(command, failure),
     }
 }
@@ -1158,6 +1223,76 @@ fn current_head(events: &Path, execution: &str) -> Option<u64> {
     let store = event_store(events).ok()?;
     let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
     Some(history.last().map_or(0, |event| event.sequence))
+}
+
+/// #248: the three answers to "is any node in this execution parked in `waiting_input`", read
+/// fresh from the store rather than from a mutation response's own JSON shape (see the call
+/// site's own comment for why: `nodeStateCounts` is not a field every mutation renders).
+/// `Undetermined` is its own variant rather than folded into `Absent` (M's second finding on
+/// #424): collapsing a read failure into "no problem" would recreate the exact ambiguity this
+/// diagnostic exists to close, just one layer down -- an unreadable store and a genuinely calm
+/// execution would both answer with no warning.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WaitingInputCheck {
+    Present,
+    Absent,
+    Undetermined,
+}
+
+fn fixture_only_diagnostic(check: WaitingInputCheck) -> Option<Diagnostic> {
+    match check {
+        WaitingInputCheck::Present => Some(Diagnostic::warning(
+            "GHCLI021_FIXTURE_ONLY_WAITING_INPUT",
+            "this deployment has no real-executor wiring (fixture-only mode); a node with no \
+             fixture answer parks in waiting_input and will never proceed on its own -- this is a \
+             configuration state, not a workflow wait",
+            "/",
+            SOURCE,
+        )),
+        WaitingInputCheck::Undetermined => Some(Diagnostic::warning(
+            "GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED",
+            "this deployment has no real-executor wiring (fixture-only mode), and whether any \
+             node is parked in waiting_input could not be determined -- the store could not be \
+             re-read after this mutation",
+            "/",
+            SOURCE,
+        )),
+        WaitingInputCheck::Absent => None,
+    }
+}
+
+fn annotate_fixture_only(
+    output: &mut CommandOutput,
+    events: &Path,
+    execution: &str,
+    wiring: ExecutorWiring,
+) {
+    if wiring == ExecutorWiring::FixtureOnly
+        && let Some(diagnostic) = fixture_only_diagnostic(check_waiting_input(events, execution))
+    {
+        output.diagnostics.push(diagnostic);
+    }
+}
+
+fn check_waiting_input(events: &Path, execution: &str) -> WaitingInputCheck {
+    let Ok(store) = event_store(events) else {
+        return WaitingInputCheck::Undetermined;
+    };
+    let Ok((scope, stream, history)) = execution::resolve_stream(&store, Some(execution)) else {
+        return WaitingInputCheck::Undetermined;
+    };
+    let Ok(projection) = graphhelm_events::replay(&scope, &stream, &history) else {
+        return WaitingInputCheck::Undetermined;
+    };
+    if projection
+        .node_states
+        .values()
+        .any(|state| *state == graphhelm_protocols::NodeState::WaitingInput)
+    {
+        WaitingInputCheck::Present
+    } else {
+        WaitingInputCheck::Absent
+    }
 }
 
 /// Equal-length fold with `|=` so no early return leaks which byte differed. Lengths are not
@@ -1451,6 +1586,31 @@ mod tests {
             r#"{"apple":2,"zebra":1}"#,
             "confirms the order is specifically sorted, not merely some other stable order"
         );
+    }
+
+    /// #248/M's second finding: a store read failure must answer `Undetermined`, never silently
+    /// agree with `Absent` — folding the two would recreate this diagnostic's own reason to
+    /// exist one layer down (an unreadable store and a genuinely calm execution both reading as
+    /// "no problem"). Triggered here with a path that cannot possibly open as an event
+    /// repository (a plain file, not a directory) rather than a directory that merely lacks the
+    /// named execution's stream — the point is a STORE failure, not a resolvable-but-empty read.
+    #[test]
+    fn a_store_that_cannot_be_read_answers_undetermined_not_absent() {
+        let directory = tempfile::tempdir().unwrap();
+        let not_a_store_dir = directory.path().join("this-is-a-file-not-a-directory");
+        std::fs::write(&not_a_store_dir, b"not an event store").unwrap();
+        let check = check_waiting_input(&not_a_store_dir, "exec-does-not-matter");
+        assert_eq!(
+            check,
+            WaitingInputCheck::Undetermined,
+            "an unreadable store must not answer the same as a store that read cleanly and \
+             found nothing waiting"
+        );
+        let diagnostic = fixture_only_diagnostic(check)
+            .expect("an undetermined fixture-only state must produce GHCLI022");
+        assert_eq!(diagnostic.code, "GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED");
+        assert_eq!(diagnostic.path, "/");
+        assert_eq!(diagnostic.source, SOURCE);
     }
 
     /// `request_digest16` must be stable across the same two-key-order variation the probe above

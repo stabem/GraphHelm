@@ -21,7 +21,7 @@ use graphhelm_tool_broker::lease::{Capability, ToolLease};
 
 use super::ports::{ServeModelPort, ServeToolPort, build_sealer};
 use super::{
-    MutationError, ServeState, parse_mutation_headers, respond, respond_failure,
+    ExecutorWiring, MutationError, ServeState, parse_mutation_headers, respond, respond_failure,
     run_idempotent_mutation,
 };
 use crate::commands::execution::PreparedDrive;
@@ -264,6 +264,7 @@ pub(super) async fn start(
         &execution_id,
         START_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 let version =
@@ -378,6 +379,7 @@ pub(super) async fn signal(
         &execution_id,
         SIGNAL_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::signal::execute(
@@ -433,6 +435,7 @@ pub(super) async fn approve(
         &execution_id,
         APPROVE_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::approve::execute(
@@ -515,6 +518,7 @@ pub(super) async fn amend_budget(
         &execution_id,
         AMEND_BUDGET_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::amend::execute(
@@ -631,6 +635,7 @@ pub(super) async fn pause(
         &execution_id,
         PAUSE_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::pause::execute(
@@ -690,6 +695,7 @@ pub(super) async fn resume(
         &execution_id,
         RESUME_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 let version =
@@ -751,6 +757,7 @@ pub(super) async fn cancel(
         &execution_id,
         CANCEL_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::cancel::execute(
@@ -822,6 +829,7 @@ pub(super) async fn sweep(
         &execution_id,
         SWEEP_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::sweep::execute(
@@ -1414,6 +1422,7 @@ pub(super) async fn wake_lease(
         &execution_id,
         WAKE_LEASE_COMMAND,
         identity,
+        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::wake::arm(

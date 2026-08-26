@@ -95,8 +95,8 @@ fn execute_local(root: &Path, archive: &Path) -> Result<serde_json::Value, Failu
         ));
     }
 
-    let text =
-        std::fs::read_to_string(archive).map_err(|_| local_error("the archive could not be read"))?;
+    let text = std::fs::read_to_string(archive)
+        .map_err(|_| local_error("the archive could not be read"))?;
     let value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|_| local_error("the archive is not a valid archive"))?;
     let journal = value["journal"]

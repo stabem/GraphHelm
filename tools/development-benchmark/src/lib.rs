@@ -212,7 +212,7 @@ fn arm_cost(
 
     let cost = receipt.field(field).ok_or_else(unavailable)?;
     let value = cost.observed().ok_or_else(unavailable)?;
-    Ok((value, cost.provenance().clone()))
+    Ok((value, *cost.provenance()))
 }
 
 /// Compare one cost field across the two arms.

@@ -22,7 +22,7 @@ use std::path::PathBuf;
 ///
 /// This is the anchor, and it is the right one because it IS the pinned thing: if the pin moves,
 /// this literal changes in the same edit that must rewrite the defence.
-const PIN: &str = "sha256:174c7cf9d7e3a9d7fe14b7dadf9fc1b7c36004197a87b42d5bb0f8f04a8723b4";
+const PIN: &str = "sha256:1a6980bd47eeecf8eb2bb624db0a640b0d0abb5391d1a5cb4bbd39a8215dadfb";
 
 fn tripwire_source() -> String {
     let path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

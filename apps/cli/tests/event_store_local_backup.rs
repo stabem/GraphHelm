@@ -189,10 +189,7 @@ fn a_local_store_round_trips_through_backup_and_restore() {
         "--execution",
         EXECUTION,
     ]);
-    assert_eq!(
-        code, 0,
-        "the restored store must OPEN; envelope: {value}"
-    );
+    assert_eq!(code, 0, "the restored store must OPEN; envelope: {value}");
     assert_eq!(value["ok"], true, "restored store failed to open: {value}");
     assert_eq!(
         value["data"]["headSequence"], HEAD_SEQUENCE,
@@ -218,7 +215,11 @@ fn a_restored_store_rebuilds_its_active_markers_on_open() {
     assert_eq!(back_up(&source, &archive).0, 0, "backup must succeed first");
 
     let restored = directory.path().join("restored");
-    assert_eq!(restore(&restored, &archive).0, 0, "restore must succeed first");
+    assert_eq!(
+        restore(&restored, &archive).0,
+        0,
+        "restore must succeed first"
+    );
 
     // The restore lets the store build the layout, so the marker directory is there from the
     // start. That is not what this test is about: the question is whether `active/` is REBUILT

@@ -148,24 +148,20 @@ pub fn run(command: TopLevel) -> Outcome {
                 repository,
                 config,
                 output,
-            } => {
-                events::backup::run(events::backup::Request {
-                    repository: repository.as_deref(),
-                    config: config.as_deref(),
-                    output: &output,
-                })
-            }
+            } => events::backup::run(events::backup::Request {
+                repository: repository.as_deref(),
+                config: config.as_deref(),
+                output: &output,
+            }),
             EventsCommand::Restore {
                 repository,
                 config,
                 archive,
-            } => {
-                events::restore::run(events::restore::Request {
-                    repository: repository.as_deref(),
-                    config: config.as_deref(),
-                    archive: &archive,
-                })
-            }
+            } => events::restore::run(events::restore::Request {
+                repository: repository.as_deref(),
+                config: config.as_deref(),
+                archive: &archive,
+            }),
         },
         TopLevel::Execution(execution) => match execution.command {
             ExecutionCommand::Start {

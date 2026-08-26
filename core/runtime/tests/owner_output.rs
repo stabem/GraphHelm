@@ -642,22 +642,6 @@ fn exact_command_text_round_trips_byte_verbatim() {
     );
 }
 
-/// T12: `apiVersion`'s major segment is checked before any typed use of `spec`. Placeholder
-/// scope, not yet wired to the shared `DevelopmentEnvelope` (design §4.4/§9 — #221's own §10
-/// notes the envelope integration is still open pending confirmation of how #217's untyped
-/// `spec: serde_json::Value` is meant to reach this validator). Recorded here as a declared gap
-/// rather than a silent one: this task's acceptance criteria are about `OwnerTaskResult`'s own
-/// fields, and none of T1-T11 needed envelope integration to be real and testable.
-#[test]
-#[ignore = "envelope integration not yet designed against #217's real DevelopmentEnvelope shape \
-            — see .factory/e-agent-221-blueprint.md §10 and the note on this test"]
-fn unknown_major_version_fails_closed() {
-    unimplemented!(
-        "requires deciding how OwnerTaskResult round-trips through DevelopmentEnvelope.spec; \
-         out of scope for this pass, flagged rather than faked"
-    );
-}
-
 // L's review finding on #254 (`5395616664`): `recommended` used to be a `usize`, unvalidated,
 // and `render` indexed `decision.options[decision.recommended]` with it directly. The doc
 // comment claimed "always 0 or 1 by construction" — untrue of a `pub usize` with no validating

@@ -3170,7 +3170,10 @@ fn open_child_file(
 /// `Integrity` is a verdict about BYTES — that what was read disagrees with what it should be. A
 /// failed open reads no bytes, so it is almost always a statement about the MACHINE instead:
 /// contention, a denied handle, a share conflict. Those belong to `Storage`, which is what the
-/// crate's own `From<std::io::Error>` already answers for every `?`; this site used to override it.
+/// crate's own `From<std::io::Error>` already answers for every `?`; these sites used to override
+/// it. Four sites now share this oracle: both arms of `open_child_file` (#366) and both opens
+/// inside the windows `link_retained_file_between` (#367). Duplicating the rule per site is what
+/// let the family drift in the first place, so new open sites call this rather than restate it.
 ///
 /// The one exception is real and worth keeping. When the caller is NOT creating, the layout says
 /// the child must already exist, so `NotFound` **is** damage and keeps its integrity verdict.
@@ -3418,13 +3421,16 @@ fn link_retained_file_between(
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
-    let named = std::fs::OpenOptions::new()
-        .read(true)
-        .access_mode(GENERIC_READ)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(_source_path.join(source))
-        .map_err(|_| EventRepositoryError::Integrity)?;
+    // Publication is not creating this child. The mapper keeps NotFound as integrity and
+    // classifies every other refused open as storage (#367).
+    let named = map_staged_publication_open(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(_source_path.join(source)),
+    )?;
     validate_opened_regular(&named)?;
     if file_identity(&named)? != file_identity(source_file)? {
         return Err(EventRepositoryError::Integrity);
@@ -3440,18 +3446,35 @@ fn link_retained_file_between(
             EventRepositoryError::Storage
         }
     })?;
-    let published = std::fs::OpenOptions::new()
-        .read(true)
-        .access_mode(GENERIC_READ)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(_destination_path.join(destination))
-        .map_err(|_| EventRepositoryError::Integrity)?;
+    // The hard link already landed. The mapper keeps NotFound as integrity and classifies every
+    // other refused open as storage (#367).
+    let published = map_published_publication_open(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(_destination_path.join(destination)),
+    )?;
     validate_opened_regular(&published)?;
     if file_identity(&published)? != file_identity(source_file)? {
         return Err(EventRepositoryError::Integrity);
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn map_staged_publication_open(
+    opened: std::io::Result<File>,
+) -> Result<File, EventRepositoryError> {
+    opened.map_err(|error| open_failure(false, &error))
+}
+
+#[cfg(windows)]
+fn map_published_publication_open(
+    opened: std::io::Result<File>,
+) -> Result<File, EventRepositoryError> {
+    opened.map_err(|error| open_failure(false, &error))
 }
 
 #[cfg(unix)]
@@ -3888,6 +3911,11 @@ mod limit_tests {
 
     use super::*;
 
+    #[test]
+    fn public_local_failpoint_catalog_keeps_seven_stable_faults() {
+        let _: [LocalFailpoint; 7] = LocalFailpoint::all();
+    }
+
     /// `open_failure`'s OTHER arm, reached directly — because nothing else reaches it.
     ///
     /// Found by K reviewing #366: the integration guard for a missing `journal.jsonl` never
@@ -4086,6 +4114,124 @@ mod limit_tests {
             Err(EventRepositoryError::Integrity)
         ));
         assert!(!destination_path.join("object.json").exists());
+    }
+
+    /// Exact mapper-site fixture for the staged-source OPEN (#367).
+    ///
+    /// This synthetic `AccessDenied` does not claim a reachable scanner, backup agent, or second
+    /// GraphHelm handle shape. It pins only the verdict at the private mapper production uses.
+    #[cfg(windows)]
+    #[test]
+    fn windows_staged_publication_open_mapper_reports_access_denied_as_storage() {
+        let error = map_staged_publication_open(Err(std::io::Error::from_raw_os_error(5)))
+            .expect_err("a refused staged-source open cannot publish");
+        assert_eq!(
+            error.code(),
+            "GHE008_STORAGE_FAILURE",
+            "a refused OPEN is a storage failure; GHE005 accuses the store of corrupting itself"
+        );
+    }
+
+    /// The OTHER half of the same site's population: `NotFound` KEEPS its integrity verdict.
+    ///
+    /// The sibling above proves a refused open answers `Storage`. On its own that measures one
+    /// side of a two-way branch, and a fix that answered `Storage` for EVERYTHING would pass it
+    /// while destroying the one exception worth keeping. This cell holds that exception down,
+    /// at the same call site, with a fault that is just as real: the retained handle pins the
+    /// bytes, and the name it was staged under is gone.
+    ///
+    /// The two cells pull in OPPOSITE directions, which is the point -- no single wrong mapping
+    /// satisfies both.
+    #[cfg(windows)]
+    #[test]
+    fn windows_publication_source_gone_by_name_stays_an_integrity_verdict() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let source_path = directory.path().join("source");
+        let destination_path = directory.path().join("destination");
+        std::fs::create_dir(&source_path).unwrap();
+        std::fs::create_dir(&destination_path).unwrap();
+        let source_directory = open_directory(&source_path).unwrap();
+        let destination_directory = open_directory(&destination_path).unwrap();
+
+        let source = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .access_mode(GENERIC_READ | GENERIC_WRITE | DELETE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(source_path.join("object.tmp"))
+            .unwrap();
+        std::fs::write(source_path.join("object.tmp"), b"retained").unwrap();
+        // Moved away and NOT replaced -- the distinction from the identity-gate test above, which
+        // puts different bytes back under the same name and is therefore about CONTENT.
+        std::fs::rename(
+            source_path.join("object.tmp"),
+            source_path.join("displaced.tmp"),
+        )
+        .unwrap();
+
+        // POSITIVE CONTROL, first: the arranged fault is NotFound and nothing else.
+        assert_eq!(
+            std::fs::File::open(source_path.join("object.tmp"))
+                .err()
+                .map(|error| error.kind()),
+            Some(std::io::ErrorKind::NotFound),
+            "fixture did not arm: the staged name is still openable"
+        );
+
+        let error = link_retained_file_between(
+            &source,
+            &source_directory,
+            &source_path,
+            "object.tmp",
+            &destination_directory,
+            &destination_path,
+            "object.json",
+        )
+        .expect_err("a staged name that vanished cannot publish");
+        assert_eq!(
+            error.code(),
+            "GHE005_INTEGRITY_FAILURE",
+            "the layout says this child exists; its absence is damage, not a busy machine"
+        );
+        assert!(!destination_path.join("object.json").exists());
+    }
+
+    /// Exact mapper-site fixture for the freshly linked destination OPEN (#367).
+    ///
+    /// This synthetic `AccessDenied` pins only the verdict at the private mapper production uses.
+    /// It does not claim that a process can pre-hold a destination name before the link exists.
+    #[cfg(windows)]
+    #[test]
+    fn windows_published_open_mapper_reports_access_denied_as_storage() {
+        let error = map_published_publication_open(Err(std::io::Error::from_raw_os_error(5)))
+            .expect_err("a refused published-name open cannot confirm publication");
+        assert_eq!(
+            error.code(),
+            "GHE008_STORAGE_FAILURE",
+            "a refused OPEN is a storage failure; GHE005 accuses the store of corrupting itself"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_published_open_mapper_keeps_not_found_as_integrity() {
+        let error =
+            map_published_publication_open(Err(std::io::Error::from(std::io::ErrorKind::NotFound)))
+                .expect_err("a vanished published name cannot confirm publication");
+        assert_eq!(
+            error.code(),
+            "GHE005_INTEGRITY_FAILURE",
+            "the link already landed, so its absence is damage rather than storage contention"
+        );
     }
 
     #[cfg(windows)]

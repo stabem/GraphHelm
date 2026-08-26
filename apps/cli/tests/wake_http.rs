@@ -1887,9 +1887,23 @@ fn reported_refusal(child: &mut Child) -> String {
 /// choreography test uses; a fixed sleep would be a timing assumption wearing a step's
 /// clothes. Both waits now share `reported_refusal`, so the claim of sameness this comment
 /// has always made is true of the DIAGNOSIS too, not only of the polling shape.
+///
+/// This is a 30-second hang catcher, not a supported startup deadline. A healthy Windows start can
+/// take longer than five seconds while an eight-second lease is still alive, especially when the
+/// test binary starts several sidecars together. The lease must outlive this catcher so a failure
+/// here still diagnoses startup rather than an already-mature lease (#413).
+///
+/// The idle benchmark below is evidence for the original bug: parallel sidecar startup consumed
+/// most of the old short lease before the scenario began. It is not evidence that five seconds is
+/// a safe maximum on every healthy Windows machine.
+#[cfg(windows)]
+const PIPE_STARTUP_HANG_CATCHER_SECONDS: u64 = 30;
+#[cfg(windows)]
+const RACING_WAKE_LEASE_SECONDS: u64 = 60;
+
 #[cfg(windows)]
 fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS);
     let expected = format!("graphhelm-wake-{rendezvous_id}");
     while !std::fs::read_dir("//./pipe").is_ok_and(|entries| {
         entries.filter_map(Result::ok).any(|entry| {
@@ -1901,7 +1915,7 @@ fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
     }) {
         // The child is asked BEFORE the deadline is judged, because a dead sidecar and a slow one
         // are different failures and only this call can tell them apart. Without it both spend the
-        // full ten seconds and report the same sentence -- true of the pipe, useless about the
+        // full hang-catcher window and report the same sentence -- true of the pipe, useless about the
         // cause, while the exit status sat unread the whole time (#386).
         if let Some(status) = child.try_wait().expect("the sidecar handle is readable") {
             // Says only what this position can KNOW: the child is gone and the name is absent.
@@ -1947,7 +1961,13 @@ fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
     let events = directory.path().join("events");
     let execution = "exec-88-missed";
     start_execution(&events, directory.path(), execution);
-    arm_lease_bounded(&events, execution, "rvz-88-missed", head(&events), Some(3));
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-missed",
+        head(&events),
+        Some(RACING_WAKE_LEASE_SECONDS),
+    );
     let armed_at = head(&events);
     let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
     wait_for_pipe(&mut child, "rvz-88-missed");
@@ -2042,7 +2062,13 @@ fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
     let events = directory.path().join("events");
     let execution = "exec-88-rearm";
     start_execution(&events, directory.path(), execution);
-    arm_lease_bounded(&events, execution, "rvz-88-rearm-a", head(&events), Some(3));
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-rearm-a",
+        head(&events),
+        Some(RACING_WAKE_LEASE_SECONDS),
+    );
     let first_arming = head(&events);
     let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
     wait_for_pipe(&mut child, "rvz-88-rearm-a");
@@ -2121,7 +2147,13 @@ fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
     let events = directory.path().join("events");
     let execution = "exec-88-unreadable";
     start_execution(&events, directory.path(), execution);
-    arm_lease_bounded(&events, execution, "rvz-88-unread", head(&events), Some(3));
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-unread",
+        head(&events),
+        Some(RACING_WAKE_LEASE_SECONDS),
+    );
     let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
     wait_for_pipe(&mut child, "rvz-88-unread");
     std::fs::remove_dir_all(&events)
@@ -2158,7 +2190,13 @@ fn a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis() {
     start_execution(&events, directory.path(), execution);
     arm_lease(&events, execution, "rvz-88-mis-a", head(&events));
     let captured_arming = head(&events);
-    arm_lease_bounded(&events, execution, "rvz-88-mis-b", head(&events), Some(3));
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-mis-b",
+        head(&events),
+        Some(RACING_WAKE_LEASE_SECONDS),
+    );
     let live_arming = head(&events);
     assert!(captured_arming < live_arming);
     let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
@@ -2215,7 +2253,13 @@ fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
     let events = directory.path().join("events");
     let execution = "exec-88-twocycle";
     start_execution(&events, directory.path(), execution);
-    arm_lease_bounded(&events, execution, "rvz-88-cycle-a", head(&events), Some(4));
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-cycle-a",
+        head(&events),
+        Some(RACING_WAKE_LEASE_SECONDS),
+    );
     let first_arming = head(&events);
     let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
     wait_for_pipe(&mut child, "rvz-88-cycle-a");
@@ -2283,7 +2327,7 @@ fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
         execution,
         "rvz-88-stale-alive",
         head(&events),
-        Some(3),
+        Some(RACING_WAKE_LEASE_SECONDS),
     );
     let armed_at = head(&events);
     let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
@@ -2314,4 +2358,83 @@ fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
         "the sweep aimed at this arming; being judged stale is not a mis-aim: {data}"
     );
     assert_eq!(data["laterArmingLive"], false, "{data}");
+}
+
+/// The sidecar's startup budget must fit INSIDE the lease it is racing (#413 B).
+///
+/// `cargo test` runs this binary's tests in parallel, so an ordinary run spawns as many sidecars at
+/// once as there are tests. This idle-machine benchmark explains the original failure: even without
+/// outside load, parallel startup consumed most of the old short lease before the scenario began.
+/// It does not establish a supported startup deadline. Each sample used a 600 s lease so nothing
+/// could expire mid-measurement and panicked if any child died before its rendezvous:
+///
+/// ```text
+/// spawn -> rendezvous visible      min      p50      p90      max
+///   1  sequential                   120      313     1013     1268 ms
+///  12  concurrent                   351      396      421      433 ms
+///  28  concurrent (this binary)    1766     1840     1926     1953 ms
+/// ```
+///
+/// The maturity clock starts at the ARMING APPEND, before the spawn. So the window the scenario
+/// actually gets is `lease - startup`, and at the binary's own width that leaves a `Some(2)` lease
+/// between fifty and two hundred and thirty milliseconds -- on a machine where nothing else is
+/// running. The scaling is superlinear (2.3x the width, 4.5x the time), so a colder cache or an
+/// antivirus pass over fresh binaries closes it.
+///
+/// The guard holds both requirements: the startup hang catcher allows at least 30 seconds for a
+/// healthy slow Windows start, and the tightest lease it races remains strictly longer. Otherwise
+/// the test either rejects a healthy start or fails downstream after the lease has already matured.
+#[cfg(windows)]
+#[test]
+fn the_pipe_wait_is_bounded_below_the_leases_it_races() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wake_http.rs"),
+    )
+    .expect("this test file is readable");
+
+    let pipe_bound = PIPE_STARTUP_HANG_CATCHER_SECONDS;
+
+    // Every lease bound armed by a test that then waits for a rendezvous.
+    let mut raced: Vec<u64> = Vec::new();
+    for block in source.split("\nfn ").skip(1) {
+        if block.starts_with("the_pipe_wait_is_bounded_below_the_leases_it_races") {
+            continue;
+        }
+        if !block.contains("wait_for_pipe(") {
+            continue;
+        }
+        for (index, _) in block.match_indices("arm_lease_bounded(") {
+            let call = &block[index..];
+            if let Some(some) = call.split_once("Some(")
+                && let Some(bound) = some.1.split(')').next()
+            {
+                let seconds = match bound.trim() {
+                    "RACING_WAKE_LEASE_SECONDS" => RACING_WAKE_LEASE_SECONDS,
+                    digits => digits
+                        .parse::<u64>()
+                        .expect("a racing lease bound is a known constant or literal seconds"),
+                };
+                raced.push(seconds);
+            }
+        }
+    }
+
+    assert!(
+        !raced.is_empty(),
+        "no test was found that arms a bounded lease and then waits for a rendezvous, so the \
+         comparison below would pass vacuously -- the extraction is broken, not the code"
+    );
+    let tightest = *raced.iter().min().expect("non-empty");
+    assert!(
+        pipe_bound >= 30,
+        "the pipe wait must allow a healthy slow Windows start: {pipe_bound} < 30"
+    );
+    assert!(
+        pipe_bound < tightest,
+        "the pipe wait allows {pipe_bound}s while the tightest lease it races matures in \
+         {tightest}s. A wait longer than the lease cannot report a slow sidecar: by the time it \
+         gives up, the lease has been mature for {}s and the failure lands downstream saying \
+         nothing about startup. Lease bounds seen: {raced:?}",
+        pipe_bound - tightest
+    );
 }

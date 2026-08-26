@@ -1219,7 +1219,7 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                 restore_terminator.await.unwrap();
             }
             assert_eq!(restore_result, Err(BackupError::InvalidRestore), "{failure}");
-            let preserved: (bool, String) = sqlx::query_as(
+            let preserved: (bool, Option<String>) = sqlx::query_as(
                 "SELECT NOT datallowconn,shobj_description(oid,'pg_database') \
                  FROM pg_database WHERE datname=$1",
             )
@@ -1227,10 +1227,46 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             .fetch_one(&root_pool)
             .await
             .unwrap();
-            assert!(preserved.0, "{failure}");
-            let marker: serde_json::Value = serde_json::from_str(&preserved.1).unwrap();
-            assert_eq!(marker["format"], "graphhelm.restore.marker.v1", "{failure}");
-            let replacement_owner = marker["replacementOwner"].as_str().unwrap().to_owned();
+            let restore_roles: Vec<String> =
+                sqlx::query_scalar("SELECT rolname FROM pg_roles WHERE rolname LIKE 'graphhelm_restore_o_%' ORDER BY rolname")
+                    .fetch_all(&root_pool)
+                    .await
+                    .unwrap();
+            let state = format!(
+                "closed={}, marker={:?}, restore_roles={restore_roles:?}",
+                preserved.0, preserved.1
+            );
+            let clean_release = terminate_after_marker
+                && !preserved.0
+                && preserved.1.is_none()
+                && restore_roles.is_empty();
+            let replacement_owner = if clean_release {
+                None
+            } else {
+                assert!(preserved.0, "{failure}: target was not closed; {state}");
+                let marker_text = preserved
+                    .1
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{failure}: closed target lost marker; {state}"));
+                let marker: serde_json::Value = serde_json::from_str(marker_text)
+                    .unwrap_or_else(|error| panic!("{failure}: invalid marker ({error}); {state}"));
+                assert_eq!(
+                    marker["format"], "graphhelm.restore.marker.v1",
+                    "{failure}: wrong marker format; {state}"
+                );
+                let replacement_owner = marker["replacementOwner"]
+                    .as_str()
+                    .unwrap_or_else(|| {
+                        panic!("{failure}: marker has no replacement owner; {state}")
+                    })
+                    .to_owned();
+                assert_eq!(
+                    restore_roles,
+                    vec![replacement_owner.clone()],
+                    "{failure}: marker owner must be the only restore role; {state}"
+                );
+                Some(replacement_owner)
+            };
             drop(corrupt_operator);
             corrupt_pool.close().await;
             sqlx::query(AssertSqlSafe(format!(
@@ -1239,13 +1275,25 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             .execute(&root_pool)
             .await
             .unwrap();
-            sqlx::query(AssertSqlSafe(format!(
-                "DROP ROLE \"{}\"",
-                replacement_owner.replace('"', "\"\"")
-            )))
-            .execute(&root_pool)
+            if let Some(replacement_owner) = replacement_owner {
+                sqlx::query(AssertSqlSafe(format!(
+                    "DROP ROLE \"{}\"",
+                    replacement_owner.replace('"', "\"\"")
+                )))
+                .execute(&root_pool)
+                .await
+                .unwrap();
+            }
+            let leaked_restore_roles: Vec<String> = sqlx::query_scalar(
+                "SELECT rolname FROM pg_roles WHERE rolname LIKE 'graphhelm_restore_o_%' ORDER BY rolname",
+            )
+            .fetch_all(&root_pool)
             .await
             .unwrap();
+            assert!(
+                leaked_restore_roles.is_empty(),
+                "{failure}: cleanup leaked restore roles: {leaked_restore_roles:?}"
+            );
         }
         std::fs::remove_file(&corrupt_projection_archive).unwrap();
         std::fs::remove_file(&corrupt_checkpoint_archive).unwrap();

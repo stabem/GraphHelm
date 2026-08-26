@@ -28,13 +28,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use graphhelm_schema_evolution::{
-    CatalogResources, CompatibilityClass, SchemaCatalog, compare_catalogs,
+    CatalogResources, CompatibilityChange, CompatibilityClass, CompatibilityReport, SchemaCatalog,
+    compare_catalogs,
 };
 use semver::Version;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const LIVE_CATALOG: &str = "schemas/catalog.json";
 const RELEASE_CATALOG: &str = "schemas/releases/1.0.0/catalog.json";
+const D037_CUSTOMS_BUDGET_POINTERS: [&str; 3] = [
+    "/properties/completion/properties/customs/properties/budgets/properties/waitWithinSeconds/maximum",
+    "/properties/completion/properties/customs/properties/budgets/properties/clearanceWithinSeconds/maximum",
+    "/properties/completion/properties/customs/properties/budgets/properties/dlqWithinSeconds/maximum",
+];
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -135,6 +141,149 @@ fn document_version(resources: &CatalogResources, schema: &str) -> Option<Versio
         .map(|entry| entry.document_version.clone())
 }
 
+fn candidate_with_customs_budget_maximum(
+    baseline: &CatalogResources,
+    pointers: &[&str],
+    maximum: u64,
+) -> CatalogResources {
+    let mut candidate = baseline.clone();
+    let node = candidate.schemas.get_mut("node").unwrap();
+    for pointer in pointers {
+        let (parent, keyword) = pointer.rsplit_once('/').unwrap();
+        node.pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(keyword.to_owned(), json!(maximum));
+    }
+    candidate
+}
+
+/// D-037/ADR-023 allows this one correction to the unpublished 1.0.0 baseline. Match the
+/// comparison identity and the actual JSON values; summaries are diagnostic prose, not authority.
+fn is_d037_customs_budget_baseline_correction(
+    baseline: &CatalogResources,
+    candidate: &CatalogResources,
+    breaking: &[&CompatibilityChange],
+) -> bool {
+    if breaking.len() != D037_CUSTOMS_BUDGET_POINTERS.len()
+        || breaking.iter().any(|change| {
+            change.schema != "node"
+                || change.code != "GHC003_BREAKING_CHANGE"
+                || !D037_CUSTOMS_BUDGET_POINTERS.contains(&change.pointer.as_str())
+        })
+    {
+        return false;
+    }
+
+    let baseline_node = baseline.schemas.get("node").unwrap();
+    let candidate_node = candidate.schemas.get("node").unwrap();
+    D037_CUSTOMS_BUDGET_POINTERS.iter().all(|pointer| {
+        breaking.iter().any(|change| change.pointer == *pointer)
+            && baseline_node.pointer(pointer).is_none()
+            && candidate_node.pointer(pointer) == Some(&json!(315_576_000_u64))
+    })
+}
+
+fn undeclared_breaking_changes<'a>(
+    baseline: &CatalogResources,
+    candidate: &CatalogResources,
+    report: &'a CompatibilityReport,
+) -> Vec<&'a CompatibilityChange> {
+    let breaking = report
+        .changes
+        .iter()
+        .filter(|change| change.class == CompatibilityClass::Breaking)
+        .collect::<Vec<_>>();
+    let d037_correction =
+        is_d037_customs_budget_baseline_correction(baseline, candidate, &breaking);
+
+    breaking
+        .into_iter()
+        .filter(|change| {
+            // "Declared" means the schema moved its OWN documentVersion to announce the break. A
+            // removed schema has no version left to declare anything in, so `(Some, None)` is
+            // undeclared -- comparing the two options directly would read `Some(1.0.0) != None`
+            // as a declaration and wave the most breaking change there is straight through.
+            match (
+                document_version(baseline, &change.schema),
+                document_version(candidate, &change.schema),
+            ) {
+                (Some(landed), Some(proposed)) => landed == proposed,
+                _ => true,
+            }
+        })
+        .filter(|_| !d037_correction)
+        .collect()
+}
+
+#[test]
+fn d037_accepts_only_the_exact_three_customs_budget_maxima() {
+    let baseline = checked_in_catalog(LIVE_CATALOG);
+    let candidate = candidate_with_customs_budget_maximum(
+        &baseline,
+        &D037_CUSTOMS_BUDGET_POINTERS,
+        315_576_000,
+    );
+    let report = compare_catalogs(&baseline, &candidate);
+    let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report);
+
+    assert!(
+        undeclared.is_empty(),
+        "D-037's exact unpublished baseline correction was rejected: {undeclared:#?}"
+    );
+}
+
+#[test]
+fn d037_customs_budget_exception_rejects_every_near_miss() {
+    let baseline = checked_in_catalog(LIVE_CATALOG);
+    let oversized = candidate_with_customs_budget_maximum(
+        &baseline,
+        &D037_CUSTOMS_BUDGET_POINTERS,
+        315_576_001,
+    );
+    let partial = candidate_with_customs_budget_maximum(
+        &baseline,
+        &D037_CUSTOMS_BUDGET_POINTERS[..2],
+        315_576_000,
+    );
+    let mut fourth = candidate_with_customs_budget_maximum(
+        &baseline,
+        &D037_CUSTOMS_BUDGET_POINTERS,
+        315_576_000,
+    );
+    fourth
+        .schemas
+        .get_mut("node")
+        .unwrap()
+        .pointer_mut("/properties/timeoutSeconds")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert("maximum".into(), json!(315_576_000_u64));
+    let mut removed = candidate_with_customs_budget_maximum(
+        &baseline,
+        &D037_CUSTOMS_BUDGET_POINTERS,
+        315_576_000,
+    );
+    removed.schemas.remove("agent");
+
+    for (name, candidate, expected_breaking) in [
+        ("315576001", oversized, 3),
+        ("only two fields", partial, 2),
+        ("fourth breaking change", fourth, 4),
+        ("schema removal", removed, 5),
+    ] {
+        let report = compare_catalogs(&baseline, &candidate);
+        let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report);
+        assert_eq!(
+            undeclared.len(),
+            expected_breaking,
+            "D-037 exception accepted sabotage cell {name}: {undeclared:#?}"
+        );
+    }
+}
+
 // Records that the gate's checked-in baseline tracks its own candidate, so that stage cannot
 // refuse -- and fires the day that stops being true.
 #[test]
@@ -198,23 +347,8 @@ fn no_silent_breaking_change_against_what_landed_on_main() {
     );
 
     let report = compare_catalogs(&baseline, &candidate);
-    let undeclared = report
-        .changes
-        .iter()
-        .filter(|change| change.class == CompatibilityClass::Breaking)
-        .filter(|change| {
-            // "Declared" means the schema moved its OWN documentVersion to announce the break. A
-            // removed schema has no version left to declare anything in, so `(Some, None)` is
-            // undeclared -- comparing the two options directly would read `Some(1.0.0) != None`
-            // as a declaration and wave the most breaking change there is straight through.
-            match (
-                document_version(&baseline, &change.schema),
-                document_version(&candidate, &change.schema),
-            ) {
-                (Some(landed), Some(proposed)) => landed == proposed,
-                _ => true,
-            }
-        })
+    let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report)
+        .into_iter()
         .map(|change| {
             format!(
                 "{} at {} ({}): {} -> {}",

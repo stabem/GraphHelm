@@ -66,7 +66,7 @@
       "id": "https://p50.dev/schemas/node.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/node.schema.json",
-      "sha256": "sha256:139e9489452e66b3e4c84564512765d7e601bd4eee2f5def0ae2b4a745996090"
+      "sha256": "sha256:5b40c693ddbf36aafe24980bf1ae4d508052bc0708b3720713cf6caac9651917"
     },
     "persisted-graph-version": {
       "id": "https://p50.dev/schemas/persisted-graph-version.schema.json",

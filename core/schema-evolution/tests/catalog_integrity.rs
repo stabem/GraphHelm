@@ -325,6 +325,63 @@ fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
 }
 
 #[test]
+fn customs_budget_seconds_are_bounded_in_both_schema_packages() {
+    const MAX_BUDGET_SECONDS: u64 = 315_576_000;
+    let schema_id = "https://p50.dev/schemas/node.schema.json";
+
+    for (package_name, package) in [
+        ("current", RepositoryPackage::Current),
+        ("release", RepositoryPackage::Release1_0_0),
+    ] {
+        let validators = OfflineSchemaSet::compile(load_repo_catalog(package).schemas).unwrap();
+
+        for field in [
+            "waitWithinSeconds",
+            "clearanceWithinSeconds",
+            "dlqWithinSeconds",
+        ] {
+            let node = |value| {
+                let mut budgets = json!({
+                    "waitWithinSeconds": 1,
+                    "clearanceWithinSeconds": 1,
+                    "dlqWithinSeconds": 1
+                });
+                budgets[field] = json!(value);
+                json!({
+                    "type": "gate",
+                    "name": "bounded-customs-budget",
+                    "objective": "Prove the authoring limit",
+                    "optionality": "required",
+                    "completion": {"customs": {"budgets": budgets}}
+                })
+            };
+
+            let accepted = validators.validate(
+                schema_id,
+                &node(MAX_BUDGET_SECONDS),
+                &format!("{package_name}-{field}-accepted"),
+            );
+            assert!(
+                accepted.is_empty(),
+                "{package_name} rejected {field} at the maximum: {accepted:?}"
+            );
+
+            let rejected = validators.validate(
+                schema_id,
+                &node(MAX_BUDGET_SECONDS + 1),
+                &format!("{package_name}-{field}-rejected"),
+            );
+            assert_eq!(rejected.len(), 1, "{package_name} accepted {field}");
+            assert_eq!(rejected[0].code, "GHS002_SCHEMA");
+            assert_eq!(
+                rejected[0].path,
+                format!("/completion/customs/budgets/{field}")
+            );
+        }
+    }
+}
+
+#[test]
 fn path_content_slots_are_identical_closed_1_0_0_contracts() {
     let root = repository_root();
     let current = load_repo_catalog(RepositoryPackage::Current);

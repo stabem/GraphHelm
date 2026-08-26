@@ -1141,12 +1141,16 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
         assert_eq!(retained_schema.as_deref(), Some("graphhelm_events"));
         populated_target.cleanup().await;
 
-        for corrupt_archive in [
-            &corrupt_projection_archive,
-            &corrupt_checkpoint_archive,
-            &corrupt_retention_archive,
-            &corrupt_orphan_policy_archive,
-            &corrupt_cleanup_archive,
+        // pg_restore is single-transaction: a post-marker process failure may roll back every
+        // object. The safety contract is the closed target plus authenticated marker, not a
+        // load-sensitive count of whatever partial objects happen to have committed.
+        for (failure, failing_archive, terminate_after_marker) in [
+            ("terminated restore", &destination, true),
+            ("projection", &corrupt_projection_archive, false),
+            ("checkpoint", &corrupt_checkpoint_archive, false),
+            ("retention", &corrupt_retention_archive, false),
+            ("orphan-policy", &corrupt_orphan_policy_archive, false),
+            ("cleanup", &corrupt_cleanup_archive, false),
         ] {
             let corrupt_name = format!(
                 "graphhelm_restore_corrupt_{}",
@@ -1177,18 +1181,44 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             )
             .await
             .unwrap();
-            assert_eq!(
-                corrupt_operator.restore_from_path(corrupt_archive).await,
-                Err(BackupError::InvalidRestore)
-            );
-            let corrupt_objects: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
-                 WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')",
-            )
-            .fetch_one(&corrupt_pool)
-            .await
-            .unwrap();
-            assert!(corrupt_objects > 0);
+            let restore_terminator = if terminate_after_marker {
+                let root_pool = root_pool.clone();
+                let corrupt_name = corrupt_name.clone();
+                Some(tokio::spawn(async move {
+                    for _ in 0..3_000 {
+                        let restore_pid: Option<i32> = sqlx::query_scalar(
+                            "SELECT a.pid FROM pg_stat_activity a JOIN pg_database d ON d.oid=a.datid \
+                             WHERE d.datname=$1 AND a.application_name LIKE 'graphhelm-restore-%' \
+                             AND shobj_description(d.oid,'pg_database') LIKE '%graphhelm.restore.marker.v1%' \
+                             LIMIT 1",
+                        )
+                        .bind(&corrupt_name)
+                        .fetch_optional(&root_pool)
+                        .await
+                        .unwrap()
+                        .flatten();
+                        if let Some(pid) = restore_pid {
+                            let terminated: bool =
+                                sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+                                    .bind(pid)
+                                    .fetch_one(&root_pool)
+                                    .await
+                                    .unwrap();
+                            assert!(terminated);
+                            return;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    panic!("restore process was not observed after its marker");
+                }))
+            } else {
+                None
+            };
+            let restore_result = corrupt_operator.restore_from_path(failing_archive).await;
+            if let Some(restore_terminator) = restore_terminator {
+                restore_terminator.await.unwrap();
+            }
+            assert_eq!(restore_result, Err(BackupError::InvalidRestore), "{failure}");
             let preserved: (bool, String) = sqlx::query_as(
                 "SELECT NOT datallowconn,shobj_description(oid,'pg_database') \
                  FROM pg_database WHERE datname=$1",
@@ -1197,9 +1227,9 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             .fetch_one(&root_pool)
             .await
             .unwrap();
-            assert!(preserved.0);
+            assert!(preserved.0, "{failure}");
             let marker: serde_json::Value = serde_json::from_str(&preserved.1).unwrap();
-            assert_eq!(marker["format"], "graphhelm.restore.marker.v1");
+            assert_eq!(marker["format"], "graphhelm.restore.marker.v1", "{failure}");
             let replacement_owner = marker["replacementOwner"].as_str().unwrap().to_owned();
             drop(corrupt_operator);
             corrupt_pool.close().await;

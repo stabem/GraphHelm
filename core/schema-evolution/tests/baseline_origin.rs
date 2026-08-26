@@ -159,6 +159,55 @@ fn candidate_with_customs_budget_maximum(
     candidate
 }
 
+fn d037_post_correction_fixture(checked_in: &CatalogResources) -> CatalogResources {
+    let mut post_d037_live = checked_in.clone();
+    let node = post_d037_live.schemas.get_mut("node").unwrap();
+    for pointer in D037_CUSTOMS_BUDGET_POINTERS {
+        let (parent, keyword) = pointer.rsplit_once('/').unwrap();
+        let budget = node.pointer_mut(parent).unwrap().as_object_mut().unwrap();
+        if let Some(existing) = budget.get(keyword) {
+            assert_eq!(
+                existing,
+                &json!(315_576_000_u64),
+                "D-037 live fixture carries an unapproved maximum at {pointer}"
+            );
+        } else {
+            budget.insert(keyword.to_owned(), json!(315_576_000_u64));
+        }
+    }
+    post_d037_live
+}
+
+/// Exercises both repository states without overwriting either: before #250 the first pass adds
+/// the approved maxima, while after #250 both passes validate the values already checked in.
+fn d037_live_after_correction_fixture(checked_in: &CatalogResources) -> CatalogResources {
+    let simulated_live = d037_post_correction_fixture(checked_in);
+    d037_post_correction_fixture(&simulated_live)
+}
+
+/// Reconstructs the node schema immediately before D-037 from a candidate that already carries
+/// the approved correction. This keeps the exception tests stable when the checked-in live schema
+/// advances to that candidate while still refusing to normalize any other value.
+fn d037_pre_correction_baseline(post_d037_live: &CatalogResources) -> CatalogResources {
+    let mut baseline = post_d037_live.clone();
+    let node = baseline.schemas.get_mut("node").unwrap();
+    for pointer in D037_CUSTOMS_BUDGET_POINTERS {
+        let (parent, keyword) = pointer.rsplit_once('/').unwrap();
+        let removed = node
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(keyword);
+        assert_eq!(
+            removed,
+            Some(json!(315_576_000_u64)),
+            "D-037 post-correction fixture must carry the approved maximum at {pointer}"
+        );
+    }
+    baseline
+}
+
 /// D-037/ADR-023 allows this one correction to the unpublished 1.0.0 baseline. Match the
 /// comparison identity and the actual JSON values; summaries are diagnostic prose, not authority.
 fn is_d037_customs_budget_baseline_correction(
@@ -218,13 +267,24 @@ fn undeclared_breaking_changes<'a>(
 }
 
 #[test]
-fn d037_accepts_only_the_exact_three_customs_budget_maxima() {
-    let baseline = checked_in_catalog(LIVE_CATALOG);
-    let candidate = candidate_with_customs_budget_maximum(
-        &baseline,
-        &D037_CUSTOMS_BUDGET_POINTERS,
-        315_576_000,
+#[should_panic(expected = "D-037 live fixture carries an unapproved maximum")]
+fn d037_fixture_rejects_an_existing_unapproved_live_maximum() {
+    let checked_in = checked_in_catalog(LIVE_CATALOG);
+    let drifted_live = candidate_with_customs_budget_maximum(
+        &checked_in,
+        &D037_CUSTOMS_BUDGET_POINTERS[..1],
+        315_576_001,
     );
+
+    let _ = d037_post_correction_fixture(&drifted_live);
+}
+
+#[test]
+fn d037_accepts_only_the_exact_three_customs_budget_maxima() {
+    let checked_in = checked_in_catalog(LIVE_CATALOG);
+    let post_d037_live = d037_live_after_correction_fixture(&checked_in);
+    let baseline = d037_pre_correction_baseline(&post_d037_live);
+    let candidate = post_d037_live;
     let report = compare_catalogs(&baseline, &candidate);
     let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report);
 
@@ -236,7 +296,9 @@ fn d037_accepts_only_the_exact_three_customs_budget_maxima() {
 
 #[test]
 fn d037_customs_budget_exception_rejects_every_near_miss() {
-    let baseline = checked_in_catalog(LIVE_CATALOG);
+    let checked_in = checked_in_catalog(LIVE_CATALOG);
+    let post_d037_live = d037_live_after_correction_fixture(&checked_in);
+    let baseline = d037_pre_correction_baseline(&post_d037_live);
     let oversized = candidate_with_customs_budget_maximum(
         &baseline,
         &D037_CUSTOMS_BUDGET_POINTERS,

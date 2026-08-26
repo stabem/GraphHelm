@@ -360,7 +360,8 @@ fn without_a_recorded_shape_no_wedge_is_claimed_and_no_calm_either() {
                 .expect("one reason"),
             },
         },
-        "and no basis to assert CALM either -- the question is unanswerable, which is its own          answer"
+        "and no basis to assert CALM either -- the question is unanswerable, which is its own \
+         answer"
     );
 }
 
@@ -807,7 +808,9 @@ fn the_wedge_reads_the_declared_form_and_prefers_the_sealed_one() {
     let declared = graphhelm_execution::attention(&projection, &AttentionInputs::default());
     assert_ne!(
         sealed.verdict, declared.verdict,
-        "with every SEALED node finished the run is wedged, while the DECLARED form still          lists `ship` as untouched -- if these agreed, precedence would be decorative:          sealed={sealed:?} declared={declared:?}"
+        "with every SEALED node finished the run is wedged, while the DECLARED form still \
+         lists `ship` as untouched -- if these agreed, precedence would be decorative: \
+         sealed={sealed:?} declared={declared:?}"
     );
 }
 
@@ -978,7 +981,8 @@ fn a_requeued_node_that_already_ran_has_judgeable_silence() {
             .contains(&graphhelm_execution::AttentionReason::SilentNode {
                 node: "flaky_check".to_owned(),
             }),
-        "a node that already ran and is sitting requeued past its bound is SILENT, and must be          named as such rather than merely appearing somewhere in the answer: {answer:?}"
+        "a node that already ran and is sitting requeued past its bound is SILENT, and must be \
+         named as such rather than merely appearing somewhere in the answer: {answer:?}"
     );
 }
 
@@ -1056,6 +1060,7 @@ fn a_requeued_node_whose_calm_was_bought_is_still_named() {
     );
     assert!(
         format!("{answer:?}").contains("CalmedByAmendment"),
-        "the ceiling was raised over a requeued node that had already blown a tighter one, and          that calm must not read as untroubled: {answer:?}"
+        "the ceiling was raised over a requeued node that had already blown a tighter one, and \
+         that calm must not read as untroubled: {answer:?}"
     );
 }

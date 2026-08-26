@@ -1419,6 +1419,10 @@ fn the_packaging_is_valid_and_names_only_real_tools() {
 #[test]
 fn wake_arm_arms_this_session_and_wake_status_reads_it_back() {
     let harness = wired("exec-mcp-wake");
+    // Before either wake event, every event on this freshly-started stream is content. Use that
+    // observed cursor for the replacement: a fixed older cursor is already satisfied and may be
+    // consumed by the asynchronous sweep before `wake_status` reads it.
+    let replacement_cursor = harness.head_sequence("exec-mcp-wake");
     let session = harness.session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -1431,7 +1435,7 @@ fn wake_arm_arms_this_session_and_wake_status_reads_it_back() {
             serde_json::json!("arm-2"),
             "wake_arm",
             serde_json::json!({"executionId": "exec-mcp-wake", "rendezvousId": "rdv-mcp-two",
-                "cursor": 3}),
+                "cursor": replacement_cursor}),
         ),
         tool_call(
             serde_json::json!("read-1"),
@@ -1465,7 +1469,7 @@ fn wake_arm_arms_this_session_and_wake_status_reads_it_back() {
         live["data"]["rendezvousId"], "rdv-mcp-two",
         "re-arming replaces — the fold invariant read back through the tool: {live}"
     );
-    assert_eq!(live["data"]["cursor"], 3, "{live}");
+    assert_eq!(live["data"]["cursor"], replacement_cursor, "{live}");
     assert_eq!(
         live["data"]["sessionId"].as_str().unwrap(),
         session_id,

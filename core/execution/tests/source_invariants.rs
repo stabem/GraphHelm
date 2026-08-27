@@ -6,6 +6,13 @@
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
 
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tools/source-invariants/detect.rs"
+));
+
+use std::path::{Path, PathBuf};
+
 /// The `[dependencies]` table only, stopping at the next `[section]` header.
 ///
 /// Purity is a claim about what ships in the compiled library, not about what a test file needs
@@ -123,7 +130,8 @@ fn every_source_file() -> Vec<(String, String)> {
         // this invariant by accident.
         assert!(
             path.is_file(),
-            "unexpected subdirectory in src/: {}. Decide explicitly whether this invariant              covers it, then teach this test — do not let it inherit coverage silently.",
+            "unexpected subdirectory in src/: {}. Decide explicitly whether this invariant \
+             covers it, then teach this test — do not let it inherit coverage silently.",
             path.display()
         );
         if path.extension().is_some_and(|extension| extension == "rs") {
@@ -138,6 +146,146 @@ fn every_source_file() -> Vec<(String, String)> {
     }
     files.sort();
     files
+}
+
+/// Every authored Rust file in this crate, including tests.
+///
+/// This is separate from `every_source_file`: that older scan intentionally covers only the flat
+/// production `src/` tree. This walk serves an authored-prose control, so omitting `tests/` would
+/// omit the only defect population found when the control was introduced.
+fn authored_rust_files() -> Vec<(String, String)> {
+    const MAX_DEPTH: usize = 8;
+    const MAX_ENTRIES: usize = 512;
+    const MAX_FILES: usize = 128;
+
+    fn walk(directory: &Path, depth: usize, entries_seen: &mut usize, files: &mut Vec<PathBuf>) {
+        assert!(
+            depth <= MAX_DEPTH,
+            "authored Rust scan exceeded depth {MAX_DEPTH}"
+        );
+        let entries = std::fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", directory.display()));
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|error| {
+                panic!(
+                    "cannot read an entry under {}: {error}",
+                    directory.display()
+                )
+            });
+            *entries_seen += 1;
+            assert!(
+                *entries_seen <= MAX_ENTRIES,
+                "authored Rust scan exceeded {MAX_ENTRIES} directory entries"
+            );
+
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .unwrap_or_else(|error| panic!("cannot inspect {}: {error}", path.display()));
+            assert!(
+                !metadata.file_type().is_symlink(),
+                "authored Rust scan refuses symlink: {}",
+                path.display()
+            );
+            if metadata.is_dir() {
+                walk(&path, depth + 1, entries_seen, files);
+            } else {
+                assert!(
+                    metadata.is_file(),
+                    "unexpected file type: {}",
+                    path.display()
+                );
+                if path.extension().is_some_and(|extension| extension == "rs") {
+                    files.push(path);
+                    assert!(
+                        files.len() <= MAX_FILES,
+                        "authored Rust scan exceeded {MAX_FILES} Rust files"
+                    );
+                }
+            }
+        }
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut paths = Vec::new();
+    let mut entries_seen = 0;
+    walk(&root.join("src"), 0, &mut entries_seen, &mut paths);
+    walk(&root.join("tests"), 0, &mut entries_seen, &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let shown = path
+                .strip_prefix(root)
+                .expect("authored Rust file remains inside the crate")
+                .display()
+                .to_string();
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+            (shown, source)
+        })
+        .collect()
+}
+
+/// The comment-filter sample below deliberately contains indented prose inside one literal.
+/// Exempt that fixture by its exact role and location, never by exempting this whole file.
+fn is_comment_filter_fixture(path: &str, line: &str) -> bool {
+    if path.replace('\\', "/") != "tests/source_invariants.rs" {
+        return false;
+    }
+    let expected = format!(
+        "\"// mentions rand and SystemTime\\nlet x = 1; // trailing\\n{}// indented\\ncode();\";",
+        " ".repeat(4)
+    );
+    line.trim_start() == expected
+}
+
+fn has_collapsed_authored_literal(path: &str, line: &str) -> bool {
+    !is_line_comment(line) && !is_comment_filter_fixture(path, line) && has_run_in_literal(line)
+}
+
+#[test]
+fn authored_strings_carry_no_collapsed_indentation() {
+    let offenders: Vec<String> = authored_rust_files()
+        .iter()
+        .flat_map(|(path, source)| {
+            source
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| has_collapsed_authored_literal(path, line))
+                .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim_start()))
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "these authored string literals contain collapsed indentation:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn authored_string_scan_covers_source_and_tests() {
+    let files = authored_rust_files();
+    assert!(
+        files.len() >= 15,
+        "authored Rust scan found only {} files: {:?}",
+        files.len(),
+        files.iter().map(|(path, _)| path).collect::<Vec<_>>()
+    );
+    let normalized: Vec<String> = files
+        .iter()
+        .map(|(path, _)| path.replace('\\', "/"))
+        .collect();
+    for required in [
+        "src/lib.rs",
+        "tests/attention.rs",
+        "tests/source_invariants.rs",
+    ] {
+        assert!(
+            normalized.iter().any(|path| path == required),
+            "authored Rust scan must include {required}: {normalized:?}"
+        );
+    }
 }
 
 /// A derived scan that finds nothing would pass for every possible defect — the exact

@@ -15,7 +15,97 @@ include!(concat!(
 
 use std::path::{Path, PathBuf};
 
-/// Every `.rs` file under `src/`, discovered by WALKING the directory.
+const MAX_DEPTH: usize = 32;
+const MAX_ENTRIES: usize = 4_096;
+const MAX_RUST_FILES: usize = 1_024;
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+struct MetadataSnapshot {
+    is_symlink: bool,
+    is_dir: bool,
+    is_file: bool,
+    len: u64,
+}
+
+trait AuthoredFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String>;
+    fn read_dir(&mut self, path: &Path, limit: usize) -> Result<Vec<PathBuf>, String>;
+    fn read_to_string(&mut self, path: &Path, limit: usize) -> Result<String, String>;
+}
+
+struct RealFs;
+
+impl AuthoredFs for RealFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|e| format!("cannot inspect {}: {e}", path.display()))?;
+        let kind = metadata.file_type();
+        Ok(MetadataSnapshot {
+            is_symlink: kind.is_symlink(),
+            is_dir: metadata.is_dir(),
+            is_file: metadata.is_file(),
+            len: metadata.len(),
+        })
+    }
+
+    fn read_dir(&mut self, path: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
+        let entries =
+            std::fs::read_dir(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let mut paths = Vec::new();
+        for entry in entries {
+            if paths.len() >= limit {
+                return Err(format!(
+                    "HARNESS-BROKE: authored Rust walk exceeded {MAX_ENTRIES} entries"
+                ));
+            }
+            paths.push(
+                entry
+                    .map_err(|e| format!("cannot read an entry in {}: {e}", path.display()))?
+                    .path(),
+            );
+        }
+        Ok(paths)
+    }
+
+    fn read_to_string(&mut self, path: &Path, limit: usize) -> Result<String, String> {
+        use std::io::Read;
+
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if bytes.len() > limit {
+            return Err(format!(
+                "HARNESS-BROKE: {} changed while scanning and exceeds file-size limit of \
+                 {MAX_FILE_BYTES} bytes",
+                path.display()
+            ));
+        }
+        String::from_utf8(bytes)
+            .map_err(|e| format!("cannot decode {} as UTF-8: {e}", path.display()))
+    }
+}
+
+fn require_authored_rust_directory(path: &Path, metadata: MetadataSnapshot) -> Result<(), String> {
+    if metadata.is_symlink {
+        return Err(format!(
+            "HARNESS-BROKE: symlinks are not allowed in authored Rust roots: {}",
+            path.display()
+        ));
+    }
+    if !metadata.is_dir {
+        return Err(format!(
+            "HARNESS-BROKE: authored Rust root is not a directory: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Every authored `.rs` file under `src/` and `tests/`, discovered by WALKING the directories.
 ///
 /// **The population is the directory, not a list.** An earlier version named three files with
 /// `include_str!`, which bought one property -- a moved path breaks the BUILD instead of silently
@@ -26,33 +116,85 @@ use std::path::{Path, PathBuf};
 /// The shrinkage risk that `include_str!` covered is handled by the floor in
 /// `the_scan_covers_the_whole_crate`: a walk that returns almost nothing fails loudly.
 fn sources() -> Vec<(String, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let entries =
-            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    authored_sources_with_fs(&mut RealFs, crate_root).unwrap_or_else(|e| panic!("{e}"))
+}
+
+fn authored_sources_with_fs<F: AuthoredFs>(
+    fs: &mut F,
+    crate_root: &Path,
+) -> Result<Vec<(String, String)>, String> {
+    fn walk<F: AuthoredFs>(
+        fs: &mut F,
+        dir: &Path,
+        depth: usize,
+        entries_seen: &mut usize,
+        out: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
+        let metadata = fs.symlink_metadata(dir)?;
+        require_authored_rust_directory(dir, metadata)?;
+        if depth > MAX_DEPTH {
+            return Err(format!(
+                "HARNESS-BROKE: authored Rust walk exceeded depth {MAX_DEPTH} at {}",
+                dir.display()
+            ));
+        }
+        let remaining = MAX_ENTRIES.saturating_sub(*entries_seen);
+        let mut paths = fs.read_dir(dir, remaining)?;
+        *entries_seen += paths.len();
+        paths.sort();
+        for path in paths {
+            let metadata = fs.symlink_metadata(&path)?;
+            if metadata.is_symlink {
+                return Err(format!(
+                    "HARNESS-BROKE: symlinks are not allowed in authored Rust roots: {}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir {
+                walk(fs, &path, depth + 1, entries_seen, out)?;
+            } else if metadata.is_file && path.extension().is_some_and(|ext| ext == "rs") {
+                if metadata.len > MAX_FILE_BYTES {
+                    return Err(format!(
+                        "HARNESS-BROKE: {} is {} bytes and exceeds file-size limit of \
+                         {MAX_FILE_BYTES} bytes",
+                        path.display(),
+                        metadata.len
+                    ));
+                }
+                if out.len() >= MAX_RUST_FILES {
+                    return Err(format!(
+                        "HARNESS-BROKE: authored Rust walk exceeded {MAX_RUST_FILES} Rust files"
+                    ));
+                }
                 out.push(path);
+            } else if !metadata.is_file {
+                return Err(format!(
+                    "HARNESS-BROKE: unexpected filesystem entry in authored Rust roots: {}",
+                    path.display()
+                ));
             }
         }
+        Ok(())
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
     let mut found = Vec::new();
-    walk(&root, &mut found);
+    let mut entries_seen = 0;
+    for root in [crate_root.join("src"), crate_root.join("tests")] {
+        walk(fs, &root, 0, &mut entries_seen, &mut found)?;
+    }
     found.sort();
     found
         .into_iter()
         .map(|path| {
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let text = fs.read_to_string(&path, MAX_FILE_BYTES as usize)?;
             let shown = path
-                .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")))
+                .strip_prefix(crate_root)
                 .unwrap_or(&path)
                 .display()
-                .to_string();
-            (shown, text)
+                .to_string()
+                .replace('\\', "/");
+            Ok((shown, text))
         })
         .collect()
 }
@@ -70,8 +212,56 @@ fn sources() -> Vec<(String, String)> {
 /// place, and this crate inherits the fix rather than needing it applied a second time --
 /// which is the entire argument for the shared file, and is exactly what the twin pointer
 /// deleted here predicted would go wrong.
-fn offends(line: &str) -> bool {
-    !is_line_comment(line) && has_run_in_literal(line)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Exemption {
+    Comment,
+    CanonicalJsonFixture,
+    DetectorFixture,
+}
+
+fn canonical_json_fixture_source_line() -> String {
+    let two = " ".repeat(2);
+    let four = " ".repeat(4);
+    format!(
+        "\"{{\\n{two}\\\"a\\\": {{\\n{four}\\\"x\\\": 3,\\n{four}\\\"y\\\": 2\\n{two}}},\\n{two}\\\"b\\\": 1\\n}}\","
+    )
+}
+
+fn detector_fixture_source_lines() -> Vec<String> {
+    let three = " ".repeat(3);
+    let four = " ".repeat(4);
+    let eight = " ".repeat(8);
+    let ten = " ".repeat(10);
+    vec![
+        format!("let aligned = r#\"let s = \"ok\"; //{three}aligned trailing comment\"#;"),
+        format!("aligned.contains(\"{three}\"),"),
+        format!("let between = r#\"let a = \"x\";{eight}let b = \"y\";\"#;"),
+        format!("between.contains(\"{three}\"),"),
+        format!("let commented = r#\"//{three}let s = \"a{ten}b\";\"#;"),
+        format!("r#\"{four}\"a real defect with{ten}collapsed indent\",\"#"),
+    ]
+}
+
+fn exemption(path: &str, line: &str) -> Option<Exemption> {
+    if is_line_comment(line) {
+        return Some(Exemption::Comment);
+    }
+    let trimmed = line.trim_start();
+    if path == "tests/schema_cli.rs" && trimmed == canonical_json_fixture_source_line() {
+        return Some(Exemption::CanonicalJsonFixture);
+    }
+    if path == "tests/source_invariants.rs"
+        && detector_fixture_source_lines()
+            .iter()
+            .any(|fixture| fixture == trimmed)
+    {
+        return Some(Exemption::DetectorFixture);
+    }
+    None
+}
+
+fn offends(path: &str, line: &str) -> bool {
+    has_run_in_literal(line) && exemption(path, line).is_none()
 }
 
 #[test]
@@ -81,7 +271,7 @@ fn operator_strings_carry_no_collapsed_indentation() {
         .flat_map(|(path, text)| {
             text.lines()
                 .enumerate()
-                .filter(|(_, line)| offends(line))
+                .filter(|(_, line)| offends(path, line))
                 .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim_start()))
         })
         .collect();
@@ -93,31 +283,300 @@ fn operator_strings_carry_no_collapsed_indentation() {
     );
 }
 
+/// Complete in-memory model of the filesystem subset the walker consumes.
+///
+/// Directory children come from the node map. Metadata preserves both a link's identity and its
+/// target's file/directory shape, making it possible to prove that the walker checks the identity
+/// first. Opening a link follows its target, like the operating system would, and every inspect or
+/// open is recorded before the operation so the tests can prove a forbidden open never happened.
+#[derive(Clone, Debug)]
+enum FakeNode {
+    Directory,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Operation {
+    Inspect(PathBuf),
+    ReadDirectory(PathBuf),
+    ReadFile(PathBuf),
+}
+
+#[derive(Default)]
+struct FakeFs {
+    nodes: std::collections::BTreeMap<PathBuf, FakeNode>,
+    operations: Vec<Operation>,
+}
+
+impl FakeFs {
+    fn insert(&mut self, path: impl Into<PathBuf>, node: FakeNode) {
+        self.nodes.insert(path.into(), node);
+    }
+
+    fn resolved_node(&self, path: &Path) -> Result<&FakeNode, String> {
+        let node = self
+            .nodes
+            .get(path)
+            .ok_or_else(|| format!("fake path is absent: {}", path.display()))?;
+        match node {
+            FakeNode::Symlink(target) => self
+                .nodes
+                .get(target)
+                .ok_or_else(|| format!("fake link target is absent: {}", target.display())),
+            other => Ok(other),
+        }
+    }
+}
+
+impl AuthoredFs for FakeFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String> {
+        self.operations.push(Operation::Inspect(path.to_path_buf()));
+        let direct = self
+            .nodes
+            .get(path)
+            .ok_or_else(|| format!("fake path is absent: {}", path.display()))?;
+        let target = self.resolved_node(path)?;
+        Ok(MetadataSnapshot {
+            is_symlink: matches!(direct, FakeNode::Symlink(_)),
+            is_dir: matches!(target, FakeNode::Directory),
+            is_file: matches!(target, FakeNode::File(_)),
+            len: match target {
+                FakeNode::File(bytes) => bytes.len() as u64,
+                FakeNode::Directory | FakeNode::Symlink(_) => 0,
+            },
+        })
+    }
+
+    fn read_dir(&mut self, path: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
+        self.operations
+            .push(Operation::ReadDirectory(path.to_path_buf()));
+        if !matches!(self.resolved_node(path)?, FakeNode::Directory) {
+            return Err(format!("fake path is not a directory: {}", path.display()));
+        }
+        let resolved = match self.nodes.get(path) {
+            Some(FakeNode::Symlink(target)) => target,
+            Some(_) => path,
+            None => return Err(format!("fake path is absent: {}", path.display())),
+        };
+        let mut children = self
+            .nodes
+            .keys()
+            .filter(|candidate| candidate.parent() == Some(resolved))
+            .cloned()
+            .collect::<Vec<_>>();
+        children.sort();
+        if children.len() > limit {
+            return Err(format!(
+                "fake directory exceeds entry limit: {}",
+                path.display()
+            ));
+        }
+        Ok(children)
+    }
+
+    fn read_to_string(&mut self, path: &Path, limit: usize) -> Result<String, String> {
+        self.operations
+            .push(Operation::ReadFile(path.to_path_buf()));
+        match self.resolved_node(path)? {
+            FakeNode::File(bytes) if bytes.len() <= limit => String::from_utf8(bytes.clone())
+                .map_err(|e| format!("fake file is not UTF-8: {}: {e}", path.display())),
+            FakeNode::File(_) => Err(format!("fake file exceeds read limit: {}", path.display())),
+            _ => Err(format!("fake path is not a file: {}", path.display())),
+        }
+    }
+}
+
+#[test]
+fn real_reader_rechecks_the_limit_after_metadata_before_allocating_more() {
+    use std::io::Write;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("boundary.rs");
+    std::fs::write(&path, vec![b'x'; MAX_FILE_BYTES as usize]).unwrap();
+    let mut fs = RealFs;
+    let accepted_metadata = fs.symlink_metadata(&path).unwrap();
+    assert_eq!(accepted_metadata.len, MAX_FILE_BYTES);
+    assert_eq!(
+        fs.read_to_string(&path, MAX_FILE_BYTES as usize)
+            .unwrap()
+            .len(),
+        MAX_FILE_BYTES as usize
+    );
+
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"x")
+        .unwrap();
+    let error = match fs.read_to_string(&path, MAX_FILE_BYTES as usize) {
+        Err(error) => error,
+        Ok(text) => panic!("real reader accepted {} bytes after growth", text.len()),
+    };
+
+    assert!(error.contains("changed while scanning"), "{error}");
+}
+
+#[test]
+fn real_walker_rejects_a_root_symlink_before_opening_it() {
+    let crate_root = PathBuf::from("crate");
+    let src = crate_root.join("src");
+    let outside = PathBuf::from("outside");
+    let mut fs = FakeFs::default();
+    fs.insert(&src, FakeNode::Symlink(outside.clone()));
+    fs.insert(&outside, FakeNode::Directory);
+
+    let error = match authored_sources_with_fs(&mut fs, &crate_root) {
+        Err(error) => error,
+        Ok(found) => panic!("walker accepted {} source files", found.len()),
+    };
+
+    assert!(error.contains("symlinks are not allowed"), "{error}");
+    assert_eq!(fs.operations, [Operation::Inspect(src)]);
+}
+
+#[test]
+fn real_walker_rejects_a_child_symlink_before_opening_it() {
+    let crate_root = PathBuf::from("crate");
+    let src = crate_root.join("src");
+    let tests = crate_root.join("tests");
+    let linked = src.join("linked");
+    let outside = PathBuf::from("outside");
+    let mut fs = FakeFs::default();
+    fs.insert(&src, FakeNode::Directory);
+    fs.insert(&tests, FakeNode::Directory);
+    fs.insert(&linked, FakeNode::Symlink(outside.clone()));
+    fs.insert(&outside, FakeNode::Directory);
+
+    let error = match authored_sources_with_fs(&mut fs, &crate_root) {
+        Err(error) => error,
+        Ok(found) => panic!("walker accepted {} source files", found.len()),
+    };
+
+    assert!(error.contains("symlinks are not allowed"), "{error}");
+    assert_eq!(
+        fs.operations,
+        [
+            Operation::Inspect(src.clone()),
+            Operation::ReadDirectory(src),
+            Operation::Inspect(linked),
+        ]
+    );
+}
+
+#[test]
+fn real_walker_rejects_an_oversized_rust_file_before_reading_it() {
+    let crate_root = PathBuf::from("crate");
+    let src = crate_root.join("src");
+    let tests = crate_root.join("tests");
+    let oversized = src.join("oversized.rs");
+    let mut fs = FakeFs::default();
+    fs.insert(&src, FakeNode::Directory);
+    fs.insert(&tests, FakeNode::Directory);
+    fs.insert(
+        &oversized,
+        FakeNode::File(vec![b'x'; (MAX_FILE_BYTES + 1) as usize]),
+    );
+
+    let error = match authored_sources_with_fs(&mut fs, &crate_root) {
+        Err(error) => error,
+        Ok(found) => panic!("walker accepted {} source files", found.len()),
+    };
+
+    assert!(error.contains("exceeds file-size limit"), "{error}");
+    assert_eq!(
+        fs.operations,
+        [
+            Operation::Inspect(src.clone()),
+            Operation::ReadDirectory(src),
+            Operation::Inspect(oversized),
+        ]
+    );
+}
+
+#[test]
+fn real_walker_accepts_a_rust_file_at_the_size_boundary() {
+    let crate_root = PathBuf::from("crate");
+    let src = crate_root.join("src");
+    let tests = crate_root.join("tests");
+    let boundary = src.join("boundary.rs");
+    let mut fs = FakeFs::default();
+    fs.insert(&src, FakeNode::Directory);
+    fs.insert(&tests, FakeNode::Directory);
+    fs.insert(
+        &boundary,
+        FakeNode::File(vec![b'x'; MAX_FILE_BYTES as usize]),
+    );
+
+    let found = authored_sources_with_fs(&mut fs, &crate_root).unwrap();
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0, "src/boundary.rs");
+    assert_eq!(found[0].1.len(), MAX_FILE_BYTES as usize);
+    assert_eq!(fs.operations.last(), Some(&Operation::ReadFile(boundary)));
+}
+
 /// The walk must actually reach the crate.
 ///
 /// Without this, a `read_dir` that returned almost nothing would satisfy the assertion above while
 /// scanning nothing -- the vacuous pass that the previous `include_str!` list was chosen to avoid.
-/// The floor is the replacement for that property, and it is the REAL count rather than a number
-/// chosen to be comfortably under it. A floor with slack tolerates exactly the silent shrinkage it
-/// exists to catch: at `>= 40` against 57 files, sixteen could vanish without a word.
+/// The floor is the replacement for that property, and it is the current count rather than a
+/// number chosen to be comfortably under it. A floor with slack tolerates the silent shrinkage it
+/// exists to catch.
 ///
-/// The cost is that a legitimate removal now edits this number, which is the plausible-looking edit
+/// This crate currently has 100 authored Rust files. The cost is that a legitimate removal now
+/// edits this number, which is the plausible-looking edit
 /// a floor is supposed to resist. So the rule beside it: **lower this only in the same commit as
-/// the removal that caused it, and name the removed file.** The landmark below and this count then
+/// the removal that caused it, and name the removed file in this comment.** The landmarks below and this count then
 /// fail on different work, which is the whole reason for keeping both -- lowering a threshold is a
 /// plausible edit, deleting a named assertion is a visible one.
 #[test]
 fn the_scan_covers_the_whole_crate() {
     let found = sources();
     assert!(
-        found.len() >= 57,
-        "HARNESS-BROKE: the walk found only {} source files, so the scan above reads far less \
+        found.len() >= 100,
+        "HARNESS-BROKE: the walk found only {} authored Rust files, so the scan above reads far less \
          than this crate",
         found.len()
     );
+    for landmark in [
+        "src/main.rs",
+        "src/commands/wake_wait.rs",
+        "tests/schema_cli.rs",
+        "tests/source_invariants.rs",
+    ] {
+        assert!(
+            found.iter().any(|(path, _)| path == landmark),
+            "HARNESS-BROKE: known file {landmark} is absent from the walk"
+        );
+    }
+}
+
+#[test]
+fn every_content_exemption_is_load_bearing_and_bounded() {
+    let mut canonical_json = Vec::new();
+    let mut detector_fixtures = Vec::new();
+    for (path, text) in sources() {
+        for (number, line) in text.lines().enumerate() {
+            if !has_run_in_literal(line) {
+                continue;
+            }
+            let location = format!("{path}:{}", number + 1);
+            match exemption(&path, line) {
+                Some(Exemption::CanonicalJsonFixture) => canonical_json.push(location),
+                Some(Exemption::DetectorFixture) => detector_fixtures.push(location),
+                Some(Exemption::Comment) | None => {}
+            }
+        }
+    }
+    assert_eq!(canonical_json, ["tests/schema_cli.rs:1298"]);
+    assert_eq!(detector_fixtures.len(), 6);
     assert!(
-        found.iter().any(|(path, _)| path.contains("wake_wait")),
-        "HARNESS-BROKE: a file known to exist is absent from the walk"
+        detector_fixtures
+            .iter()
+            .all(|location| location.starts_with("tests/source_invariants.rs:")),
+        "detector fixture exemptions escaped their owning test file: {detector_fixtures:?}"
     );
 }
 
@@ -140,7 +599,7 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         "the aligned-comment fixture stopped carrying a run, so the assertion below measures nothing"
     );
     assert!(
-        !offends(aligned),
+        !offends("fixture.rs", aligned),
         "a trailing aligned comment after a literal is ordinary Rust"
     );
 
@@ -150,7 +609,7 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         "the between-literals fixture stopped carrying a run, so the assertion below measures nothing"
     );
     assert!(
-        !offends(between),
+        !offends("fixture.rs", between),
         "spacing between two literals is ordinary Rust"
     );
     // PRECONDITION for the comment case, and it guards a correction rather than a fixture this
@@ -180,11 +639,14 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         // exemption was ever consulted and the assertion passed whether the exemption
         // worked or not. Found by sabotaging `is_line_comment` against the pathogens copy
         // of this same fixture and watching nothing go red.
-        !offends(commented),
+        !offends("fixture.rs", commented),
         "comments are excluded: their indentation is often deliberate"
     );
     assert!(
-        offends(r#"    "a real defect with          collapsed indent","#),
+        offends(
+            "fixture.rs",
+            r#"    "a real defect with          collapsed indent","#
+        ),
         "the defect itself must still be caught"
     );
 }

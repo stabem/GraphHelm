@@ -1,84 +1,242 @@
-//! Enforces a property of this crate's SOURCE that no runtime test can see.
-//!
-//! A documented control which no test enforces is not a control. This crate's refusal findings are
-//! such a control: nothing renders them except a human reading a failed gate, so a defect in them
-//! leaves every test green.
-//!
-//! The defect: a line continuation inside a string literal keeps the NEXT line's indentation
-//! inside the literal, and `cargo fmt` joins the pieces into one line. The source reads plausibly
-//! while the reader gets `flaky success is not proven              success`.
+//! Enforces source properties which runtime tests cannot observe.
 
 include!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tools/source-invariants/detect.rs"
 ));
 
-/// Every `.rs` file under `src/`, discovered by WALKING the directory.
-///
-/// **The population is the directory, not a list.** A hand-written list guards the file that
-/// MOVES and says nothing about the file that is ADDED -- a new source in this crate would not be
-/// scanned and nothing would say so. (L's finding on the sibling guard; the same hand-list shape
-/// had been used here.) The shrinkage a list protected against is covered by the floor in
-/// `the_scan_covers_the_whole_crate`.
-fn sources() -> Vec<(String, String)> {
-    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+use std::path::{Path, PathBuf};
+
+const MAX_DEPTH: usize = 32;
+const MAX_ENTRIES: usize = 4_096;
+const MAX_RUST_FILES: usize = 1_024;
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+struct MetadataSnapshot {
+    is_symlink: bool,
+    is_dir: bool,
+    is_file: bool,
+    len: u64,
+}
+
+trait AuthoredFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String>;
+    fn read_dir(&mut self, path: &Path, limit: usize) -> Result<Vec<PathBuf>, String>;
+    fn read_to_string(&mut self, path: &Path, limit: usize) -> Result<String, String>;
+}
+
+fn read_bounded<R: std::io::Read>(reader: R, limit: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    reader
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read authored Rust file: {e}"))?;
+    if bytes.len() > limit {
+        return Err(format!(
+            "HARNESS-BROKE: authored Rust file changed while scanning and exceeds {limit} bytes"
+        ));
+    }
+    Ok(bytes)
+}
+
+struct RealFs;
+
+impl AuthoredFs for RealFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|e| format!("cannot inspect {}: {e}", path.display()))?;
+        let kind = metadata.file_type();
+        Ok(MetadataSnapshot {
+            is_symlink: kind.is_symlink(),
+            is_dir: metadata.is_dir(),
+            is_file: metadata.is_file(),
+            len: metadata.len(),
+        })
+    }
+
+    fn read_dir(&mut self, path: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
         let entries =
-            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
+            std::fs::read_dir(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let mut paths = Vec::new();
+        for entry in entries {
+            if paths.len() >= limit {
+                return Err(format!(
+                    "HARNESS-BROKE: authored Rust walk exceeded {MAX_ENTRIES} entries"
+                ));
+            }
+            paths.push(
+                entry
+                    .map_err(|e| format!("cannot read an entry in {}: {e}", path.display()))?
+                    .path(),
+            );
+        }
+        Ok(paths)
+    }
+
+    fn read_to_string(&mut self, path: &Path, limit: usize) -> Result<String, String> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        let bytes = read_bounded(file, limit)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        String::from_utf8(bytes)
+            .map_err(|e| format!("cannot decode {} as UTF-8: {e}", path.display()))
+    }
+}
+
+fn require_directory(path: &Path, metadata: MetadataSnapshot) -> Result<(), String> {
+    if metadata.is_symlink {
+        return Err(format!(
+            "HARNESS-BROKE: symlinks are not allowed in authored Rust roots: {}",
+            path.display()
+        ));
+    }
+    if !metadata.is_dir {
+        return Err(format!(
+            "HARNESS-BROKE: authored Rust root is not a directory: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn authored_sources_with_fs<F: AuthoredFs>(
+    fs: &mut F,
+    crate_root: &Path,
+) -> Result<Vec<(String, String)>, String> {
+    fn walk<F: AuthoredFs>(
+        fs: &mut F,
+        dir: &Path,
+        depth: usize,
+        entries_seen: &mut usize,
+        found: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
+        let metadata = fs.symlink_metadata(dir)?;
+        require_directory(dir, metadata)?;
+        if depth > MAX_DEPTH {
+            return Err(format!(
+                "HARNESS-BROKE: authored Rust walk exceeded depth {MAX_DEPTH} at {}",
+                dir.display()
+            ));
+        }
+        let remaining = MAX_ENTRIES.saturating_sub(*entries_seen);
+        let mut paths = fs.read_dir(dir, remaining)?;
+        *entries_seen += paths.len();
+        paths.sort();
+        for path in paths {
+            let metadata = fs.symlink_metadata(&path)?;
+            if metadata.is_symlink {
+                return Err(format!(
+                    "HARNESS-BROKE: symlinks are not allowed in authored Rust roots: {}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir {
+                walk(fs, &path, depth + 1, entries_seen, found)?;
+            } else if metadata.is_file && path.extension().is_some_and(|ext| ext == "rs") {
+                if metadata.len > MAX_FILE_BYTES {
+                    return Err(format!(
+                        "HARNESS-BROKE: {} is {} bytes and exceeds {MAX_FILE_BYTES} bytes",
+                        path.display(),
+                        metadata.len
+                    ));
+                }
+                if found.len() >= MAX_RUST_FILES {
+                    return Err(format!(
+                        "HARNESS-BROKE: authored Rust walk exceeded {MAX_RUST_FILES} Rust files"
+                    ));
+                }
+                found.push(path);
+            } else if !metadata.is_file {
+                return Err(format!(
+                    "HARNESS-BROKE: unexpected filesystem entry in authored Rust roots: {}",
+                    path.display()
+                ));
             }
         }
+        Ok(())
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
     let mut found = Vec::new();
-    walk(&root, &mut found);
+    let mut entries_seen = 0;
+    for root in [crate_root.join("src"), crate_root.join("tests")] {
+        walk(fs, &root, 0, &mut entries_seen, &mut found)?;
+    }
     found.sort();
     found
         .into_iter()
         .map(|path| {
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-            let shown = path.file_name().map_or_else(
-                || path.display().to_string(),
-                |n| format!("src/{}", n.to_string_lossy()),
-            );
-            (shown, text)
+            let text = fs.read_to_string(&path, MAX_FILE_BYTES as usize)?;
+            let shown = path
+                .strip_prefix(crate_root)
+                .unwrap_or(&path)
+                .display()
+                .to_string()
+                .replace('\\', "/");
+            Ok((shown, text))
         })
         .collect()
 }
 
-/// Lines whose runs are deliberate and must not be reported.
-///
-/// Comments: their indentation is often an intentional list.
-///
-/// `html:` lines: the rendered-surface FIXTURES of the geometry pathogens. `suite_digest` is a
-/// sha256 over the serialized suite, so "tidying" their whitespace changes the digest and voids
-/// every recorded geometry certification with the corpus semantically unchanged. An operator who
-/// watches certifications fall for a cosmetic reason learns the signal is noisy.
-///
-/// Exempt by ROLE, not by file: every other line of `lib.rs` stays scanned.
-fn is_exempt(line: &str) -> bool {
-    is_line_comment(line) || line.trim_start_matches(' ').starts_with("html:")
+fn sources() -> Vec<(String, String)> {
+    authored_sources_with_fs(&mut RealFs, Path::new(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}"))
 }
 
-fn offends(line: &str) -> bool {
-    !is_exempt(line) && has_run_in_literal(line)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Exemption {
+    Comment,
+    HtmlFixture,
+    DetectorFixture,
+}
+
+fn detector_fixture_source_lines() -> Vec<String> {
+    let three = " ".repeat(3);
+    let four = " ".repeat(4);
+    let eight = " ".repeat(8);
+    let ten = " ".repeat(10);
+    let nineteen = " ".repeat(19);
+    vec![
+        format!(r##"let aligned = r#"let s = "ok"; //{three}aligned trailing comment"#;"##),
+        format!("assert!(aligned.contains(\"{three}\"));"),
+        format!(r##"let between = r#"let a = "x";{eight}let b = "y";"#;"##),
+        format!("assert!(between.contains(\"{three}\"));"),
+        format!(r##"let comment = r#"//{three}let s = "a{ten}b";"#;"##),
+        format!(r##"let exempt_by_role = r#"{eight}html: "<main>x</a>{nineteen}<section>","#;"##),
+        format!(r##"r#"{four}"a real defect with{ten}collapsed indent","#"##),
+    ]
+}
+
+fn exemption(path: &str, line: &str) -> Option<Exemption> {
+    if is_line_comment(line) {
+        Some(Exemption::Comment)
+    } else if line.trim_start_matches(' ').starts_with("html:") {
+        Some(Exemption::HtmlFixture)
+    } else if path == "tests/source_invariants.rs"
+        && detector_fixture_source_lines()
+            .iter()
+            .any(|fixture| fixture == line.trim_start())
+    {
+        Some(Exemption::DetectorFixture)
+    } else {
+        None
+    }
+}
+
+fn offends(path: &str, line: &str) -> bool {
+    has_run_in_literal(line) && exemption(path, line).is_none()
 }
 
 #[test]
 fn refusal_strings_carry_no_collapsed_indentation() {
-    // The scan must have something to scan: an `include_str!` that resolved to nothing would
-    // satisfy the assertion below while reading no source at all.
     let offenders: Vec<String> = sources()
         .iter()
         .flat_map(|(path, text)| {
             text.lines()
                 .enumerate()
-                .filter(|(_, line)| offends(line))
+                .filter(|(_, line)| offends(path, line))
                 .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim_start()))
         })
         .collect();
@@ -90,17 +248,310 @@ fn refusal_strings_carry_no_collapsed_indentation() {
     );
 }
 
-/// The exemption must be CARRYING WEIGHT, not merely have a subject.
-///
-/// The first version asserted that `html:` lines exist. **Existing is not offending.** Someone
-/// reformats the geometry fixtures -- they are HTML strings, entirely tidyable -- so that no
-/// `html:` line carries a run any more, and the exemption suppresses nothing while this cell stays
-/// GREEN. That is precisely the rot the exemption's own comment claims nobody would notice, and it
-/// was reachable: verified by collapsing both fixtures, after which all four tests still passed.
-/// (Found by L.)
-///
-/// The S2 sabotage proved the exemption load-bearing ONCE. This asserts it is load-bearing NOW --
-/// evidence of the moment against evidence that keeps.
+#[derive(Clone, Debug)]
+enum FakeNode {
+    Directory,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+    Other,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Operation {
+    Inspect(PathBuf),
+    ReadDirectory(PathBuf),
+    ReadFile(PathBuf),
+}
+
+#[derive(Default)]
+struct FakeFs {
+    nodes: std::collections::BTreeMap<PathBuf, FakeNode>,
+    operations: Vec<Operation>,
+}
+
+impl FakeFs {
+    fn insert(&mut self, path: impl Into<PathBuf>, node: FakeNode) {
+        self.nodes.insert(path.into(), node);
+    }
+
+    fn crate_with_one_file_in_each_authored_root() -> Self {
+        let mut fs = Self::default();
+        fs.insert("crate/src", FakeNode::Directory);
+        fs.insert("crate/tests", FakeNode::Directory);
+        fs.insert(
+            "crate/src/lib.rs",
+            FakeNode::File(b"pub fn x() {}".to_vec()),
+        );
+        fs.insert(
+            "crate/tests/guard.rs",
+            FakeNode::File(b"#[test] fn x() {}".to_vec()),
+        );
+        fs
+    }
+
+    fn resolved_node(&self, path: &Path) -> Result<&FakeNode, String> {
+        let direct = self
+            .nodes
+            .get(path)
+            .ok_or_else(|| format!("fake path is absent: {}", path.display()))?;
+        match direct {
+            FakeNode::Symlink(target) => self
+                .nodes
+                .get(target)
+                .ok_or_else(|| format!("fake link target is absent: {}", target.display())),
+            other => Ok(other),
+        }
+    }
+}
+
+impl AuthoredFs for FakeFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String> {
+        self.operations.push(Operation::Inspect(path.to_path_buf()));
+        let direct = self
+            .nodes
+            .get(path)
+            .ok_or_else(|| format!("fake path is absent: {}", path.display()))?;
+        let target = self.resolved_node(path)?;
+        Ok(MetadataSnapshot {
+            is_symlink: matches!(direct, FakeNode::Symlink(_)),
+            is_dir: matches!(target, FakeNode::Directory),
+            is_file: matches!(target, FakeNode::File(_)),
+            len: match target {
+                FakeNode::File(bytes) => bytes.len() as u64,
+                FakeNode::Directory | FakeNode::Symlink(_) | FakeNode::Other => 0,
+            },
+        })
+    }
+
+    fn read_dir(&mut self, path: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
+        self.operations
+            .push(Operation::ReadDirectory(path.to_path_buf()));
+        if !matches!(self.resolved_node(path)?, FakeNode::Directory) {
+            return Err(format!("fake path is not a directory: {}", path.display()));
+        }
+        let resolved = match self.nodes.get(path) {
+            Some(FakeNode::Symlink(target)) => target,
+            Some(_) => path,
+            None => return Err(format!("fake path is absent: {}", path.display())),
+        };
+        let mut children = self
+            .nodes
+            .keys()
+            .filter(|candidate| candidate.parent() == Some(resolved))
+            .cloned()
+            .collect::<Vec<_>>();
+        children.sort();
+        if children.len() > limit {
+            return Err(format!(
+                "fake directory exceeds entry limit: {}",
+                path.display()
+            ));
+        }
+        Ok(children)
+    }
+
+    fn read_to_string(&mut self, path: &Path, limit: usize) -> Result<String, String> {
+        self.operations
+            .push(Operation::ReadFile(path.to_path_buf()));
+        match self.resolved_node(path)? {
+            FakeNode::File(bytes) if bytes.len() <= limit => String::from_utf8(bytes.clone())
+                .map_err(|e| format!("fake file is not UTF-8: {}: {e}", path.display())),
+            FakeNode::File(_) => Err(format!("fake file exceeds read limit: {}", path.display())),
+            _ => Err(format!("fake path is not a file: {}", path.display())),
+        }
+    }
+}
+
+#[test]
+fn authored_walker_reaches_tests_through_the_injected_filesystem() {
+    let mut fs = FakeFs::crate_with_one_file_in_each_authored_root();
+    let found = authored_sources_with_fs(&mut fs, Path::new("crate")).unwrap();
+    assert_eq!(
+        found
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect::<Vec<_>>(),
+        ["src/lib.rs", "tests/guard.rs"]
+    );
+}
+
+#[test]
+fn walker_skips_regular_non_rust_files_but_refuses_special_entries() {
+    let mut fs = FakeFs::crate_with_one_file_in_each_authored_root();
+    fs.insert("crate/src/notes.txt", FakeNode::File(b"notes".to_vec()));
+    let found = authored_sources_with_fs(&mut fs, Path::new("crate")).unwrap();
+    assert_eq!(found.len(), 2);
+    assert!(
+        !fs.operations
+            .contains(&Operation::ReadFile(PathBuf::from("crate/src/notes.txt")))
+    );
+
+    fs.insert("crate/src/device", FakeNode::Other);
+    let error = authored_sources_with_fs(&mut fs, Path::new("crate")).unwrap_err();
+    assert!(error.contains("unexpected filesystem entry"), "{error}");
+}
+
+#[test]
+fn walker_rejects_a_root_symlink_before_reading_or_opening_it() {
+    let mut fs = FakeFs::default();
+    fs.insert("crate/src", FakeNode::Symlink(PathBuf::from("outside")));
+    fs.insert("outside", FakeNode::Directory);
+    let error = authored_sources_with_fs(&mut fs, Path::new("crate")).unwrap_err();
+    assert!(error.contains("symlinks are not allowed"), "{error}");
+    assert_eq!(
+        fs.operations,
+        [Operation::Inspect(PathBuf::from("crate/src"))]
+    );
+}
+
+#[test]
+fn walker_rejects_a_child_symlink_before_reading_or_opening_it() {
+    let mut fs = FakeFs::crate_with_one_file_in_each_authored_root();
+    fs.insert(
+        "crate/src/linked.rs",
+        FakeNode::Symlink(PathBuf::from("outside.rs")),
+    );
+    fs.insert("outside.rs", FakeNode::File(b"secret".to_vec()));
+    let error = authored_sources_with_fs(&mut fs, Path::new("crate")).unwrap_err();
+    assert!(error.contains("symlinks are not allowed"), "{error}");
+    let linked = PathBuf::from("crate/src/linked.rs");
+    assert!(!fs.operations.contains(&Operation::ReadFile(linked.clone())));
+    assert!(!fs.operations.contains(&Operation::ReadDirectory(linked)));
+}
+
+#[test]
+fn walker_checks_metadata_size_before_opening_a_rust_file() {
+    let mut fs = FakeFs::crate_with_one_file_in_each_authored_root();
+    let oversized = PathBuf::from("crate/src/oversized.rs");
+    fs.insert(
+        &oversized,
+        FakeNode::File(vec![b'x'; (MAX_FILE_BYTES + 1) as usize]),
+    );
+    let error = authored_sources_with_fs(&mut fs, Path::new("crate")).unwrap_err();
+    assert!(error.contains("exceeds"), "{error}");
+    assert!(!fs.operations.contains(&Operation::ReadFile(oversized)));
+}
+
+#[test]
+fn real_bounded_reader_accepts_the_limit_and_rejects_growth() {
+    let exact = vec![b'x'; MAX_FILE_BYTES as usize];
+    assert_eq!(
+        read_bounded(std::io::Cursor::new(&exact), MAX_FILE_BYTES as usize)
+            .unwrap()
+            .len(),
+        MAX_FILE_BYTES as usize
+    );
+    let grown = vec![b'x'; MAX_FILE_BYTES as usize + 1];
+    let error = match read_bounded(std::io::Cursor::new(grown), MAX_FILE_BYTES as usize) {
+        Err(error) => error,
+        Ok(bytes) => panic!("bounded reader accepted {} bytes after growth", bytes.len()),
+    };
+    assert!(error.contains("changed while scanning"), "{error}");
+}
+
+struct IsolatedTempDirectory {
+    path: PathBuf,
+}
+
+impl IsolatedTempDirectory {
+    fn create() -> Result<Self, String> {
+        let root = std::env::temp_dir();
+        for attempt in 0..128 {
+            let path = root.join(format!(
+                "graphhelm-pathogens-source-invariants-{}-{attempt}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "cannot create isolated temporary directory {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        Err("cannot reserve an isolated temporary directory after 128 attempts".to_owned())
+    }
+
+    fn remove(self) -> Result<PathBuf, String> {
+        let path = self.path.clone();
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| format!("cannot remove isolated directory {}: {e}", path.display()))?;
+        std::mem::forget(self);
+        Ok(path)
+    }
+}
+
+impl Drop for IsolatedTempDirectory {
+    fn drop(&mut self) {
+        if self.path.parent() == Some(std::env::temp_dir().as_path()) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+#[test]
+fn real_fs_rechecks_the_bound_after_metadata_before_accepting_growth() {
+    use std::io::Write;
+
+    let directory = IsolatedTempDirectory::create().unwrap();
+    let path = directory.path.join("boundary.rs");
+    std::fs::write(&path, vec![b'x'; MAX_FILE_BYTES as usize]).unwrap();
+
+    let mut fs = RealFs;
+    let metadata = fs.symlink_metadata(&path).unwrap();
+    assert_eq!(metadata.len, MAX_FILE_BYTES);
+    assert_eq!(
+        fs.read_to_string(&path, MAX_FILE_BYTES as usize)
+            .unwrap()
+            .len(),
+        MAX_FILE_BYTES as usize
+    );
+
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"x")
+        .unwrap();
+    let error = match fs.read_to_string(&path, MAX_FILE_BYTES as usize) {
+        Err(error) => error,
+        Ok(text) => panic!("real adapter accepted {} bytes after growth", text.len()),
+    };
+    assert!(error.contains("changed while scanning"), "{error}");
+
+    let removed = directory.remove().unwrap();
+    assert!(
+        !removed.exists(),
+        "temporary proof directory was not removed"
+    );
+}
+
+#[test]
+fn the_scan_covers_the_whole_crate() {
+    let found = sources();
+    assert!(
+        found.len() >= 13,
+        "HARNESS-BROKE: the walk found only {} authored Rust files; lower 13 only with a named removal",
+        found.len()
+    );
+    for expected in [
+        "src/lib.rs",
+        "src/jpd.rs",
+        "src/retry_lineage.rs",
+        "tests/generic_harness.rs",
+        "tests/source_invariants.rs",
+    ] {
+        assert!(
+            found.iter().any(|(path, _)| path == expected),
+            "HARNESS-BROKE: known file {expected} is absent from the walk"
+        );
+    }
+    assert!(found.iter().all(|(path, _)| !path.contains('\\')));
+}
+
 #[test]
 fn the_html_exemption_actually_suppresses_something() {
     let suppressed: Vec<String> = sources()
@@ -109,119 +560,61 @@ fn the_html_exemption_actually_suppresses_something() {
             text.lines()
                 .enumerate()
                 .filter(|(_, line)| {
-                    line.trim_start().starts_with("html:") && has_run_in_literal(line)
+                    line.trim_start_matches(' ').starts_with("html:") && has_run_in_literal(line)
                 })
                 .map(move |(number, _)| format!("{path}:{}", number + 1))
         })
         .collect();
-
-    assert!(
-        !suppressed.is_empty(),
-        "HARNESS-BROKE: no `html:` line carries a run, so the exemption in `is_exempt` suppresses nothing. Either the fixtures were reformatted -- in which case REMOVE the exemption rather than leave it looking load-bearing -- or the scan stopped reaching lib.rs"
-    );
+    assert!(!suppressed.is_empty(), "HTML exemption suppresses nothing");
+    assert!(suppressed.iter().all(|item| item.starts_with("src/")));
 }
 
-/// The walk must actually reach the crate.
-///
-/// Without this, a `read_dir` returning almost nothing would satisfy the scan above while reading
-/// no source at all -- the vacuous pass a hand-written list was originally chosen to avoid. The
-/// floor is the replacement for that property, and it is the REAL count rather than a number left
-/// comfortably under it. A floor with slack tolerates precisely the silent shrinkage it exists to
-/// catch.
-///
-/// The cost is that a legitimate removal now edits this number, which is the plausible-looking
-/// edit a floor is supposed to resist. So the rule beside it: **lower this only in the same commit
-/// as the removal that caused it, and name the removed file.**
-///
-/// The named files below are the other half and they are not redundant with the count: the count
-/// is mute about WHICH file went missing, and a named assertion is mute about a file ADDED and
-/// never scanned. Lowering a threshold is a plausible edit; deleting a named assertion is a
-/// visible one, so the two fail on different work and neither is a substitute for the other.
 #[test]
-fn the_scan_covers_the_whole_crate() {
-    let found = sources();
-    assert!(
-        found.len() >= 4,
-        "HARNESS-BROKE: the walk found only {} source files in this crate",
-        found.len()
+fn detector_fixture_exemptions_are_load_bearing_and_bounded() {
+    let suppressed: Vec<String> = sources()
+        .iter()
+        .flat_map(|(path, text)| {
+            text.lines()
+                .enumerate()
+                .filter(|(_, line)| has_run_in_literal(line))
+                .filter(|(_, line)| exemption(path, line) == Some(Exemption::DetectorFixture))
+                .map(move |(number, _)| format!("{path}:{}", number + 1))
+        })
+        .collect();
+
+    assert_eq!(
+        suppressed.len(),
+        7,
+        "unexpected fixture set: {suppressed:?}"
     );
-    for expected in ["src/lib.rs", "src/jpd.rs", "src/retry_lineage.rs"] {
-        assert!(
-            found.iter().any(|(path, _)| path == expected),
-            "HARNESS-BROKE: {expected} is known to exist and is absent from the walk"
-        );
-    }
+    assert!(
+        suppressed
+            .iter()
+            .all(|location| location.starts_with("tests/source_invariants.rs:")),
+        "fixture exemptions escaped their exact owning path: {suppressed:?}"
+    );
 }
 
-/// The predicate itself, because it decides what everything else in this file means.
 #[test]
 fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
-    // PRECONDITION for the two cases below, and it is not ceremony. Their fixture property
-    // is "this line CARRIES a run of three or more spaces, outside any literal". Lose one
-    // space to an edit and `!offends(..)` collapses to `!false` and passes having measured
-    // nothing -- and it would keep passing with the even-segment bug back in place, which is
-    // the exact defect these two cells exist to catch. The pair is tight in both directions:
-    // if the run vanished the precondition fails, and if it moved INSIDE a literal `offends`
-    // becomes true and the assertion fails.
     let aligned = r#"let s = "ok"; //   aligned trailing comment"#;
-    assert!(
-        aligned.contains("   "),
-        "the aligned-comment fixture stopped carrying a run, so the assertion below measures nothing"
-    );
-    assert!(
-        !offends(aligned),
-        "a trailing aligned comment after a literal is ordinary Rust"
-    );
+    assert!(aligned.contains("   "));
+    assert!(!offends("fixture.rs", aligned));
 
     let between = r#"let a = "x";        let b = "y";"#;
-    assert!(
-        between.contains("   "),
-        "the between-literals fixture stopped carrying a run, so the assertion below measures nothing"
-    );
-    assert!(
-        !offends(between),
-        "spacing between two literals is ordinary Rust"
-    );
-    // PRECONDITION, and NOT the one its two neighbours use. Theirs assert `.contains("   ")`
-    // because their property is "carries a run OUTSIDE any literal". This fixture's property is
-    // the OPPOSITE -- the run must be INSIDE the literal, or `has_run_in_literal` answers false
-    // and the exemption below is never consulted. `.contains("   ")` cannot tell the difference:
-    // degrade this line to `//      let s = "ab";` and the run migrates out of the literal while
-    // `contains` stays true, which is exactly the degradation that silences the exemption.
-    // Copying the neighbours here would have looked right and measured nothing. (Found by B.)
+    assert!(between.contains("   "));
+    assert!(!offends("fixture.rs", between));
+
     let comment = r#"//   let s = "a          b";"#;
-    assert!(
-        has_run_in_literal(comment),
-        "the comment fixture stopped carrying a run inside its literal, so the exemption is no longer what makes the assertion below pass"
-    );
-    assert!(
-        // The comment exemption must be REACHED to be observed. An earlier fixture here
-        // was `"///   a doc comment whose indent is an intentional list"` -- a line with no
-        // string literal in it at all, so `has_run_in_literal` answered `false` before the
-        // exemption was ever consulted and the assertion passed whether the exemption
-        // worked or not. Found by sabotaging `is_line_comment` and watching nothing go red.
-        !offends(comment),
-        "comments are excluded: their indentation is often deliberate"
-    );
-    // A NEGATIVE assertion goes vacuous when its fixture loses the property under test: if this
-    // sample stopped carrying a run, `!offends(..)` would be `!false` and pass having proved
-    // nothing. Measured, not feared -- collapsing this one string left all four tests GREEN.
-    //
-    // Its positive twin below needs no such pairing: a fixture that stops carrying a run makes
-    // `offends(..)` false and the assertion RED. That asymmetry is the rule worth keeping --
-    // guard the fixture of a NEGATIVE assertion, because only that direction fails silently.
+    assert!(has_run_in_literal(comment));
+    assert!(!offends("fixture.rs", comment));
+
     let exempt_by_role = r#"        html: "<main>x</a>                   <section>","#;
-    assert!(
-        has_run_in_literal(exempt_by_role),
-        "the fixture must carry a run, or the exemption assertion below proves nothing"
-    );
-    assert!(
-        !offends(exempt_by_role),
-        "digest-bearing fixtures are exempt by role"
-    );
-    // The false-negative case: a guard tuned until it stops complaining stops working.
-    assert!(
-        offends(r#"    "a real defect with          collapsed indent","#),
-        "the defect itself must still be caught"
-    );
+    assert!(has_run_in_literal(exempt_by_role));
+    assert!(!offends("fixture.rs", exempt_by_role));
+
+    assert!(offends(
+        "fixture.rs",
+        r#"    "a real defect with          collapsed indent","#
+    ));
 }

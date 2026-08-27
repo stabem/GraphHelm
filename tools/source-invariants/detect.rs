@@ -29,14 +29,14 @@
 // time: which crates carry an `#[allow(dead_code)]` and why, in this comment, so the
 // exception is visible to the next person rather than discovered by a red build.
 //
-// Today both items qualify: the compile carrier uses both, and every one of the eight
+// Today both items qualify: the compile carrier uses both, and every one of the nine
 // guards exempts comments. (Constraint named by L.)
 //
 // DECLARED EXCEPTION, under the rule directly above. `shared_predicate_self_path` is
 // consumed only by the compile carrier in core/quality, which is the one adopter that can
 // ask `freeze_violation` anything -- every other adopter reaches this file by `include!`
 // precisely so that it needs no dependency on that crate. It therefore carries
-// `#[allow(dead_code)]` here, once, rather than eight `allow`s in eight adopters.
+// `#[allow(dead_code)]` here, once, rather than nine `allow`s in nine adopters.
 
 /// Whether this line carries a run of three or more spaces inside a STRING LITERAL.
 ///

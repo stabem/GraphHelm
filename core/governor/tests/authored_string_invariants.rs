@@ -30,54 +30,186 @@ include!(concat!(
 
 use std::path::{Path, PathBuf};
 
+const WALK_LIMITS: WalkLimits = WalkLimits {
+    max_depth: 32,
+    max_entries: 4_096,
+    max_rust_files: 1_024,
+};
+
+#[derive(Clone, Copy)]
+struct WalkLimits {
+    max_depth: usize,
+    max_entries: usize,
+    max_rust_files: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MetadataSnapshot {
+    is_symlink: bool,
+    is_dir: bool,
+    is_file: bool,
+}
+
+trait SourceFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String>;
+    fn read_dir(
+        &mut self,
+        path: &Path,
+        limit: usize,
+    ) -> Result<Vec<Result<PathBuf, String>>, String>;
+    fn read_to_string(&mut self, path: &Path) -> Result<String, String>;
+}
+
+type MetadataFn = fn(&Path) -> std::io::Result<std::fs::Metadata>;
+
+fn no_follow_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    std::fs::symlink_metadata(path)
+}
+
+struct RealFs {
+    metadata_fn: MetadataFn,
+}
+
+impl Default for RealFs {
+    fn default() -> Self {
+        Self {
+            metadata_fn: no_follow_metadata,
+        }
+    }
+}
+
+impl SourceFs for RealFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String> {
+        let metadata = (self.metadata_fn)(path)
+            .map_err(|e| format!("cannot inspect {}: {e}", path.display()))?;
+        let file_type = metadata.file_type();
+        Ok(MetadataSnapshot {
+            is_symlink: file_type.is_symlink(),
+            is_dir: file_type.is_dir(),
+            is_file: file_type.is_file(),
+        })
+    }
+
+    fn read_dir(
+        &mut self,
+        path: &Path,
+        limit: usize,
+    ) -> Result<Vec<Result<PathBuf, String>>, String> {
+        let entries =
+            std::fs::read_dir(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let mut paths = Vec::new();
+        for entry in entries {
+            if paths.len() >= limit {
+                return Err("HARNESS-BROKE: authored Rust walk exceeded entry limit".to_owned());
+            }
+            paths.push(
+                entry
+                    .map(|entry| entry.path())
+                    .map_err(|e| format!("cannot read an entry in {}: {e}", path.display())),
+            );
+        }
+        Ok(paths)
+    }
+
+    fn read_to_string(&mut self, path: &Path) -> Result<String, String> {
+        std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))
+    }
+}
+
 /// Every `.rs` file under `src/` AND `tests/`, discovered by WALKING the directories.
 ///
 /// The population is the directory, not a list: a file ADDED to the crate must be scanned without
 /// anyone remembering to name it. The risk that trades against, a walk that silently returns
 /// almost nothing, is answered by the floor and the two root assertions below.
 fn sources() -> Vec<(String, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        // A MISSING root is deferred to the root assertions below rather than reported here.
-        // `read_dir` on an absent directory panics in the ARRANGEMENT, so a crate without a
-        // `tests/` directory would fail with an io error from a helper -- while a missing root is
-        // precisely the condition those assertions exist to report, in the vocabulary of coverage.
-        // The wrong mechanism answering first also hides the right one: the assertion never runs,
-        // so nobody learns whether it would have caught this. (Found by M, reviewing #390.)
-        //
-        // Only NotFound is deferred. Every other io error still panics here, because a root that
-        // exists but cannot be read is NOT what the assertions below describe, and swallowing it
-        // would let the walk shrink silently -- which is the failure the floor and the roots are
-        // both built against.
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-            Err(e) => panic!("cannot read {}: {e}", dir.display()),
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    sources_with_fs(&mut RealFs::default(), root, WALK_LIMITS).unwrap_or_else(|e| panic!("{e}"))
+}
+
+fn sources_with_fs<F: SourceFs>(
+    fs: &mut F,
+    root: &Path,
+    limits: WalkLimits,
+) -> Result<Vec<(String, String)>, String> {
+    fn walk<F: SourceFs>(
+        fs: &mut F,
+        dir: &Path,
+        depth: usize,
+        entries_seen: &mut usize,
+        found: &mut Vec<PathBuf>,
+        limits: WalkLimits,
+    ) -> Result<(), String> {
+        let metadata = fs.symlink_metadata(dir)?;
+        if metadata.is_symlink {
+            return Err(format!(
+                "HARNESS-BROKE: symlink is not allowed: {}",
+                dir.display()
+            ));
+        }
+        if !metadata.is_dir {
+            return Err(format!(
+                "HARNESS-BROKE: authored Rust root is not a directory: {}",
+                dir.display()
+            ));
+        }
+        if depth > limits.max_depth {
+            return Err(format!(
+                "HARNESS-BROKE: authored Rust walk exceeded depth {} at {}",
+                limits.max_depth,
+                dir.display()
+            ));
+        }
+
+        let remaining = limits.max_entries.saturating_sub(*entries_seen);
+        let entries = fs.read_dir(dir, remaining)?;
+        *entries_seen += entries.len();
+        let mut paths = entries.into_iter().collect::<Result<Vec<_>, _>>()?;
+        paths.sort();
+        for path in paths {
+            let metadata = fs.symlink_metadata(&path)?;
+            if metadata.is_symlink {
+                return Err(format!(
+                    "HARNESS-BROKE: symlink is not allowed: {}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir {
+                walk(fs, &path, depth + 1, entries_seen, found, limits)?;
+            } else if metadata.is_file && path.extension().is_some_and(|ext| ext == "rs") {
+                if found.len() >= limits.max_rust_files {
+                    return Err(format!(
+                        "HARNESS-BROKE: authored Rust walk exceeded Rust file limit {}",
+                        limits.max_rust_files
+                    ));
+                }
+                found.push(path);
+            } else if !metadata.is_file {
+                return Err(format!(
+                    "HARNESS-BROKE: unexpected filesystem entry: {}",
+                    path.display()
+                ));
             }
         }
+        Ok(())
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
     let mut found = Vec::new();
-    walk(&root.join("src"), &mut found);
-    walk(&root.join("tests"), &mut found);
+    let mut entries_seen = 0;
+    for fixed_root in [root.join("src"), root.join("tests")] {
+        walk(fs, &fixed_root, 0, &mut entries_seen, &mut found, limits)?;
+    }
     found.sort();
     found
         .into_iter()
         .map(|path| {
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let text = fs.read_to_string(&path)?;
             let shown = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
                 .display()
-                .to_string();
-            (shown, text)
+                .to_string()
+                .replace('\\', "/");
+            Ok((shown, text))
         })
         .collect()
 }
@@ -163,4 +295,215 @@ fn the_scan_covers_both_roots_of_the_crate() {
          than this crate",
         found.len()
     );
+}
+
+#[derive(Clone, Copy)]
+enum FakeKind {
+    Directory,
+    File,
+    Symlink,
+    Other,
+}
+
+#[derive(Default)]
+struct FakeFs {
+    nodes: std::collections::BTreeMap<PathBuf, FakeKind>,
+    read_dir_failure: Option<PathBuf>,
+    entry_failure: Option<PathBuf>,
+    metadata_failure: Option<PathBuf>,
+    reads: Vec<PathBuf>,
+}
+
+impl FakeFs {
+    fn seeded() -> Self {
+        let mut fs = Self::default();
+        fs.nodes.insert("crate/src".into(), FakeKind::Directory);
+        fs.nodes.insert("crate/tests".into(), FakeKind::Directory);
+        fs.nodes.insert("crate/src/lib.rs".into(), FakeKind::File);
+        fs.nodes
+            .insert("crate/tests/guard.rs".into(), FakeKind::File);
+        fs
+    }
+}
+
+impl SourceFs for FakeFs {
+    fn symlink_metadata(&mut self, path: &Path) -> Result<MetadataSnapshot, String> {
+        if self.metadata_failure.as_deref() == Some(path) {
+            return Err("metadata sentinel".to_owned());
+        }
+        let kind = self
+            .nodes
+            .get(path)
+            .ok_or_else(|| format!("missing fake path {}", path.display()))?;
+        Ok(MetadataSnapshot {
+            is_symlink: matches!(kind, FakeKind::Symlink),
+            is_dir: matches!(kind, FakeKind::Directory),
+            is_file: matches!(kind, FakeKind::File),
+        })
+    }
+
+    fn read_dir(
+        &mut self,
+        path: &Path,
+        limit: usize,
+    ) -> Result<Vec<Result<PathBuf, String>>, String> {
+        if self.read_dir_failure.as_deref() == Some(path) {
+            return Err("read-dir sentinel".to_owned());
+        }
+        let mut children = self
+            .nodes
+            .keys()
+            .filter(|candidate| candidate.parent() == Some(path))
+            .cloned()
+            .collect::<Vec<_>>();
+        children.reverse();
+        if children.len() > limit {
+            return Err("entry limit sentinel".to_owned());
+        }
+        let mut entries = children.into_iter().map(Ok).collect::<Vec<_>>();
+        if self.entry_failure.as_deref() == Some(path) {
+            entries.push(Err("entry sentinel".to_owned()));
+        }
+        Ok(entries)
+    }
+
+    fn read_to_string(&mut self, path: &Path) -> Result<String, String> {
+        self.reads.push(path.to_path_buf());
+        Ok(format!("// {}", path.display()))
+    }
+}
+
+fn limits(depth: usize, entries: usize, rust_files: usize) -> WalkLimits {
+    WalkLimits {
+        max_depth: depth,
+        max_entries: entries,
+        max_rust_files: rust_files,
+    }
+}
+
+#[test]
+fn hardened_walker_sorts_and_reaches_both_fixed_roots() {
+    let mut fs = FakeFs::seeded();
+    let found = sources_with_fs(&mut fs, Path::new("crate"), limits(4, 8, 4)).unwrap();
+    assert_eq!(
+        found
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect::<Vec<_>>(),
+        ["src/lib.rs", "tests/guard.rs"]
+    );
+}
+
+#[test]
+fn hardened_walker_refuses_a_missing_fixed_root() {
+    let mut fs = FakeFs::seeded();
+    fs.nodes.remove(Path::new("crate/tests"));
+    let error = sources_with_fs(&mut fs, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert!(error.contains("missing fake path"), "{error}");
+    assert!(error.contains("tests"), "{error}");
+    assert!(fs.reads.is_empty());
+}
+
+#[test]
+fn hardened_walker_rejects_symlinks_and_unexpected_entries() {
+    let mut root_link = FakeFs::seeded();
+    root_link
+        .nodes
+        .insert("crate/src".into(), FakeKind::Symlink);
+    let error = sources_with_fs(&mut root_link, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert!(error.contains("symlink"), "{error}");
+    assert!(root_link.reads.is_empty());
+
+    let mut child_link = FakeFs::seeded();
+    child_link
+        .nodes
+        .insert("crate/src/escape.rs".into(), FakeKind::Symlink);
+    let error = sources_with_fs(&mut child_link, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert!(error.contains("symlink"), "{error}");
+    assert!(child_link.reads.is_empty());
+
+    let mut special = FakeFs::seeded();
+    special
+        .nodes
+        .insert("crate/src/device".into(), FakeKind::Other);
+    let error = sources_with_fs(&mut special, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert!(error.contains("unexpected"), "{error}");
+    assert!(special.reads.is_empty());
+}
+
+#[test]
+fn hardened_walker_enforces_all_limits_before_reading_content() {
+    let mut depth = FakeFs::seeded();
+    depth
+        .nodes
+        .insert("crate/src/nested".into(), FakeKind::Directory);
+    let error = sources_with_fs(&mut depth, Path::new("crate"), limits(0, 8, 4)).unwrap_err();
+    assert!(error.contains("depth"), "{error}");
+    assert!(depth.reads.is_empty());
+
+    let mut entries = FakeFs::seeded();
+    let error = sources_with_fs(&mut entries, Path::new("crate"), limits(4, 1, 4)).unwrap_err();
+    assert!(error.contains("entry limit"), "{error}");
+    assert!(entries.reads.is_empty());
+
+    let mut rust_files = FakeFs::seeded();
+    let error = sources_with_fs(&mut rust_files, Path::new("crate"), limits(4, 8, 1)).unwrap_err();
+    assert!(error.contains("Rust file"), "{error}");
+    assert!(rust_files.reads.is_empty());
+}
+
+#[test]
+fn hardened_walker_propagates_directory_entry_and_metadata_errors() {
+    let src = PathBuf::from("crate/src");
+    let lib = PathBuf::from("crate/src/lib.rs");
+
+    let mut read_dir = FakeFs::seeded();
+    read_dir.read_dir_failure = Some(src.clone());
+    let error = sources_with_fs(&mut read_dir, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert_eq!(error, "read-dir sentinel");
+
+    let mut entry = FakeFs::seeded();
+    entry.entry_failure = Some(src);
+    let emitted = entry.read_dir(Path::new("crate/src"), 8).unwrap();
+    assert!(emitted.first().is_some_and(Result::is_ok));
+    assert!(emitted.get(1).is_some_and(Result::is_err));
+    let error = sources_with_fs(&mut entry, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert_eq!(error, "entry sentinel");
+
+    let mut metadata = FakeFs::seeded();
+    metadata.metadata_failure = Some(lib);
+    let error = sources_with_fs(&mut metadata, Path::new("crate"), limits(4, 8, 4)).unwrap_err();
+    assert_eq!(error, "metadata sentinel");
+}
+
+#[test]
+fn real_adapter_is_bound_to_no_follow_metadata() {
+    fn sentinel(_: &Path) -> std::io::Result<std::fs::Metadata> {
+        Err(std::io::Error::other("metadata seam sentinel"))
+    }
+
+    let real = RealFs::default();
+    assert!(std::ptr::fn_addr_eq(
+        real.metadata_fn,
+        no_follow_metadata as MetadataFn
+    ));
+
+    let own_source = sources()
+        .into_iter()
+        .find(|(_, text)| text.contains("fn real_adapter_is_bound_to_no_follow_metadata"))
+        .map(|(_, text)| text)
+        .expect("the authored-source walk must include this test file");
+    let indent = " ".repeat(4);
+    let binding = format!(
+        "fn no_follow_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {{\n\
+         {indent}std::fs::symlink_metadata(path)\n\
+         }}"
+    );
+    assert!(own_source.contains(&binding), "{binding}");
+
+    let mut injected = RealFs {
+        metadata_fn: sentinel,
+    };
+    let error = injected.symlink_metadata(Path::new("unused")).unwrap_err();
+    assert!(error.contains("metadata seam sentinel"), "{error}");
 }

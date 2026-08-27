@@ -39,6 +39,17 @@ fn supported_format_repository(directory: &TempDir) -> PathBuf {
     root
 }
 
+fn complete_local_repository(directory: &TempDir) -> PathBuf {
+    let root = directory.path().join("complete");
+    fs::create_dir_all(root.join("blobs")).unwrap();
+    fs::create_dir(root.join(".tmp")).unwrap();
+    fs::create_dir(root.join("active")).unwrap();
+    fs::write(root.join("format.json"), b"{\"formatVersion\":\"1.0.0\"}\n").unwrap();
+    fs::write(root.join("journal.jsonl"), []).unwrap();
+    fs::write(root.join("repository.lock"), []).unwrap();
+    root
+}
+
 fn tool_entry(path: &Path) -> Value {
     json!({
         "path": path,
@@ -102,6 +113,65 @@ fn unsupported_repository_format_fails_without_import_fallback() {
             "unsupported format output must not offer {forbidden}: {rendered}"
         );
     }
+}
+
+#[test]
+fn verify_reports_a_missing_repository_as_an_argument_without_creating_it() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("missing-repository");
+    let (code, value) = json_output(&["events", "verify", "--repository", root.to_str().unwrap()]);
+
+    assert_eq!(code, 2);
+    assert!(diagnostic_codes(&value).contains(&"GHCLI001_ARGUMENT_INVALID".to_owned()));
+    assert_eq!(value["diagnostics"][0]["path"], "/repository");
+    assert!(!value.to_string().contains(root.to_str().unwrap()));
+    assert!(!root.exists());
+}
+
+#[test]
+fn verify_reports_a_format_only_repository_as_integrity_without_repair() {
+    let directory = TempDir::new().unwrap();
+    let root = supported_format_repository(&directory);
+    let (code, value) = json_output(&["events", "verify", "--repository", root.to_str().unwrap()]);
+
+    assert_eq!(code, 2);
+    assert!(diagnostic_codes(&value).contains(&"GHE005_INTEGRITY_FAILURE".to_owned()));
+    assert_eq!(value["diagnostics"][0]["path"], "/repository");
+    assert!(!value.to_string().contains(root.to_str().unwrap()));
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+}
+
+#[test]
+fn verify_reports_an_ordinary_wrong_required_slot_type_as_integrity() {
+    let directory = TempDir::new().unwrap();
+    let root = complete_local_repository(&directory);
+    fs::remove_file(root.join("journal.jsonl")).unwrap();
+    fs::create_dir(root.join("journal.jsonl")).unwrap();
+
+    let (code, value) = json_output(&["events", "verify", "--repository", root.to_str().unwrap()]);
+
+    assert_eq!(code, 2);
+    assert!(diagnostic_codes(&value).contains(&"GHE005_INTEGRITY_FAILURE".to_owned()));
+    assert_eq!(value["diagnostics"][0]["path"], "/repository");
+    assert!(!value.to_string().contains(root.to_str().unwrap()));
+    assert!(root.join("journal.jsonl").is_dir());
+}
+
+#[test]
+fn verify_accepts_a_valid_repository_without_recreating_transient_directories() {
+    let directory = TempDir::new().unwrap();
+    let root = complete_local_repository(&directory);
+    fs::remove_dir(root.join(".tmp")).unwrap();
+    fs::remove_dir(root.join("active")).unwrap();
+    let names_before = fs::read_dir(&root).unwrap().count();
+    let (code, value) = json_output(&["events", "verify", "--repository", root.to_str().unwrap()]);
+
+    assert_eq!(code, 0);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["data"]["formatSupported"], true);
+    assert_eq!(fs::read_dir(&root).unwrap().count(), names_before);
+    assert!(!root.join(".tmp").exists());
+    assert!(!root.join("active").exists());
 }
 
 #[test]

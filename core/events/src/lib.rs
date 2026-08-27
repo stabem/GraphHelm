@@ -31,7 +31,9 @@ pub use key::{
     RepositoryFuture, RevocationReceipt, RevokeKeyRequest, VerifyAuthenticationRequest,
     WrapKeyRequest, WrappedKey,
 };
-pub use local::{LocalEventRepository, LocalFailpoint, journal_line_roundtrips};
+pub use local::{
+    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, journal_line_roundtrips,
+};
 pub use memory::{append_memory_refusal, memory_journal_is_clean};
 pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,

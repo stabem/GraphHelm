@@ -305,7 +305,87 @@ pub struct LocalEventRepository {
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
 }
 
+/// Result of recognizing a local repository without opening it for writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalRepositoryInspection {
+    /// No selected root existed when the anchored open began.
+    Missing,
+    /// The root or a retained child could not be read.
+    Storage,
+    /// The declared local format exists, but its required persisted layout is incomplete.
+    Integrity,
+    /// The declared format and required persisted layout were recognized without mutation.
+    Recognized,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InspectionMoment {
+    RootOpened,
+    DirectorySnapshotted,
+}
+
 impl LocalEventRepository {
+    /// Recognizes the persisted local layout without creating or repairing any path.
+    pub fn inspect_repository(
+        root: &Path,
+    ) -> Result<LocalRepositoryInspection, EventRepositoryError> {
+        Self::inspect_repository_inner(root, |_| {})
+    }
+
+    #[cfg(test)]
+    fn inspect_repository_with_hook(
+        root: &Path,
+        hook: impl FnMut(InspectionMoment),
+    ) -> Result<LocalRepositoryInspection, EventRepositoryError> {
+        Self::inspect_repository_inner(root, hook)
+    }
+
+    fn inspect_repository_inner(
+        root: &Path,
+        hook: impl FnMut(InspectionMoment),
+    ) -> Result<LocalRepositoryInspection, EventRepositoryError> {
+        if root.as_os_str().is_empty() {
+            return Ok(LocalRepositoryInspection::Missing);
+        }
+        Self::inspect_repository_from_opened(root, open_inspection_root(root), hook)
+    }
+
+    #[cfg(test)]
+    fn inspect_repository_with_root_error(
+        root: &Path,
+        error: std::io::Error,
+    ) -> Result<LocalRepositoryInspection, EventRepositoryError> {
+        Self::inspect_repository_from_opened(root, inspection_root_open_failure(error), |_| {})
+    }
+
+    fn inspect_repository_from_opened(
+        root: &Path,
+        opened: Result<Option<File>, EventRepositoryError>,
+        mut hook: impl FnMut(InspectionMoment),
+    ) -> Result<LocalRepositoryInspection, EventRepositoryError> {
+        let Some(root_handle) = (match opened {
+            Ok(handle) => handle,
+            Err(EventRepositoryError::Storage) => {
+                return Ok(LocalRepositoryInspection::Storage);
+            }
+            Err(error) => return Err(error),
+        }) else {
+            return Ok(LocalRepositoryInspection::Missing);
+        };
+        hook(InspectionMoment::RootOpened);
+        match inspect_layout(root, &root_handle, &mut hook) {
+            Ok(LayoutState::Complete | LayoutState::RecoverableDirs) => {
+                Ok(LocalRepositoryInspection::Recognized)
+            }
+            Ok(LayoutState::RecognizedPartial) => Err(EventRepositoryError::UnsupportedFormat),
+            Err(EventRepositoryError::Integrity | EventRepositoryError::IntegrityAt(_)) => {
+                Ok(LocalRepositoryInspection::Integrity)
+            }
+            Err(EventRepositoryError::Storage) => Ok(LocalRepositoryInspection::Storage),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Recognizes an existing v1 repository without creating or reconciling it.
     pub fn inspect_format(root: &Path) -> Result<(), EventRepositoryError> {
         if !root.exists() {
@@ -1938,6 +2018,143 @@ impl LocalEventRepository {
     }
 }
 
+fn inspect_layout(
+    root: &Path,
+    root_handle: &File,
+    hook: &mut impl FnMut(InspectionMoment),
+) -> Result<LayoutState, EventRepositoryError> {
+    inspect_layout_with_directory_opener(
+        root,
+        root_handle,
+        hook,
+        &mut open_inspection_child_directory,
+    )
+}
+
+fn inspect_layout_with_directory_opener(
+    root: &Path,
+    root_handle: &File,
+    hook: &mut impl FnMut(InspectionMoment),
+    directory_opener: &mut impl FnMut(&File, &Path, &str) -> Result<File, EventRepositoryError>,
+) -> Result<LayoutState, EventRepositoryError> {
+    let entries = collect_child_identities_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?;
+    hook(InspectionMoment::DirectorySnapshotted);
+    let names = entries.keys().cloned().collect::<BTreeSet<_>>();
+    let allowed = BTreeSet::from([
+        "blobs".to_owned(),
+        ".tmp".to_owned(),
+        "active".to_owned(),
+        "format.json".to_owned(),
+        "journal.jsonl".to_owned(),
+        "repository.lock".to_owned(),
+    ]);
+    let format_declared = if let Some(expected_identity) = entries.get("format.json") {
+        let mut file = map_inspection_slot_open(
+            open_inspection_child_file(root_handle, root, "format.json"),
+            false,
+        )?;
+        if file_identity(&file)? != *expected_identity {
+            return Err(EventRepositoryError::Integrity);
+        }
+        if read_bounded_file(&mut file, 1024)? != FORMAT_BYTES {
+            return Err(EventRepositoryError::UnsupportedFormat);
+        }
+        true
+    } else {
+        false
+    };
+    for (name, expected_identity) in &entries {
+        if name == "format.json" {
+            continue;
+        }
+        if !allowed.contains(name) {
+            return Err(EventRepositoryError::UnsupportedFormat);
+        }
+        match name.as_str() {
+            "blobs" | ".tmp" | "active" => {
+                let directory = map_inspection_slot_open(
+                    directory_opener(root_handle, root, name),
+                    format_declared,
+                )?;
+                if file_identity(&directory)? != *expected_identity {
+                    return Err(EventRepositoryError::Integrity);
+                }
+                if !format_declared {
+                    require_inspection_directory_empty(&directory, &root.join(name))?;
+                }
+            }
+            "journal.jsonl" | "repository.lock" => {
+                let file = map_inspection_slot_open(
+                    open_inspection_child_file(root_handle, root, name),
+                    format_declared,
+                )?;
+                if file_identity(&file)? != *expected_identity {
+                    return Err(EventRepositoryError::Integrity);
+                }
+                if !format_declared && file.metadata()?.len() != 0 {
+                    return Err(EventRepositoryError::UnsupportedFormat);
+                }
+            }
+            _ => return Err(EventRepositoryError::UnsupportedFormat),
+        }
+    }
+    if format_declared {
+        if names == allowed {
+            return Ok(LayoutState::Complete);
+        }
+        if allowed
+            .difference(&names)
+            .all(|name| name == ".tmp" || name == "active")
+        {
+            return Ok(LayoutState::RecoverableDirs);
+        }
+        return Err(EventRepositoryError::Integrity);
+    }
+    Ok(LayoutState::RecognizedPartial)
+}
+
+fn map_inspection_slot_open<T>(
+    opened: Result<T, EventRepositoryError>,
+    format_declared: bool,
+) -> Result<T, EventRepositoryError> {
+    opened.map_err(|error| {
+        if !format_declared
+            && matches!(
+                error,
+                EventRepositoryError::Integrity | EventRepositoryError::IntegrityAt(_)
+            )
+        {
+            EventRepositoryError::UnsupportedFormat
+        } else {
+            error
+        }
+    })
+}
+
+fn collect_child_identities_bounded(
+    directory: &File,
+    path: &Path,
+    max_entries: usize,
+) -> Result<BTreeMap<String, FileIdentity>, EventRepositoryError> {
+    let mut budget = DirectoryBudget::with_limits(max_entries, MAX_REPOSITORY_NAME_BYTES);
+    let mut identities = BTreeMap::new();
+    for_each_child_identity(directory, path, &mut budget, |name, identity| {
+        identities.insert(name.to_owned(), identity);
+        Ok(())
+    })?;
+    Ok(identities)
+}
+
+fn require_inspection_directory_empty(
+    directory: &File,
+    path: &Path,
+) -> Result<(), EventRepositoryError> {
+    let mut budget = DirectoryBudget::with_limits(1, MAX_REPOSITORY_NAME_BYTES);
+    for_each_child_identity(directory, path, &mut budget, |_, _| {
+        Err(EventRepositoryError::UnsupportedFormat)
+    })
+}
+
 impl EventRepository for LocalEventRepository {
     fn append_atomic(
         &self,
@@ -3024,6 +3241,152 @@ fn open_directory(path: &Path) -> Result<File, EventRepositoryError> {
     }
 }
 
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq)]
+struct WindowsInspectionPath {
+    anchor: PathBuf,
+    components: Vec<std::ffi::OsString>,
+}
+
+#[cfg(windows)]
+fn parse_windows_inspection_path(
+    absolute: &Path,
+) -> Result<WindowsInspectionPath, EventRepositoryError> {
+    use std::path::{Component, Prefix};
+
+    let mut parts = absolute.components();
+    let prefix = match parts.next() {
+        Some(Component::Prefix(prefix)) => prefix,
+        _ => return Err(EventRepositoryError::UnsupportedFormat),
+    };
+    match prefix.kind() {
+        Prefix::Disk(_)
+        | Prefix::VerbatimDisk(_)
+        | Prefix::UNC(_, _)
+        | Prefix::VerbatimUNC(_, _) => {}
+        _ => return Err(EventRepositoryError::UnsupportedFormat),
+    }
+    if !matches!(parts.next(), Some(Component::RootDir)) {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    let mut anchor = prefix.as_os_str().to_os_string();
+    anchor.push(r"\");
+    let mut components = Vec::new();
+    for part in parts {
+        let Component::Normal(name) = part else {
+            return Err(EventRepositoryError::UnsupportedFormat);
+        };
+        components.push(name.to_os_string());
+    }
+    Ok(WindowsInspectionPath {
+        anchor: PathBuf::from(anchor),
+        components,
+    })
+}
+
+/// Opens the selected root once, without create semantics, and preserves absence.
+fn open_inspection_root(root: &Path) -> Result<Option<File>, EventRepositoryError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        let absolute = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(root)
+        };
+        let parsed = parse_windows_inspection_path(&absolute)?;
+        let mut current = match std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(parsed.anchor)
+        {
+            Ok(file) => file,
+            Err(error) => return inspection_root_open_failure(error),
+        };
+        validate_opened_directory(&current)?;
+        for name in parsed.components {
+            let Some(next) = nt_open_inspection_root_component(&current, &name)? else {
+                return Ok(None);
+            };
+            current = next;
+        }
+        Ok(Some(current))
+    }
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::ffi::OsStrExt;
+        let absolute = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(root)
+        };
+        let slash = CString::new("/").map_err(|_| EventRepositoryError::Storage)?;
+        // SAFETY: the fixed root path is NUL-terminated and the descriptor is transferred once.
+        let descriptor = unsafe {
+            libc::open(
+                slash.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+        };
+        if descriptor < 0 {
+            return Err(EventRepositoryError::Storage);
+        }
+        // SAFETY: descriptor is fresh and uniquely owned.
+        let mut current = unsafe { File::from_raw_fd(descriptor) };
+        for component in absolute.components() {
+            match component {
+                std::path::Component::RootDir | std::path::Component::CurDir => {}
+                std::path::Component::ParentDir | std::path::Component::Prefix(_) => {
+                    return Err(EventRepositoryError::UnsupportedFormat);
+                }
+                std::path::Component::Normal(part) => {
+                    let name = CString::new(part.as_bytes())
+                        .map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+                    // SAFETY: the retained descriptor and fixed component are live; links are not
+                    // followed, and no create flag is present.
+                    let next = unsafe {
+                        libc::openat(
+                            current.as_raw_fd(),
+                            name.as_ptr(),
+                            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                        )
+                    };
+                    if next < 0 {
+                        let error = std::io::Error::last_os_error();
+                        return inspection_root_open_failure(error);
+                    }
+                    // SAFETY: next is fresh and replaces the previous retained descriptor.
+                    current = unsafe { File::from_raw_fd(next) };
+                }
+            }
+        }
+        Ok(Some(current))
+    }
+}
+
+fn inspection_root_open_failure(
+    error: std::io::Error,
+) -> Result<Option<File>, EventRepositoryError> {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    if matches!(
+        error.raw_os_error(),
+        Some(code) if code == libc::ELOOP || code == libc::ENOTDIR
+    ) {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    Err(EventRepositoryError::Storage)
+}
+
 fn validate_child_name(name: &str) -> Result<(), EventRepositoryError> {
     if name.is_empty()
         || name.len() > 128
@@ -3186,6 +3549,461 @@ fn open_failure(create: bool, error: &std::io::Error) -> EventRepositoryError {
     } else {
         EventRepositoryError::Storage
     }
+}
+
+#[cfg(unix)]
+fn open_inspection_child_directory(
+    directory: &File,
+    _path: &Path,
+    name: &str,
+) -> Result<File, EventRepositoryError> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    validate_child_name(name)?;
+    match inspection_directory_child_kind(directory, name)? {
+        InspectionDirectoryChildKind::Directory => {}
+        InspectionDirectoryChildKind::Regular => {
+            return Err(EventRepositoryError::Integrity);
+        }
+        InspectionDirectoryChildKind::Unsafe => {
+            return Err(EventRepositoryError::UnsupportedFormat);
+        }
+    }
+    let child = CString::new(name).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+    // SAFETY: retained directory and bounded child name are live; no write or create flag exists.
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            child.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(if error.kind() == std::io::ErrorKind::NotFound {
+            EventRepositoryError::Integrity
+        } else if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOTDIR) | Some(libc::ELOOP)
+        ) {
+            match inspection_directory_child_kind(directory, name)? {
+                InspectionDirectoryChildKind::Regular | InspectionDirectoryChildKind::Directory => {
+                    EventRepositoryError::Integrity
+                }
+                InspectionDirectoryChildKind::Unsafe => EventRepositoryError::UnsupportedFormat,
+            }
+        } else {
+            EventRepositoryError::Storage
+        });
+    }
+    // SAFETY: descriptor is fresh and uniquely transferred.
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InspectionDirectoryChildKind {
+    Directory,
+    Regular,
+    Unsafe,
+}
+
+#[cfg(unix)]
+fn inspection_directory_child_kind(
+    directory: &File,
+    name: &str,
+) -> Result<InspectionDirectoryChildKind, EventRepositoryError> {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
+
+    validate_child_name(name)?;
+    let name = CString::new(name).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+    let mut stat = MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: retained parent, NUL-terminated child and output storage are live; links are not
+    // followed, so the returned type belongs to the selected directory entry itself.
+    if unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        let error = std::io::Error::last_os_error();
+        return Err(if error.kind() == std::io::ErrorKind::NotFound {
+            EventRepositoryError::Integrity
+        } else {
+            EventRepositoryError::Storage
+        });
+    }
+    // SAFETY: successful fstatat initialized the structure.
+    let mode = unsafe { stat.assume_init() }.st_mode & libc::S_IFMT;
+    Ok(if mode == libc::S_IFDIR {
+        InspectionDirectoryChildKind::Directory
+    } else if mode == libc::S_IFREG {
+        InspectionDirectoryChildKind::Regular
+    } else {
+        InspectionDirectoryChildKind::Unsafe
+    })
+}
+
+#[cfg(windows)]
+fn open_inspection_child_directory(
+    directory: &File,
+    _path: &Path,
+    name: &str,
+) -> Result<File, EventRepositoryError> {
+    let file = nt_open_inspection_child_handle(
+        directory,
+        name,
+        false,
+        inspection_required_directory_open_failure,
+    )?;
+    validate_inspection_directory(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn validate_inspection_directory(file: &File) -> Result<(), EventRepositoryError> {
+    let metadata = file.metadata()?;
+    if is_reparse_point(&metadata) {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    if metadata.is_file() {
+        return Err(EventRepositoryError::Integrity);
+    }
+    if !metadata.is_dir() {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn inspection_required_directory_open_failure(status: i32) -> EventRepositoryError {
+    use windows_sys::Win32::Foundation::{
+        STATUS_DIRECTORY_IS_A_REPARSE_POINT, STATUS_IO_REPARSE_TAG_NOT_HANDLED,
+        STATUS_NAME_TOO_LONG, STATUS_NO_SUCH_FILE, STATUS_NOT_A_DIRECTORY,
+        STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
+        STATUS_OBJECT_PATH_SYNTAX_BAD, STATUS_OBJECT_TYPE_MISMATCH,
+        STATUS_REPARSE_POINT_ENCOUNTERED, STATUS_REPARSE_POINT_NOT_RESOLVED,
+        STATUS_STOPPED_ON_SYMLINK, STATUS_SYMLINK_CLASS_DISABLED,
+    };
+    if matches!(
+        status,
+        STATUS_NO_SUCH_FILE | STATUS_OBJECT_NAME_NOT_FOUND | STATUS_OBJECT_PATH_NOT_FOUND
+    ) {
+        return EventRepositoryError::Integrity;
+    }
+    if matches!(
+        status,
+        STATUS_NOT_A_DIRECTORY
+            | STATUS_OBJECT_TYPE_MISMATCH
+            | STATUS_OBJECT_NAME_INVALID
+            | STATUS_OBJECT_PATH_SYNTAX_BAD
+            | STATUS_NAME_TOO_LONG
+            | STATUS_DIRECTORY_IS_A_REPARSE_POINT
+            | STATUS_REPARSE_POINT_ENCOUNTERED
+            | STATUS_REPARSE_POINT_NOT_RESOLVED
+            | STATUS_IO_REPARSE_TAG_NOT_HANDLED
+            | STATUS_STOPPED_ON_SYMLINK
+            | STATUS_SYMLINK_CLASS_DISABLED
+    ) {
+        return EventRepositoryError::UnsupportedFormat;
+    }
+    EventRepositoryError::Storage
+}
+
+#[cfg(windows)]
+fn nt_open_inspection_root_component(
+    directory: &File,
+    name: &std::ffi::OsStr,
+) -> Result<Option<File>, EventRepositoryError> {
+    use std::mem::{size_of, zeroed};
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+        NtCreateFile,
+    };
+    use windows_sys::Win32::Foundation::{HANDLE, OBJ_CASE_INSENSITIVE, UNICODE_STRING};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_NORMAL, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, SYNCHRONIZE,
+    };
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    let mut wide = name.encode_wide().collect::<Vec<_>>();
+    if wide.is_empty()
+        || wide.len() > 255
+        || wide.as_slice() == [46]
+        || wide.as_slice() == [46, 46]
+        || wide
+            .iter()
+            .any(|unit| matches!(*unit, 0 | 34 | 42 | 47 | 58 | 60 | 62 | 63 | 92 | 124))
+    {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    let byte_length = wide
+        .len()
+        .checked_mul(2)
+        .and_then(|length| u16::try_from(length).ok())
+        .ok_or(EventRepositoryError::UnsupportedFormat)?;
+    let unicode = UNICODE_STRING {
+        Length: byte_length,
+        MaximumLength: byte_length,
+        Buffer: wide.as_mut_ptr(),
+    };
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: directory.as_raw_handle(),
+        ObjectName: &unicode,
+        Attributes: OBJ_CASE_INSENSITIVE,
+        SecurityDescriptor: std::ptr::null(),
+        SecurityQualityOfService: std::ptr::null(),
+    };
+    let mut handle: HANDLE = std::ptr::null_mut();
+    // SAFETY: zero is the documented initial state and all pointers below remain live.
+    let mut status: IO_STATUS_BLOCK = unsafe { zeroed() };
+    // SAFETY: retained parent and bounded relative name remain live for this synchronous call.
+    let result = unsafe {
+        NtCreateFile(
+            &mut handle,
+            FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            &attributes,
+            &mut status,
+            std::ptr::null(),
+            FILE_ATTRIBUTE_NORMAL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if result < 0 || handle.is_null() {
+        return inspection_root_component_open_failure(result).map(|()| None);
+    }
+    // SAFETY: successful NtCreateFile returned one owned handle.
+    let file = unsafe { File::from_raw_handle(handle) };
+    validate_opened_directory(&file)?;
+    Ok(Some(file))
+}
+
+#[cfg(windows)]
+fn inspection_root_component_open_failure(status: i32) -> Result<(), EventRepositoryError> {
+    use windows_sys::Win32::Foundation::{
+        STATUS_DIRECTORY_IS_A_REPARSE_POINT, STATUS_FILE_IS_A_DIRECTORY,
+        STATUS_IO_REPARSE_TAG_NOT_HANDLED, STATUS_NAME_TOO_LONG, STATUS_NO_SUCH_FILE,
+        STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND,
+        STATUS_OBJECT_PATH_NOT_FOUND, STATUS_OBJECT_PATH_SYNTAX_BAD, STATUS_OBJECT_TYPE_MISMATCH,
+        STATUS_REPARSE_POINT_ENCOUNTERED, STATUS_REPARSE_POINT_NOT_RESOLVED,
+        STATUS_STOPPED_ON_SYMLINK, STATUS_SYMLINK_CLASS_DISABLED,
+    };
+    if matches!(
+        status,
+        STATUS_NO_SUCH_FILE | STATUS_OBJECT_NAME_NOT_FOUND | STATUS_OBJECT_PATH_NOT_FOUND
+    ) {
+        return Ok(());
+    }
+    if matches!(
+        status,
+        STATUS_NOT_A_DIRECTORY
+            | STATUS_FILE_IS_A_DIRECTORY
+            | STATUS_OBJECT_TYPE_MISMATCH
+            | STATUS_OBJECT_NAME_INVALID
+            | STATUS_OBJECT_PATH_SYNTAX_BAD
+            | STATUS_NAME_TOO_LONG
+            | STATUS_DIRECTORY_IS_A_REPARSE_POINT
+            | STATUS_REPARSE_POINT_ENCOUNTERED
+            | STATUS_REPARSE_POINT_NOT_RESOLVED
+            | STATUS_IO_REPARSE_TAG_NOT_HANDLED
+            | STATUS_STOPPED_ON_SYMLINK
+            | STATUS_SYMLINK_CLASS_DISABLED
+    ) {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    Err(EventRepositoryError::Storage)
+}
+
+#[cfg(unix)]
+fn open_inspection_child_file(
+    directory: &File,
+    _path: &Path,
+    name: &str,
+) -> Result<File, EventRepositoryError> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    validate_child_name(name)?;
+    let name = CString::new(name).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+    // SAFETY: retained directory descriptor and NUL-terminated child are valid.
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            inspection_child_file_open_flags(),
+        )
+    };
+    if descriptor < 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(match error.raw_os_error() {
+            Some(libc::ENOENT) => EventRepositoryError::Integrity,
+            Some(libc::ELOOP) | Some(libc::ENOTDIR) | Some(libc::ENXIO) => {
+                EventRepositoryError::UnsupportedFormat
+            }
+            _ => EventRepositoryError::Storage,
+        });
+    }
+    // SAFETY: descriptor is fresh and uniquely owned.
+    let file = unsafe { File::from_raw_fd(descriptor) };
+    validate_inspection_regular_file(&file)?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+const fn inspection_child_file_open_flags() -> libc::c_int {
+    libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
+}
+
+#[cfg(windows)]
+fn open_inspection_child_file(
+    directory: &File,
+    _path: &Path,
+    name: &str,
+) -> Result<File, EventRepositoryError> {
+    let file =
+        nt_open_inspection_child_handle(directory, name, true, inspection_file_open_failure)?;
+    validate_inspection_regular_file(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn nt_open_inspection_child_handle(
+    directory: &File,
+    name: &str,
+    read_data: bool,
+    map_failure: fn(i32) -> EventRepositoryError,
+) -> Result<File, EventRepositoryError> {
+    use std::mem::{size_of, zeroed};
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NtCreateFile,
+    };
+    use windows_sys::Win32::Foundation::{HANDLE, OBJ_CASE_INSENSITIVE, UNICODE_STRING};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_NORMAL, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, SYNCHRONIZE,
+    };
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    validate_child_name(name)?;
+    let mut wide = name.encode_utf16().collect::<Vec<_>>();
+    let byte_length = wide
+        .len()
+        .checked_mul(2)
+        .and_then(|length| u16::try_from(length).ok())
+        .ok_or(EventRepositoryError::UnsupportedFormat)?;
+    let unicode = UNICODE_STRING {
+        Length: byte_length,
+        MaximumLength: byte_length,
+        Buffer: wide.as_mut_ptr(),
+    };
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: directory.as_raw_handle(),
+        ObjectName: &unicode,
+        Attributes: OBJ_CASE_INSENSITIVE,
+        SecurityDescriptor: std::ptr::null(),
+        SecurityQualityOfService: std::ptr::null(),
+    };
+    let mut handle: HANDLE = std::ptr::null_mut();
+    // SAFETY: zero is the documented initial state and every pointer supplied below remains live.
+    let mut status: IO_STATUS_BLOCK = unsafe { zeroed() };
+    // SAFETY: all pointers reference live storage for the synchronous call. No create disposition
+    // or write access is requested, and the returned handle is transferred exactly once.
+    let desired_access = FILE_READ_ATTRIBUTES
+        | SYNCHRONIZE
+        | if read_data {
+            FILE_READ_DATA
+        } else {
+            FILE_LIST_DIRECTORY | FILE_TRAVERSE
+        };
+    let result = unsafe {
+        NtCreateFile(
+            &mut handle,
+            desired_access,
+            &attributes,
+            &mut status,
+            std::ptr::null(),
+            FILE_ATTRIBUTE_NORMAL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if result < 0 || handle.is_null() {
+        return Err(map_failure(result));
+    }
+    // SAFETY: successful NtCreateFile returned one owned live handle.
+    Ok(unsafe { File::from_raw_handle(handle) })
+}
+
+fn validate_inspection_regular_file(file: &File) -> Result<(), EventRepositoryError> {
+    let metadata = file.metadata()?;
+    if is_reparse_point(&metadata) {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    if metadata.is_dir() {
+        return Err(EventRepositoryError::Integrity);
+    }
+    if !metadata.is_file() {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn inspection_file_open_failure(status: i32) -> EventRepositoryError {
+    use windows_sys::Win32::Foundation::{
+        STATUS_DIRECTORY_IS_A_REPARSE_POINT, STATUS_FILE_IS_A_DIRECTORY,
+        STATUS_IO_REPARSE_TAG_NOT_HANDLED, STATUS_NAME_TOO_LONG, STATUS_NO_SUCH_FILE,
+        STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND,
+        STATUS_OBJECT_PATH_NOT_FOUND, STATUS_OBJECT_PATH_SYNTAX_BAD, STATUS_OBJECT_TYPE_MISMATCH,
+        STATUS_REPARSE_POINT_ENCOUNTERED, STATUS_REPARSE_POINT_NOT_RESOLVED,
+        STATUS_STOPPED_ON_SYMLINK, STATUS_SYMLINK_CLASS_DISABLED,
+    };
+    if matches!(
+        status,
+        STATUS_NO_SUCH_FILE | STATUS_OBJECT_NAME_NOT_FOUND | STATUS_OBJECT_PATH_NOT_FOUND
+    ) {
+        return EventRepositoryError::Integrity;
+    }
+    if status == STATUS_FILE_IS_A_DIRECTORY {
+        return EventRepositoryError::Integrity;
+    }
+    if matches!(
+        status,
+        STATUS_NOT_A_DIRECTORY
+            | STATUS_OBJECT_TYPE_MISMATCH
+            | STATUS_OBJECT_NAME_INVALID
+            | STATUS_OBJECT_PATH_SYNTAX_BAD
+            | STATUS_NAME_TOO_LONG
+            | STATUS_DIRECTORY_IS_A_REPARSE_POINT
+            | STATUS_REPARSE_POINT_ENCOUNTERED
+            | STATUS_REPARSE_POINT_NOT_RESOLVED
+            | STATUS_IO_REPARSE_TAG_NOT_HANDLED
+            | STATUS_STOPPED_ON_SYMLINK
+            | STATUS_SYMLINK_CLASS_DISABLED
+    ) {
+        return EventRepositoryError::UnsupportedFormat;
+    }
+    EventRepositoryError::Storage
 }
 
 #[cfg(windows)]
@@ -3543,6 +4361,70 @@ fn named_file_identity(
 }
 
 #[cfg(unix)]
+fn for_each_inspection_child_name(
+    directory: &File,
+    _path: &Path,
+    budget: &mut DirectoryBudget,
+    mut visitor: impl FnMut(&str, &mut DirectoryBudget) -> Result<(), EventRepositoryError>,
+) -> Result<(), EventRepositoryError> {
+    use std::ffi::CStr;
+    use std::os::fd::AsRawFd;
+    let dot = std::ffi::CString::new(".").map_err(|_| EventRepositoryError::Storage)?;
+    // SAFETY: openat creates an independent open file description rooted at the retained directory.
+    let duplicate = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            dot.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if duplicate < 0 {
+        return Err(EventRepositoryError::Storage);
+    }
+    // SAFETY: fdopendir consumes the duplicate descriptor on success.
+    let stream = unsafe { libc::fdopendir(duplicate) };
+    if stream.is_null() {
+        // SAFETY: fdopendir failed and did not consume the descriptor.
+        unsafe { libc::close(duplicate) };
+        return Err(EventRepositoryError::Storage);
+    }
+    let result = (|| {
+        loop {
+            // POSIX uses a null result for both EOF and failure. Clear thread-local errno before
+            // every read so a failure cannot be mistaken for a complete directory snapshot.
+            let errno = unsafe { unix_errno_location() };
+            if errno.is_null() {
+                return Err(EventRepositoryError::Storage);
+            }
+            // SAFETY: the platform helper returns this thread's live errno cell.
+            unsafe { *errno = 0 };
+            // SAFETY: stream remains live until closed below; readdir returns an internal entry.
+            let entry = unsafe { libc::readdir(stream) };
+            if entry.is_null() {
+                // SAFETY: errno belongs to this thread and no syscall intervened after readdir.
+                inspection_readdir_completion(unsafe { *errno })?;
+                break;
+            }
+            // SAFETY: d_name is NUL-terminated for the returned live entry.
+            let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if matches!(bytes, b"." | b"..") {
+                continue;
+            }
+            let name =
+                std::str::from_utf8(bytes).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+            budget.account(std::ffi::OsStr::new(name))?;
+            visitor(name, budget)?;
+        }
+        Ok(())
+    })();
+    // SAFETY: stream is live and closed exactly once; it owns the duplicate descriptor.
+    if unsafe { libc::closedir(stream) } != 0 {
+        return Err(EventRepositoryError::Storage);
+    }
+    result
+}
+
+#[cfg(unix)]
 fn for_each_child_name(
     directory: &File,
     _path: &Path,
@@ -3594,6 +4476,205 @@ fn for_each_child_name(
         return Err(EventRepositoryError::Storage);
     }
     result
+}
+
+#[cfg(any(unix, test))]
+fn inspection_readdir_completion(errno: libc::c_int) -> Result<(), EventRepositoryError> {
+    if errno == 0 {
+        Ok(())
+    } else {
+        Err(EventRepositoryError::Storage)
+    }
+}
+
+#[cfg(unix)]
+#[allow(unreachable_code)]
+unsafe fn unix_errno_location() -> *mut libc::c_int {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "emscripten",
+        target_os = "redox",
+        target_os = "hurd"
+    ))]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::__errno_location() };
+    }
+    #[cfg(any(
+        target_os = "android",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "cygwin",
+        target_os = "nuttx"
+    ))]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::__errno() };
+    }
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos",
+        target_os = "freebsd"
+    ))]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::__error() };
+    }
+    #[cfg(target_os = "dragonfly")]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on this target.
+        return unsafe { libc::__errno_location() };
+    }
+    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::___errno() };
+    }
+    #[cfg(target_os = "haiku")]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on this target.
+        return unsafe { libc::_errnop() };
+    }
+    #[cfg(target_os = "aix")]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on this target.
+        return unsafe { libc::_Errno() };
+    }
+    #[cfg(target_os = "nto")]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on this target.
+        return unsafe { libc::__get_errno_ptr() };
+    }
+    std::ptr::null_mut()
+}
+
+#[cfg(unix)]
+fn for_each_child_identity(
+    directory: &File,
+    path: &Path,
+    budget: &mut DirectoryBudget,
+    mut visitor: impl FnMut(&str, FileIdentity) -> Result<(), EventRepositoryError>,
+) -> Result<(), EventRepositoryError> {
+    for_each_inspection_child_name(directory, path, budget, |name, _| {
+        visitor(name, named_child_identity(directory, name.as_bytes())?)
+    })
+}
+
+#[cfg(unix)]
+fn named_child_identity(
+    directory: &File,
+    name: &[u8],
+) -> Result<FileIdentity, EventRepositoryError> {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
+    let name = CString::new(name).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+    let mut stat = MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: retained directory, bounded child and output storage are live.
+    if unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(EventRepositoryError::Storage);
+    }
+    // SAFETY: successful fstatat initialized the structure.
+    let stat = unsafe { stat.assume_init() };
+    let kind = stat.st_mode & libc::S_IFMT;
+    if kind != libc::S_IFREG && kind != libc::S_IFDIR {
+        return Err(EventRepositoryError::UnsupportedFormat);
+    }
+    Ok(FileIdentity {
+        device: stat.st_dev,
+        file: stat.st_ino,
+    })
+}
+
+#[cfg(windows)]
+fn for_each_child_identity(
+    directory: &File,
+    _path: &Path,
+    budget: &mut DirectoryBudget,
+    mut visitor: impl FnMut(&str, FileIdentity) -> Result<(), EventRepositoryError>,
+) -> Result<(), EventRepositoryError> {
+    use std::mem::size_of;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{ERROR_NO_MORE_FILES, GetLastError};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_BOTH_DIR_INFO, FileIdBothDirectoryInfo,
+        GetFileInformationByHandleEx,
+    };
+
+    let device = file_identity(directory)?.device;
+    loop {
+        // u64 backing keeps every FILE_ID_BOTH_DIR_INFO entry naturally aligned.
+        let mut storage = [0_u64; 8_192];
+        // SAFETY: the directory handle and writable fixed-size buffer are live for the call.
+        let success = unsafe {
+            GetFileInformationByHandleEx(
+                directory.as_raw_handle(),
+                FileIdBothDirectoryInfo,
+                storage.as_mut_ptr().cast(),
+                u32::try_from(storage.len() * size_of::<u64>())
+                    .map_err(|_| EventRepositoryError::LimitExceeded)?,
+            )
+        };
+        if success == 0 {
+            // SAFETY: GetLastError immediately follows the failed Win32 call.
+            let error = unsafe { GetLastError() };
+            if error == ERROR_NO_MORE_FILES {
+                break;
+            }
+            return Err(EventRepositoryError::Storage);
+        }
+        let mut offset = 0_usize;
+        loop {
+            if offset + size_of::<FILE_ID_BOTH_DIR_INFO>() > storage.len() * size_of::<u64>() {
+                return Err(EventRepositoryError::Storage);
+            }
+            // SAFETY: offset is bounds-checked and entries returned by the API are aligned.
+            let info = unsafe {
+                &*(storage
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_ID_BOTH_DIR_INFO>())
+            };
+            if info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err(EventRepositoryError::UnsupportedFormat);
+            }
+            let name_units = usize::try_from(info.FileNameLength / 2)
+                .map_err(|_| EventRepositoryError::LimitExceeded)?;
+            // SAFETY: FileNameLength is supplied by the successful kernel query inside the buffer.
+            let wide = unsafe { std::slice::from_raw_parts(info.FileName.as_ptr(), name_units) };
+            let name =
+                String::from_utf16(wide).map_err(|_| EventRepositoryError::UnsupportedFormat)?;
+            if !matches!(name.as_str(), "." | "..") {
+                budget.account(std::ffi::OsStr::new(&name))?;
+                visitor(
+                    &name,
+                    FileIdentity {
+                        device,
+                        file: info.FileId as u64,
+                    },
+                )?;
+            }
+            if info.NextEntryOffset == 0 {
+                break;
+            }
+            offset = offset
+                .checked_add(info.NextEntryOffset as usize)
+                .ok_or(EventRepositoryError::LimitExceeded)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -3944,6 +5025,279 @@ mod limit_tests {
             "not creating means the layout says the child must exist, so its ABSENCE is damage \
              and keeps the integrity verdict"
         );
+    }
+
+    #[test]
+    fn inspection_stays_on_the_root_opened_before_a_path_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap());
+        let displaced = directory.path().join("displaced");
+        let replacement_marker = b"replacement must stay untouched";
+
+        let outcome = LocalEventRepository::inspect_repository_with_hook(&root, |moment| {
+            if moment == InspectionMoment::RootOpened {
+                std::fs::rename(&root, &displaced).unwrap();
+                std::fs::create_dir(&root).unwrap();
+                std::fs::write(root.join("attacker-marker"), replacement_marker).unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(outcome, LocalRepositoryInspection::Recognized);
+        assert_eq!(
+            std::fs::read(root.join("attacker-marker")).unwrap(),
+            replacement_marker
+        );
+        assert_eq!(
+            repository_root_names_for_test(&root),
+            vec!["attacker-marker"]
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_a_child_replaced_after_the_directory_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap());
+        let displaced = root.join("displaced-format.json");
+
+        let outcome = LocalEventRepository::inspect_repository_with_hook(&root, |moment| {
+            if moment == InspectionMoment::DirectorySnapshotted {
+                std::fs::rename(root.join("format.json"), &displaced).unwrap();
+                std::fs::write(root.join("format.json"), FORMAT_BYTES).unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(outcome, LocalRepositoryInspection::Integrity);
+        assert_eq!(
+            std::fs::read(root.join("format.json")).unwrap(),
+            FORMAT_BYTES
+        );
+        assert_eq!(std::fs::read(displaced).unwrap(), FORMAT_BYTES);
+    }
+
+    #[test]
+    fn inspection_maps_an_injected_permission_denial_to_storage_without_creating() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        let denial = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert_eq!(
+            LocalEventRepository::inspect_repository_with_root_error(&root, denial).unwrap(),
+            LocalRepositoryInspection::Storage
+        );
+        assert!(!root.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_inspection_path_parser_keeps_drive_and_share_roots_as_anchors() {
+        use std::ffi::OsString;
+
+        for (selected, anchor) in [
+            (r"C:\repository\nested", r"C:\"),
+            (r"\\server\share\repository\nested", r"\\server\share\"),
+            (
+                r"\\?\UNC\server\share\repository\nested",
+                r"\\?\UNC\server\share\",
+            ),
+        ] {
+            let parsed = parse_windows_inspection_path(Path::new(selected)).unwrap();
+
+            assert_eq!(parsed.anchor, PathBuf::from(anchor), "{selected}");
+            assert_eq!(
+                parsed.components,
+                vec![OsString::from("repository"), OsString::from("nested")],
+                "{selected}"
+            );
+        }
+    }
+
+    #[test]
+    fn inspection_expected_regular_file_rejects_an_opened_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let child = directory.path().join("journal.jsonl");
+        std::fs::create_dir(&child).unwrap();
+        let opened = open_directory(&child).unwrap();
+
+        let error = validate_inspection_regular_file(&opened).unwrap_err();
+
+        assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_child_file_open_is_nonblocking() {
+        assert_ne!(inspection_child_file_open_flags() & libc::O_NONBLOCK, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_rejects_a_required_file_replaced_by_a_fifo_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap());
+        let journal = root.join("journal.jsonl");
+        let displaced = root.join("displaced-journal.jsonl");
+
+        let error = LocalEventRepository::inspect_repository_with_hook(&root, |moment| {
+            if moment == InspectionMoment::DirectorySnapshotted {
+                std::fs::rename(&journal, &displaced).unwrap();
+                let fifo = CString::new(journal.as_os_str().as_bytes()).unwrap();
+                // SAFETY: the path is NUL-terminated and names a new entry in the test directory.
+                assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+        assert!(displaced.is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_directory_open_rejects_a_fifo_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let child = directory.path().join("blobs");
+        let fifo = CString::new(child.as_os_str().as_bytes()).unwrap();
+        // SAFETY: the path is NUL-terminated and names a new entry in the test directory.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let root = open_directory(directory.path()).unwrap();
+
+        let error = open_inspection_child_directory(&root, directory.path(), "blobs").unwrap_err();
+
+        assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_directory_type_query_separates_regular_symlink_and_device_entries() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = open_directory(directory.path()).unwrap();
+        std::fs::write(directory.path().join("regular"), b"ordinary file").unwrap();
+        assert_eq!(
+            inspection_directory_child_kind(&root, "regular").unwrap(),
+            InspectionDirectoryChildKind::Regular
+        );
+        assert_eq!(
+            open_inspection_child_directory(&root, directory.path(), "regular")
+                .unwrap_err()
+                .code(),
+            "GHE005_INTEGRITY_FAILURE"
+        );
+
+        let target = directory.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, directory.path().join("linked")).unwrap();
+        assert_eq!(
+            inspection_directory_child_kind(&root, "linked").unwrap(),
+            InspectionDirectoryChildKind::Unsafe
+        );
+        assert_eq!(
+            open_inspection_child_directory(&root, directory.path(), "linked")
+                .unwrap_err()
+                .code(),
+            "GHE007_UNSUPPORTED_FORMAT"
+        );
+
+        let device_metadata = std::fs::symlink_metadata("/dev/null").unwrap();
+        assert!(device_metadata.file_type().is_char_device());
+        let devices = open_directory(Path::new("/dev")).unwrap();
+        assert_eq!(
+            inspection_directory_child_kind(&devices, "null").unwrap(),
+            InspectionDirectoryChildKind::Unsafe
+        );
+        assert_eq!(
+            open_inspection_child_directory(&devices, Path::new("/dev"), "null")
+                .unwrap_err()
+                .code(),
+            "GHE007_UNSUPPORTED_FORMAT"
+        );
+    }
+
+    #[test]
+    fn inspection_readdir_failure_cannot_be_treated_as_end_of_directory() {
+        assert!(inspection_readdir_completion(0).is_ok());
+        let error = inspection_readdir_completion(libc::EIO).unwrap_err();
+        assert_eq!(error.code(), "GHE008_STORAGE_FAILURE");
+    }
+
+    #[test]
+    fn inspection_child_directory_permission_denial_is_storage() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap());
+        let root_handle = open_inspection_root(&root).unwrap().unwrap();
+        let mut hook = |_| {};
+
+        let error = match inspect_layout_with_directory_opener(
+            &root,
+            &root_handle,
+            &mut hook,
+            &mut |_, _, _| Err(EventRepositoryError::Storage),
+        ) {
+            Ok(_) => panic!("injected child-directory denial was ignored"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), "GHE008_STORAGE_FAILURE");
+
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::{
+                STATUS_ACCESS_DENIED, STATUS_FILE_IS_A_DIRECTORY, STATUS_NOT_A_DIRECTORY,
+                STATUS_OBJECT_NAME_NOT_FOUND, STATUS_REPARSE_POINT_ENCOUNTERED,
+            };
+            assert_eq!(
+                inspection_required_directory_open_failure(STATUS_ACCESS_DENIED).code(),
+                "GHE008_STORAGE_FAILURE"
+            );
+            assert_eq!(
+                inspection_required_directory_open_failure(STATUS_OBJECT_NAME_NOT_FOUND).code(),
+                "GHE005_INTEGRITY_FAILURE"
+            );
+            assert_eq!(
+                inspection_required_directory_open_failure(STATUS_REPARSE_POINT_ENCOUNTERED).code(),
+                "GHE007_UNSUPPORTED_FORMAT"
+            );
+            assert_eq!(
+                inspection_file_open_failure(STATUS_ACCESS_DENIED).code(),
+                "GHE008_STORAGE_FAILURE"
+            );
+            assert_eq!(
+                inspection_file_open_failure(STATUS_OBJECT_NAME_NOT_FOUND).code(),
+                "GHE005_INTEGRITY_FAILURE"
+            );
+            assert_eq!(
+                inspection_file_open_failure(STATUS_FILE_IS_A_DIRECTORY).code(),
+                "GHE005_INTEGRITY_FAILURE"
+            );
+            assert_eq!(
+                inspection_root_component_open_failure(STATUS_NOT_A_DIRECTORY)
+                    .unwrap_err()
+                    .code(),
+                "GHE007_UNSUPPORTED_FORMAT"
+            );
+        }
+    }
+
+    fn repository_root_names_for_test(root: &Path) -> Vec<String> {
+        let mut names = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
     }
 
     #[test]

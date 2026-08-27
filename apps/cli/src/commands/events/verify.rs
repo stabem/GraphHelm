@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use graphhelm_events::{AsyncEventRepository, IntegrityReport, VerifyRangeRequest};
+use graphhelm_events::{
+    AsyncEventRepository, EventRepositoryError, IntegrityReport, LocalEventRepository,
+    LocalRepositoryInspection, VerifyRangeRequest,
+};
 use graphhelm_protocols::RepositoryScope;
 use serde_json::json;
 
@@ -88,8 +91,26 @@ fn verify_local(root: &Path, range: Option<Range>) -> Result<serde_json::Value, 
             "/arguments",
         ));
     }
-    super::require_supported_format(root)?;
+    inspection_result(LocalEventRepository::inspect_repository(root))?;
     Ok(json!({"formatSupported": true, "verified": false}))
+}
+
+fn inspection_result(
+    result: Result<LocalRepositoryInspection, EventRepositoryError>,
+) -> Result<(), Failure> {
+    match result {
+        Ok(LocalRepositoryInspection::Missing) => {
+            Err(argument("--repository does not exist", "/repository"))
+        }
+        Ok(LocalRepositoryInspection::Storage) => {
+            Err(repository_failure(&EventRepositoryError::Storage))
+        }
+        Ok(LocalRepositoryInspection::Integrity) => {
+            Err(repository_failure(&EventRepositoryError::Integrity))
+        }
+        Ok(LocalRepositoryInspection::Recognized) => Ok(()),
+        Err(error) => Err(repository_failure(&error)),
+    }
 }
 
 fn verify_postgres(config_path: &Path, range: Option<Range>) -> Result<serde_json::Value, Failure> {
@@ -129,4 +150,35 @@ fn report_json(report: &IntegrityReport) -> serde_json::Value {
         "verifiedEvents": report.verified_events,
         "verifiedThrough": report.verified_through,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use graphhelm_events::LocalRepositoryInspection;
+
+    use super::{inspection_result, verify_local};
+
+    #[test]
+    fn storage_inspection_outcome_keeps_the_repository_storage_diagnostic() {
+        let failure = inspection_result(Ok(LocalRepositoryInspection::Storage)).unwrap_err();
+        assert_eq!(failure.code, "GHE008_STORAGE_FAILURE");
+        assert_eq!(failure.pointer, "/repository");
+        assert!(!failure.message.contains(':'));
+    }
+
+    #[test]
+    fn empty_repository_selection_is_an_argument_failure_without_a_path_leak() {
+        let failure = verify_local(Path::new(""), None).unwrap_err();
+
+        assert_eq!(failure.code, "GHCLI001_ARGUMENT_INVALID");
+        assert_eq!(failure.pointer, "/repository");
+        assert!(!failure.message.contains(':'));
+        assert!(
+            !failure
+                .message
+                .contains(&std::env::current_dir().unwrap().display().to_string())
+        );
+    }
 }

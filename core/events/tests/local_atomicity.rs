@@ -3,9 +3,329 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{
-    ArtifactRegistration, LocalEventRepository, LocalFailpoint, PreparedAppend, SealedEvidence,
-    WrappedKey,
+    ArtifactRegistration, LocalEventRepository, LocalFailpoint, LocalRepositoryInspection,
+    PreparedAppend, SealedEvidence, WrappedKey,
 };
+
+#[test]
+fn read_only_inspection_reports_a_missing_root_without_creating_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("missing-repository");
+
+    assert_eq!(
+        LocalEventRepository::inspect_repository(&root).unwrap(),
+        LocalRepositoryInspection::Missing
+    );
+    assert!(
+        !root.exists(),
+        "inspection must not create the selected root"
+    );
+}
+
+#[test]
+fn read_only_inspection_rejects_an_ordinary_file_in_the_root_component_walk() {
+    let directory = tempfile::tempdir().unwrap();
+    let ancestor = directory.path().join("ordinary-file");
+    std::fs::write(&ancestor, b"not a directory").unwrap();
+
+    let error = LocalEventRepository::inspect_repository(&ancestor.join("repository")).unwrap_err();
+
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert_eq!(std::fs::read(&ancestor).unwrap(), b"not a directory");
+}
+
+#[test]
+fn read_only_inspection_does_not_treat_an_empty_selection_as_the_current_directory() {
+    assert_eq!(
+        LocalEventRepository::inspect_repository(std::path::Path::new("")).unwrap(),
+        LocalRepositoryInspection::Missing
+    );
+}
+
+#[test]
+fn read_only_inspection_reports_a_format_only_root_as_incomplete_without_repair() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let format = b"{\"formatVersion\":\"1.0.0\"}\n";
+    std::fs::write(root.join("format.json"), format).unwrap();
+
+    assert_eq!(
+        LocalEventRepository::inspect_repository(&root).unwrap(),
+        LocalRepositoryInspection::Integrity
+    );
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    assert_eq!(std::fs::read(root.join("format.json")).unwrap(), format);
+}
+
+#[test]
+fn read_only_inspection_rejects_a_nonempty_partial_directory_as_unsupported() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    let blobs = root.join("blobs");
+    std::fs::create_dir_all(&blobs).unwrap();
+    std::fs::write(blobs.join("first"), b"one").unwrap();
+    std::fs::write(blobs.join("second"), b"two").unwrap();
+
+    let error = LocalEventRepository::inspect_repository(&root).unwrap_err();
+
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert_eq!(std::fs::read(blobs.join("first")).unwrap(), b"one");
+    assert_eq!(std::fs::read(blobs.join("second")).unwrap(), b"two");
+}
+
+#[test]
+fn read_only_inspection_keeps_pre_format_wrong_slot_types_unsupported() {
+    for (name, directory_slot) in [("blobs", true), ("journal.jsonl", false)] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        std::fs::create_dir(&root).unwrap();
+        if directory_slot {
+            std::fs::write(root.join(name), b"ordinary file").unwrap();
+        } else {
+            std::fs::create_dir(root.join(name)).unwrap();
+        }
+
+        let error = LocalEventRepository::inspect_repository(&root).unwrap_err();
+
+        assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT", "{name}");
+    }
+}
+
+#[test]
+fn read_only_inspection_reports_directories_in_required_file_slots_as_integrity() {
+    for name in ["journal.jsonl", "repository.lock"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(repository(&root));
+        std::fs::remove_file(root.join(name)).unwrap();
+        std::fs::create_dir(root.join(name)).unwrap();
+
+        let outcome = LocalEventRepository::inspect_repository(&root).unwrap();
+
+        assert_eq!(outcome, LocalRepositoryInspection::Integrity, "{name}");
+        assert!(root.join(name).is_dir(), "{name}");
+    }
+}
+
+#[test]
+fn read_only_inspection_reports_files_in_required_directory_slots_as_integrity() {
+    for name in ["blobs", ".tmp", "active"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(repository(&root));
+        std::fs::remove_dir(root.join(name)).unwrap();
+        std::fs::write(root.join(name), b"ordinary file").unwrap();
+
+        let outcome = LocalEventRepository::inspect_repository(&root).unwrap();
+
+        assert_eq!(outcome, LocalRepositoryInspection::Integrity, "{name}");
+        assert!(root.join(name).is_file(), "{name}");
+    }
+}
+
+#[test]
+fn read_only_inspection_recognizes_complete_and_recoverable_layouts_without_mutation() {
+    for missing in [
+        &[][..],
+        &[".tmp"][..],
+        &["active"][..],
+        &[".tmp", "active"][..],
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        drop(repository(&root));
+        for name in missing {
+            std::fs::remove_dir(root.join(name)).unwrap();
+        }
+        let names_before = repository_root_names(&root);
+        let format_before = std::fs::read(root.join("format.json")).unwrap();
+        let journal_before = std::fs::read(root.join("journal.jsonl")).unwrap();
+        let lock_before = std::fs::read(root.join("repository.lock")).unwrap();
+
+        assert_eq!(
+            LocalEventRepository::inspect_repository(&root).unwrap(),
+            LocalRepositoryInspection::Recognized
+        );
+        assert_eq!(repository_root_names(&root), names_before);
+        assert_eq!(
+            std::fs::read(root.join("format.json")).unwrap(),
+            format_before
+        );
+        assert_eq!(
+            std::fs::read(root.join("journal.jsonl")).unwrap(),
+            journal_before
+        );
+        assert_eq!(
+            std::fs::read(root.join("repository.lock")).unwrap(),
+            lock_before
+        );
+    }
+}
+
+#[test]
+fn read_only_inspection_accepts_a_store_that_refuses_writer_access() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    drop(repository(&root));
+
+    #[cfg(windows)]
+    let _writer_denials = deny_writer_access(&root);
+    #[cfg(unix)]
+    make_store_read_only(&root);
+
+    #[cfg(windows)]
+    {
+        let error = match LocalEventRepository::open(
+            &root,
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+        ) {
+            Ok(_) => panic!("control failed: writer open bypassed the denied write share"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), "GHE008_STORAGE_FAILURE");
+    }
+
+    #[cfg(unix)]
+    {
+        let error = match LocalEventRepository::open(
+            &root,
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+        ) {
+            Ok(_) => {
+                make_store_writable(&root);
+                panic!("OBSERVER_MISSING: Unix process bypassed the denied writer permissions");
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), "GHE008_STORAGE_FAILURE");
+    }
+
+    assert_eq!(
+        LocalEventRepository::inspect_repository(&root).unwrap(),
+        LocalRepositoryInspection::Recognized
+    );
+
+    #[cfg(unix)]
+    make_store_writable(&root);
+}
+
+#[cfg(windows)]
+fn deny_writer_access(root: &std::path::Path) -> Vec<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ};
+
+    ["journal.jsonl", "repository.lock"]
+        .into_iter()
+        .map(|name| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+                .open(root.join(name))
+                .unwrap()
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn make_store_read_only(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    for name in ["format.json", "journal.jsonl", "repository.lock"] {
+        std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o400)).unwrap();
+    }
+    for name in ["blobs", ".tmp", "active"] {
+        std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o500)).unwrap();
+    }
+    std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o500)).unwrap();
+}
+
+#[cfg(unix)]
+fn make_store_writable(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for name in ["blobs", ".tmp", "active"] {
+        std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    for name in ["format.json", "journal.jsonl", "repository.lock"] {
+        std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
+#[test]
+fn read_only_inspection_preserves_unsupported_format_and_unsafe_link_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let unsupported = br#"{"formatVersion":0}"#;
+    std::fs::write(root.join("format.json"), unsupported).unwrap();
+
+    let error = LocalEventRepository::inspect_repository(&root).unwrap_err();
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    assert_eq!(
+        std::fs::read(root.join("format.json")).unwrap(),
+        unsupported
+    );
+
+    let linked = directory.path().join("linked-repository");
+    if let Err(error) = create_directory_link(&root, &linked) {
+        if is_windows_symlink_privilege_error(&error) {
+            panic!(
+                "OBSERVER_MISSING: Windows cannot create the final-root reparse fixture: {error}"
+            );
+        }
+        panic!("failed to construct root-link attack: {error}");
+    }
+    let error = LocalEventRepository::inspect_repository(&linked).unwrap_err();
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+
+    let real_parent = directory.path().join("real-parent");
+    std::fs::create_dir(&real_parent).unwrap();
+    let nested = real_parent.join("repository");
+    drop(repository(&nested));
+    let linked_parent = directory.path().join("linked-parent");
+    if let Err(error) = create_directory_link(&real_parent, &linked_parent) {
+        if is_windows_symlink_privilege_error(&error) {
+            panic!("OBSERVER_MISSING: Windows cannot create the ancestor reparse fixture: {error}");
+        }
+        panic!("failed to construct ancestor-link attack: {error}");
+    }
+    let error =
+        LocalEventRepository::inspect_repository(&linked_parent.join("repository")).unwrap_err();
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+}
+
+#[test]
+fn read_only_inspection_accepts_absolute_and_relative_selected_paths() {
+    let directory = tempfile::Builder::new()
+        .prefix("graphhelm-inspection-")
+        .tempdir_in(std::env::current_dir().unwrap())
+        .unwrap();
+    let absolute = directory.path().join("absolute-repository");
+    drop(repository(&absolute));
+    assert_eq!(
+        LocalEventRepository::inspect_repository(&absolute).unwrap(),
+        LocalRepositoryInspection::Recognized
+    );
+
+    let relative = absolute
+        .strip_prefix(std::env::current_dir().unwrap())
+        .unwrap();
+    assert_eq!(
+        LocalEventRepository::inspect_repository(relative).unwrap(),
+        LocalRepositoryInspection::Recognized
+    );
+}
+
+fn repository_root_names(root: &std::path::Path) -> Vec<String> {
+    let mut names = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
 use graphhelm_protocols::{
     ActorId, ArtifactId, ArtifactLocator, ArtifactReference, Clock, DraftProposed, EventKind,
     EvidenceId, EvidenceReference, GraphImported, GraphSourceKind, IdGenerator, MediaType,
@@ -1188,7 +1508,9 @@ fn repository_components_reject_symlinks_or_reparse_points() {
     std::fs::create_dir(&outside).unwrap();
     if let Err(error) = create_directory_link(&outside, &original) {
         if is_windows_symlink_privilege_error(&error) {
-            return;
+            panic!(
+                "OBSERVER_MISSING: Windows cannot create the component reparse fixture: {error}"
+            );
         }
         panic!("failed to construct component-link attack: {error}");
     }
@@ -1204,17 +1526,21 @@ fn repository_components_reject_symlinks_or_reparse_points() {
 }
 
 #[test]
-fn format_inspection_rejects_a_broken_repository_link() {
+fn repository_inspection_rejects_a_broken_repository_link() {
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("missing");
+    std::fs::create_dir(&missing).unwrap();
     let root = directory.path().join("repository");
     if let Err(error) = create_directory_link(&missing, &root) {
         if is_windows_symlink_privilege_error(&error) {
-            return;
+            panic!(
+                "OBSERVER_MISSING: Windows cannot create the broken-root reparse fixture: {error}"
+            );
         }
         panic!("failed to construct root-link attack: {error}");
     }
-    let error = LocalEventRepository::inspect_format(&root).unwrap_err();
+    std::fs::remove_dir(&missing).unwrap();
+    let error = LocalEventRepository::inspect_repository(&root).unwrap_err();
     assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
 }
 
@@ -1226,7 +1552,20 @@ fn event_with_key(key: &str) -> NewEvent {
 
 #[cfg(windows)]
 fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
-    std::os::windows::fs::symlink_dir(target, link)
+    match std::os::windows::fs::symlink_dir(target, link) {
+        Ok(()) => Ok(()),
+        Err(error) if is_windows_symlink_privilege_error(&error) && target.exists() => {
+            let status = std::process::Command::new("cmd")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()?;
+            if status.success() { Ok(()) } else { Err(error) }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(windows)]

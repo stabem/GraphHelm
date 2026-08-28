@@ -110,6 +110,30 @@ fn two_contribution_package() -> PackageFixture {
     }
 }
 
+fn development_capability_package() -> PackageFixture {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().to_path_buf();
+    let resolver = write_resource(
+        &root,
+        "fixtures/development-resolver.json",
+        b"{}",
+        &["tool:resolve_contract"],
+        &["runtime.connect"],
+        &["network.loopback"],
+    );
+    let manifest = manifest(vec![resolver]);
+    fs::write(
+        root.join("extension.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    PackageFixture {
+        _directory: directory,
+        root,
+    }
+}
+
 #[test]
 fn validated_package_exposes_each_contributions_own_surfaces() {
     let package = two_contribution_package();
@@ -429,6 +453,89 @@ fn tools_call_proceeds_past_the_capability_gate_when_the_tool_is_allowlisted() {
     assert_eq!(records.len(), 1, "one decision recorded: {records:?}");
     assert_eq!(records[0]["toolName"], "signal");
     assert_eq!(records[0]["decision"]["outcome"], "allowed");
+}
+
+#[test]
+fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_token() {
+    // `resolve_contract` and `compile_context` are the MCP names for the
+    // `development.resolve-contract` and `development.compile-context` operations. Keep exactly
+    // one on the token so this one real session proves both sides of the per-tool allowlist
+    // rather than inferring development-family coverage from other tools.
+    let package = development_capability_package();
+    let directory = TempDir::new().unwrap();
+    let mint_output = cli()
+        .args(["extension", "mint-mcp-token", "--package"])
+        .arg(&package.root)
+        .args([
+            "--contribution",
+            "fixtures-development-resolver-json",
+            "--actor",
+            "agent-x",
+            "--ttl-seconds",
+            "3600",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        mint_output.status.success(),
+        "the production mint command must accept the development contribution: {mint_output:?}"
+    );
+    let minted: Value = serde_json::from_slice(&mint_output.stdout).unwrap();
+    assert_eq!(minted["ok"], true, "{minted}");
+    assert_eq!(
+        minted["data"]["allowedTools"],
+        json!(["resolve_contract"]),
+        "the production mint must derive the exact development allowlist from contribution surfaces"
+    );
+    let token_path = write_token_file(directory.path(), &minted["data"]);
+    let audit_log = directory.path().join("audit.jsonl");
+    let args = gated_session_args(
+        &package.root,
+        token_path.to_str().unwrap(),
+        "agent-x",
+        audit_log.to_str().unwrap(),
+    );
+    let session = mcp_session_with(
+        &args,
+        &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &[
+            initialize_request(1),
+            initialized_notification(),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "resolve_contract", "arguments": {}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": {"name": "compile_context", "arguments": {}}}),
+        ],
+    );
+
+    assert_eq!(session.replies.len(), 3, "{:?}", session.replies);
+    if let Some(message) = session.replies[1]["error"]["message"].as_str() {
+        assert!(
+            !message.contains("capability") && !message.contains("allowlist"),
+            "resolve_contract IS the token's sole allowlisted development tool; any failure must \
+             be downstream of the capability gate: {message}"
+        );
+    }
+    let refusal = &session.replies[2];
+    assert!(
+        refusal.get("error").is_some(),
+        "compile_context is outside the token's allowlist and must be refused: {refusal}"
+    );
+
+    let records = read_jsonl(&audit_log);
+    assert_eq!(
+        records.len(),
+        2,
+        "one decision per development tool: {records:?}"
+    );
+    assert_eq!(records[0]["toolName"], "resolve_contract");
+    assert_eq!(records[0]["decision"]["outcome"], "allowed");
+    assert_eq!(records[1]["toolName"], "compile_context");
+    assert_eq!(records[1]["decision"]["outcome"], "refused");
+    assert_eq!(
+        records[1]["decision"]["code"], "tool_not_allowlisted",
+        "the different development tool must be refused by the capability gate: {records:?}"
+    );
 }
 
 /// #341: the two tests above prove the capability gate refuses/allows `approve` and `signal`

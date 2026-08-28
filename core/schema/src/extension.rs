@@ -126,6 +126,12 @@ const MCP_TOOLS: &[&str] = &[
     "amend_budget",
     "wake_wait",
     "probe",
+    "resolve_contract",
+    "memory_status",
+    "present",
+    "compile_context",
+    "memory_propose",
+    "accounting",
 ];
 
 /// DELIBERATE ALLOWLIST, not an enumeration of every real command - a skill's declared `surface`

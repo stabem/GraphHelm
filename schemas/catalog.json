@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "releaseVersion": "1.0.0",
+  "releaseVersion": "1.1.0",
   "schemas": {
     "agent": {
       "id": "https://p50.dev/schemas/agent.schema.json",
@@ -43,6 +43,12 @@
       "documentVersion": "1.0.0",
       "path": "schemas/evidence-record.schema.json",
       "sha256": "sha256:132d8e6311e0088f7f8415e6280b6e0ae490b9f3331f673835676f2e3c4eb2ee"
+    },
+    "execution-accounting-receipt": {
+      "id": "https://p50.dev/schemas/execution-accounting-receipt.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/execution-accounting-receipt.schema.json",
+      "sha256": "sha256:1ee15dad1bdc6717f29d192cd04a2bd944b9c058279a88ee7adec6affe8ffd61"
     },
     "extension": {
       "id": "https://p50.dev/schemas/extension.schema.json",

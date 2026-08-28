@@ -327,6 +327,7 @@ use graphhelm_protocols::{
     OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
     ReuseKeyComponent, ReuseOutcome, Sensitivity, WireHash, WorkspaceId,
 };
+use graphhelm_runtime::context_accounting::{ACCOUNTING_RECEIPT_MEDIA_TYPE, MODEL_USAGE_PRODUCER};
 use graphhelm_runtime::driver::record_outcome_with_evidence;
 use graphhelm_runtime::executor::{Sealable, WorkOutcome, WorkSummary};
 use graphhelm_runtime::ports::ReuseSummary;
@@ -449,9 +450,13 @@ fn driver_actor() -> PersistedActor {
 }
 
 fn plain_event(key: &str, kind: EventKind) -> NewEvent {
+    event_by(key, driver_actor(), kind)
+}
+
+fn event_by(key: &str, actor: PersistedActor, kind: EventKind) -> NewEvent {
     NewEvent::new(
         OpaqueId::parse(key).unwrap(),
-        driver_actor(),
+        actor,
         Sensitivity::Internal,
         kind,
         vec![],
@@ -463,6 +468,13 @@ fn plain_event(key: &str, kind: EventKind) -> NewEvent {
 /// Approved (`Draft -> Ready`), Started (`-> Queued`), Started (`-> Running`) — each through
 /// the projection so the bootstrap can never disagree with `apply_transition`.
 fn running_node_repository(directory: &std::path::Path) -> (LocalEventRepository, OpaqueId) {
+    running_node_repository_started_by(directory, driver_actor())
+}
+
+fn running_node_repository_started_by(
+    directory: &std::path::Path,
+    start_actor: PersistedActor,
+) -> (LocalEventRepository, OpaqueId) {
     let repository = LocalEventRepository::open(
         directory,
         Arc::new(FixedClock),
@@ -485,8 +497,9 @@ fn running_node_repository(directory: &std::path::Path) -> (LocalEventRepository
         .unwrap();
         sequence += u64::try_from(repository.append_atomic(&request).unwrap().len()).unwrap();
     };
-    append(vec![plain_event(
+    append(vec![event_by(
         "boot-started",
+        start_actor,
         EventKind::ExecutionStarted(ExecutionStarted {
             execution_id: execution_id.clone(),
             graph_version: 1,
@@ -556,6 +569,21 @@ fn succeeded_work(reuse: Option<ReuseSummary>) -> WorkOutcome {
     }
 }
 
+struct RefusingEvidenceSealer;
+
+impl graphhelm_events::EvidenceSealer for RefusingEvidenceSealer {
+    fn seal<'a>(
+        &'a self,
+        _scope: RepositoryScope,
+        _input: graphhelm_events::EvidenceInput,
+    ) -> RepositoryFuture<
+        'a,
+        Result<graphhelm_events::SealedEvidence, graphhelm_events::EvidenceError>,
+    > {
+        Box::pin(async { Err(graphhelm_events::EvidenceError::Unavailable) })
+    }
+}
+
 fn hit_summary() -> ReuseSummary {
     ReuseSummary {
         decision: ReuseOutcome::Hit,
@@ -619,18 +647,25 @@ fn an_outcome_and_its_evidence_land_in_one_atomic_append() {
     assert_eq!(recorded.outcome, NodeOutcome::Succeeded);
 
     // Deterministically derived, attempt-scoped references — retries never collide.
-    let expected: Vec<String> = ["reply", "stdout"]
+    let expected: Vec<String> = ["reply", "stdout", "accounting-receipt"]
         .iter()
         .map(|suffix| format!("exec-{execution_id}-{NODE}-a{attempt}-{suffix}"))
         .collect();
     let refs = &envelope.evidence_refs;
-    assert_eq!(refs.len(), 2, "one reference per sealable");
+    assert_eq!(
+        refs.len(),
+        3,
+        "work material and its accounting receipt are referenced"
+    );
     // The local store exposes availability, not a sealed read (`EvidenceRepository` is the
     // Postgres adapter's surface — reported discrepancy); the driver returns what it sealed,
     // so the open round-trip runs against the exact appended items.
     let originals = succeeded_work(None);
-    for ((reference, expected_id), original) in refs.iter().zip(&expected).zip(&originals.sealables)
-    {
+    for (expected_id, original) in expected.iter().take(2).zip(&originals.sealables) {
+        let reference = refs
+            .iter()
+            .find(|reference| reference.evidence_id().as_str() == expected_id)
+            .expect("the original sealable reference exists");
         assert_eq!(reference.evidence_id().as_str(), expected_id);
         assert!(
             repository
@@ -659,6 +694,276 @@ fn an_outcome_and_its_evidence_land_in_one_atomic_append() {
     let serialized = serde_json::to_string(envelope).unwrap();
     assert!(!serialized.contains("REPLY-SENTINEL"));
     assert!(!serialized.contains("STREAM-SENTINEL"));
+}
+
+#[test]
+fn a_maximum_length_start_actor_gets_a_bounded_stable_binding_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let actor_id = "a".repeat(256);
+    let start_actor = PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse(&actor_id).unwrap(),
+    );
+    let (repository, execution_id) =
+        running_node_repository_started_by(directory.path(), start_actor);
+    let scope = driver_scope();
+    let protector = EvidenceProtector::new(InMemoryKeyProvider::default());
+
+    let recorded = block_on(record_outcome_with_evidence(
+        &repository,
+        &protector,
+        &SequenceIds::default(),
+        &scope,
+        &OpaqueId::parse(DRIVER_STREAM).unwrap(),
+        &execution_id,
+        &driver_actor(),
+        NODE,
+        &succeeded_work(None),
+    ))
+    .expect("a valid ActorId must not make accounting fail");
+    let receipt = recorded
+        .sealed
+        .iter()
+        .find(|item| item.media_type().as_str() == ACCOUNTING_RECEIPT_MEDIA_TYPE)
+        .unwrap();
+    let opened = block_on(graphhelm_events::EvidenceOpener::open(
+        &protector, scope, receipt,
+    ))
+    .unwrap();
+    let json: serde_json::Value = opened.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    assert_eq!(json["executionBinding"]["producerActor"]["type"], "system");
+    assert_eq!(json["executionBinding"]["producerActor"]["id"], actor_id);
+    assert!(json["executionBinding"].get("snapshots").is_none());
+}
+
+#[test]
+fn measured_model_usage_receipt_round_trips_as_the_same_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let (repository, execution_id) = running_node_repository(directory.path());
+    let scope = driver_scope();
+    let stream = OpaqueId::parse(DRIVER_STREAM).unwrap();
+    let protector = EvidenceProtector::new(InMemoryKeyProvider::default());
+    let ids = SequenceIds::default();
+    let executor = executor(
+        Ok(reply("PRIVATE-REPLY-CONTENT")),
+        ToolDisposition::Completed { exit_code: 0 },
+    );
+    let work = block_on(executor.execute(&cognitive_work())).unwrap();
+    let history = repository
+        .read_replay_stream(&scope, DRIVER_STREAM)
+        .unwrap();
+    let started = history
+        .iter()
+        .find(|envelope| matches!(envelope.kind, EventKind::ExecutionStarted(_)))
+        .unwrap();
+    let expected_event_id = started.event_id.to_string();
+    let expected_event_hash = started.event_hash.to_string();
+
+    let recorded = block_on(record_outcome_with_evidence(
+        &repository,
+        &protector,
+        &ids,
+        &scope,
+        &stream,
+        &execution_id,
+        &driver_actor(),
+        NODE,
+        &work,
+    ))
+    .unwrap();
+
+    let receipt = recorded
+        .sealed
+        .iter()
+        .find(|item| {
+            item.reference()
+                .evidence_id()
+                .as_str()
+                .ends_with("-accounting-receipt")
+        })
+        .expect("the real work summary must become accounting evidence");
+    assert_eq!(receipt.media_type().as_str(), ACCOUNTING_RECEIPT_MEDIA_TYPE);
+    assert!(
+        repository
+            .evidence_exists(&scope, receipt.reference().evidence_id())
+            .unwrap(),
+        "the receipt reference must reload from the repository boundary"
+    );
+    let opened = block_on(graphhelm_events::EvidenceOpener::open(
+        &protector, scope, receipt,
+    ))
+    .unwrap();
+    let bytes = opened.expose(|bytes| bytes.to_vec());
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["executionBinding"]["bindingKind"],
+        "execution_started_event"
+    );
+    assert_eq!(
+        json["executionBinding"]["schemaId"],
+        "https://p50.dev/schemas/event-envelope.schema.json"
+    );
+    assert_eq!(json["executionBinding"]["eventId"], expected_event_id);
+    assert_eq!(json["executionBinding"]["eventHash"], expected_event_hash);
+    assert_eq!(
+        json["executionBinding"]["scope"]["executionId"],
+        execution_id.as_str()
+    );
+    assert_eq!(json["executionBinding"]["producerActor"]["type"], "system");
+    assert_eq!(
+        json["executionBinding"]["producerActor"]["id"],
+        "system-driver"
+    );
+    assert!(json["executionBinding"].get("artifactId").is_none());
+    assert!(json["executionBinding"].get("snapshots").is_none());
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("\"value\":12"));
+    assert!(text.contains("\"value\":5"));
+    assert!(text.contains("\"name\":\"provider_reported_input_tokens\",\"value\":12"));
+    assert!(text.contains("\"name\":\"provider_total_input_tokens\",\"value\":null"));
+    assert!(text.contains("\"name\":\"compiled_input_tokens\",\"value\":null"));
+    assert!(text.contains("\"provenance\":\"measured\""));
+    assert!(text.contains(&format!("\"producer\":\"{MODEL_USAGE_PRODUCER}\"")));
+    assert!(!text.contains("PRIVATE-REPLY-CONTENT"));
+}
+
+#[test]
+fn an_unsafe_provider_token_count_refuses_before_sealing_or_append() {
+    let directory = tempfile::tempdir().unwrap();
+    let (repository, execution_id) = running_node_repository(directory.path());
+    let scope = driver_scope();
+    let before = repository.next_sequence(&scope, DRIVER_STREAM).unwrap();
+    let work = WorkOutcome {
+        outcome: NodeOutcome::Succeeded,
+        reason: None,
+        summary: WorkSummary {
+            input_tokens: Some(9_007_199_254_740_992),
+            output_tokens: Some(5),
+            exit_code: None,
+        },
+        sealables: Vec::new(),
+        reuse: None,
+        gate_verdict: None,
+    };
+
+    let result = block_on(record_outcome_with_evidence(
+        &repository,
+        &EvidenceProtector::new(InMemoryKeyProvider::default()),
+        &SequenceIds::default(),
+        &scope,
+        &OpaqueId::parse(DRIVER_STREAM).unwrap(),
+        &execution_id,
+        &driver_actor(),
+        NODE,
+        &work,
+    ));
+
+    assert!(result.is_err());
+    assert_eq!(
+        repository.next_sequence(&scope, DRIVER_STREAM).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn a_no_observation_fixture_outcome_does_not_require_evidence_sealing() {
+    let directory = tempfile::tempdir().unwrap();
+    let cli_start_actor = PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse("system-cli").unwrap(),
+    );
+    let (repository, execution_id) =
+        running_node_repository_started_by(directory.path(), cli_start_actor);
+    let scope = driver_scope();
+    let work = WorkOutcome {
+        outcome: NodeOutcome::Succeeded,
+        reason: None,
+        sealables: Vec::new(),
+        summary: WorkSummary {
+            input_tokens: None,
+            output_tokens: None,
+            exit_code: None,
+        },
+        reuse: None,
+        gate_verdict: None,
+    };
+
+    let recorded = block_on(record_outcome_with_evidence(
+        &repository,
+        &RefusingEvidenceSealer,
+        &SequenceIds::default(),
+        &scope,
+        &OpaqueId::parse(DRIVER_STREAM).unwrap(),
+        &execution_id,
+        &driver_actor(),
+        NODE,
+        &work,
+    ))
+    .expect("a fixture with nothing to account must not call the refusing sealer");
+
+    assert!(recorded.sealed.is_empty());
+    let history = repository
+        .read_replay_stream(&scope, DRIVER_STREAM)
+        .unwrap();
+    assert!(history.last().unwrap().evidence_refs.is_empty());
+}
+
+#[test]
+fn sealed_work_without_provider_usage_still_emits_an_unavailable_receipt() {
+    let directory = tempfile::tempdir().unwrap();
+    let (repository, execution_id) = running_node_repository(directory.path());
+    let scope = driver_scope();
+    let protector = EvidenceProtector::new(InMemoryKeyProvider::default());
+    let work = WorkOutcome {
+        outcome: NodeOutcome::Succeeded,
+        reason: None,
+        sealables: vec![Sealable {
+            local_ref_suffix: "reply",
+            media_type: "application/json",
+            bytes: br#"{"text":"REAL-WORK-WITHOUT-USAGE"}"#.to_vec(),
+        }],
+        summary: WorkSummary {
+            input_tokens: None,
+            output_tokens: None,
+            exit_code: None,
+        },
+        reuse: None,
+        gate_verdict: None,
+    };
+
+    let recorded = block_on(record_outcome_with_evidence(
+        &repository,
+        &protector,
+        &SequenceIds::default(),
+        &scope,
+        &OpaqueId::parse(DRIVER_STREAM).unwrap(),
+        &execution_id,
+        &driver_actor(),
+        NODE,
+        &work,
+    ))
+    .expect("real sealed work must keep its accounting receipt even without provider usage");
+
+    let receipt = recorded
+        .sealed
+        .iter()
+        .find(|item| item.media_type().as_str() == ACCOUNTING_RECEIPT_MEDIA_TYPE)
+        .expect("the unavailable receipt is still durable Evidence");
+    let opened = block_on(graphhelm_events::EvidenceOpener::open(
+        &protector, scope, receipt,
+    ))
+    .unwrap();
+    let json: serde_json::Value = opened.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    for name in ["provider_reported_input_tokens", "output_tokens"] {
+        let field = json["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["name"] == name)
+            .unwrap();
+        assert_eq!(field["value"], serde_json::Value::Null);
+        assert_eq!(field["provenance"], "unavailable");
+    }
 }
 
 #[test]

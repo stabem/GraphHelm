@@ -339,7 +339,444 @@ fn byte_identity_is_decided_on_bytes_not_on_canonical_meaning() {
 // Where a number is born. A number is born where its inputs are born; a reader only reads.
 // ---------------------------------------------------------------------------------------------
 
-use graphhelm_runtime::context_accounting::{ACCOUNTING_MODULE, AccountingReceipt};
+use graphhelm_protocols::{
+    ActorId, EventEnvelope, EventHash, EventKind, ExecutionId, ExecutionMode, ExecutionStarted,
+    NewEvent, OpaqueId, PersistedActor, PersistedActorType, PersistedTimestamp, ProjectId,
+    RepositoryScope, Sensitivity, WireHash, WorkspaceId,
+};
+use graphhelm_runtime::context_accounting::{
+    ACCOUNTING_MODULE, AccountingReceipt, ExecutionAccountingReceipt,
+};
+use graphhelm_runtime::executor::WorkSummary;
+
+const EXECUTION_ID: &str = "execution-accounting-fixed";
+const MODEL_USAGE_PRODUCER: &str = "model_gateway";
+
+fn execution_event(scoped_execution: Option<&str>, payload_execution: &str) -> EventEnvelope {
+    execution_event_by_actor(
+        scoped_execution,
+        payload_execution,
+        PersistedActorType::System,
+    )
+}
+
+fn execution_event_by_actor(
+    scoped_execution: Option<&str>,
+    payload_execution: &str,
+    actor_type: PersistedActorType,
+) -> EventEnvelope {
+    let previous_hash = EventHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap();
+    let mut envelope = EventEnvelope::new(
+        OpaqueId::parse("execution-start-event-1").unwrap(),
+        RepositoryScope::new(
+            WorkspaceId::parse("workspace-accounting").unwrap(),
+            ProjectId::parse("project-accounting").unwrap(),
+            scoped_execution.map(|value| ExecutionId::parse(value).unwrap()),
+        ),
+        OpaqueId::parse("execution-accounting-stream").unwrap(),
+        1,
+        PersistedTimestamp::parse("2026-08-28T00:00:00Z").unwrap(),
+        NewEvent::new(
+            OpaqueId::parse("execution-start-key").unwrap(),
+            PersistedActor::new(actor_type, ActorId::parse("runtime-driver").unwrap()),
+            Sensitivity::Internal,
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: OpaqueId::parse(payload_execution).unwrap(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Autopilot,
+            }),
+            Vec::new(),
+            Vec::new(),
+        ),
+        previous_hash.clone(),
+        EventHash::parse(format!("sha256:{}", "f".repeat(64))).unwrap(),
+    );
+    envelope.event_hash = EventHash::parse(
+        graphhelm_events::compute_event_hash(&envelope, previous_hash.as_str()).unwrap(),
+    )
+    .unwrap();
+    envelope
+}
+
+fn execution_binding() -> EventEnvelope {
+    execution_event(Some(EXECUTION_ID), EXECUTION_ID)
+}
+
+#[test]
+fn execution_usage_receipt_is_bound_and_byte_stable() {
+    let summary = WorkSummary {
+        input_tokens: Some(12),
+        output_tokens: Some(5),
+        exit_code: None,
+    };
+
+    let binding = execution_binding();
+    let first = ExecutionAccountingReceipt::from_work_summary(&binding, &summary).unwrap();
+    let second = ExecutionAccountingReceipt::from_work_summary(&binding, &summary).unwrap();
+
+    assert_eq!(first.execution_id(), EXECUTION_ID);
+    assert_eq!(
+        first.stable_bytes().unwrap(),
+        second.stable_bytes().unwrap()
+    );
+    assert_eq!(
+        ExecutionAccountingReceipt::from_stable_bytes(&first.stable_bytes().unwrap(), &binding)
+            .unwrap(),
+        first
+    );
+
+    for (name, expected) in [("provider_reported_input_tokens", 12), ("output_tokens", 5)] {
+        let field = first.field(name).expect("the measured model field exists");
+        assert_eq!(field.observed(), Some(expected));
+        assert_eq!(field.provenance(), &CostProvenance::Measured);
+        assert_eq!(field.producer(), Some(MODEL_USAGE_PRODUCER));
+    }
+
+    let compiled = first
+        .field("compiled_input_tokens")
+        .expect("compiled input remains explicit");
+    assert_eq!(compiled.observed(), None);
+    assert_eq!(compiled.provenance(), &CostProvenance::Unavailable);
+    assert_eq!(compiled.producer(), None);
+
+    let provider_total = first
+        .field("provider_total_input_tokens")
+        .expect("provider total remains explicit even when unavailable");
+    assert_eq!(provider_total.observed(), None);
+    assert_eq!(provider_total.provenance(), &CostProvenance::Unavailable);
+    assert_eq!(provider_total.producer(), None);
+
+    let bytes = first.stable_bytes().unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["executionBinding"]["scope"]["executionId"],
+        EXECUTION_ID
+    );
+    assert_eq!(
+        json["executionBinding"]["eventId"],
+        "execution-start-event-1"
+    );
+    assert_eq!(
+        json["executionBinding"]["bindingKind"],
+        "execution_started_event"
+    );
+    assert_eq!(json["executionBinding"]["producerActor"]["type"], "system");
+    assert_eq!(
+        json["executionBinding"]["producerActor"]["id"],
+        "runtime-driver"
+    );
+    assert!(json["executionBinding"].get("snapshots").is_none());
+    assert_eq!(json["schemaVersion"], "1.0.0");
+    let names: Vec<&str> = json["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "orientation_tokens",
+            "zero_result_queries",
+            "retrieval_pages",
+            "retrieval_retries",
+            "retrieval_fallbacks",
+            "summary_tokens",
+            "provider_reported_input_tokens",
+            "provider_total_input_tokens",
+            "compiled_input_tokens",
+            "output_tokens",
+            "formatting_tokens",
+            INDEX_COST_COLD_FIELD,
+            INDEX_COST_AMORTIZED_FIELD,
+        ],
+        "persistent receipt fields are a closed vocabulary"
+    );
+    let schema: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../schemas/execution-accounting-receipt.schema.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let schema_names: Vec<&str> = schema["properties"]["fields"]["prefixItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field["properties"]["name"]["const"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names, schema_names,
+        "runtime receipt bytes must use the registered schema's exact field order"
+    );
+    let reported = json["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == "provider_reported_input_tokens")
+        .unwrap();
+    assert_eq!(reported["value"], 12);
+    assert!(reported["note"].as_str().unwrap().contains("cache read"));
+    assert!(
+        reported["note"]
+            .as_str()
+            .unwrap()
+            .contains("cache creation")
+    );
+    let total = json["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == "provider_total_input_tokens")
+        .unwrap();
+    assert_eq!(total["value"], serde_json::Value::Null);
+    assert_eq!(total["provenance"], "unavailable");
+    assert!(total["note"].as_str().unwrap().contains("cache read"));
+    assert!(total["note"].as_str().unwrap().contains("cache creation"));
+    assert!(!String::from_utf8_lossy(&bytes).contains("prompt"));
+    assert!(!String::from_utf8_lossy(&bytes).contains("outputContent"));
+}
+
+#[test]
+fn missing_model_usage_is_unavailable_and_never_zero() {
+    let summary = WorkSummary {
+        input_tokens: None,
+        output_tokens: None,
+        exit_code: None,
+    };
+    let receipt =
+        ExecutionAccountingReceipt::from_work_summary(&execution_binding(), &summary).unwrap();
+
+    for name in [
+        "provider_reported_input_tokens",
+        "provider_total_input_tokens",
+        "output_tokens",
+    ] {
+        let field = receipt.field(name).expect("the unavailable field exists");
+        assert_eq!(field.observed(), None, "missing usage must not become zero");
+        assert_eq!(field.provenance(), &CostProvenance::Unavailable);
+        assert_eq!(field.producer(), None);
+    }
+
+    for name in [
+        "orientation_tokens",
+        "zero_result_queries",
+        "retrieval_pages",
+        "retrieval_retries",
+        "retrieval_fallbacks",
+        "summary_tokens",
+        "compiled_input_tokens",
+        "formatting_tokens",
+        INDEX_COST_COLD_FIELD,
+        INDEX_COST_AMORTIZED_FIELD,
+    ] {
+        let field = receipt
+            .field(name)
+            .expect("every unmeasured category is explicit");
+        assert_eq!(
+            field.observed(),
+            None,
+            "{name} must not be invented as zero"
+        );
+        assert_eq!(field.provenance(), &CostProvenance::Unavailable);
+    }
+}
+
+#[test]
+fn an_execution_receipt_refuses_a_binding_without_an_execution_scope() {
+    let result = ExecutionAccountingReceipt::from_work_summary(
+        &execution_event(None, EXECUTION_ID),
+        &WorkSummary {
+            input_tokens: Some(12),
+            output_tokens: Some(5),
+            exit_code: None,
+        },
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn an_execution_receipt_refuses_a_mismatched_or_corrupt_execution_event() {
+    let summary = WorkSummary {
+        input_tokens: Some(12),
+        output_tokens: Some(5),
+        exit_code: None,
+    };
+    assert!(
+        ExecutionAccountingReceipt::from_work_summary(
+            &execution_event(Some(EXECUTION_ID), "another-execution"),
+            &summary,
+        )
+        .is_err()
+    );
+
+    let mut corrupt = execution_binding();
+    corrupt.event_hash = EventHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap();
+    assert!(ExecutionAccountingReceipt::from_work_summary(&corrupt, &summary).is_err());
+}
+
+#[test]
+fn producer_actor_type_is_identity_even_when_actor_id_is_the_same() {
+    let summary = WorkSummary {
+        input_tokens: Some(12),
+        output_tokens: Some(5),
+        exit_code: None,
+    };
+    let system = ExecutionAccountingReceipt::from_work_summary(
+        &execution_event_by_actor(Some(EXECUTION_ID), EXECUTION_ID, PersistedActorType::System),
+        &summary,
+    )
+    .unwrap();
+    let agent = ExecutionAccountingReceipt::from_work_summary(
+        &execution_event_by_actor(Some(EXECUTION_ID), EXECUTION_ID, PersistedActorType::Agent),
+        &summary,
+    )
+    .unwrap();
+
+    assert_ne!(
+        system.stable_bytes().unwrap(),
+        agent.stable_bytes().unwrap()
+    );
+}
+
+#[test]
+fn execution_receipt_deserialization_rejects_tokens_above_json_safe_integer() {
+    let binding = execution_binding();
+    let receipt = ExecutionAccountingReceipt::from_work_summary(
+        &binding,
+        &WorkSummary {
+            input_tokens: Some(12),
+            output_tokens: Some(5),
+            exit_code: None,
+        },
+    )
+    .unwrap();
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    json["fields"][6]["value"] = serde_json::json!(9_007_199_254_740_992_u64);
+
+    assert!(
+        ExecutionAccountingReceipt::from_stable_bytes(
+            &serde_json::to_vec(&json).unwrap(),
+            &binding,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn execution_receipt_deserialization_rejects_wrong_binding_domain_kind_and_digest() {
+    let binding = execution_binding();
+    let receipt = ExecutionAccountingReceipt::from_work_summary(
+        &binding,
+        &WorkSummary {
+            input_tokens: Some(12),
+            output_tokens: Some(5),
+            exit_code: None,
+        },
+    )
+    .unwrap();
+    let original: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+
+    for (field, wrong) in [
+        ("bindingKind", serde_json::json!("artifact_binding")),
+        (
+            "schemaId",
+            serde_json::json!("https://p50.dev/schemas/context-capsule.schema.json"),
+        ),
+        (
+            "eventHash",
+            serde_json::json!(format!("sha512:{}", "a".repeat(64))),
+        ),
+    ] {
+        let mut candidate = original.clone();
+        candidate["executionBinding"][field] = wrong;
+        assert!(
+            ExecutionAccountingReceipt::from_stable_bytes(
+                &serde_json::to_vec(&candidate).unwrap(),
+                &binding,
+            )
+            .is_err(),
+            "wrong {field} must fail closed"
+        );
+    }
+
+    let mut generic = original;
+    generic["executionBinding"] = serde_json::json!({
+        "artifactId": "execution-start-event-1",
+        "schemaId": "https://p50.dev/schemas/event-envelope.schema.json",
+        "documentVersion": "1.0.0",
+        "schemaVersion": "1.0.0",
+        "digest": format!("sha256:{}", "a".repeat(64)),
+        "scope": {
+            "workspaceId": "workspace-accounting",
+            "projectId": "project-accounting",
+            "executionId": EXECUTION_ID
+        },
+        "producer": "runtime-driver",
+        "snapshots": {
+            "repoSnapshot": "repo-snapshot",
+            "indexGeneration": "repo-snapshot"
+        }
+    });
+    assert!(
+        ExecutionAccountingReceipt::from_stable_bytes(
+            &serde_json::to_vec(&generic).unwrap(),
+            &binding,
+        )
+        .is_err()
+    );
+
+    let mut missing_required_nullable: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    missing_required_nullable["fields"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("value");
+    assert!(
+        ExecutionAccountingReceipt::from_stable_bytes(
+            &serde_json::to_vec(&missing_required_nullable).unwrap(),
+            &binding,
+        )
+        .is_err()
+    );
+
+    let mut secret_note: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    secret_note["fields"][0]["note"] = serde_json::json!("PRIVATE-PROMPT-SENTINEL");
+    assert!(
+        ExecutionAccountingReceipt::from_stable_bytes(
+            &serde_json::to_vec(&secret_note).unwrap(),
+            &binding,
+        )
+        .is_err()
+    );
+
+    let mut invented_compiled: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    invented_compiled["fields"][8]["value"] = serde_json::json!(12);
+    invented_compiled["fields"][8]["provenance"] = serde_json::json!("measured");
+    invented_compiled["fields"][8]["producer"] = serde_json::json!("model_gateway");
+    invented_compiled["fields"][8]["note"] = serde_json::json!("");
+    assert!(
+        ExecutionAccountingReceipt::from_stable_bytes(
+            &serde_json::to_vec(&invented_compiled).unwrap(),
+            &binding,
+        )
+        .is_err()
+    );
+
+    let valid_bytes = receipt.stable_bytes().unwrap();
+    let different_authority =
+        execution_event_by_actor(Some(EXECUTION_ID), EXECUTION_ID, PersistedActorType::Agent);
+    assert!(
+        ExecutionAccountingReceipt::from_stable_bytes(&valid_bytes, &different_authority).is_err(),
+        "a structurally valid receipt must still authenticate against its exact journal event"
+    );
+}
 
 /// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before writing it: **accepting the accounting
 /// module itself as the producer of a measured field.**

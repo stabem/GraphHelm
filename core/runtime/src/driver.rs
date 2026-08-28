@@ -11,10 +11,13 @@ use graphhelm_events::{
 };
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
-    EventKind, EvidenceId, IdGenerator, NewEvent, NodeOutcomeRecorded, NodeState, OpaqueId,
-    PersistedActor, RepositoryScope, ReuseDecision, ReusePlane, Sensitivity,
+    EventEnvelope, EventKind, EvidenceId, IdGenerator, NewEvent, NodeOutcomeRecorded, NodeState,
+    OpaqueId, PersistedActor, RepositoryScope, ReuseDecision, ReusePlane, Sensitivity,
 };
 
+use crate::context_accounting::{
+    ACCOUNTING_RECEIPT_MEDIA_TYPE, AccountingReceiptError, ExecutionAccountingReceipt,
+};
 use crate::evidence::seal_work;
 use crate::executor::WorkOutcome;
 
@@ -31,6 +34,8 @@ pub enum DriverError {
     Transition,
     #[error("an identifier is not wire-safe")]
     Identity,
+    #[error("the execution accounting receipt could not be built; nothing was appended")]
+    Accounting(#[from] AccountingReceiptError),
 }
 
 /// What one recorded outcome left behind: the transition's result and the sealed items the
@@ -64,6 +69,7 @@ pub async fn record_outcome_with_evidence(
     work: &WorkOutcome,
 ) -> Result<RecordedOutcome, DriverError> {
     let history = store.read_replay_stream(scope, stream.as_str())?;
+    let execution_start = execution_start_event(&history, execution_id)?;
     let projection = replay(scope, stream.as_str(), &history)?;
     let current = projection
         .node_states
@@ -80,9 +86,31 @@ pub async fn record_outcome_with_evidence(
     .map_err(|_| DriverError::Transition)?;
     let node_id = OpaqueId::parse(node).map_err(|_| DriverError::Identity)?;
 
-    // Evidence before append: a sealing failure returns here, store untouched.
-    let sealed_work =
+    // Evidence before append: a sealing failure returns here, store untouched. An attempt result also
+    // carries the immutable accounting artifact built from the executor's real summary. Lifecycle
+    // hops do not: they did not execute a port, and sharing their attempt-scoped evidence identity
+    // with the eventual work result would create a false duplicate.
+    let receipt = if is_accounted_attempt(work) {
+        let receipt =
+            ExecutionAccountingReceipt::from_work_summary(execution_start, &work.summary)?;
+        Some(crate::executor::Sealable {
+            local_ref_suffix: "accounting-receipt",
+            media_type: ACCOUNTING_RECEIPT_MEDIA_TYPE,
+            bytes: receipt.stable_bytes()?,
+        })
+    } else {
+        None
+    };
+    let mut sealed_work =
         seal_work(sealer, scope, execution_id, node, attempts, &work.sealables).await?;
+    if let Some(receipt) = receipt {
+        let mut sealed_receipt =
+            seal_work(sealer, scope, execution_id, node, attempts, &[receipt]).await?;
+        sealed_work.evidence.append(&mut sealed_receipt.evidence);
+        sealed_work
+            .references
+            .append(&mut sealed_receipt.references);
+    }
 
     let mut events = vec![NewEvent::new(
         mint_key(ids, "node-outcome")?,
@@ -166,6 +194,50 @@ pub async fn record_outcome_with_evidence(
         next_state,
         sealed: sealed_work.evidence,
     })
+}
+
+/// Whether this outcome carries any observation made by an executor.
+///
+/// The fixture bridge's deliberate shape is empty sealables plus an entirely absent summary,
+/// reuse decision, and gate verdict. It represents no provider or tool attempt, so manufacturing
+/// an "unavailable provider" receipt would invent work and would require a fixture-only server to
+/// provision Evidence keys for bytes that describe nothing observed. Real port outcomes always
+/// carry either sealable material or an observed summary value; lifecycle hops are excluded by
+/// outcome even if a future caller accidentally attaches one.
+fn is_accounted_attempt(work: &WorkOutcome) -> bool {
+    !matches!(
+        work.outcome,
+        graphhelm_protocols::NodeOutcome::Started
+            | graphhelm_protocols::NodeOutcome::Approved
+            | graphhelm_protocols::NodeOutcome::Waived
+            | graphhelm_protocols::NodeOutcome::Skipped
+            | graphhelm_protocols::NodeOutcome::Invalidated
+            | graphhelm_protocols::NodeOutcome::Paused
+            | graphhelm_protocols::NodeOutcome::Interrupted
+    ) && (!work.sealables.is_empty()
+        || work.summary.input_tokens.is_some()
+        || work.summary.output_tokens.is_some()
+        || work.summary.exit_code.is_some()
+        || work.reuse.is_some()
+        || work.gate_verdict.is_some())
+}
+
+/// Return the exact persisted `execution_started` envelope, not an ID copied from the caller.
+/// Its journal ID, hash, scope and full actor become the closed execution binding. No generic
+/// artifact snapshots are synthesized because an event is not a repository index.
+fn execution_start_event<'a>(
+    history: &'a [EventEnvelope],
+    execution_id: &OpaqueId,
+) -> Result<&'a EventEnvelope, DriverError> {
+    history
+        .iter()
+        .find(|envelope| {
+            matches!(
+                &envelope.kind,
+                EventKind::ExecutionStarted(started) if &started.execution_id == execution_id
+            )
+        })
+        .ok_or(DriverError::Identity)
 }
 
 fn mint_key(ids: &dyn IdGenerator, prefix: &'static str) -> Result<OpaqueId, DriverError> {

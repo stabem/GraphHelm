@@ -533,3 +533,49 @@ the [decoder fixtures](../../adapters/codebase-memory-mcp/tests/fixtures/README.
 change requires evidence rather than an invented local contract. This makes D-042 normative,
 refines ADR-008, ADR-013, ADR-026 and D-041, and does not weaken Tool Broker authorization or
 containment.
+
+## 34. ADR-029 — Closed execution accounting identity and interoperable token bounds
+
+**Status:** accepted.
+
+**Context:** issue #222's first durable accounting slice must distinguish measured usage from
+missing observations. The executor's current `WorkSummary.input_tokens` is the provider-reported
+input field, but the model gateway does not preserve every prompt-cache component. Calling that
+number compiled input or a complete provider total would make cached work look falsely cheap.
+Separately, the first receipt draft reused `ArtifactBinding` for execution identity. That generic
+development binding requires repository and index snapshots, while a persisted execution event
+owns neither. Filling those fields from an event hash would invent provenance. The pure
+codebase-memory adapter accepted by ADR-028 decodes recorded provider results and transport facts;
+it exposes no complete token-cost producer and therefore cannot fill these accounting categories.
+
+**Decision:** the execution-accounting receipt is a closed, versioned Evidence wire contract. Its
+`executionBinding` is a dedicated type with the constant kind `execution_started_event`, the exact
+event-envelope schema identity and version, the persisted event ID and canonical event hash, the
+exact execution-scoped `RepositoryScope`, and the complete persisted producer actor `{type,id}`.
+Runtime construction accepts the verified `execution_started` envelope, recomputes its event hash,
+and refuses a missing or mismatched execution scope. Deserialization requires that same journal
+envelope and compares the decoded binding to the freshly derived one; a valid-looking hash or actor
+is never trusted on shape alone. The actor type is identity material, so two actor classes sharing
+an ID remain distinct. The receipt never accepts a generic `ArtifactBinding` and never synthesizes
+`repoSnapshot` or `indexGeneration`.
+
+`provider_reported_input_tokens` and `output_tokens` are measured only when `WorkSummary` reports
+them. `provider_total_input_tokens` and `compiled_input_tokens` remain explicitly unavailable until
+their complete producers exist, including prompt-cache components. Every token value is limited to
+9,007,199,254,740,991 before serialization and after deserialization, matching interoperable JSON
+integer semantics. The registered schema is closed, fixes field order and provenance/value shapes,
+and rejects the wrong binding kind, schema domain, digest shape, actor identity, extra data, and
+unsafe integers.
+
+**Rejected alternatives:** relabeling partial provider input as compiled input; summing a provider
+total without cache-read and cache-creation usage; silently omitting unavailable categories; hashing
+only actor ID; truncating actor IDs to fit `OpaqueId`; reusing `ArtifactBinding`; setting both
+snapshot coordinates to the event hash; accepting arbitrary schema IDs or binding kinds; and
+serializing a Rust-private structure without a registered schema and conformance fixtures.
+
+**Consequences:** old pre-release receipt bytes from this unmerged branch are intentionally not
+accepted. Durable receipts carry only real journal identity and honest observations. Context
+Compiler, retrieval, formatting, index, and complete provider-total producers remain follow-up work
+under #222; this slice does not close that issue and exposes no new public CLI, API, MCP, Studio, or
+model-gateway surface. This makes D-043 normative, refines ADR-021, ADR-022 and ADR-028, and leaves
+Tool Broker containment unchanged.

@@ -2,25 +2,20 @@
 //!
 //! `ci/gate.ps1` runs one stage as `schema check --baseline schemas/releases/1.0.0/catalog.json
 //! --candidate schemas/catalog.json`. Read alone that is a release gate. Measured, its two inputs
-//! are held BYTE-IDENTICAL by a sibling test in the same gate --
-//! `catalog_integrity.rs::checked_in_1_0_0_release_is_complete_and_raw_byte_identical` asserts
-//! `fs::read(live) == fs::read(released)` for all fifteen schemas, plus digest equality. The
-//! divergence that stage exists to find is therefore not merely unobserved: it is FORBIDDEN
-//! upstream, and any branch that produced it would go red on the sibling first. That happened
-//! once, live -- #339 diverged `extension.schema.json`, and hotfix #365 reverted it to the frozen
-//! bytes rather than repin.
+//! held BYTE-IDENTICAL for the fifteen schemas published in `1.0.0` by a sibling test in the same
+//! gate. The current catalog is now a real candidate: `1.1.0` adds the execution-accounting receipt
+//! schema while the frozen release directory stays untouched. The compatibility stage must report
+//! that one additive minor change and still refuse a breaking change to any shared schema.
 //!
 //! So this file does two separate things, and they are not the same claim:
 //!
-//! 1. `the_gate_baseline_is_a_mirror_the_repo_itself_enforces` records the impossibility with a
-//!    positive control, and stands as the tripwire for the day it stops being true.
+//! 1. `the_gate_baseline_records_the_one_additive_current_schema` pins the exact intended delta.
 //! 2. `no_silent_breaking_change_against_what_landed_on_main` supplies a baseline the branch
 //!    CANNOT edit -- the merge base with `origin/main`, read out of git -- so that a comparison
 //!    which can actually refuse exists somewhere in the gate.
 //!
-//! What is deliberately NOT done here: nothing weakens or retires the byte-identity sibling.
-//! Whether `schemas/releases/1.0.0/` should become a genuinely frozen snapshot is the milestone
-//! decision #229 reserved, and taking it means retiring the guard that caught #339.
+//! The byte-identity sibling remains strict for every schema already published in `1.0.0`; the new
+//! schema is absent from that immutable snapshot by design.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -29,7 +24,7 @@ use std::process::Command;
 
 use graphhelm_schema_evolution::{
     CatalogResources, CompatibilityChange, CompatibilityClass, CompatibilityReport, SchemaCatalog,
-    compare_catalogs,
+    SemverImpact, compare_catalogs,
 };
 use semver::Version;
 use serde_json::{Value, json};
@@ -346,10 +341,9 @@ fn d037_customs_budget_exception_rejects_every_near_miss() {
     }
 }
 
-// Records that the gate's checked-in baseline tracks its own candidate, so that stage cannot
-// refuse -- and fires the day that stops being true.
+// Pins the deliberate divergence: one additive schema and no mutation of the published set.
 #[test]
-fn the_gate_baseline_is_a_mirror_the_repo_itself_enforces() {
+fn the_gate_baseline_records_the_one_additive_current_schema() {
     let baseline = checked_in_catalog(RELEASE_CATALOG);
     let candidate = checked_in_catalog(LIVE_CATALOG);
 
@@ -365,13 +359,12 @@ fn the_gate_baseline_is_a_mirror_the_repo_itself_enforces() {
 
     let report = compare_catalogs(&baseline, &candidate);
     assert_eq!(
-        (report.class, report.changes.len()),
-        (CompatibilityClass::Unchanged, 0),
-        "the two checked-in catalogs have diverged. That is not a bug in this test: it means the \
-         mirror #229 measured no longer holds, so the `schema baseline compatibility` stage in \
-         ci/gate.ps1 has become capable of refusing, and its --baseline argument and the \
-         byte-identity sibling in catalog_integrity.rs both need revisiting."
+        (report.class, report.impact, report.changes.len()),
+        (CompatibilityClass::Compatible, SemverImpact::Minor, 1),
+        "the current catalog must differ from 1.0.0 by exactly one additive minor schema"
     );
+    assert_eq!(report.changes[0].schema, "execution-accounting-receipt");
+    assert_eq!(report.changes[0].pointer, "/");
 
     // Positive control: the silence above is the subject's, not the instrument's.
     let mut divergent = candidate.clone();
@@ -380,8 +373,8 @@ fn the_gate_baseline_is_a_mirror_the_repo_itself_enforces() {
     assert_eq!(
         compare_catalogs(&baseline, &divergent).class,
         CompatibilityClass::Breaking,
-        "compare_catalogs did not report a removed schema as breaking, so its `unchanged` verdict \
-         above says nothing about the catalogs"
+        "compare_catalogs did not report a removed schema as breaking, so its additive verdict \
+         above says nothing about the published contracts"
     );
 }
 

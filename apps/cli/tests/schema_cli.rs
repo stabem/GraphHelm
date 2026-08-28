@@ -476,7 +476,7 @@ fn five_schema_commands_return_one_json_document_with_exact_names() {
 }
 
 #[test]
-fn checked_in_catalog_reports_the_single_safe_1_0_0_release() {
+fn checked_in_catalog_reports_the_additive_1_1_0_candidate() {
     let catalog = repository_root().join("schemas/catalog.json");
     let output = run_catalog(&catalog);
     assert!(
@@ -485,8 +485,8 @@ fn checked_in_catalog_reports_the_single_safe_1_0_0_release() {
         String::from_utf8_lossy(&output.stdout)
     );
     let value = output_json(&output);
-    assert_eq!(value["data"]["releaseVersion"], "1.0.0");
-    assert_eq!(value["data"]["schemaCount"], 15);
+    assert_eq!(value["data"]["releaseVersion"], "1.1.0");
+    assert_eq!(value["data"]["schemaCount"], 16);
 }
 
 #[test]

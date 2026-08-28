@@ -42,6 +42,8 @@
     {"id":"schema.event-envelope.valid.minimum","kind":"schema","schema":"event-envelope","input":"conformance/schemas/valid/event-envelope.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.evidence-record.invalid.plaintext","kind":"schema","schema":"evidence-record","input":"conformance/schemas/invalid/evidence-record.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/"]}},
     {"id":"schema.evidence-record.valid.minimum","kind":"schema","schema":"evidence-record","input":"conformance/schemas/valid/evidence-record.json","expect":{"ok":true,"codes":[]}},
+    {"id":"schema.execution-accounting-receipt.invalid.extra-field","kind":"schema","schema":"execution-accounting-receipt","input":"conformance/schemas/invalid/execution-accounting-receipt.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/"]}},
+    {"id":"schema.execution-accounting-receipt.valid.minimum","kind":"schema","schema":"execution-accounting-receipt","input":"conformance/schemas/valid/execution-accounting-receipt.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.extension.invalid.kind","kind":"schema","schema":"extension","input":"conformance/schemas/invalid/extension.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/kind"]}},
     {"id":"schema.extension.valid.minimum","kind":"schema","schema":"extension","input":"conformance/schemas/valid/extension.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.graph-signal.invalid.severity","kind":"schema","schema":"graph-signal","input":"conformance/schemas/invalid/graph-signal.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/severity"]}},

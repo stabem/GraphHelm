@@ -1,32 +1,23 @@
 //! Context Capsule accounting (#222).
 //!
-//! # Declared gap: eight of the nine cost categories are not here
+//! # Declared gap: eight required cost categories still have no production observer
 //!
 //! #222's criterion names nine things that must be counted — orientation, zero results, pages,
 //! retries, fallbacks, summaries, compiled input, output, and formatting — plus cold and amortized
-//! index cost reported separately. **This module implements the index pair and the receipt
-//! mechanism, and nothing for the other eight.** Measured rather than estimated, **at `591dac7`,
-//! before this paragraph existed**: a case-insensitive sweep of this file for each category name
-//! returned zero for all eight, against **three** hits for `index` as the live positive control.
+//! index cost reported separately. **This module now records provider-reported input and output
+//! from the executor's real `WorkSummary`; provider-total input, compiled input, and the other
+//! categories remain explicitly unavailable.** Before the
+//! execution receipt existed, a measured sweep at `591dac7` returned zero for those category names,
+//! against three hits for `index` as the live positive control.
 //!
-//! **The base is named because the sentence otherwise falsifies itself**, and this one did. Naming
-//! the eight categories puts them in this file: each returns one hit today, and the claim of zero
-//! has been false since the commit that made it. Re-measured while fixing that (#428): the counts
-//! it cited for the positive control — fifteen for `index`, eleven for `amortiz` — were true at no
-//! commit at all. At `591dac7` they are three and zero; at `0754cda`, where this paragraph landed,
-//! seventeen and thirteen. They appear to be a draft's numbers, kept while the prose around them
-//! grew. `amortiz` is dropped from the control rather than re-cited: at the named base it is zero,
-//! which cannot serve as evidence that the sweep reads anything.
+//! The old grep counts are historical evidence only. Current source names every category because
+//! every receipt carries every field. The structured provenance is now the guard: unavailable is
+//! serialized explicitly and cannot be mistaken for a measured zero.
 //!
-//! It is written here because an undeclared gap and an implemented category read identically from
-//! outside: both are silence. A reader summing this receipt would get a number that looks total.
-//!
-//! **Condition for closing it, and who owns it.** The eight are all costs of *retrieval*, and this
-//! slice has no retriever — no production caller constructs anything in this module, measured as
-//! zero call sites outside the tests. They become writable when a caller wires compilation to a
-//! retrieval path, which is #219's surface, not this one. Owner is whoever lands that wiring; the
-//! shape to reuse is `CostField`, which already forces each number to carry how it came to exist,
-//! so the eight arrive with provenance or not at all.
+//! **Condition for closing it, and who owns it.** Retrieval owns orientation, zero-result, page,
+//! retry, fallback, and summary counts; the Context Compiler owns compiled input; the formatting
+//! boundary owns formatting cost. This slice does not invent any of them. Their production
+//! observers must populate the same `CostField` shape, with provenance, before #222 can close.
 //!
 //! Every type here exists to keep two states apart that a careless representation folds into one:
 //! a measured zero versus nothing measured, a real run versus a capsule that was only built, an
@@ -121,7 +112,10 @@ pub(crate) fn push_segment(out: &mut String, value: &str) {
     out.push_str(value);
 }
 
-use graphhelm_protocols::wire_vocabulary;
+use graphhelm_protocols::{
+    EventEnvelope, EventHash, EventKind, EventSchemaVersion, OpaqueId, PersistedActor,
+    RepositoryScope, wire_vocabulary,
+};
 use serde::{Deserialize, Serialize};
 
 wire_vocabulary! {
@@ -144,10 +138,13 @@ wire_vocabulary! {
 }
 
 /// One cost line in an accounting receipt, carrying its own provenance.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CostField {
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     value: Option<u64>,
     provenance: CostProvenance,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     producer: Option<String>,
     note: String,
 }
@@ -261,6 +258,147 @@ pub struct AccountingReceipt {
     fields: Vec<(String, CostField)>,
 }
 
+/// An immutable, execution-bound receipt safe to persist as Evidence.
+///
+/// Unlike [`AccountingReceipt`], this type has no free-form builder. Its closed field set is the
+/// security boundary that prevents a prompt, model reply, or arbitrary note from entering the
+/// persistent artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionAccountingReceipt {
+    execution_binding: ExecutionBinding,
+    fields: Vec<(String, CostField)>,
+}
+
+/// A closed reference to the exact persisted event that began the execution.
+///
+/// This is deliberately not [`graphhelm_protocols::ArtifactBinding`]. That generic development
+/// binding requires repository and index snapshots. An execution event owns neither, so filling
+/// those fields would manufacture provenance. The event journal already provides the immutable
+/// identity needed here: event ID, canonical event hash, exact repository scope, and full actor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExecutionBinding {
+    binding_kind: ExecutionBindingKind,
+    schema_id: ExecutionBindingSchema,
+    schema_version: EventSchemaVersion,
+    event_id: OpaqueId,
+    event_hash: EventHash,
+    scope: RepositoryScope,
+    producer_actor: PersistedActor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum ExecutionBindingKind {
+    #[serde(rename = "execution_started_event")]
+    ExecutionStartedEvent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum ExecutionBindingSchema {
+    #[serde(rename = "https://p50.dev/schemas/event-envelope.schema.json")]
+    EventEnvelope,
+}
+
+/// The model boundary is where token usage is observed. The accounting module only records it.
+pub const MODEL_USAGE_PRODUCER: &str = "model_gateway";
+
+/// Version of the stable evidence payload emitted for an execution accounting receipt.
+pub const ACCOUNTING_RECEIPT_SCHEMA_VERSION: &str = "1.0.0";
+
+/// Media type of the schema-bound Evidence payload.
+pub const ACCOUNTING_RECEIPT_MEDIA_TYPE: &str =
+    "application/vnd.graphhelm.execution-accounting+json";
+
+const MAX_JSON_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+const UNAVAILABLE_NOTE: &str = "not measured by this runtime slice";
+const PROVIDER_REPORTED_INPUT_NOTE: &str = "raw WorkSummary.input_tokens reported by the provider boundary; may exclude cache read and cache creation tokens";
+const PROVIDER_REPORTED_INPUT_UNAVAILABLE_NOTE: &str =
+    "provider-reported input tokens were not reported by the model boundary";
+const PROVIDER_TOTAL_INPUT_UNAVAILABLE_NOTE: &str = "provider total input is unavailable because WorkSummary may exclude cache read and cache creation tokens";
+const OUTPUT_UNAVAILABLE_NOTE: &str = "output_tokens was not reported by the model boundary";
+
+const ORIENTATION_TOKENS_FIELD: &str = "orientation_tokens";
+const ZERO_RESULT_QUERIES_FIELD: &str = "zero_result_queries";
+const RETRIEVAL_PAGES_FIELD: &str = "retrieval_pages";
+const RETRIEVAL_RETRIES_FIELD: &str = "retrieval_retries";
+const RETRIEVAL_FALLBACKS_FIELD: &str = "retrieval_fallbacks";
+const SUMMARY_TOKENS_FIELD: &str = "summary_tokens";
+const PROVIDER_REPORTED_INPUT_TOKENS_FIELD: &str = "provider_reported_input_tokens";
+const PROVIDER_TOTAL_INPUT_TOKENS_FIELD: &str = "provider_total_input_tokens";
+const COMPILED_INPUT_TOKENS_FIELD: &str = "compiled_input_tokens";
+const OUTPUT_TOKENS_FIELD: &str = "output_tokens";
+const FORMATTING_TOKENS_FIELD: &str = "formatting_tokens";
+const ACCOUNTING_FIELD_NAMES: [&str; 13] = [
+    ORIENTATION_TOKENS_FIELD,
+    ZERO_RESULT_QUERIES_FIELD,
+    RETRIEVAL_PAGES_FIELD,
+    RETRIEVAL_RETRIES_FIELD,
+    RETRIEVAL_FALLBACKS_FIELD,
+    SUMMARY_TOKENS_FIELD,
+    PROVIDER_REPORTED_INPUT_TOKENS_FIELD,
+    PROVIDER_TOTAL_INPUT_TOKENS_FIELD,
+    COMPILED_INPUT_TOKENS_FIELD,
+    OUTPUT_TOKENS_FIELD,
+    FORMATTING_TOKENS_FIELD,
+    INDEX_COST_COLD_FIELD,
+    INDEX_COST_AMORTIZED_FIELD,
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountingReceiptWire<'a> {
+    schema_version: &'static str,
+    execution_binding: &'a ExecutionBinding,
+    fields: Vec<AccountingFieldWire<'a>>,
+}
+
+#[derive(Serialize)]
+struct AccountingFieldWire<'a> {
+    name: &'a str,
+    #[serde(flatten)]
+    cost: &'a CostField,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OwnedAccountingReceiptWire {
+    schema_version: String,
+    execution_binding: ExecutionBinding,
+    fields: Vec<OwnedAccountingFieldWire>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedAccountingFieldWire {
+    name: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    value: Option<u64>,
+    provenance: CostProvenance,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    producer: Option<String>,
+    note: String,
+}
+
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AccountingReceiptError {
+    #[error("the accounting receipt binding is not the exact persisted execution start")]
+    InvalidExecutionBinding,
+    #[error("an accounting token count exceeds the JSON interoperable safe-integer maximum")]
+    UnsafeTokenCount,
+    #[error("the accounting receipt does not match its closed wire contract")]
+    InvalidWireContract,
+    #[error("the accounting receipt JSON could not be encoded or decoded")]
+    Json(#[from] serde_json::Error),
+}
+
 impl AccountingReceipt {
     pub fn new() -> Self {
         Self::default()
@@ -285,6 +423,230 @@ impl AccountingReceipt {
     pub fn field(&self, name: &str) -> Option<&CostField> {
         self.fields.iter().find(|(n, _)| n == name).map(|(_, f)| f)
     }
+}
+
+impl ExecutionAccountingReceipt {
+    /// Build the execution-bound receipt from usage already observed by the executor.
+    ///
+    /// Missing values remain unavailable. Every category this slice does not observe is present
+    /// with unavailable provenance, so an incomplete run can never serialize as a cheap one.
+    pub fn from_work_summary(
+        execution_start: &EventEnvelope,
+        summary: &crate::executor::WorkSummary,
+    ) -> Result<Self, AccountingReceiptError> {
+        let execution_binding = validated_execution_binding(execution_start)?;
+        if summary
+            .input_tokens
+            .into_iter()
+            .chain(summary.output_tokens)
+            .any(|value| value > MAX_JSON_SAFE_INTEGER)
+        {
+            return Err(AccountingReceiptError::UnsafeTokenCount);
+        }
+        let unavailable = || CostField::unavailable(UNAVAILABLE_NOTE);
+        let output_usage = match summary.output_tokens {
+            Some(value) => CostField::measured(value, MODEL_USAGE_PRODUCER),
+            None => CostField::unavailable(OUTPUT_UNAVAILABLE_NOTE),
+        };
+        let reported_input = match summary.input_tokens {
+            Some(value) => CostField {
+                value: Some(value),
+                provenance: CostProvenance::Measured,
+                producer: Some(MODEL_USAGE_PRODUCER.to_owned()),
+                note: PROVIDER_REPORTED_INPUT_NOTE.to_owned(),
+            },
+            None => CostField::unavailable(PROVIDER_REPORTED_INPUT_UNAVAILABLE_NOTE),
+        };
+
+        Ok(Self {
+            execution_binding,
+            fields: vec![
+                (ORIENTATION_TOKENS_FIELD.to_owned(), unavailable()),
+                (ZERO_RESULT_QUERIES_FIELD.to_owned(), unavailable()),
+                (RETRIEVAL_PAGES_FIELD.to_owned(), unavailable()),
+                (RETRIEVAL_RETRIES_FIELD.to_owned(), unavailable()),
+                (RETRIEVAL_FALLBACKS_FIELD.to_owned(), unavailable()),
+                (SUMMARY_TOKENS_FIELD.to_owned(), unavailable()),
+                (
+                    PROVIDER_REPORTED_INPUT_TOKENS_FIELD.to_owned(),
+                    reported_input,
+                ),
+                (
+                    PROVIDER_TOTAL_INPUT_TOKENS_FIELD.to_owned(),
+                    CostField::unavailable(PROVIDER_TOTAL_INPUT_UNAVAILABLE_NOTE),
+                ),
+                (COMPILED_INPUT_TOKENS_FIELD.to_owned(), unavailable()),
+                (OUTPUT_TOKENS_FIELD.to_owned(), output_usage),
+                (FORMATTING_TOKENS_FIELD.to_owned(), unavailable()),
+                (INDEX_COST_COLD_FIELD.to_owned(), unavailable()),
+                (INDEX_COST_AMORTIZED_FIELD.to_owned(), unavailable()),
+            ],
+        })
+    }
+
+    /// The execution this persistent receipt belongs to.
+    pub fn execution_id(&self) -> &str {
+        self.execution_binding
+            .scope
+            .execution_id()
+            .expect("constructor requires an execution-scoped binding")
+            .as_str()
+    }
+
+    /// Serialize the receipt to its stable evidence bytes.
+    ///
+    /// Field order is fixed by construction and no clock or generated identifier is included.
+    pub fn stable_bytes(&self) -> Result<Vec<u8>, AccountingReceiptError> {
+        self.validate_wire_contract()?;
+        let fields = self
+            .fields
+            .iter()
+            .map(|(name, cost)| AccountingFieldWire { name, cost })
+            .collect();
+        Ok(serde_json::to_vec(&AccountingReceiptWire {
+            schema_version: ACCOUNTING_RECEIPT_SCHEMA_VERSION,
+            execution_binding: &self.execution_binding,
+            fields,
+        })?)
+    }
+
+    /// Decode and validate the closed persistent wire contract against its journal authority.
+    ///
+    /// This is intentionally stricter than generic JSON deserialization: exact field order,
+    /// provenance/value relationships, producer identity, and interoperable integer bounds are
+    /// all checked before a receipt becomes trusted runtime data. The caller must supply the
+    /// persisted `execution_started` envelope so a valid-looking but unauthenticated binding can
+    /// never be accepted on shape alone.
+    pub fn from_stable_bytes(
+        bytes: &[u8],
+        execution_start: &EventEnvelope,
+    ) -> Result<Self, AccountingReceiptError> {
+        let wire: OwnedAccountingReceiptWire = serde_json::from_slice(bytes)?;
+        if wire.schema_version != ACCOUNTING_RECEIPT_SCHEMA_VERSION {
+            return Err(AccountingReceiptError::InvalidWireContract);
+        }
+        let receipt = Self {
+            execution_binding: wire.execution_binding,
+            fields: wire
+                .fields
+                .into_iter()
+                .map(|field| {
+                    (
+                        field.name,
+                        CostField {
+                            value: field.value,
+                            provenance: field.provenance,
+                            producer: field.producer,
+                            note: field.note,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        receipt.validate_wire_contract()?;
+        if receipt.execution_binding != validated_execution_binding(execution_start)? {
+            return Err(AccountingReceiptError::InvalidExecutionBinding);
+        }
+        Ok(receipt)
+    }
+
+    pub fn field(&self, name: &str) -> Option<&CostField> {
+        self.fields.iter().find(|(n, _)| n == name).map(|(_, f)| f)
+    }
+
+    fn validate_wire_contract(&self) -> Result<(), AccountingReceiptError> {
+        if self.execution_binding.scope.execution_id().is_none()
+            || self.fields.len() != ACCOUNTING_FIELD_NAMES.len()
+        {
+            return Err(AccountingReceiptError::InvalidWireContract);
+        }
+        for ((name, field), expected_name) in self.fields.iter().zip(ACCOUNTING_FIELD_NAMES.iter())
+        {
+            if name != expected_name
+                || field
+                    .value
+                    .is_some_and(|value| value > MAX_JSON_SAFE_INTEGER)
+                || field.note.chars().count() > 2048
+            {
+                return Err(AccountingReceiptError::InvalidWireContract);
+            }
+            let valid_shape = match name.as_str() {
+                PROVIDER_REPORTED_INPUT_TOKENS_FIELD => match field.provenance {
+                    CostProvenance::Measured => {
+                        field.value.is_some()
+                            && field.producer.as_deref() == Some(MODEL_USAGE_PRODUCER)
+                            && field.note == PROVIDER_REPORTED_INPUT_NOTE
+                    }
+                    CostProvenance::Unavailable => {
+                        field.value.is_none()
+                            && field.producer.is_none()
+                            && field.note == PROVIDER_REPORTED_INPUT_UNAVAILABLE_NOTE
+                    }
+                    CostProvenance::Derived => false,
+                },
+                OUTPUT_TOKENS_FIELD => match field.provenance {
+                    CostProvenance::Measured => {
+                        field.value.is_some()
+                            && field.producer.as_deref() == Some(MODEL_USAGE_PRODUCER)
+                            && field.note.is_empty()
+                    }
+                    CostProvenance::Unavailable => {
+                        field.value.is_none()
+                            && field.producer.is_none()
+                            && field.note == OUTPUT_UNAVAILABLE_NOTE
+                    }
+                    CostProvenance::Derived => false,
+                },
+                PROVIDER_TOTAL_INPUT_TOKENS_FIELD => {
+                    field.value.is_none()
+                        && field.provenance == CostProvenance::Unavailable
+                        && field.producer.is_none()
+                        && field.note == PROVIDER_TOTAL_INPUT_UNAVAILABLE_NOTE
+                }
+                _ => {
+                    field.value.is_none()
+                        && field.provenance == CostProvenance::Unavailable
+                        && field.producer.is_none()
+                        && field.note == UNAVAILABLE_NOTE
+                }
+            };
+            if !valid_shape {
+                return Err(AccountingReceiptError::InvalidWireContract);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validated_execution_binding(
+    execution_start: &EventEnvelope,
+) -> Result<ExecutionBinding, AccountingReceiptError> {
+    let EventKind::ExecutionStarted(started) = &execution_start.kind else {
+        return Err(AccountingReceiptError::InvalidExecutionBinding);
+    };
+    let scoped_execution = execution_start
+        .scope
+        .execution_id()
+        .ok_or(AccountingReceiptError::InvalidExecutionBinding)?;
+    if scoped_execution.as_str() != started.execution_id.as_str()
+        || graphhelm_events::compute_event_hash(
+            execution_start,
+            execution_start.previous_hash.as_str(),
+        )
+        .map_err(|_| AccountingReceiptError::InvalidExecutionBinding)?
+            != execution_start.event_hash.as_str()
+    {
+        return Err(AccountingReceiptError::InvalidExecutionBinding);
+    }
+    Ok(ExecutionBinding {
+        binding_kind: ExecutionBindingKind::ExecutionStartedEvent,
+        schema_id: ExecutionBindingSchema::EventEnvelope,
+        schema_version: execution_start.schema_version,
+        event_id: execution_start.event_id.clone(),
+        event_hash: execution_start.event_hash.clone(),
+        scope: execution_start.scope.clone(),
+        producer_actor: execution_start.actor.clone(),
+    })
 }
 
 /// Index cost, in the two shapes that must never become one number.

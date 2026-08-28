@@ -149,11 +149,219 @@ fn repository_has_one_safe_initial_release() {
         )
         .collect::<std::collections::BTreeSet<_>>();
 
-    assert_eq!(catalog.release_version, Version::new(1, 0, 0));
-    assert_eq!(catalog.schemas.len(), 15);
+    assert_eq!(catalog.release_version, Version::new(1, 1, 0));
+    assert_eq!(catalog.schemas.len(), 16);
     assert!(!root.join("schemas/releases/1.1.0").exists());
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 50);
-    assert_eq!(declared_resources.len(), 52);
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 52);
+    assert_eq!(declared_resources.len(), 54);
+}
+
+#[test]
+fn current_catalog_adds_execution_accounting_without_backfilling_release_1_0_0() {
+    let root = repository_root();
+    let current: SchemaCatalog =
+        serde_json::from_slice(&fs::read(root.join("schemas/catalog.json")).unwrap()).unwrap();
+    let release: SchemaCatalog = serde_json::from_slice(
+        &fs::read(root.join("schemas/releases/1.0.0/catalog.json")).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(current.release_version, Version::new(1, 1, 0));
+    assert_eq!(current.schemas.len(), 16);
+    assert!(current.schemas.contains_key("execution-accounting-receipt"));
+    assert_eq!(release.release_version, Version::new(1, 0, 0));
+    assert_eq!(release.schemas.len(), 15);
+    assert!(!release.schemas.contains_key("execution-accounting-receipt"));
+    assert!(
+        !root
+            .join("schemas/releases/1.0.0/execution-accounting-receipt.schema.json")
+            .exists()
+    );
+}
+
+#[test]
+fn execution_accounting_schema_accepts_the_receipt_and_rejects_unbounded_or_extra_data() {
+    const SCHEMA_ID: &str = "https://p50.dev/schemas/execution-accounting-receipt.schema.json";
+    let root = repository_root();
+    let schema: Value = serde_json::from_slice(
+        &fs::read(root.join("schemas/execution-accounting-receipt.schema.json")).unwrap(),
+    )
+    .unwrap();
+    let validators = OfflineSchemaSet::compile(BTreeMap::from([(SCHEMA_ID.to_owned(), schema)]))
+        .expect("the new schema compiles offline");
+    let field =
+        |name: &str, value: Option<u64>, provenance: &str, producer: Option<&str>, note: &str| {
+            json!({
+                "name": name,
+                "value": value,
+                "provenance": provenance,
+                "producer": producer,
+                "note": note
+            })
+        };
+    let binding = json!({
+        "bindingKind": "execution_started_event",
+        "schemaId": "https://p50.dev/schemas/event-envelope.schema.json",
+        "schemaVersion": "1.0.0",
+        "eventId": "execution-start-event-1",
+        "eventHash": format!("sha256:{}", "a".repeat(64)),
+        "scope": {
+            "workspaceId": "workspace-accounting",
+            "projectId": "project-accounting",
+            "executionId": "execution-accounting-fixed"
+        },
+        "producerActor": {"type": "system", "id": "runtime-driver"}
+    });
+    let mut receipt = json!({
+        "schemaVersion": "1.0.0",
+        "executionBinding": binding,
+        "fields": [
+            field("orientation_tokens", None, "unavailable", None, "not measured by this runtime slice"),
+            field("zero_result_queries", None, "unavailable", None, "not measured by this runtime slice"),
+            field("retrieval_pages", None, "unavailable", None, "not measured by this runtime slice"),
+            field("retrieval_retries", None, "unavailable", None, "not measured by this runtime slice"),
+            field("retrieval_fallbacks", None, "unavailable", None, "not measured by this runtime slice"),
+            field("summary_tokens", None, "unavailable", None, "not measured by this runtime slice"),
+            field("provider_reported_input_tokens", Some(12), "measured", Some("model_gateway"), "raw WorkSummary.input_tokens reported by the provider boundary; may exclude cache read and cache creation tokens"),
+            field("provider_total_input_tokens", None, "unavailable", None, "provider total input is unavailable because WorkSummary may exclude cache read and cache creation tokens"),
+            field("compiled_input_tokens", None, "unavailable", None, "not measured by this runtime slice"),
+            field("output_tokens", Some(5), "measured", Some("model_gateway"), ""),
+            field("formatting_tokens", None, "unavailable", None, "not measured by this runtime slice"),
+            field("index_cost_cold", None, "unavailable", None, "not measured by this runtime slice"),
+            field("index_cost_amortized", None, "unavailable", None, "not measured by this runtime slice")
+        ]
+    });
+    assert!(
+        validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty()
+    );
+
+    let measured_provider_input = receipt["fields"][6].clone();
+    let measured_output = receipt["fields"][9].clone();
+    receipt["fields"][6]["value"] = Value::Null;
+    receipt["fields"][6]["provenance"] = json!("unavailable");
+    receipt["fields"][6]["producer"] = Value::Null;
+    receipt["fields"][6]["note"] =
+        json!("provider-reported input tokens were not reported by the model boundary");
+    receipt["fields"][9]["value"] = Value::Null;
+    receipt["fields"][9]["provenance"] = json!("unavailable");
+    receipt["fields"][9]["producer"] = Value::Null;
+    receipt["fields"][9]["note"] = json!("output_tokens was not reported by the model boundary");
+    assert!(
+        validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "provider fields may be unavailable, but never synthetic zero"
+    );
+    receipt["fields"][6] = measured_provider_input;
+    receipt["fields"][9] = measured_output;
+
+    receipt["executionBinding"]["producerActor"]["id"] = json!("a".repeat(256));
+    assert!(
+        validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "the exact persisted actor identity may use the full ActorId bound"
+    );
+    receipt["executionBinding"]["producerActor"]["id"] = json!("producer:forbidden");
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "the schema must reject an ID that ActorId cannot deserialize"
+    );
+    receipt["executionBinding"]["producerActor"]["id"] = json!("runtime-driver");
+
+    for (field, wrong) in [
+        ("bindingKind", json!("artifact_binding")),
+        (
+            "schemaId",
+            json!("https://p50.dev/schemas/context-capsule.schema.json"),
+        ),
+        ("eventHash", json!(format!("sha512:{}", "a".repeat(64)))),
+    ] {
+        let original = receipt["executionBinding"][field].clone();
+        receipt["executionBinding"][field] = wrong;
+        assert!(
+            !validators
+                .validate(SCHEMA_ID, &receipt, "receipt")
+                .is_empty(),
+            "the closed execution binding must reject wrong {field}"
+        );
+        receipt["executionBinding"][field] = original;
+    }
+
+    let closed_binding = receipt["executionBinding"].clone();
+    receipt["executionBinding"] = json!({
+        "artifactId": "execution-start-event-1",
+        "schemaId": "https://p50.dev/schemas/event-envelope.schema.json",
+        "documentVersion": "1.0.0",
+        "schemaVersion": "1.0.0",
+        "digest": format!("sha256:{}", "a".repeat(64)),
+        "scope": {
+            "workspaceId": "workspace-accounting",
+            "projectId": "project-accounting",
+            "executionId": "execution-accounting-fixed"
+        },
+        "producer": "runtime-driver",
+        "snapshots": {
+            "repoSnapshot": "repo-snapshot",
+            "indexGeneration": "repo-snapshot"
+        }
+    });
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "a generic ArtifactBinding must not masquerade as execution identity"
+    );
+    receipt["executionBinding"] = closed_binding;
+
+    receipt["fields"][6]["value"] = json!(9_007_199_254_740_992_u64);
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "token counts above JSON safe integer must be rejected"
+    );
+    receipt["fields"][6]["value"] = json!(12);
+
+    receipt["fields"][0]["note"] = json!("PRIVATE-PROMPT-SENTINEL");
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "receipt notes are a closed vocabulary, not a secret-bearing free-text channel"
+    );
+    receipt["fields"][0]["note"] = json!("not measured by this runtime slice");
+
+    let unavailable_compiled = receipt["fields"][8].clone();
+    receipt["fields"][8]["value"] = json!(12);
+    receipt["fields"][8]["provenance"] = json!("measured");
+    receipt["fields"][8]["producer"] = json!("model_gateway");
+    receipt["fields"][8]["note"] = json!("");
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty(),
+        "compiled input must remain unavailable until its complete producer exists"
+    );
+    receipt["fields"][8] = unavailable_compiled;
+
+    receipt["secretPrompt"] = json!("must never enter Evidence");
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty()
+    );
+    receipt.as_object_mut().unwrap().remove("secretPrompt");
+    receipt["fields"][0]["note"] = json!("x".repeat(2049));
+    assert!(
+        !validators
+            .validate(SCHEMA_ID, &receipt, "receipt")
+            .is_empty()
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -162,7 +370,7 @@ enum RepositoryPackage {
     Release1_0_0,
 }
 
-const SAFE_SCHEMA_NAMES: [&str; 15] = [
+const RELEASE_1_0_0_SCHEMA_NAMES: [&str; 15] = [
     "agent",
     "artifact-reference",
     "claim",
@@ -170,6 +378,25 @@ const SAFE_SCHEMA_NAMES: [&str; 15] = [
     "edge",
     "event-envelope",
     "evidence-record",
+    "extension",
+    "graph",
+    "graph-signal",
+    "node",
+    "persisted-graph-version",
+    "policy-waiver",
+    "repository-scope",
+    "sensitivity",
+];
+
+const CURRENT_SCHEMA_NAMES: [&str; 16] = [
+    "agent",
+    "artifact-reference",
+    "claim",
+    "context-capsule",
+    "edge",
+    "event-envelope",
+    "evidence-record",
+    "execution-accounting-receipt",
     "extension",
     "graph",
     "graph-signal",
@@ -198,16 +425,24 @@ impl RepositoryPackage {
     fn schema_path(self, name: &str) -> String {
         format!("{}/{}.schema.json", self.schema_directory(), name)
     }
+
+    fn schema_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Current => &CURRENT_SCHEMA_NAMES,
+            Self::Release1_0_0 => &RELEASE_1_0_0_SCHEMA_NAMES,
+        }
+    }
 }
 
 fn package_layout_is_exact(catalog: &SchemaCatalog, package: RepositoryPackage) -> bool {
-    catalog.schemas.len() == SAFE_SCHEMA_NAMES.len()
+    let schema_names = package.schema_names();
+    catalog.schemas.len() == schema_names.len()
         && catalog
             .schemas
             .keys()
             .map(String::as_str)
-            .eq(SAFE_SCHEMA_NAMES)
-        && SAFE_SCHEMA_NAMES
+            .eq(schema_names.iter().copied())
+        && schema_names
             .iter()
             .all(|name| catalog.schemas[*name].path == package.schema_path(name))
 }
@@ -224,8 +459,9 @@ fn package_schema_inventory(root: &Path, package: RepositoryPackage) -> Vec<Stri
     inventory
 }
 
-fn expected_schema_inventory() -> Vec<String> {
-    let mut inventory = SAFE_SCHEMA_NAMES
+fn expected_schema_inventory(package: RepositoryPackage) -> Vec<String> {
+    let mut inventory = package
+        .schema_names()
         .iter()
         .map(|name| format!("{name}.schema.json"))
         .collect::<Vec<_>>();
@@ -241,9 +477,10 @@ fn load_repo_catalog(package: RepositoryPackage) -> CatalogResources {
     assert!(package_layout_is_exact(&catalog, package));
     assert_eq!(
         package_schema_inventory(&root, package),
-        expected_schema_inventory()
+        expected_schema_inventory(package)
     );
-    let schemas = SAFE_SCHEMA_NAMES
+    let schemas = package
+        .schema_names()
         .iter()
         .map(|name| {
             let document =
@@ -293,9 +530,9 @@ fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
     let current = load_repo_catalog(RepositoryPackage::Current);
     let release = load_repo_catalog(RepositoryPackage::Release1_0_0);
 
-    assert_eq!(current.catalog.release_version, Version::new(1, 0, 0));
+    assert_eq!(current.catalog.release_version, Version::new(1, 1, 0));
     assert_eq!(release.catalog.release_version, Version::new(1, 0, 0));
-    assert_eq!(current.catalog.schemas.len(), 15);
+    assert_eq!(current.catalog.schemas.len(), 16);
     assert_eq!(release.catalog.schemas.len(), 15);
     for (label, resources) in [("current", &current), ("release", &release)] {
         let report = validate_catalog(resources);
@@ -311,7 +548,7 @@ fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
         );
     }
 
-    for name in SAFE_SCHEMA_NAMES {
+    for name in RELEASE_1_0_0_SCHEMA_NAMES {
         assert_eq!(
             fs::read(root.join(RepositoryPackage::Current.schema_path(name))).unwrap(),
             fs::read(root.join(RepositoryPackage::Release1_0_0.schema_path(name))).unwrap(),
@@ -481,9 +718,9 @@ fn path_content_slots_are_identical_closed_1_0_0_contracts() {
     );
 }
 
-// Prevents the immutable snapshot from enforcing different public outcomes than the root package.
+// Prevents the immutable snapshot from enforcing different public outcomes for shared schemas.
 #[test]
-fn current_and_1_0_0_release_enforce_identical_public_schema_contracts() {
+fn current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts() {
     let root = repository_root();
     let current = load_repo_catalog(RepositoryPackage::Current);
     let release = load_repo_catalog(RepositoryPackage::Release1_0_0);
@@ -498,9 +735,12 @@ fn current_and_1_0_0_release_enforce_identical_public_schema_contracts() {
         .filter(|case| case["kind"] == "schema")
         .collect::<Vec<_>>();
 
-    assert_eq!(schema_cases.len(), 30);
+    assert_eq!(schema_cases.len(), 32);
     for case in schema_cases {
         let name = case["schema"].as_str().unwrap();
+        if name == "execution-accounting-receipt" {
+            continue;
+        }
         let input = case["input"].as_str().unwrap();
         let document: Value = serde_json::from_slice(&fs::read(root.join(input)).unwrap()).unwrap();
         let schema_id = format!("https://p50.dev/schemas/{name}.schema.json");

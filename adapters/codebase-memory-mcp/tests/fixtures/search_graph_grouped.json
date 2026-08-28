@@ -1,0 +1,22 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"total\":1,\"count\":1,\"cols\":[\"name\",\"label\",\"lines\",\"in\",\"out\"],\"groups\":[{\"qn_prefix\":\"F-github-GraphHelm.core.tool-broker.src.record\",\"file\":\"core/tool-broker/src/record.rs\",\"rows\":[[\"ToolCallRecord\",\"Struct\",\"39-53\",8,2]]}],\"has_more\":false}"
+    }
+  ],
+  "structuredContent": {
+    "total": 1,
+    "count": 1,
+    "cols": ["name", "label", "lines", "in", "out"],
+    "groups": [
+      {
+        "qn_prefix": "F-github-GraphHelm.core.tool-broker.src.record",
+        "file": "core/tool-broker/src/record.rs",
+        "rows": [["ToolCallRecord", "Struct", "39-53", 8, 2]]
+      }
+    ],
+    "has_more": false
+  },
+  "isError": false
+}

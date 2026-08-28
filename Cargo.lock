@@ -921,6 +921,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-codebase-memory-mcp"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-tool-broker",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "graphhelm-development-benchmark"
 version = "0.1.0"
 dependencies = [

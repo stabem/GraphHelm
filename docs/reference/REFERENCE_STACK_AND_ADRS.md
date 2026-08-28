@@ -485,3 +485,51 @@ Plugin validation and task-local Skill Capsules can ship before a general instal
 still requires a separately installed observer and must refuse honestly when absent. This ADR makes
 D-041 normative and supersedes the universal-method wording in `AGENTS.md`; it does not weaken the
 local gate or completion evidence requirements.
+
+## 33. ADR-028 — Containment-safe code-index provider sessions
+
+**Status:** accepted.
+
+**Context:** issue #480 introduces the first consumer of codebase-memory-mcp's machine-readable
+`structuredContent`. The provider keeps its active index under `CBM_CACHE_DIR`, and every retrieval
+process must address the same canonical cache root. The current Tool Host deliberately clears the
+environment, redirects home and temporary directories, and runs a `ShellAction` inside a Tier 1
+ephemeral worktree. Passing the host cache into that sandbox would expose a writable path outside
+containment; omitting it would silently select an empty or different index. Direct process launch,
+automatic indexing, and a second ungoverned MCP path would all bypass the Tool Broker. ADR-026 also
+named `structuredContent` as a trigger to adopt an MCP SDK instead of growing GraphHelm's hand-rolled
+stdio server layer.
+
+**Decision:** separate pure decoding from live provider access. A pure adapter may decode an already
+captured MCP tool result and derive a transport receipt from an existing `ToolCallRecord`; this does
+not create a session, transport, or protocol implementation and therefore does not extend the
+hand-rolled ADR-026 server. It must fail closed on absent or malformed `structuredContent`, provider
+errors, excessive bytes or nesting, inconsistent page metadata, repeated cursors or offsets, page
+limits, and unfinished pagination. Provider `best_effort` coverage remains `Unknown`; it can never
+be promoted to complete coverage. Receipts expose only facts present in `ToolCallRecord`; invocation
+and executable identity remain explicitly unavailable.
+
+Live wiring is deferred until the Tool Broker owns a bounded provider-session capability. That
+capability must use a maintained MCP SDK, satisfying ADR-026's revisit trigger, and must verify the
+provider executable before starting it. The broker copies a GraphHelm-owned, immutable provider
+snapshot into Tier 1, pins and verifies its digest, and sets `CBM_CACHE_DIR` only to a path inside
+that sandbox. Index production is a separate authorized operation and never occurs during
+retrieval. The session returns recorded tool results to the pure decoder. Until this complete path
+exists, the live boundary returns a typed unavailable result; no caller may fall back to a direct
+command, host cache mount, network call, or automatic index mutation.
+
+**Rejected alternatives:** passing the host `CBM_CACHE_DIR` through `ShellAction`; allowing provider
+writes outside Tier 1; starting codebase-memory-mcp directly from Runtime or an adapter; adding
+provider-specific environment escape hatches to Tool Host; treating a fresh empty cache as the
+requested project; auto-indexing on retrieval; expanding GraphHelm's hand-rolled MCP server into a
+client/session implementation; and inventing executable or invocation identity from stream digests.
+
+**Consequences:** the first #480 slice is useful offline: it provides strict, reusable decoding and
+honest receipts against real provider-shaped fixtures, but claims no live connectivity. The
+follow-up broker capability must define snapshot production, digest verification, executable
+verification, session lifetime, byte/page limits, and audit evidence before Runtime, CLI, API, or
+MCP surfaces can consume it. Fixture capture and upstream-source provenance remain recorded beside
+the [decoder fixtures](../../adapters/codebase-memory-mcp/tests/fixtures/README.md), so a shape
+change requires evidence rather than an invented local contract. This makes D-042 normative,
+refines ADR-008, ADR-013, ADR-026 and D-041, and does not weaken Tool Broker authorization or
+containment.

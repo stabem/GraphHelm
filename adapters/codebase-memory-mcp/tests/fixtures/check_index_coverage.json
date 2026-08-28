@@ -1,0 +1,61 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "provider text view deliberately ignored by the structured decoder"
+    }
+  ],
+  "structuredContent": {
+    "project": "F-github-GraphHelm",
+    "signal": "best_effort",
+    "indexed_at": "2026-08-26T14:18:14Z",
+    "metadata": {
+      "generation": "2026-08-26T14:18:14Z",
+      "index_mode": "full",
+      "recorded_at": "2026-08-26T14:18:14Z",
+      "recording_status": "truncated",
+      "ignored_files_stored": 2000,
+      "ignored_files_total": 5925,
+      "hash_records_complete": true,
+      "coverage_version": 3,
+      "generation_matches": true
+    },
+    "paths": [
+      {
+        "requested_path": "core/tool-broker/src/record.rs",
+        "path": "core/tool-broker/src/record.rs",
+        "status": "partial",
+        "freshness": "metadata_match",
+        "recommended_action": "read_ranges_and_verify_scope",
+        "coverage": [
+          {
+            "path": "core/tool-broker/src/record.rs",
+            "kind": "parse_partial",
+            "detail": "39-53",
+            "match": "exact",
+            "ranges": [{"start": 39, "end": 53}]
+          }
+        ]
+      }
+    ],
+    "scopes": [
+      {
+        "requested_scope": "adapters",
+        "scope": "adapters",
+        "total": 1,
+        "has_more": false,
+        "entries": [
+          {
+            "path": "adapters/postgres-event-store/migrations/0001_event_evidence.sql",
+            "kind": "parse_partial",
+            "detail": "6-9",
+            "ranges": [{"start": 6, "end": 9}]
+          }
+        ],
+        "status": "known_gaps"
+      }
+    ],
+    "caveat": "Best-effort signal only."
+  },
+  "isError": false
+}

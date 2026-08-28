@@ -10,6 +10,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use sha2::{Digest, Sha256};
+
 struct ServerGuard {
     child: Child,
 }
@@ -291,7 +294,7 @@ impl Sleeper {
     /// kinds — the honest detector for "a ring implies a durable trigger" (checking after
     /// the HTTP response returns would be blind to an early ring).
     fn arm(logical_rendezvous_id: &str, events: &Path) -> Self {
-        let rendezvous_id = runner_scoped_rendezvous_id(logical_rendezvous_id);
+        let rendezvous_id = fixture_scoped_rendezvous_id(logical_rendezvous_id, events);
         let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
         let events = events.to_path_buf();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -333,7 +336,7 @@ impl Sleeper {
         }
     }
 
-    /// Creates the runner-scoped physical rendezvous and persists that exact id in its lease.
+    /// Creates the fixture-scoped physical rendezvous and persists that exact id in its lease.
     /// Callers provide only the stable logical id, so a new test cannot accidentally arm a
     /// machine-global fixed pipe while another runner owns it.
     fn arm_lease(logical_rendezvous_id: &str, events: &Path, execution: &str, cursor: u64) -> Self {
@@ -352,10 +355,37 @@ impl Sleeper {
 }
 
 #[cfg(windows)]
-/// Keeps the logical rendezvous stable inside one test runner while isolating the machine-global
-/// named-pipe namespace from another runner executing the same test at the same time.
-fn runner_scoped_rendezvous_id(logical_id: &str) -> String {
-    format!("{logical_id}-runner-{}", std::process::id())
+fn serve_before_arming_sleeper(
+    events: &Path,
+    execution: &str,
+    logical_rendezvous_id: &str,
+    env: &[(&str, &str)],
+) -> (ServerGuard, String, String, Sleeper) {
+    // Starting the child can exceed the sleeper's strict ten-second ring budget under workspace
+    // load. Make child readiness a setup precondition so that budget measures only the wake path.
+    let (guard, address, token) = serve_with_env(events, env);
+    let sleeper = Sleeper::arm_lease(logical_rendezvous_id, events, execution, head(events));
+    (guard, address, token, sleeper)
+}
+
+#[cfg(windows)]
+/// Keeps a logical re-arm stable inside one fixture while isolating the machine-global named-pipe
+/// namespace from parallel fixtures in this process and from another test-process runner. Hashing
+/// the store path avoids exposing the user's temporary path in either the lease or the pipe name.
+fn fixture_scoped_rendezvous_id(logical_id: &str, events: &Path) -> String {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    let mut digest = Sha256::new();
+    digest.update(b"graphhelm-wake-test-fixture-v1\0");
+    for unit in events.as_os_str().encode_wide() {
+        digest.update(unit.to_le_bytes());
+    }
+    let fixture = hex::encode(digest.finalize());
+    format!(
+        "{logical_id}-runner-{}-{}",
+        std::process::id(),
+        &fixture[..16]
+    )
 }
 
 fn kinds_snapshot(events: &Path) -> Vec<String> {
@@ -378,9 +408,8 @@ fn an_append_beyond_the_cursor_rings_one_byte_only_after_the_trigger_is_durable(
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     start_execution(&events, directory.path(), "exec-wake-ring");
-    let armed_at = head(&events);
-    let sleeper = Sleeper::arm_lease("rvz-ring-1", &events, "exec-wake-ring", armed_at);
-    let (_guard, address, token) = serve(&events);
+    let (_guard, address, token, sleeper) =
+        serve_before_arming_sleeper(&events, "exec-wake-ring", "rvz-ring-1", &[]);
 
     let before = head(&events);
     let (status, reply) = post_json(
@@ -420,34 +449,48 @@ fn an_append_beyond_the_cursor_rings_one_byte_only_after_the_trigger_is_durable(
 
 #[cfg(windows)]
 #[test]
-fn sleeper_arm_scopes_the_real_pipe_and_reuses_it_for_a_logical_rearm() {
-    let directory = tempfile::tempdir().unwrap();
-    let events = directory.path().join("events");
-    start_execution(&events, directory.path(), "exec-runner-isolation");
+fn sleeper_arm_isolates_concurrent_fixtures_and_reuses_a_logical_rearm() {
+    let first_directory = tempfile::tempdir().unwrap();
+    let first_events = first_directory.path().join("events");
+    start_execution(
+        &first_events,
+        first_directory.path(),
+        "exec-runner-isolation-a",
+    );
+    let second_directory = tempfile::tempdir().unwrap();
+    let second_events = second_directory.path().join("events");
+    start_execution(
+        &second_events,
+        second_directory.path(),
+        "exec-runner-isolation-b",
+    );
 
     let logical_id = "rvz-runner-collision";
-    let first = Sleeper::arm(logical_id, &events);
-    let physical_id = first.rendezvous_id().to_owned();
+    let first = Sleeper::arm(logical_id, &first_events);
+    let first_physical_id = first.rendezvous_id().to_owned();
+    let second = Sleeper::arm(logical_id, &second_events);
+    let second_physical_id = second.rendezvous_id().to_owned();
     assert_ne!(
-        physical_id, logical_id,
+        first_physical_id, logical_id,
         "the helper must scope the real pipe"
     );
-    assert_eq!(
-        physical_id,
-        format!("{logical_id}-runner-{}", std::process::id()),
-        "another test runner must derive a different machine-global pipe name"
+    assert_ne!(
+        first_physical_id, second_physical_id,
+        "parallel fixtures in one test process must own different physical pipes"
     );
-    ring_pipe(&physical_id, b"a").unwrap();
+    ring_pipe(&first_physical_id, b"a").unwrap();
+    ring_pipe(&second_physical_id, b"b").unwrap();
     assert_eq!(first.wait().0, b"a");
-
-    let second = Sleeper::arm(logical_id, &events);
-    assert_eq!(
-        second.rendezvous_id(),
-        physical_id,
-        "a logical re-arm inside one runner must target the same physical pipe"
-    );
-    ring_pipe(second.rendezvous_id(), b"b").unwrap();
     assert_eq!(second.wait().0, b"b");
+
+    let rearmed = Sleeper::arm(logical_id, &first_events);
+    assert_eq!(
+        rearmed.rendezvous_id(),
+        first_physical_id,
+        "a logical re-arm inside one fixture must target the same physical pipe"
+    );
+    ring_pipe(rearmed.rendezvous_id(), b"c").unwrap();
+    assert_eq!(rearmed.wait().0, b"c");
 }
 
 #[cfg(windows)]
@@ -457,9 +500,8 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
     let events = directory.path().join("events");
     start_execution(&events, directory.path(), "exec-wake-burn");
     let logical_rendezvous_id = "rvz-burn-1";
-    let armed_at = head(&events);
-    let sleeper = Sleeper::arm_lease(logical_rendezvous_id, &events, "exec-wake-burn", armed_at);
-    let (_guard, address, token) = serve(&events);
+    let (_guard, address, token, sleeper) =
+        serve_before_arming_sleeper(&events, "exec-wake-burn", logical_rendezvous_id, &[]);
 
     // First trigger rings and burns.
     let (status, _reply) = post_json(
@@ -1791,10 +1833,12 @@ fn a_designed_phase3_delay_is_absorbed_by_the_receipt_wait() {
     let events = directory.path().join("events");
     let execution = "exec-wake-delay";
     start_execution(&events, directory.path(), execution);
-    let armed_at = head(&events);
-    let sleeper = Sleeper::arm_lease("rvz-delay-1", &events, execution, armed_at);
-    let (_guard, base, token) =
-        serve_with_env(&events, &[("GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS", "2000")]);
+    let (_guard, base, token, sleeper) = serve_before_arming_sleeper(
+        &events,
+        execution,
+        "rvz-delay-1",
+        &[("GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS", "2000")],
+    );
 
     let evidence_out = directory.path().join("delay-evidence.json");
     let (status, reply) = post_json(

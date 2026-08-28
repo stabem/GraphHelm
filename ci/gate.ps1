@@ -223,6 +223,35 @@ $failed = @()
 $stageRecords = New-Object System.Collections.Generic.List[object]
 $runStartUtc = [DateTime]::UtcNow
 
+# Evidence can contain connection strings printed by a failing test. Redact before the line reaches
+# either Write-Host (the human gate log) or $capturedLines (the machine-readable manifest). Keep
+# this pure so PowerShell 5.1 and PowerShell Core apply exactly the same substitutions.
+function Protect-GateEvidenceLine {
+    param([AllowEmptyString()] [string] $Line)
+
+    $protected = [regex]::Replace(
+        $Line,
+        '(?i)\b(postgres(?:ql)?://[^:\s/@]+:)([^@\s]+)(@)',
+        '$1***$3'
+    )
+    $protected = [regex]::Replace(
+        $protected,
+        '(?i)\b(PGPASSWORD|password|passwd|pwd)(\s*[:=]\s*)([^\s;]+)',
+        '$1$2***'
+    )
+    $protected = [regex]::Replace(
+        $protected,
+        '(?i)(--pwfile(?:=|\s+))(?:"[^"]+"|''[^'']+''|\S+)',
+        '$1[REDACTED_SECRET_FILE]'
+    )
+    $protected = [regex]::Replace(
+        $protected,
+        '(?i)(?:"[^"\r\n]*initdb\.pwfile"|''[^''\r\n]*initdb\.pwfile''|(?:[A-Za-z]:[\\/]|/)[^\s;]*initdb\.pwfile)',
+        '[REDACTED_SECRET_FILE]'
+    )
+    return $protected
+}
+
 # Runs ci/postgres.ps1 as a fully detached child.
 #
 # Two hazards make the obvious invocations wrong. Calling it with `&` propagates its `exit` and
@@ -232,6 +261,12 @@ $runStartUtc = [DateTime]::UtcNow
 # temporary files of its own closes both, and `WaitForExit` waits for that process alone rather than
 # for its descendants - the server is stopped by postgres.ps1's own teardown before it returns.
 function Invoke-Postgres {
+    param(
+        # Focused harness tests inject a deterministic child without starting PostgreSQL or the
+        # cargo matrix. Production callers omit this and retain the checked-in postgres.ps1.
+        [string] $ScriptPath = (Join-Path $PSScriptRoot 'postgres.ps1')
+    )
+
     $hostExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
     $outFile = [System.IO.Path]::GetTempFileName()
     $errFile = [System.IO.Path]::GetTempFileName()
@@ -239,7 +274,7 @@ function Invoke-Postgres {
         $process = Start-Process -FilePath $hostExe -PassThru -NoNewWindow `
             -ArgumentList @(
                 '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                '-File', (Join-Path $PSScriptRoot 'postgres.ps1')
+                '-File', $ScriptPath
             ) `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
         # Touching Handle caches it so ExitCode is readable after the wait. Without this the
@@ -248,7 +283,10 @@ function Invoke-Postgres {
         $process.WaitForExit()
         foreach ($file in @($outFile, $errFile)) {
             if (Test-Path -LiteralPath $file) {
-                Get-Content -LiteralPath $file -ErrorAction SilentlyContinue |
+                # Bound each child stream before publishing it. The manifest applies its tighter
+                # combined 40-line tail below; the human log gets at most 80 stdout plus 80 stderr
+                # lines from this detached stage instead of an unbounded cargo/test transcript.
+                Get-Content -LiteralPath $file -Tail 80 -ErrorAction SilentlyContinue |
                     ForEach-Object { Write-Host $_ }
             }
         }
@@ -282,7 +320,16 @@ function Invoke-Stage {
         # this on failure, so a reader sees the named assertion in the JSON itself, not only in a
         # console scrollback that may already be gone by the time anyone reads the manifest.
         $capturedLines = New-Object System.Collections.Generic.List[string]
-        & $Body | ForEach-Object { $capturedLines.Add([string]$_); Write-Host $_ }
+        # Invoke-Postgres publishes its detached child's files with Write-Host so that reading
+        # them cannot become this function's numeric return value. Write-Host is information
+        # stream 6 in Windows PowerShell 5.1 and PowerShell Core. Merge only that stream into the
+        # success stream here, then redact once before both evidence sinks. Without 6>&1 the child
+        # is visible at best in the console but absent from outputTail (#484).
+        & $Body 6>&1 | ForEach-Object {
+            $line = Protect-GateEvidenceLine -Line ([string]$_)
+            $capturedLines.Add($line)
+            Write-Host $line
+        }
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous

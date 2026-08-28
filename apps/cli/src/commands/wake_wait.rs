@@ -21,10 +21,43 @@ use crate::output::{CommandOutput, Outcome};
 
 const COMMAND: &str = "wake.wait";
 const MCP_WAKE_INVALID: &str = "GHCLI017_WAKE_INVALID";
+const TEST_CAUSAL_TRANSCRIPT: &str = "GRAPHHELM_TEST_WAKE_CAUSAL_TRANSCRIPT";
+const TEST_CAUSAL_TRANSCRIPT_MAX_BYTES: u64 = 4 * 1024;
 
 /// Timeout is not a failure: the dead-man design MEANS timeouts happen routinely. Exit 3
 /// distinguishes "nothing rang" from success (0) and refusal (2) for hook-friendly callers.
 const EXIT_TIMEOUT: i32 = 3;
+
+/// Fixed, test-owned causal marks for the real deadline path. The seam is absent unless
+/// its private environment variable names a transcript file, and its single child writer
+/// refuses each append that would grow the transcript beyond 4 KiB. Failures are
+/// deliberately unobservable to the command: a test observer must never change the wake
+/// result or leak its local path through CLI output.
+fn record_test_causal_mark(mark: &str) {
+    let Some(path) = std::env::var_os(TEST_CAUSAL_TRANSCRIPT) else {
+        return;
+    };
+    let Ok(mut transcript) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let Some(next_len) = transcript
+        .metadata()
+        .ok()
+        .and_then(|metadata| metadata.len().checked_add(mark.len().try_into().ok()?))
+        .and_then(|length| length.checked_add(1))
+    else {
+        return;
+    };
+    if next_len > TEST_CAUSAL_TRANSCRIPT_MAX_BYTES {
+        return;
+    }
+    use std::io::Write as _;
+    let _ = writeln!(transcript, "{mark}");
+}
 
 fn refuse(message: &str, pointer: &str) -> Outcome {
     Outcome::domain(
@@ -145,6 +178,29 @@ enum ReceiptAtDeadline {
     },
 }
 
+struct ReceiptSnapshot {
+    history: Vec<graphhelm_protocols::EventEnvelope>,
+    projection: graphhelm_events::ExecutionProjection,
+}
+
+/// The operation boundary for one real receipt-store attempt. The causal mark belongs
+/// immediately beside the open/resolve/replay operation, not at its caller: a future retry
+/// must cross this boundary again and therefore becomes a second observable attempt.
+fn read_receipt_snapshot_attempt(
+    events: &std::path::Path,
+    execution: Option<&str>,
+) -> Option<ReceiptSnapshot> {
+    record_test_causal_mark("receipt-read-attempt");
+    let store = crate::commands::event_store(events).ok()?;
+    let (scope, stream, history) =
+        crate::commands::execution::resolve_stream(&store, execution).ok()?;
+    let projection = graphhelm_events::replay(&scope, &stream, &history).ok()?;
+    Some(ReceiptSnapshot {
+        history,
+        projection,
+    })
+}
+
 /// ONE read, at the deadline, and the handle never survives it. Every failure shape is
 /// `Unreadable` — the timeout verdict is already made and this read can only enrich it.
 ///
@@ -160,15 +216,11 @@ fn receipt_at_deadline(
     armed_at_sequence: u64,
 ) -> ReceiptAtDeadline {
     use graphhelm_protocols::EventKind;
-    let Ok(store) = crate::commands::event_store(events) else {
-        return ReceiptAtDeadline::Unreadable;
-    };
-    let Ok((scope, stream, history)) =
-        crate::commands::execution::resolve_stream(&store, execution)
+    let Some(ReceiptSnapshot {
+        history,
+        projection,
+    }) = read_receipt_snapshot_attempt(events, execution)
     else {
-        return ReceiptAtDeadline::Unreadable;
-    };
-    let Ok(projection) = graphhelm_events::replay(&scope, &stream, &history) else {
         return ReceiptAtDeadline::Unreadable;
     };
     // A store whose head predates THIS arming is not the store we armed against. The
@@ -252,6 +304,7 @@ fn receipt_at_deadline(
 /// what makes the immediate answer testable — an assertion on elapsed time cannot tell a
 /// zero-second wait from a one-second one, because process start-up costs more than either.
 fn matured(args: &WakeWaitArgs, lease: &OwnLease, already_past: bool) -> Outcome {
+    record_test_causal_mark("deadline-transition");
     // #88: the deadline answer consults the receipt — ONE read, right now, both for the
     // waited-out path and the already-past one (B10 pays one extra open over reusing its
     // pre-block read; one seam that both paths share beats one saved open on the path
@@ -322,7 +375,7 @@ fn matured(args: &WakeWaitArgs, lease: &OwnLease, already_past: bool) -> Outcome
             }
         }
     }
-    Outcome {
+    let outcome = Outcome {
         output: CommandOutput {
             ok: true,
             command: COMMAND,
@@ -330,7 +383,9 @@ fn matured(args: &WakeWaitArgs, lease: &OwnLease, already_past: bool) -> Outcome
             diagnostics: vec![],
         },
         exit_code: EXIT_TIMEOUT,
-    }
+    };
+    record_test_causal_mark("outcome-publication");
+    outcome
 }
 
 fn read_own_lease(

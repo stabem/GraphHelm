@@ -475,13 +475,29 @@ fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {
 // Task 4: the sidecar — `graphhelm wake-wait` blocks for free and content never crosses.
 // ---------------------------------------------------------------------------------------------
 
+#[cfg(windows)]
+const TEST_WAKE_CAUSAL_TRANSCRIPT_ENV: &str = "GRAPHHELM_TEST_WAKE_CAUSAL_TRANSCRIPT";
+#[cfg(windows)]
+const TEST_WAKE_CAUSAL_TRANSCRIPT_MAX_BYTES: usize = 4 * 1024;
+
 /// Spawns `graphhelm wake-wait` and returns the child (the sidecar CREATES the rendezvous).
 #[cfg(windows)]
 /// The waiter no longer takes a rendezvous or a deadline from its caller: both come from the
 /// lease this session armed. So the harness arms one, and the test's "timeout" is now the
 /// bound the sleeper DECLARED — which is the point of the step.
 fn spawn_wake_wait(events: &Path, execution: &str, session: &str) -> Child {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    spawn_wake_wait_with_env(events, execution, session, &[])
+}
+
+#[cfg(windows)]
+fn spawn_wake_wait_with_env(
+    events: &Path,
+    execution: &str,
+    session: &str,
+    env: &[(&str, &str)],
+) -> Child {
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
         .args([
             "wake-wait",
             "--events",
@@ -492,9 +508,12 @@ fn spawn_wake_wait(events: &Path, execution: &str, session: &str) -> Child {
             session,
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap()
+        .stderr(Stdio::piped());
+    command.env_remove(TEST_WAKE_CAUSAL_TRANSCRIPT_ENV);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.spawn().unwrap()
 }
 
 /// Reaps a sidecar and returns its exit status together with everything it wrote to
@@ -2022,21 +2041,63 @@ fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
 fn a_silent_deadline_reports_a_silent_receipt_not_just_silence() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
+    let causal_transcript = directory.path().join("wake-wait-causal-transcript");
     let execution = "exec-88-silent";
     start_execution(&events, directory.path(), execution);
     arm_lease_bounded(&events, execution, "rvz-88-silent", head(&events), Some(1));
-    let started = Instant::now();
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    let child = spawn_wake_wait_with_env(
+        &events,
+        execution,
+        "session-sleeper-1",
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
+    );
 
     let (code, value) = wake_wait_result(child);
-    // The deadline never moves for the receipt read: one open, no waiting. The bound is
-    // deliberately loose against machine load (declared bound 1s + spawn + one store
-    // open), but a wait-loop smuggled into the final read blows straight through it —
-    // this is the blade sabotage s4 falls on, not a race to win.
-    assert!(
-        started.elapsed() < Duration::from_secs(6),
-        "the deadline answer arrives promptly — the receipt read never waits: {:?}",
-        started.elapsed()
+    // Post-child contention observer: the zero-capacity channel forces one bounded
+    // scheduler rendezvous after the child is complete, without using wall-clock timing.
+    let (post_child_contention_tx, post_child_contention_rx) = std::sync::mpsc::sync_channel(0);
+    let post_child_contention_observer =
+        std::thread::spawn(move || post_child_contention_tx.send(()).unwrap());
+    post_child_contention_rx.recv().unwrap();
+    post_child_contention_observer.join().unwrap();
+    let transcript = std::fs::read_to_string(&causal_transcript)
+        .unwrap_or_else(|error| panic!("CAUSAL_TRANSCRIPT_OBSERVER_MISSING: {error}"));
+    let entries = transcript.lines().collect::<Vec<_>>();
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| **entry == "deadline-transition")
+            .count(),
+        1,
+        "CAUSAL_TRACE_DEADLINE_COUNT: {entries:?}"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| **entry == "receipt-read-attempt")
+            .count(),
+        1,
+        "CAUSAL_TRACE_RECEIPT_READ_ATTEMPT_COUNT: {entries:?}"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| **entry == "outcome-publication")
+            .count(),
+        1,
+        "CAUSAL_TRACE_PUBLICATION_COUNT: {entries:?}"
+    );
+    assert_eq!(
+        entries,
+        [
+            "deadline-transition",
+            "receipt-read-attempt",
+            "outcome-publication"
+        ],
+        "CAUSAL_TRACE_ORDER: the deadline, its one receipt read, and publication must be causally ordered"
     );
     assert_eq!(code, Some(3), "{value}");
     let data = &value["data"];
@@ -2050,6 +2111,42 @@ fn a_silent_deadline_reports_a_silent_receipt_not_just_silence() {
     );
     assert_eq!(data["missedRing"], false, "{data}");
     assert_eq!(data["laterArmingLive"], false, "{data}");
+}
+
+#[cfg(windows)]
+#[test]
+fn causal_transcript_refuses_marks_past_its_byte_bound() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let causal_transcript = directory.path().join("wake-wait-causal-transcript-at-cap");
+    let execution = "exec-88-transcript-cap";
+    start_execution(&events, directory.path(), execution);
+    arm_lease_bounded(
+        &events,
+        execution,
+        "rvz-88-transcript-cap",
+        head(&events),
+        Some(1),
+    );
+    let at_cap = vec![b'x'; TEST_WAKE_CAUSAL_TRANSCRIPT_MAX_BYTES];
+    std::fs::write(&causal_transcript, &at_cap).unwrap();
+    let child = spawn_wake_wait_with_env(
+        &events,
+        execution,
+        "session-sleeper-1",
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
+    );
+
+    let (code, value) = wake_wait_result(child);
+    assert_eq!(code, Some(3), "{value}");
+    assert_eq!(
+        std::fs::read(&causal_transcript).unwrap(),
+        at_cap,
+        "the opt-in observer must never grow beyond its named byte bound"
+    );
 }
 
 /// G3 (#88): the three-worlds split. Burned-and-missed PLUS a later live re-arm — the world

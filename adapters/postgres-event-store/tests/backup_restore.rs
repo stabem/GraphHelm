@@ -1,4 +1,10 @@
-use std::{io::Cursor, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    io::{Cursor, Write},
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use graphhelm_events::{
     AsyncEventRepository, AuthenticateRequest, AuthenticatedCheckpoint, AuthenticationTag,
@@ -30,6 +36,18 @@ struct MemoryKeyProvider;
 struct ReceiptFailingKeyProvider(MemoryKeyProvider);
 #[derive(Clone)]
 struct FixedClock(PersistedTimestamp);
+
+struct FailingArchiveWriter;
+
+impl Write for FailingArchiveWriter {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("test-only archive write failure"))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::other("test-only archive flush failure"))
+    }
+}
 
 impl RetentionClock for FixedClock {
     fn now(&self) -> PersistedTimestamp {
@@ -241,6 +259,148 @@ fn configured_tool_identity_is_verified_before_use() {
             .verify_identity(Duration::from_secs(5))
             .unwrap_err(),
         BackupError::InvalidBackup,
+    );
+}
+
+#[test]
+fn unavailable_diagnostic_preserves_a_safe_stable_stage_code() {
+    const CHILD: &str = "GRAPHHELM_TEST_UNAVAILABLE_STAGE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        support::runtime().block_on(async {
+            let error = BackupCodec::new(Arc::new(MemoryKeyProvider))
+                .encrypt(&manifest(), Cursor::new(b"secret"), FailingArchiveWriter)
+                .await
+                .unwrap_err();
+            assert_eq!(error, BackupError::Unavailable);
+        });
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unavailable_diagnostic_preserves_a_safe_stable_stage_code",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("[graphhelm-backup] unavailable=archive.write"),
+        "missing stable unavailable stage: {stderr:?}"
+    );
+    assert!(!stderr.contains("test-only archive write failure"));
+    assert!(!stderr.contains(std::env::current_dir().unwrap().to_string_lossy().as_ref()));
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FailedRestoreState {
+    CleanRelease,
+    Preserved { replacement_owner: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TerminationObservation {
+    Retry,
+    Satisfied,
+}
+
+fn classify_termination_observation(
+    observed_owned_pid: i32,
+    terminated: bool,
+    observed_pid_owned: Option<bool>,
+    remaining_owned_pid: Option<i32>,
+) -> Result<TerminationObservation, &'static str> {
+    if terminated {
+        return Ok(TerminationObservation::Satisfied);
+    }
+    match observed_pid_owned {
+        Some(true) => Ok(TerminationObservation::Retry),
+        Some(false) => Err("observed restore PID changed ownership before termination"),
+        None => match remaining_owned_pid {
+            None => Ok(TerminationObservation::Satisfied),
+            Some(pid) if pid == observed_owned_pid => {
+                Err("observed restore PID was reused before absence was proven")
+            }
+            Some(_) => Err("marker-owned restore PID changed before termination"),
+        },
+    }
+}
+
+fn classify_failed_restore_state(
+    closed: bool,
+    marker: Option<&str>,
+    restore_roles: &[String],
+    target_objects: i64,
+) -> Result<FailedRestoreState, String> {
+    if !closed && marker.is_none() && restore_roles.is_empty() && target_objects == 0 {
+        return Ok(FailedRestoreState::CleanRelease);
+    }
+    if !closed {
+        return Err("target was not closed".to_owned());
+    }
+    let marker_text = marker.ok_or_else(|| "closed target lost marker".to_owned())?;
+    let marker: serde_json::Value =
+        serde_json::from_str(marker_text).map_err(|error| format!("invalid marker ({error})"))?;
+    if marker["format"] != "graphhelm.restore.marker.v1" {
+        return Err("wrong marker format".to_owned());
+    }
+    let replacement_owner = marker["replacementOwner"]
+        .as_str()
+        .ok_or_else(|| "marker has no replacement owner".to_owned())?
+        .to_owned();
+    if restore_roles != [replacement_owner.clone()] {
+        return Err("marker owner must be the only restore role".to_owned());
+    }
+    Ok(FailedRestoreState::Preserved { replacement_owner })
+}
+
+#[test]
+fn failed_restore_oracle_accepts_atomic_pre_acquisition_release_for_every_archive() {
+    assert_eq!(
+        classify_failed_restore_state(false, None, &[], 0),
+        Ok(FailedRestoreState::CleanRelease),
+    );
+}
+
+#[test]
+fn failed_restore_oracle_rejects_open_target_with_committed_objects() {
+    assert!(classify_failed_restore_state(false, None, &[], 1).is_err());
+}
+
+#[test]
+fn failed_restore_oracle_rejects_partial_release_states() {
+    let marker =
+        r#"{"format":"graphhelm.restore.marker.v1","replacementOwner":"graphhelm_restore_o_test"}"#;
+    for (closed, marker, restore_roles) in [
+        (false, Some(marker), Vec::new()),
+        (false, None, vec!["graphhelm_restore_o_test".to_owned()]),
+        (true, None, Vec::new()),
+        (true, Some(marker), Vec::new()),
+    ] {
+        assert!(classify_failed_restore_state(closed, marker, &restore_roles, 0).is_err());
+    }
+}
+
+#[test]
+fn marker_owned_backend_may_disappear_but_a_mismatched_backend_never_counts_as_success() {
+    assert_eq!(
+        classify_termination_observation(41, false, None, None),
+        Ok(TerminationObservation::Satisfied),
+    );
+    assert_eq!(
+        classify_termination_observation(41, false, Some(true), Some(41)),
+        Ok(TerminationObservation::Retry),
+    );
+    assert_eq!(
+        classify_termination_observation(41, false, None, Some(42)),
+        Err("marker-owned restore PID changed before termination"),
+    );
+    assert_eq!(
+        classify_termination_observation(41, false, Some(false), None),
+        Err("observed restore PID changed ownership before termination"),
     );
 }
 
@@ -1204,8 +1364,48 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                                     .fetch_one(&root_pool)
                                     .await
                                     .unwrap();
-                            assert!(terminated);
-                            return;
+                            let observed_pid_owned: Option<bool> = if terminated {
+                                None
+                            } else {
+                                sqlx::query_scalar(
+                                    "SELECT COALESCE(d.datname=$1 \
+                                     AND a.application_name LIKE 'graphhelm-restore-%' \
+                                     AND shobj_description(d.oid,'pg_database') LIKE '%graphhelm.restore.marker.v1%',FALSE) \
+                                     FROM pg_stat_activity a LEFT JOIN pg_database d ON d.oid=a.datid \
+                                     WHERE a.pid=$2",
+                                )
+                                .bind(&corrupt_name)
+                                .bind(pid)
+                                .fetch_optional(&root_pool)
+                                .await
+                                .unwrap()
+                            };
+                            let remaining_owned_pid = if terminated || observed_pid_owned.is_some() {
+                                None
+                            } else {
+                                sqlx::query_scalar(
+                                    "SELECT a.pid FROM pg_stat_activity a JOIN pg_database d ON d.oid=a.datid \
+                                     WHERE d.datname=$1 AND a.application_name LIKE 'graphhelm-restore-%' \
+                                     AND shobj_description(d.oid,'pg_database') LIKE '%graphhelm.restore.marker.v1%' \
+                                     LIMIT 1",
+                                )
+                                .bind(&corrupt_name)
+                                .fetch_optional(&root_pool)
+                                .await
+                                .unwrap()
+                                .flatten()
+                            };
+                            match classify_termination_observation(
+                                pid,
+                                terminated,
+                                observed_pid_owned,
+                                remaining_owned_pid,
+                            )
+                            .unwrap()
+                            {
+                                TerminationObservation::Satisfied => return,
+                                TerminationObservation::Retry => {}
+                            }
                         }
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
@@ -1232,40 +1432,30 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                     .fetch_all(&root_pool)
                     .await
                     .unwrap();
+            let target_objects: i64 = sqlx::query_scalar(
+                "SELECT count(*)::bigint FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
+                 WHERE n.nspname NOT IN ('pg_catalog','information_schema') \
+                   AND n.nspname NOT LIKE 'pg_toast%'",
+            )
+            .fetch_one(&corrupt_pool)
+            .await
+            .unwrap();
             let state = format!(
-                "closed={}, marker={:?}, restore_roles={restore_roles:?}",
-                preserved.0, preserved.1
+                "closed={}, marker={:?}, restore_roles={restore_roles:?}, target_objects={target_objects}",
+                preserved.0, preserved.1,
             );
-            let clean_release = terminate_after_marker
-                && !preserved.0
-                && preserved.1.is_none()
-                && restore_roles.is_empty();
-            let replacement_owner = if clean_release {
-                None
-            } else {
-                assert!(preserved.0, "{failure}: target was not closed; {state}");
-                let marker_text = preserved
-                    .1
-                    .as_deref()
-                    .unwrap_or_else(|| panic!("{failure}: closed target lost marker; {state}"));
-                let marker: serde_json::Value = serde_json::from_str(marker_text)
-                    .unwrap_or_else(|error| panic!("{failure}: invalid marker ({error}); {state}"));
-                assert_eq!(
-                    marker["format"], "graphhelm.restore.marker.v1",
-                    "{failure}: wrong marker format; {state}"
-                );
-                let replacement_owner = marker["replacementOwner"]
-                    .as_str()
-                    .unwrap_or_else(|| {
-                        panic!("{failure}: marker has no replacement owner; {state}")
-                    })
-                    .to_owned();
-                assert_eq!(
-                    restore_roles,
-                    vec![replacement_owner.clone()],
-                    "{failure}: marker owner must be the only restore role; {state}"
-                );
-                Some(replacement_owner)
+            // Failure may win before acquisition for any archive, not only the deliberately
+            // terminated one. Judge the exact persisted state instead of the scenario label.
+            let replacement_owner = match classify_failed_restore_state(
+                preserved.0,
+                preserved.1.as_deref(),
+                &restore_roles,
+                target_objects,
+            )
+            .unwrap_or_else(|reason| panic!("{failure}: {reason}; {state}"))
+            {
+                FailedRestoreState::CleanRelease => None,
+                FailedRestoreState::Preserved { replacement_owner } => Some(replacement_owner),
             };
             drop(corrupt_operator);
             corrupt_pool.close().await;
@@ -2349,7 +2539,15 @@ fn constructor_bounds_reconciliation_catalog_locks() {
         // a DEADLINE fact, and this assertion is now the integration-grain guard for the
         // constructor wrapper's elapsed mapping — the exact site whose flake #19 recorded
         // as "invalid backup" under load.
-        assert!(matches!(result, Ok(Err(BackupError::DeadlineElapsed))));
+        let observed = match &result {
+            Ok(Err(error)) => format!("constructor.error.{error}"),
+            Ok(Ok(_)) => "constructor.success".to_owned(),
+            Err(_) => "observer.outer_timeout".to_owned(),
+        };
+        assert_eq!(
+            observed, "constructor.error.GHB003_DEADLINE_ELAPSED",
+            "constructor returned an unexpected safe result class while pg_authid was locked"
+        );
         lock.rollback().await.unwrap();
         std::fs::remove_file(passfile).unwrap();
         root_pool.close().await;

@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -300,6 +300,46 @@ impl std::fmt::Display for BackupError {
 
 impl std::error::Error for BackupError {}
 
+#[derive(Clone, Copy)]
+enum UnavailableStage {
+    ArchiveWrite,
+    Cancellation,
+    DirectoryOpen,
+    FileIdentity,
+    FileIo,
+    JobSetup,
+    PipeRead,
+    ProcessResume,
+    ProcessWait,
+    Random,
+    TaskJoin,
+    TemporaryCreate,
+}
+
+impl UnavailableStage {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ArchiveWrite => "archive.write",
+            Self::Cancellation => "operation.cancel",
+            Self::DirectoryOpen => "directory.open",
+            Self::FileIdentity => "file.identity",
+            Self::FileIo => "file.io",
+            Self::JobSetup => "process.job.setup",
+            Self::PipeRead => "process.pipe.read",
+            Self::ProcessResume => "process.resume",
+            Self::ProcessWait => "process.wait",
+            Self::Random => "random.source",
+            Self::TaskJoin => "task.join",
+            Self::TemporaryCreate => "temporary.create",
+        }
+    }
+}
+
+fn unavailable(stage: UnavailableStage) -> BackupError {
+    eprintln!("[graphhelm-backup] unavailable={}", stage.code());
+    BackupError::Unavailable
+}
+
 /// Exact executable identity admitted at the process boundary.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PinnedTool {
@@ -378,7 +418,7 @@ impl PinnedTool {
 
     fn verified_execution(&self) -> Result<VerifiedTool, BackupError> {
         #[cfg(all(unix, not(target_os = "linux")))]
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
         #[cfg(windows)]
         let anchors = pin_execution_ancestors(&self.path)?;
         #[cfg(not(windows))]
@@ -908,10 +948,27 @@ impl PostgresBackupOperator {
         {
             return Err(BackupError::InvalidBackup);
         }
-        pg_dump.verify_identity(process_timeout.min(Duration::from_secs(30)))?;
-        pg_restore.verify_identity(process_timeout.min(Duration::from_secs(30)))?;
+        // Tool verification is synchronous, so an outer Tokio timeout cannot pre-empt it on a
+        // current-thread runtime. Spend one constructor deadline across both processes and the
+        // async reconciliation instead of giving each preflight a fresh private allowance.
+        let constructor_deadline =
+            OperationDeadline::new(process_timeout.min(Duration::from_secs(30)));
+        let dump_budget = constructor_deadline.step(Duration::from_secs(30));
+        if dump_budget.is_zero() {
+            return Err(BackupError::DeadlineElapsed);
+        }
+        pg_dump.verify_identity(dump_budget)?;
+        let restore_budget = constructor_deadline.step(Duration::from_secs(30));
+        if restore_budget.is_zero() {
+            return Err(BackupError::DeadlineElapsed);
+        }
+        pg_restore.verify_identity(restore_budget)?;
+        let reconciliation_budget = constructor_deadline.remaining();
+        if reconciliation_budget.is_zero() {
+            return Err(BackupError::DeadlineElapsed);
+        }
         tokio::time::timeout(
-            process_timeout.min(Duration::from_secs(30)),
+            reconciliation_budget,
             Self::new_bounded(
                 admin_pool,
                 key_provider,
@@ -1035,7 +1092,7 @@ impl PostgresBackupOperator {
         )
         .wait()
         .await
-        .map_err(|_| BackupError::Unavailable)?
+        .map_err(|_| unavailable(UnavailableStage::TaskJoin))?
     }
 
     async fn backup_to_path_owned(
@@ -1276,7 +1333,8 @@ impl PostgresBackupOperator {
             return Err(BackupError::InvalidRestore);
         }
         let mut application_random = [0_u8; 16];
-        getrandom::fill(&mut application_random).map_err(|_| BackupError::Unavailable)?;
+        getrandom::fill(&mut application_random)
+            .map_err(|_| unavailable(UnavailableStage::Random))?;
         let restore_application = format!("graphhelm-restore-{}", hex::encode(application_random));
         application_random.zeroize();
         let mut child = self.spawn_restore(&pg_restore, &restore_application)?;
@@ -1356,18 +1414,10 @@ impl PostgresBackupOperator {
             cleanup_guard.cleanup().await?;
             return Err(*error);
         }
-        if fresh_target_object_count(&self.admin_pool).await? != 0 {
-            watchdog.terminate();
-            drop(stdin);
-            let _ = watchdog.finish();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            cleanup_guard.preserve_target();
-            self.release_target_exclusivity(cleanup_guard.ownership())
-                .await?;
-            cleanup_guard.disarm();
-            return Err(BackupError::InvalidRestore);
-        }
+        // pg_restore may commit its single transaction and disappear between the PID checks in
+        // acquisition and this point. Object presence is therefore not itself a failure here;
+        // the authenticated semantic verification below must judge committed content before it
+        // can ever be released.
         drop(stdin);
         let status = watchdog.finish();
         let stdout_result = stdout_reader
@@ -1462,6 +1512,7 @@ impl PostgresBackupOperator {
         if outcome.is_err() {
             cleanup_guard.cleanup().await?;
         } else {
+            cleanup_guard.ownership().authorize_release();
             self.release_target_exclusivity(cleanup_guard.ownership())
                 .await?;
             cleanup_guard.disarm();
@@ -1487,20 +1538,64 @@ impl PostgresBackupOperator {
         &self,
         ownership: &RestoreOwnership,
     ) -> Result<(), BackupError> {
-        if ownership.cleanup_allowed.load(Ordering::Acquire) {
-            reset_restore_target(
-                &self.control_pool,
-                &self.profile,
-                &ownership.marker()?,
-                &self.key_provider,
-            )
-            .await?;
-            return Ok(());
+        match ownership.recovery_action() {
+            RestoreRecoveryAction::EnsureClosedForRecovery => {
+                self.ensure_target_closed_for_recovery_bounded(ownership)
+                    .await
+            }
+            RestoreRecoveryAction::CleanupFailedRestore => {
+                reset_restore_target(
+                    &self.control_pool,
+                    &self.profile,
+                    &ownership.marker()?,
+                    &self.key_provider,
+                )
+                .await
+            }
+            RestoreRecoveryAction::ReleaseProvedState => {
+                self.release_target_exclusivity(ownership).await
+            }
+            RestoreRecoveryAction::Inactive
+            | RestoreRecoveryAction::PreserveForRecovery
+            | RestoreRecoveryAction::Complete => Ok(()),
         }
-        if ownership.release_required.load(Ordering::Acquire) {
-            self.release_target_exclusivity(ownership).await?;
-        }
-        Ok(())
+    }
+
+    async fn ensure_target_closed_for_recovery_bounded(
+        &self,
+        ownership: &RestoreOwnership,
+    ) -> Result<(), BackupError> {
+        let marker = ownership.marker()?;
+        close_restore_target_after_minimal_validation(
+            &self.control_pool,
+            &self.profile.database,
+            &marker,
+            marker.target_identity_sha256.as_str(),
+        )
+        .await?;
+        ownership.mark_closed_for_recovery();
+
+        // The close above is already committed. Everything below is read-only, so a missing
+        // provider, changed role, or changed principal can reject recovery without reopening an
+        // unverified restore target.
+        let mut transaction = self
+            .control_pool
+            .begin()
+            .await
+            .map_err(|_| BackupError::InvalidRestore)?;
+        validate_final_restore_ownership(
+            &mut transaction,
+            &self.profile.database,
+            &marker,
+            &self.key_provider,
+            marker.target_identity_sha256.as_str(),
+        )
+        .await?;
+        validate_closed_restore_access(&mut transaction, &self.profile.database, &marker).await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| BackupError::InvalidRestore)
     }
 
     async fn acquire_target_exclusivity(
@@ -1565,6 +1660,11 @@ impl PostgresBackupOperator {
             .begin()
             .await
             .map_err(|_| BackupError::InvalidRestore)?;
+        lock_restore_catalogs(
+            &mut marker_transaction,
+            RestoreCatalogLockScope::FullOwnership,
+        )
+        .await?;
         sqlx::query(AssertSqlSafe(format!(
             "CREATE ROLE {replacement_owner_quoted} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
         )))
@@ -1617,17 +1717,18 @@ impl PostgresBackupOperator {
         .execute(&mut *marker_transaction)
         .await
         .map_err(|_| BackupError::InvalidRestore)?;
+        ownership.authorize_ensure_closed();
         marker_transaction
             .commit()
             .await
             .map_err(|_| BackupError::InvalidRestore)?;
-        ownership.release_required.store(true, Ordering::Release);
         sqlx::query(AssertSqlSafe(format!(
             "ALTER DATABASE {database} ALLOW_CONNECTIONS false"
         )))
         .execute(&self.control_pool)
         .await
         .map_err(|_| BackupError::InvalidRestore)?;
+        ownership.mark_closed_for_recovery();
         let admin_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&self.admin_pool)
             .await
@@ -1643,8 +1744,38 @@ impl PostgresBackupOperator {
         .await
         .map_err(|_| BackupError::InvalidRestore)?;
         if restore_pids.len() != 1 {
-            self.release_target_exclusivity(ownership).await?;
-            return Err(BackupError::InvalidRestore);
+            // A completed pg_restore has no PID but may have committed its single transaction.
+            // Release only a stable, proved-empty target. Committed content continues into the
+            // full verification path; ambiguous observations remain closed for manual recovery.
+            let other_sessions = if restore_pids.is_empty() {
+                other_database_sessions(&self.admin_pool).await.ok()
+            } else {
+                None
+            };
+            let target_objects = if other_sessions == Some(0) {
+                fresh_target_object_count(&self.admin_pool).await.ok()
+            } else {
+                None
+            };
+            match classify_post_marker_acquisition(
+                restore_pids.len(),
+                other_sessions,
+                target_objects,
+            ) {
+                PostMarkerAcquisition::ReleaseEmpty => {
+                    ownership.authorize_release();
+                    self.release_target_exclusivity(ownership).await?;
+                    ownership.mark_complete();
+                    return Err(BackupError::InvalidRestore);
+                }
+                PostMarkerAcquisition::VerifyCompleted => {
+                    ownership.authorize_cleanup();
+                    return Ok(());
+                }
+                PostMarkerAcquisition::PreserveForRecovery => {
+                    return Err(BackupError::InvalidRestore);
+                }
+            }
         }
         let others = sqlx::query_scalar(
             "SELECT count(*)::bigint FROM pg_stat_activity \
@@ -1658,16 +1789,12 @@ impl PostgresBackupOperator {
         .await;
         let others: i64 = match others {
             Ok(others) => others,
-            Err(_) => {
-                self.release_target_exclusivity(ownership).await?;
-                return Err(BackupError::InvalidRestore);
-            }
+            Err(_) => return Err(BackupError::InvalidRestore),
         };
         if others != 0 {
-            self.release_target_exclusivity(ownership).await?;
             return Err(BackupError::InvalidRestore);
         }
-        ownership.cleanup_allowed.store(true, Ordering::Release);
+        ownership.authorize_cleanup();
         Ok(())
     }
 
@@ -1704,9 +1831,11 @@ impl PostgresBackupOperator {
             &marker,
             &self.key_provider,
             marker.target_identity_sha256.as_str(),
-            true,
         )
         .await?;
+        restore_database_access_contract_in(&mut transaction, &self.profile.database, &access)
+            .await?;
+        validate_closed_restore_access(&mut transaction, &self.profile.database, &marker).await?;
         sqlx::query(AssertSqlSafe(format!(
             "ALTER DATABASE {database} CONNECTION LIMIT {}",
             access.connection_limit
@@ -2043,10 +2172,29 @@ fn verification_ranges(event_count: u64) -> impl Iterator<Item = (u64, u32)> {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum RestoreRecoveryAction {
+    Inactive = 0,
+    EnsureClosedForRecovery = 1,
+    PreserveForRecovery = 2,
+    ReleaseProvedState = 3,
+    CleanupFailedRestore = 4,
+    Complete = 5,
+}
+
+impl RestoreRecoveryAction {
+    const fn requires_automatic_compensation(self) -> bool {
+        matches!(
+            self,
+            Self::EnsureClosedForRecovery | Self::ReleaseProvedState | Self::CleanupFailedRestore
+        )
+    }
+}
+
 #[derive(Default)]
 struct RestoreOwnership {
-    release_required: AtomicBool,
-    cleanup_allowed: AtomicBool,
+    recovery_action: AtomicU8,
     marker: Mutex<Option<RestoreMarker>>,
 }
 
@@ -2074,15 +2222,70 @@ impl RestoreOwnership {
             .clone()
             .ok_or(BackupError::InvalidRestore)
     }
+
+    fn recovery_action(&self) -> RestoreRecoveryAction {
+        match self.recovery_action.load(Ordering::Acquire) {
+            0 => RestoreRecoveryAction::Inactive,
+            1 => RestoreRecoveryAction::EnsureClosedForRecovery,
+            2 => RestoreRecoveryAction::PreserveForRecovery,
+            3 => RestoreRecoveryAction::ReleaseProvedState,
+            4 => RestoreRecoveryAction::CleanupFailedRestore,
+            5 => RestoreRecoveryAction::Complete,
+            _ => RestoreRecoveryAction::EnsureClosedForRecovery,
+        }
+    }
+
+    fn authorize_ensure_closed(&self) {
+        self.set_recovery_action(RestoreRecoveryAction::EnsureClosedForRecovery);
+    }
+
+    fn mark_closed_for_recovery(&self) {
+        self.set_recovery_action(RestoreRecoveryAction::PreserveForRecovery);
+    }
+
+    fn authorize_release(&self) {
+        self.set_recovery_action(RestoreRecoveryAction::ReleaseProvedState);
+    }
+
+    fn authorize_cleanup(&self) {
+        self.set_recovery_action(RestoreRecoveryAction::CleanupFailedRestore);
+    }
+
+    fn mark_complete(&self) {
+        self.set_recovery_action(RestoreRecoveryAction::Complete);
+    }
+
+    fn set_recovery_action(&self, action: RestoreRecoveryAction) {
+        self.recovery_action.store(action as u8, Ordering::Release);
+    }
 }
 
-struct RestoreCleanupGuard {
-    operator: Option<PostgresBackupOperator>,
+trait RestoreDropCompensator {
+    fn compensate_on_drop(self, ownership: Arc<RestoreOwnership>);
+}
+
+impl RestoreDropCompensator for PostgresBackupOperator {
+    fn compensate_on_drop(self, ownership: Arc<RestoreOwnership>) {
+        let cleanup = std::thread::spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            let _ = runtime.block_on(self.cleanup_failed_restore(&ownership));
+        });
+        let _ = cleanup.join();
+    }
+}
+
+struct RestoreCleanupGuard<C: RestoreDropCompensator = PostgresBackupOperator> {
+    operator: Option<C>,
     ownership: Arc<RestoreOwnership>,
 }
 
-impl RestoreCleanupGuard {
-    fn new(operator: PostgresBackupOperator) -> Self {
+impl<C: RestoreDropCompensator> RestoreCleanupGuard<C> {
+    fn with_compensator(operator: C) -> Self {
         Self {
             operator: Some(operator),
             ownership: Arc::new(RestoreOwnership::default()),
@@ -2093,57 +2296,41 @@ impl RestoreCleanupGuard {
         &self.ownership
     }
 
-    fn preserve_target(&self) {
-        self.ownership
-            .cleanup_allowed
-            .store(false, Ordering::Release);
-    }
-
     fn disarm(&mut self) {
-        self.ownership
-            .release_required
-            .store(false, Ordering::Release);
-        self.ownership
-            .cleanup_allowed
-            .store(false, Ordering::Release);
+        self.ownership.mark_complete();
         self.operator.take();
+    }
+}
+
+impl RestoreCleanupGuard<PostgresBackupOperator> {
+    fn new(operator: PostgresBackupOperator) -> Self {
+        Self::with_compensator(operator)
     }
 
     async fn cleanup(&mut self) -> Result<(), BackupError> {
-        let operator = self.operator.as_ref().ok_or(BackupError::InvalidRestore)?;
-        if !self.ownership.release_required.load(Ordering::Acquire)
-            && !self.ownership.cleanup_allowed.load(Ordering::Acquire)
-        {
+        let action = self.ownership.recovery_action();
+        if !action.requires_automatic_compensation() {
             self.operator.take();
             return Ok(());
         }
+        let operator = self.operator.as_ref().ok_or(BackupError::InvalidRestore)?;
         operator.cleanup_failed_restore(&self.ownership).await?;
         self.disarm();
         Ok(())
     }
 }
 
-impl Drop for RestoreCleanupGuard {
+impl<C: RestoreDropCompensator> Drop for RestoreCleanupGuard<C> {
     fn drop(&mut self) {
         let Some(operator) = self.operator.take() else {
             return;
         };
-        if !self.ownership.release_required.load(Ordering::Acquire)
-            && !self.ownership.cleanup_allowed.load(Ordering::Acquire)
-        {
+        let action = self.ownership.recovery_action();
+        if !action.requires_automatic_compensation() {
             return;
         }
         let ownership = Arc::clone(&self.ownership);
-        let cleanup = std::thread::spawn(move || {
-            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            else {
-                return;
-            };
-            let _ = runtime.block_on(operator.cleanup_failed_restore(&ownership));
-        });
-        let _ = cleanup.join();
+        operator.compensate_on_drop(ownership);
     }
 }
 
@@ -3375,9 +3562,9 @@ async fn finalize_restore_marker_and_role(
             .replacement_identity_sha256
             .as_deref()
             .ok_or(BackupError::InvalidRestore)?,
-        false,
     )
     .await?;
+    validate_closed_restore_access(&mut transaction, database_name, marker).await?;
     sqlx::query(AssertSqlSafe(format!(
         "ALTER DATABASE {database} CONNECTION LIMIT {}",
         marker.access.connection_limit
@@ -3409,37 +3596,46 @@ async fn finalize_restore_marker_and_role(
     Ok(())
 }
 
-async fn validate_final_restore_ownership(
+const RESTORE_CATALOG_LOCKS: [&str; 3] = [
+    "LOCK TABLE pg_catalog.pg_database IN SHARE ROW EXCLUSIVE MODE",
+    "LOCK TABLE pg_catalog.pg_shdescription IN SHARE ROW EXCLUSIVE MODE",
+    "LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE",
+];
+
+#[derive(Clone, Copy)]
+enum RestoreCatalogLockScope {
+    IdentityAndMarker,
+    FullOwnership,
+}
+
+impl RestoreCatalogLockScope {
+    const fn count(self) -> usize {
+        match self {
+            Self::IdentityAndMarker => 2,
+            Self::FullOwnership => RESTORE_CATALOG_LOCKS.len(),
+        }
+    }
+}
+
+async fn lock_restore_catalogs(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    scope: RestoreCatalogLockScope,
+) -> Result<(), BackupError> {
+    for statement in &RESTORE_CATALOG_LOCKS[..scope.count()] {
+        sqlx::query(*statement)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|_| BackupError::InvalidRestore)?;
+    }
+    Ok(())
+}
+
+async fn validate_restore_identity_and_marker(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     database_name: &str,
     marker: &RestoreMarker,
-    key_provider: &Arc<dyn KeyProvider>,
     expected_database_identity: &str,
-    restore_access: bool,
 ) -> Result<(), BackupError> {
-    let database = quoted_identifier(database_name)?;
-    // Acquire catalog locks in one fixed order. PostgreSQL database DDL uses
-    // RowExclusiveLock on pg_database, COMMENT uses it on pg_shdescription,
-    // and role DDL uses it on pg_authid; ShareRowExclusive conflicts with
-    // each writer while allowing the exact reads below.
-    sqlx::query("LOCK TABLE pg_catalog.pg_database IN SHARE ROW EXCLUSIVE MODE")
-        .execute(&mut **transaction)
-        .await
-        .map_err(|_| BackupError::InvalidRestore)?;
-    sqlx::query("LOCK TABLE pg_catalog.pg_shdescription IN SHARE ROW EXCLUSIVE MODE")
-        .execute(&mut **transaction)
-        .await
-        .map_err(|_| BackupError::InvalidRestore)?;
-    sqlx::query("LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE")
-        .execute(&mut **transaction)
-        .await
-        .map_err(|_| BackupError::InvalidRestore)?;
-    sqlx::query(AssertSqlSafe(format!(
-        "ALTER DATABASE {database} ALLOW_CONNECTIONS false"
-    )))
-    .execute(&mut **transaction)
-    .await
-    .map_err(|_| BackupError::InvalidRestore)?;
     let raw: Option<String> = sqlx::query_scalar(
         "SELECT shobj_description(oid,'pg_database') FROM pg_database WHERE datname=$1",
     )
@@ -3469,6 +3665,57 @@ async fn validate_final_restore_ownership(
     if identity != expected_database_identity {
         return Err(BackupError::InvalidRestore);
     }
+    Ok(())
+}
+
+async fn close_restore_target_after_minimal_validation(
+    control_pool: &PgPool,
+    database_name: &str,
+    marker: &RestoreMarker,
+    expected_database_identity: &str,
+) -> Result<(), BackupError> {
+    let database = quoted_identifier(database_name)?;
+    let mut transaction = control_pool
+        .begin()
+        .await
+        .map_err(|_| BackupError::InvalidRestore)?;
+    lock_restore_catalogs(&mut transaction, RestoreCatalogLockScope::IdentityAndMarker).await?;
+    validate_restore_identity_and_marker(
+        &mut transaction,
+        database_name,
+        marker,
+        expected_database_identity,
+    )
+    .await?;
+    sqlx::query(AssertSqlSafe(format!(
+        "ALTER DATABASE {database} ALLOW_CONNECTIONS false"
+    )))
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| BackupError::InvalidRestore)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| BackupError::InvalidRestore)
+}
+
+async fn validate_final_restore_ownership(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    database_name: &str,
+    marker: &RestoreMarker,
+    key_provider: &Arc<dyn KeyProvider>,
+    expected_database_identity: &str,
+) -> Result<(), BackupError> {
+    // Every restore transaction uses this one global order. The close-only recovery path uses
+    // the same prefix, so acquisition and validation cannot form an authid/shdescription cycle.
+    lock_restore_catalogs(transaction, RestoreCatalogLockScope::FullOwnership).await?;
+    validate_restore_identity_and_marker(
+        transaction,
+        database_name,
+        marker,
+        expected_database_identity,
+    )
+    .await?;
     key_provider
         .verify(
             VerifyAuthenticationRequest::new(
@@ -3514,9 +3761,14 @@ async fn validate_final_restore_ownership(
     if current_principals != marker.access.principal_identities {
         return Err(BackupError::InvalidRestore);
     }
-    if restore_access {
-        restore_database_access_contract_in(transaction, database_name, &marker.access).await?;
-    }
+    Ok(())
+}
+
+async fn validate_closed_restore_access(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    database_name: &str,
+    marker: &RestoreMarker,
+) -> Result<(), BackupError> {
     let access = database_access_contract_by_name_in(transaction, database_name).await?;
     if !database_access_matches_while_closed(&access, &marker.access) {
         return Err(BackupError::InvalidRestore);
@@ -3952,7 +4204,9 @@ impl ProcessWatchdog {
 
     fn finish(mut self) -> Result<std::process::ExitStatus, BackupError> {
         let status = wait_child(
-            self.child.as_mut().ok_or(BackupError::Unavailable)?,
+            self.child
+                .as_mut()
+                .ok_or_else(|| unavailable(UnavailableStage::ProcessWait))?,
             Duration::from_secs(24 * 60 * 60),
         );
         // A successful leader must not be allowed to leave pipe-owning descendants behind.
@@ -3968,7 +4222,7 @@ impl ProcessWatchdog {
         // fact (someone chose to stop the work); timed_out is a TIMING fact and must say so.
         // Checked cancel-first: a cancel that also crossed the deadline was still a cancel.
         if self.cancelled.load(Ordering::Acquire) {
-            Err(BackupError::Unavailable)
+            Err(unavailable(UnavailableStage::Cancellation))
         } else if self.timed_out.load(Ordering::Acquire) {
             Err(BackupError::DeadlineElapsed)
         } else {
@@ -4074,7 +4328,7 @@ fn create_process_group(child: &std::process::Child) -> Result<ProcessGroup, Bac
     };
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if job.is_null() {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::JobSetup));
     }
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -4091,9 +4345,13 @@ fn create_process_group(child: &std::process::Child) -> Result<ProcessGroup, Bac
     if !process.is_null() {
         unsafe { CloseHandle(process) };
     }
-    if !configured || !assigned || resume_suspended_process(child.id()).is_err() {
+    if !configured || !assigned {
         unsafe { CloseHandle(job) };
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::JobSetup));
+    }
+    if let Err(error) = resume_suspended_process(child.id()) {
+        unsafe { CloseHandle(job) };
+        return Err(error);
     }
     Ok(job as usize)
 }
@@ -4112,7 +4370,7 @@ fn resume_suspended_process(process_id: u32) -> Result<(), BackupError> {
     };
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::ProcessResume));
     }
     let mut entry = THREADENTRY32 {
         dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).unwrap(),
@@ -4137,7 +4395,7 @@ fn resume_suspended_process(process_id: u32) -> Result<(), BackupError> {
     if resumed {
         Ok(())
     } else {
-        Err(BackupError::Unavailable)
+        Err(unavailable(UnavailableStage::ProcessResume))
     }
 }
 
@@ -4209,7 +4467,7 @@ fn wait_child(
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(BackupError::Unavailable);
+            return Err(unavailable(UnavailableStage::ProcessWait));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -4475,6 +4733,29 @@ fn classify_exclusivity(connected: i64, now: Instant, deadline: Instant) -> Excl
         ExclusivityPoll::Elapsed
     } else {
         ExclusivityPoll::Waiting
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostMarkerAcquisition {
+    ReleaseEmpty,
+    VerifyCompleted,
+    PreserveForRecovery,
+}
+
+fn classify_post_marker_acquisition(
+    restore_pid_count: usize,
+    other_sessions: Option<i64>,
+    target_objects: Option<i64>,
+) -> PostMarkerAcquisition {
+    if restore_pid_count == 0 && other_sessions == Some(0) {
+        match target_objects {
+            Some(0) => PostMarkerAcquisition::ReleaseEmpty,
+            Some(objects) if objects > 0 => PostMarkerAcquisition::VerifyCompleted,
+            _ => PostMarkerAcquisition::PreserveForRecovery,
+        }
+    } else {
+        PostMarkerAcquisition::PreserveForRecovery
     }
 }
 
@@ -4883,6 +5164,190 @@ mod process_tests {
         assert_eq!(
             classify_exclusivity(0, now, later),
             ExclusivityPoll::Waiting
+        );
+    }
+
+    #[test]
+    fn disappeared_restore_with_committed_objects_requires_verification() {
+        assert_eq!(
+            classify_post_marker_acquisition(0, Some(0), Some(1)),
+            PostMarkerAcquisition::VerifyCompleted,
+        );
+        assert_eq!(
+            classify_post_marker_acquisition(0, Some(0), Some(0)),
+            PostMarkerAcquisition::ReleaseEmpty,
+        );
+        assert_eq!(
+            classify_post_marker_acquisition(0, None, Some(0)),
+            PostMarkerAcquisition::PreserveForRecovery,
+        );
+        assert_eq!(
+            classify_post_marker_acquisition(2, Some(0), Some(0)),
+            PostMarkerAcquisition::PreserveForRecovery,
+        );
+    }
+
+    #[test]
+    fn restore_catalog_locks_have_one_global_order() {
+        assert_eq!(
+            RESTORE_CATALOG_LOCKS,
+            [
+                "LOCK TABLE pg_catalog.pg_database IN SHARE ROW EXCLUSIVE MODE",
+                "LOCK TABLE pg_catalog.pg_shdescription IN SHARE ROW EXCLUSIVE MODE",
+                "LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE",
+            ]
+        );
+        assert_eq!(RestoreCatalogLockScope::IdentityAndMarker.count(), 2);
+        assert_eq!(RestoreCatalogLockScope::FullOwnership.count(), 3);
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct FakeDurableRestoreState {
+        datallowconn: bool,
+        marker_present: bool,
+        role_present: bool,
+    }
+
+    struct FakeDropCompensator(Arc<Mutex<FakeDurableRestoreState>>);
+
+    impl RestoreDropCompensator for FakeDropCompensator {
+        fn compensate_on_drop(self, ownership: Arc<RestoreOwnership>) {
+            let mut durable = self.0.lock().unwrap();
+            match ownership.recovery_action() {
+                RestoreRecoveryAction::EnsureClosedForRecovery => {
+                    durable.datallowconn = false;
+                }
+                RestoreRecoveryAction::ReleaseProvedState => {
+                    durable.datallowconn = true;
+                    durable.marker_present = false;
+                    durable.role_present = false;
+                }
+                RestoreRecoveryAction::CleanupFailedRestore => {
+                    durable.datallowconn = true;
+                    durable.marker_present = false;
+                    durable.role_present = false;
+                }
+                RestoreRecoveryAction::Inactive
+                | RestoreRecoveryAction::PreserveForRecovery
+                | RestoreRecoveryAction::Complete => {}
+            }
+        }
+    }
+
+    #[test]
+    fn drop_closes_marked_target_without_releasing_marker_or_role() {
+        let durable = Arc::new(Mutex::new(FakeDurableRestoreState {
+            datallowconn: true,
+            marker_present: true,
+            role_present: true,
+        }));
+        let guard =
+            RestoreCleanupGuard::with_compensator(FakeDropCompensator(Arc::clone(&durable)));
+        guard.ownership().authorize_ensure_closed();
+
+        drop(guard);
+
+        assert_eq!(
+            *durable.lock().unwrap(),
+            FakeDurableRestoreState {
+                datallowconn: false,
+                marker_present: true,
+                role_present: true,
+            }
+        );
+    }
+
+    #[test]
+    fn post_marker_failpoints_select_the_only_safe_drop_action() {
+        for sabotage in ["marker_to_close", "timeout_before_close"] {
+            let durable = Arc::new(Mutex::new(FakeDurableRestoreState {
+                datallowconn: true,
+                marker_present: true,
+                role_present: true,
+            }));
+            let guard =
+                RestoreCleanupGuard::with_compensator(FakeDropCompensator(Arc::clone(&durable)));
+            guard.ownership().authorize_ensure_closed();
+            assert_eq!(
+                guard.ownership().recovery_action(),
+                RestoreRecoveryAction::EnsureClosedForRecovery,
+                "{sabotage} must force Drop to close the marked target",
+            );
+            drop(guard);
+            assert_eq!(
+                *durable.lock().unwrap(),
+                FakeDurableRestoreState {
+                    datallowconn: false,
+                    marker_present: true,
+                    role_present: true,
+                },
+                "{sabotage} must run close-only compensation"
+            );
+        }
+
+        for sabotage in ["pg_backend_pid", "restore_pids", "timeout_after_close"] {
+            let durable = Arc::new(Mutex::new(FakeDurableRestoreState {
+                datallowconn: false,
+                marker_present: true,
+                role_present: true,
+            }));
+            let guard =
+                RestoreCleanupGuard::with_compensator(FakeDropCompensator(Arc::clone(&durable)));
+            guard.ownership().authorize_ensure_closed();
+            guard.ownership().mark_closed_for_recovery();
+            assert_eq!(
+                guard.ownership().recovery_action(),
+                RestoreRecoveryAction::PreserveForRecovery,
+                "{sabotage} must preserve the closed target, marker, and role",
+            );
+            drop(guard);
+            assert_eq!(
+                *durable.lock().unwrap(),
+                FakeDurableRestoreState {
+                    datallowconn: false,
+                    marker_present: true,
+                    role_present: true,
+                },
+                "{sabotage} must not reopen or clean unverified content"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_compensation_requires_an_explicit_positive_transition() {
+        let ownership = RestoreOwnership::default();
+        assert!(
+            !ownership
+                .recovery_action()
+                .requires_automatic_compensation()
+        );
+
+        ownership.authorize_release();
+        assert!(
+            ownership
+                .recovery_action()
+                .requires_automatic_compensation()
+        );
+
+        let ownership = RestoreOwnership::default();
+        assert!(
+            !ownership
+                .recovery_action()
+                .requires_automatic_compensation()
+        );
+
+        ownership.authorize_cleanup();
+        assert!(
+            ownership
+                .recovery_action()
+                .requires_automatic_compensation()
+        );
+
+        ownership.mark_complete();
+        assert!(
+            !ownership
+                .recovery_action()
+                .requires_automatic_compensation()
         );
     }
 
@@ -5392,11 +5857,11 @@ impl BackupCodec {
             return Err(BackupError::InvalidBackup);
         }
         let mut dek = Zeroizing::new([0_u8; 32]);
-        getrandom::fill(dek.as_mut()).map_err(|_| BackupError::Unavailable)?;
+        getrandom::fill(dek.as_mut()).map_err(|_| unavailable(UnavailableStage::Random))?;
         let mut nonce_prefix = [0_u8; 16];
         if getrandom::fill(&mut nonce_prefix).is_err() {
             nonce_prefix.zeroize();
-            return Err(BackupError::Unavailable);
+            return Err(unavailable(UnavailableStage::Random));
         }
         let handle = format!("backup-{}", hex::encode(nonce_prefix));
         let key_aad = canonical_bytes(&(
@@ -5468,9 +5933,13 @@ impl BackupCodec {
         if header_bytes.len() > MAX_HEADER_BYTES {
             return Err(BackupError::LimitExceeded);
         }
-        output.write_all(MAGIC).map_err(io_error)?;
+        output
+            .write_all(MAGIC)
+            .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
         write_u32(&mut output, header_bytes.len())?;
-        output.write_all(&header_bytes).map_err(io_error)?;
+        output
+            .write_all(&header_bytes)
+            .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
 
         let header_sha256 = Sha256::digest(&header_core_bytes);
         let cipher = XChaCha20Poly1305::new_from_slice(dek.as_slice())
@@ -5481,7 +5950,8 @@ impl BackupCodec {
         let mut ciphertext_bytes = 0_u64;
         let mut ciphertext_digest = Sha256::new();
         loop {
-            let read = read_chunk(&mut input, buffer.as_mut_slice()).map_err(io_error)?;
+            let read = read_chunk(&mut input, buffer.as_mut_slice())
+                .map_err(|_| unavailable(UnavailableStage::PipeRead))?;
             if read == 0 {
                 break;
             }
@@ -5498,11 +5968,15 @@ impl BackupCodec {
                     },
                 )
                 .map_err(|_| BackupError::InvalidBackup)?;
-            output.write_all(CHUNK_MARKER).map_err(io_error)?;
+            output
+                .write_all(CHUNK_MARKER)
+                .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
             write_u64(&mut output, chunk_count)?;
             write_u32(&mut output, read)?;
             write_u32(&mut output, ciphertext.len())?;
-            output.write_all(&ciphertext).map_err(io_error)?;
+            output
+                .write_all(&ciphertext)
+                .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
             ciphertext_digest.update(&ciphertext);
             ciphertext_bytes = ciphertext_bytes
                 .checked_add(ciphertext.len() as u64)
@@ -5556,10 +6030,16 @@ impl BackupCodec {
         if footer_bytes.len() > MAX_MANIFEST_BYTES {
             return Err(BackupError::LimitExceeded);
         }
-        output.write_all(FOOTER_MARKER).map_err(io_error)?;
+        output
+            .write_all(FOOTER_MARKER)
+            .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
         write_u32(&mut output, footer_bytes.len())?;
-        output.write_all(&footer_bytes).map_err(io_error)?;
-        output.flush().map_err(io_error)?;
+        output
+            .write_all(&footer_bytes)
+            .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
+        output
+            .flush()
+            .map_err(|_| unavailable(UnavailableStage::ArchiveWrite))?;
         Ok(BackupReceipt {
             chunk_count,
             plaintext_bytes: plaintext_budget.total(),
@@ -5800,7 +6280,7 @@ struct OwnedTemporary {
 impl OwnedTemporary {
     fn for_destination(destination: &Path) -> Result<Self, BackupError> {
         #[cfg(all(unix, not(target_os = "linux")))]
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::TemporaryCreate));
         if !destination.is_absolute() || destination.exists() {
             return Err(BackupError::InvalidBackup);
         }
@@ -5831,7 +6311,7 @@ impl OwnedTemporary {
                 )
             };
             if descriptor < 0 {
-                return Err(BackupError::Unavailable);
+                return Err(unavailable(UnavailableStage::TemporaryCreate));
             }
             return Ok(Self {
                 path: PathBuf::new(),
@@ -5846,7 +6326,7 @@ impl OwnedTemporary {
         #[cfg(windows)]
         for _ in 0..16 {
             let mut random = [0_u8; 16];
-            getrandom::fill(&mut random).map_err(|_| BackupError::Unavailable)?;
+            getrandom::fill(&mut random).map_err(|_| unavailable(UnavailableStage::Random))?;
             let path = parent.join(format!(".graphhelm-backup-{}.pending", hex::encode(random)));
             random.zeroize();
             match create_owned_pending(&path) {
@@ -5861,11 +6341,11 @@ impl OwnedTemporary {
                     );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(io_error(error)),
+                Err(_) => return Err(unavailable(UnavailableStage::TemporaryCreate)),
             }
         }
         #[cfg(windows)]
-        Err(BackupError::Unavailable)
+        Err(unavailable(UnavailableStage::TemporaryCreate))
     }
 
     fn new(
@@ -5877,7 +6357,7 @@ impl OwnedTemporary {
         anchors: Vec<File>,
     ) -> Result<Self, BackupError> {
         if !same_identity(&file, &File::open(&path).map_err(io_error)?)? {
-            return Err(BackupError::Unavailable);
+            return Err(unavailable(UnavailableStage::FileIdentity));
         }
         Ok(Self {
             path,
@@ -5913,7 +6393,7 @@ impl OwnedTemporary {
                     .expect("published rollback handle"),
             )?
         {
-            return Err(BackupError::Unavailable);
+            return Err(unavailable(UnavailableStage::FileIdentity));
         }
         let committed = self
             .remove()
@@ -5929,7 +6409,7 @@ impl OwnedTemporary {
         }
         let reopened = File::open(&self.path).map_err(io_error)?;
         if !same_identity(self.file(), &reopened)? {
-            return Err(BackupError::Unavailable);
+            return Err(unavailable(UnavailableStage::FileIdentity));
         }
         remove_owned_path(&self.path, self.file())
     }
@@ -5952,8 +6432,8 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
         os::fd::{AsRawFd, FromRawFd},
         os::unix::ffi::OsStrExt,
     };
-    let destination =
-        CString::new(owned.destination_name.as_bytes()).map_err(|_| BackupError::Unavailable)?;
+    let destination = CString::new(owned.destination_name.as_bytes())
+        .map_err(|_| unavailable(UnavailableStage::FileIo))?;
     let current_descriptor = unsafe {
         libc::openat(
             owned.parent.as_raw_fd(),
@@ -5962,21 +6442,21 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
         )
     };
     if current_descriptor < 0 {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     let current = unsafe { File::from_raw_fd(current_descriptor) };
     if !same_identity(&published, &current)? {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIdentity));
     }
     drop(current);
     run_before_linux_rollback_rename(&owned.parent_path.join(&owned.destination_name));
     let mut random = [0_u8; 16];
-    getrandom::fill(&mut random).map_err(|_| BackupError::Unavailable)?;
+    getrandom::fill(&mut random).map_err(|_| unavailable(UnavailableStage::Random))?;
     let quarantine = CString::new(format!(
         ".graphhelm-backup-rollback-{}",
         hex::encode(random)
     ))
-    .map_err(|_| BackupError::Unavailable)?;
+    .map_err(|_| unavailable(UnavailableStage::FileIo))?;
     random.zeroize();
     if unsafe {
         libc::renameat2(
@@ -5988,7 +6468,7 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
         )
     } != 0
     {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     let descriptor = unsafe {
         libc::openat(
@@ -5998,7 +6478,7 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
         )
     };
     if descriptor < 0 {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     let quarantined = unsafe { File::from_raw_fd(descriptor) };
     if !same_identity(&published, &quarantined)? {
@@ -6011,10 +6491,10 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
                 libc::RENAME_NOREPLACE,
             )
         };
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIdentity));
     }
     if unsafe { libc::unlinkat(owned.parent.as_raw_fd(), quarantine.as_ptr(), 0) } != 0 {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     Ok(())
 }
@@ -6052,7 +6532,7 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn remove_published_link(_: &OwnedTemporary, _: File) -> Result<(), BackupError> {
-    Err(BackupError::Unavailable)
+    Err(unavailable(UnavailableStage::FileIo))
 }
 
 impl Drop for OwnedTemporary {
@@ -6107,7 +6587,7 @@ fn open_directory(path: &Path) -> Result<File, BackupError> {
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::DirectoryOpen));
     }
     let file = unsafe { File::from_raw_handle(handle) };
     validate_windows_handle(&file, true)?;
@@ -6165,7 +6645,7 @@ fn link_owned_file(owned: &mut OwnedTemporary, _destination: &Path) -> Result<Fi
             direct
         } else {
             let source = CString::new(format!("/proc/self/fd/{published_fd}"))
-                .map_err(|_| BackupError::Unavailable)?;
+                .map_err(|_| unavailable(UnavailableStage::FileIo))?;
             unsafe {
                 libc::linkat(
                     libc::AT_FDCWD,
@@ -6185,7 +6665,7 @@ fn link_owned_file(owned: &mut OwnedTemporary, destination: &Path) -> Result<Fil
     let published = owned.file().try_clone().map_err(io_error)?;
     let named = File::open(&owned.path).map_err(io_error)?;
     if !same_identity(owned.file(), &named)? {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIdentity));
     }
     std::fs::hard_link(&owned.path, destination).map_err(map_link_error)?;
     Ok(published)
@@ -6202,16 +6682,17 @@ fn link_owned_file(owned: &mut OwnedTemporary, destination: &Path) -> Result<Fil
     let name_bytes = name
         .len()
         .checked_mul(std::mem::size_of::<u16>())
-        .ok_or(BackupError::Unavailable)?;
+        .ok_or_else(|| unavailable(UnavailableStage::FileIo))?;
     let buffer_len = std::mem::size_of::<FILE_RENAME_INFO>()
         .checked_add(name_bytes.saturating_sub(std::mem::size_of::<u16>()))
-        .ok_or(BackupError::Unavailable)?;
+        .ok_or_else(|| unavailable(UnavailableStage::FileIo))?;
     let mut buffer = vec![0_u8; buffer_len];
     let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
     unsafe {
         (*info).Anonymous.ReplaceIfExists = false;
         (*info).RootDirectory = std::ptr::null_mut();
-        (*info).FileNameLength = u32::try_from(name_bytes).map_err(|_| BackupError::Unavailable)?;
+        (*info).FileNameLength =
+            u32::try_from(name_bytes).map_err(|_| unavailable(UnavailableStage::FileIo))?;
         std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
     }
     let result = unsafe {
@@ -6219,7 +6700,7 @@ fn link_owned_file(owned: &mut OwnedTemporary, destination: &Path) -> Result<Fil
             published.as_raw_handle() as _,
             FileRenameInfo,
             buffer.as_ptr().cast(),
-            u32::try_from(buffer.len()).map_err(|_| BackupError::Unavailable)?,
+            u32::try_from(buffer.len()).map_err(|_| unavailable(UnavailableStage::FileIo))?,
         )
     };
     if result == 0 {
@@ -6243,7 +6724,7 @@ fn map_link_error(error: std::io::Error) -> BackupError {
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         BackupError::InvalidBackup
     } else {
-        BackupError::Unavailable
+        unavailable(UnavailableStage::FileIo)
     }
 }
 
@@ -6261,11 +6742,12 @@ fn remove_owned_path(path: &Path, owned: &File) -> Result<(), BackupError> {
     let metadata = std::fs::symlink_metadata(path).map_err(io_error)?;
     let owned_metadata = owned.metadata().map_err(io_error)?;
     if metadata.dev() != owned_metadata.dev() || metadata.ino() != owned_metadata.ino() {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIdentity));
     }
-    let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| BackupError::Unavailable)?;
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| unavailable(UnavailableStage::FileIo))?;
     if unsafe { libc::unlink(path.as_ptr()) } != 0 {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     Ok(())
 }
@@ -6292,7 +6774,7 @@ fn remove_owned_path(_path: &Path, owned: &File) -> Result<(), BackupError> {
         )
     };
     if result == 0 {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     Ok(())
 }
@@ -6300,7 +6782,7 @@ fn remove_owned_path(_path: &Path, owned: &File) -> Result<(), BackupError> {
 #[cfg(unix)]
 fn sync_owned_directory(directory: &File, _path: &Path) -> Result<(), BackupError> {
     if directory_sync_is_injected_failure() {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     directory.sync_all().map_err(io_error)
 }
@@ -6309,13 +6791,13 @@ fn sync_owned_directory(directory: &File, _path: &Path) -> Result<(), BackupErro
 fn sync_owned_directory(directory: &File, _path: &Path) -> Result<(), BackupError> {
     use std::os::windows::io::AsRawHandle;
     if directory_sync_is_injected_failure() {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     if unsafe {
         windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(directory.as_raw_handle() as _)
     } == 0
     {
-        return Err(BackupError::Unavailable);
+        return Err(unavailable(UnavailableStage::FileIo));
     }
     Ok(())
 }
@@ -6352,7 +6834,7 @@ fn same_identity(left: &File, right: &File) -> Result<bool, BackupError> {
             GetFileInformationByHandle(file.as_raw_handle() as _, std::ptr::addr_of_mut!(value))
         };
         if result == 0 {
-            return Err(BackupError::Unavailable);
+            return Err(unavailable(UnavailableStage::FileIdentity));
         }
         Ok(value)
     }
@@ -6512,7 +6994,7 @@ fn read_u64(reader: &mut impl Read) -> Result<u64, BackupError> {
 }
 
 fn io_error(_: std::io::Error) -> BackupError {
-    BackupError::Unavailable
+    unavailable(UnavailableStage::FileIo)
 }
 
 fn invalid_backup(_: std::io::Error) -> BackupError {

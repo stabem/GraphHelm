@@ -15,11 +15,22 @@ use serde_json::Value;
 
 use crate::{EvidenceGate, FailureAxis, Specimen, Verdict};
 
+/// The validated contract, its observation obligations, and verification result, bound by the
+/// contract's trusted digest.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneyContractEvidence {
+    pub contract: Value,
+    pub contract_digest: String,
+    pub observation_obligations: Vec<Value>,
+    pub verification_result: Value,
+}
+
 /// The five artifact kinds #211 names for runtime-side validation.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JpdEvidence {
-    JourneyContract(Value),
+    JourneyContract(JourneyContractEvidence),
     ObservationObligation(Value),
     RetryLineage(Value),
     CouncilResult(Value),
@@ -31,8 +42,8 @@ impl JpdEvidence {
     #[must_use]
     pub const fn document(&self) -> &Value {
         match self {
-            Self::JourneyContract(v)
-            | Self::ObservationObligation(v)
+            Self::JourneyContract(evidence) => &evidence.contract,
+            Self::ObservationObligation(v)
             | Self::RetryLineage(v)
             | Self::CouncilResult(v)
             | Self::VerificationResult(v) => v,
@@ -69,6 +80,8 @@ impl JpdEvidence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JpdFailureAxis {
+    /// A promise appoints the actor performing its step as that step's observer.
+    ActorUsedAsOwnObserver,
     /// A capability that was required never ran, and the result claims success anyway.
     ///
     /// Discriminated on `gate.status`, which the schema fixes to `evaluated` in the branches where
@@ -101,16 +114,23 @@ fn claims_success(document: &Value) -> bool {
 impl FailureAxis<JpdEvidence> for JpdFailureAxis {
     fn is_defeated_by(&self, evidence: &JpdEvidence) -> bool {
         let document = evidence.document();
-        if !claims_success(document) {
-            return false;
-        }
         match self {
+            Self::ActorUsedAsOwnObserver => {
+                let JpdEvidence::JourneyContract(evidence) = evidence else {
+                    return false;
+                };
+                resolved_observer_bindings(evidence)
+                    .is_ok_and(|bindings| !actor_observer_collisions(&bindings).is_empty())
+            }
             Self::CapabilityMissingUnderClaimedSuccess => {
-                document.pointer("/gate/status").and_then(Value::as_str)
-                    == Some("capability_missing")
+                claims_success(document)
+                    && document.pointer("/gate/status").and_then(Value::as_str)
+                        == Some("capability_missing")
             }
             Self::FlakyClaimedAsProven => {
-                document.get("proposedResultStatus").and_then(Value::as_str) == Some("proven")
+                claims_success(document)
+                    && document.get("proposedResultStatus").and_then(Value::as_str)
+                        == Some("proven")
                     && document
                         .pointer("/retry/outcomeClassification")
                         .and_then(Value::as_str)
@@ -122,6 +142,455 @@ impl FailureAxis<JpdEvidence> for JpdFailureAxis {
 
 /// A JPD specimen: typed evidence plus the axis it defeats.
 pub type JpdSpecimen = Specimen<JpdEvidence, JpdFailureAxis>;
+
+/// Validates the independence obligation carried by a journey contract.
+///
+/// Inputs are expected to have passed the checked-in JSON Schema first. This gate performs only
+/// the cross-record comparison that JSON Schema cannot express: the promise's observer identity
+/// must differ from the actor identity on the referenced step.
+pub struct JourneyContractGate;
+
+/// Stable severity for a journey-contract refusal diagnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JourneyDiagnosticSeverity {
+    Error,
+}
+
+/// Stable diagnostic emitted by the journey-contract gate.
+///
+/// `source_file` is a logical input filename. It deliberately never contains an operator's local
+/// filesystem path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneyContractDiagnostic {
+    pub code: &'static str,
+    pub severity: JourneyDiagnosticSeverity,
+    pub path: String,
+    pub message: String,
+    pub source_file: &'static str,
+}
+
+fn journey_diagnostic(
+    code: &'static str,
+    path: impl Into<String>,
+    message: impl Into<String>,
+    source_file: &'static str,
+) -> JourneyContractDiagnostic {
+    JourneyContractDiagnostic {
+        code,
+        severity: JourneyDiagnosticSeverity::Error,
+        path: path.into(),
+        message: message.into(),
+        source_file,
+    }
+}
+
+impl JourneyContractGate {
+    /// Evaluate with stable diagnostics. The generic certification harness below projects only
+    /// their messages into its legacy `Vec<String>` verdict.
+    #[must_use]
+    pub fn diagnostics(&self, evidence: &JpdEvidence) -> Vec<JourneyContractDiagnostic> {
+        let JpdEvidence::JourneyContract(evidence) = evidence else {
+            return vec![journey_diagnostic(
+                "GHJPD000_WRONG_EVIDENCE_KIND",
+                "/kind",
+                "this gate judges journey contracts only",
+                "jpd-evidence.json",
+            )];
+        };
+
+        let bindings = match resolved_observer_bindings(evidence) {
+            Ok(bindings) => bindings,
+            Err(diagnostics) => return diagnostics,
+        };
+
+        actor_observer_collisions(&bindings)
+            .into_iter()
+            .map(|binding| {
+                let PromiseObserverBinding {
+                    promise_id,
+                    step_id,
+                    observer_id,
+                    obligation_index,
+                    ..
+                } = binding;
+                journey_diagnostic(
+                    "GHJPD001_ACTOR_SELF_OBSERVATION",
+                    format!(
+                        "/observationObligations/{obligation_index}/resolution/capabilityBinding/observerId"
+                    ),
+                    format!(
+                        "promise {promise_id} is bound to observer {observer_id}, which is also the actor for step {step_id}; the observer must be independent from the actor"
+                    ),
+                    "observation-obligations.json",
+                )
+            })
+            .collect()
+    }
+}
+
+impl EvidenceGate<JpdEvidence> for JourneyContractGate {
+    fn id(&self) -> &str {
+        "gate/jpd-journey-contract"
+    }
+
+    fn evaluate(&self, evidence: &JpdEvidence) -> Verdict {
+        let findings = self
+            .diagnostics(evidence)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect::<Vec<_>>();
+
+        Verdict {
+            passed: findings.is_empty(),
+            findings,
+        }
+    }
+}
+
+fn contract_result_binding_findings(
+    evidence: &JourneyContractEvidence,
+) -> Vec<JourneyContractDiagnostic> {
+    let contract_id = evidence.contract.get("contractId").and_then(Value::as_str);
+    let result_contract_id = evidence
+        .verification_result
+        .get("contractId")
+        .and_then(Value::as_str);
+    let result_digest = evidence
+        .verification_result
+        .get("contractDigest")
+        .and_then(Value::as_str);
+    let mut findings = Vec::new();
+
+    if contract_id.is_none() || contract_id != result_contract_id {
+        findings.push(journey_diagnostic(
+            "GHJPD002_RESULT_CONTRACT_ID_MISMATCH",
+            "/contractId",
+            "verification result contractId does not match the journey contract",
+            "journey-verification-result.json",
+        ));
+    }
+    if result_digest != Some(evidence.contract_digest.as_str()) {
+        findings.push(journey_diagnostic(
+            "GHJPD003_RESULT_CONTRACT_DIGEST_MISMATCH",
+            "/contractDigest",
+            "verification result contractDigest does not match the supplied journey contract digest",
+            "journey-verification-result.json",
+        ));
+    }
+
+    findings
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PromiseObserverBinding<'a> {
+    promise_id: &'a str,
+    step_id: &'a str,
+    actor_id: &'a str,
+    observer_id: &'a str,
+    obligation_index: usize,
+}
+
+// The verification-result schema caps its obligation results at 128. Refuse the corresponding
+// input collection before any scan or copy so schema-valid documents cannot be amplified by an
+// unbounded envelope assembled by a caller.
+const MAX_OBSERVATION_OBLIGATIONS: usize = 128;
+
+fn resolved_observer_bindings(
+    evidence: &JourneyContractEvidence,
+) -> Result<Vec<PromiseObserverBinding<'_>>, Vec<JourneyContractDiagnostic>> {
+    let mut findings = contract_result_binding_findings(evidence);
+    if !findings.is_empty() {
+        return Err(findings);
+    }
+    if evidence.observation_obligations.len() > MAX_OBSERVATION_OBLIGATIONS {
+        return Err(vec![journey_diagnostic(
+            "GHJPD018_OBSERVATION_OBLIGATION_LIMIT",
+            "/observationObligations",
+            format!(
+                "journey evidence contains more than {MAX_OBSERVATION_OBLIGATIONS} observation obligations"
+            ),
+            "observation-obligations.json",
+        )]);
+    }
+
+    let contract_id = evidence
+        .contract
+        .get("contractId")
+        .and_then(Value::as_str)
+        .expect("contract/result binding already established a contractId");
+    let actors = evidence.contract.get("actors").and_then(Value::as_array);
+    let steps = evidence.contract.get("steps").and_then(Value::as_array);
+    let promises = evidence.contract.get("promises").and_then(Value::as_array);
+    let observers = evidence
+        .verification_result
+        .pointer("/bindings/observers")
+        .and_then(Value::as_array);
+    let mut bindings = Vec::new();
+
+    for (promise_index, promise) in promises.into_iter().flatten().enumerate() {
+        let Some((promise_id, step_id, required_capability)) = promise
+            .get("promiseId")
+            .and_then(Value::as_str)
+            .zip(promise.get("stepId").and_then(Value::as_str))
+            .zip(
+                promise
+                    .get("requiredObserverCapability")
+                    .and_then(Value::as_str),
+            )
+            .map(|((promise_id, step_id), required_capability)| {
+                (promise_id, step_id, required_capability)
+            })
+        else {
+            findings.push(journey_diagnostic(
+                "GHJPD004_MALFORMED_PROMISE_BINDING",
+                format!("/promises/{promise_index}"),
+                "journey contract contains a malformed promise binding",
+                "journey-contract.json",
+            ));
+            continue;
+        };
+
+        let promise_records = promises.expect("the loop only runs when promises is an array");
+        let duplicate_count = promise_records
+            .iter()
+            .filter(|candidate| {
+                candidate.get("promiseId").and_then(Value::as_str) == Some(promise_id)
+            })
+            .count();
+        if duplicate_count > 1 {
+            let already_reported = promise_records[..promise_index].iter().any(|candidate| {
+                candidate.get("promiseId").and_then(Value::as_str) == Some(promise_id)
+            });
+            if !already_reported {
+                findings.push(journey_diagnostic(
+                    "GHJPD005_AMBIGUOUS_PROMISE_ID",
+                    format!("/promises/{promise_index}/promiseId"),
+                    format!(
+                        "journey contract contains ambiguous promiseId {promise_id}; exactly one promise is required"
+                    ),
+                    "journey-contract.json",
+                ));
+            }
+            continue;
+        }
+
+        let mut matching_steps = steps
+            .into_iter()
+            .flatten()
+            .filter(|step| step.get("stepId").and_then(Value::as_str) == Some(step_id));
+        let Some(step) = matching_steps.next() else {
+            findings.push(journey_diagnostic(
+                "GHJPD006_STEP_MISSING",
+                format!("/promises/{promise_index}/stepId"),
+                format!("promise {promise_id} references missing step {step_id}"),
+                "journey-contract.json",
+            ));
+            continue;
+        };
+        if matching_steps.next().is_some() {
+            findings.push(journey_diagnostic(
+                "GHJPD007_STEP_AMBIGUOUS",
+                format!("/promises/{promise_index}/stepId"),
+                format!(
+                    "promise {promise_id} references ambiguous step {step_id}; exactly one step actor is required"
+                ),
+                "journey-contract.json",
+            ));
+            continue;
+        }
+        let Some(actor_id) = step.get("actorId").and_then(Value::as_str) else {
+            findings.push(journey_diagnostic(
+                "GHJPD008_STEP_ACTOR_MISSING",
+                format!("/promises/{promise_index}/stepId"),
+                format!("promise {promise_id} references step {step_id} without an actor identity"),
+                "journey-contract.json",
+            ));
+            continue;
+        };
+        let mut matching_actors = actors
+            .into_iter()
+            .flatten()
+            .filter(|actor| actor.get("actorId").and_then(Value::as_str) == Some(actor_id));
+        if matching_actors.next().is_none() {
+            findings.push(journey_diagnostic(
+                "GHJPD009_ACTOR_ROSTER_MISSING",
+                format!("/promises/{promise_index}/stepId"),
+                format!(
+                    "promise {promise_id} references step {step_id} actor {actor_id}, which is absent from the journey contract actor roster"
+                ),
+                "journey-contract.json",
+            ));
+            continue;
+        }
+        if matching_actors.next().is_some() {
+            findings.push(journey_diagnostic(
+                "GHJPD010_ACTOR_ROSTER_AMBIGUOUS",
+                format!("/promises/{promise_index}/stepId"),
+                format!(
+                    "promise {promise_id} references step {step_id} actor {actor_id}, which is ambiguous in the journey contract actor roster"
+                ),
+                "journey-contract.json",
+            ));
+            continue;
+        }
+
+        let matching = evidence
+            .observation_obligations
+            .iter()
+            .enumerate()
+            .filter(|(_, obligation)| {
+                obligation.get("promiseId").and_then(Value::as_str) == Some(promise_id)
+            })
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            findings.push(journey_diagnostic(
+                "GHJPD011_OBSERVATION_OBLIGATION_MISSING",
+                "/observationObligations",
+                format!("promise {promise_id} has no observation obligation binding"),
+                "observation-obligations.json",
+            ));
+            continue;
+        }
+
+        let promise_finding_start = findings.len();
+        for (obligation_index, obligation) in matching {
+            let obligation_path = format!("/observationObligations/{obligation_index}");
+            let obligation_contract_id = obligation.get("contractId").and_then(Value::as_str);
+            if obligation_contract_id != Some(contract_id) {
+                findings.push(journey_diagnostic(
+                    "GHJPD012_OBLIGATION_CONTRACT_ID_MISMATCH",
+                    format!("{obligation_path}/contractId"),
+                    format!(
+                        "observation obligation for promise {promise_id} has a contractId that does not match the journey contract"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            }
+            let obligation_digest = obligation.get("contractDigest").and_then(Value::as_str);
+            if obligation_digest != Some(evidence.contract_digest.as_str()) {
+                findings.push(journey_diagnostic(
+                    "GHJPD013_OBLIGATION_CONTRACT_DIGEST_MISMATCH",
+                    format!("{obligation_path}/contractDigest"),
+                    format!(
+                        "observation obligation for promise {promise_id} has a contractDigest that does not match the supplied journey contract digest"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            }
+            let required_by_obligation = obligation
+                .pointer("/observerRequirements/capability")
+                .and_then(Value::as_str);
+            if required_by_obligation != Some(required_capability) {
+                findings.push(journey_diagnostic(
+                    "GHJPD014_OBSERVER_CAPABILITY_MISMATCH",
+                    format!("{obligation_path}/observerRequirements/capability"),
+                    format!(
+                        "observation obligation for promise {promise_id} does not bind required observer capability {required_capability}"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            }
+            if obligation
+                .pointer("/resolution/status")
+                .and_then(Value::as_str)
+                != Some("matched")
+            {
+                findings.push(journey_diagnostic(
+                    "GHJPD015_OBSERVER_BINDING_UNMATCHED",
+                    format!("{obligation_path}/resolution/status"),
+                    format!(
+                        "observation obligation for promise {promise_id} has no matched observer binding"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            }
+            let bound_capability = obligation
+                .pointer("/resolution/capabilityBinding/capabilityId")
+                .and_then(Value::as_str);
+            if bound_capability != Some(required_capability) {
+                findings.push(journey_diagnostic(
+                    "GHJPD014_OBSERVER_CAPABILITY_MISMATCH",
+                    format!("{obligation_path}/resolution/capabilityBinding/capabilityId"),
+                    format!(
+                        "observation obligation for promise {promise_id} does not bind required observer capability {required_capability}"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            }
+            let Some(observer_id) = obligation
+                .pointer("/resolution/capabilityBinding/observerId")
+                .and_then(Value::as_str)
+            else {
+                findings.push(journey_diagnostic(
+                    "GHJPD016_OBSERVER_ID_MISSING",
+                    format!("{obligation_path}/resolution/capabilityBinding/observerId"),
+                    format!(
+                        "observation obligation for promise {promise_id} has no matched observer identity"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            };
+            let observer_is_rostered = observers.into_iter().flatten().any(|observer| {
+                observer.get("observerId").and_then(Value::as_str) == Some(observer_id)
+            });
+            if !observer_is_rostered {
+                findings.push(journey_diagnostic(
+                    "GHJPD017_OBSERVER_ROSTER_MISSING",
+                    format!("{obligation_path}/resolution/capabilityBinding/observerId"),
+                    format!(
+                        "observation obligation for promise {promise_id} binds observer {observer_id}, which is absent from the verification result observer roster"
+                    ),
+                    "observation-obligations.json",
+                ));
+                continue;
+            }
+
+            bindings.push(PromiseObserverBinding {
+                promise_id,
+                step_id,
+                actor_id,
+                observer_id,
+                obligation_index,
+            });
+        }
+        // Every obligation is inspected, but an untrusted collection cannot amplify refusal
+        // output beyond the journey contract's schema-bounded promise count.
+        findings.truncate(promise_finding_start.saturating_add(1));
+    }
+
+    if findings.is_empty() {
+        Ok(bindings)
+    } else {
+        Err(findings)
+    }
+}
+
+fn actor_observer_collisions<'a>(
+    bindings: &[PromiseObserverBinding<'a>],
+) -> Vec<PromiseObserverBinding<'a>> {
+    let mut reported_promises = Vec::new();
+    bindings
+        .iter()
+        .copied()
+        .filter(|binding| {
+            if binding.actor_id != binding.observer_id
+                || reported_promises.contains(&binding.promise_id)
+            {
+                return false;
+            }
+            reported_promises.push(binding.promise_id);
+            true
+        })
+        .collect()
+}
 
 /// Validates a Journey Verification Result. Deterministic: no provider, no network, no clock.
 ///
@@ -172,6 +641,9 @@ impl EvidenceGate<JpdEvidence> for VerificationResultGate {
 /// What each axis means when it fires, in the operator's words.
 fn finding_for(axis: JpdFailureAxis) -> String {
     match axis {
+        JpdFailureAxis::ActorUsedAsOwnObserver => {
+            "a journey contract uses a step actor as that step's observer".to_owned()
+        }
         JpdFailureAxis::CapabilityMissingUnderClaimedSuccess => {
             "a result claiming success reports gate.status = capability_missing: the capability that would have judged it never ran"
                 .to_owned()
@@ -212,4 +684,56 @@ pub fn jpd_suite() -> Vec<JpdSpecimen> {
             })),
         },
     ]
+}
+
+/// The journey-contract pathogen suite.
+#[must_use]
+pub fn journey_contract_suite() -> Vec<JpdSpecimen> {
+    vec![JpdSpecimen {
+        id: "contract/actor-as-own-observer".to_owned(),
+        axis: JpdFailureAxis::ActorUsedAsOwnObserver,
+        evidence: JpdEvidence::JourneyContract(JourneyContractEvidence {
+            contract: serde_json::json!({
+                "contractId": "journey/checkout-s1b",
+                "actors": [{
+                    "actorId": "agent/checkout-driver",
+                    "name": "Checkout driver",
+                    "goal": "Submit the order"
+                }],
+                "steps": [{
+                    "stepId": "step/submit-order",
+                    "actorId": "agent/checkout-driver"
+                }],
+                "promises": [{
+                    "promiseId": "promise/receipt-durable",
+                    "stepId": "step/submit-order",
+                    "requiredObserverCapability": "browser.semantic-journey"
+                }]
+            }),
+            contract_digest:
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
+            observation_obligations: vec![serde_json::json!({
+                "contractId": "journey/checkout-s1b",
+                "contractDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "promiseId": "promise/receipt-durable",
+                "observerRequirements": {
+                    "capability": "browser.semantic-journey"
+                },
+                "resolution": {
+                    "status": "matched",
+                    "capabilityBinding": {
+                        "capabilityId": "browser.semantic-journey",
+                        "observerId": "agent/checkout-driver"
+                    }
+                }
+            })],
+            verification_result: serde_json::json!({
+                "contractId": "journey/checkout-s1b",
+                "contractDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "bindings": {
+                    "observers": [{ "observerId": "agent/checkout-driver" }]
+                }
+            }),
+        }),
+    }]
 }

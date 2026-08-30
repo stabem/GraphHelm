@@ -46,6 +46,88 @@ fn replace_opened_file(path: &Path, replacement: &[u8]) -> bool {
 }
 
 #[test]
+fn accepted_development_package_keeps_its_verdict_and_manifest_evidence_after_extraction() {
+    let package = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../extensions/builtin/graphhelm-development-contracts");
+    assert!(
+        package.join(MANIFEST_NAME).is_file(),
+        "arrangement check: expected the committed development package at {}",
+        package.display()
+    );
+
+    // This is the package verdict boundary that existed before contribution exposure: validate
+    // the package and retain the manifest plus package records, without running the later
+    // `validated_contributions` extraction step.
+    let mut reference_diagnostics = DiagnosticCollector::default();
+    let (manifest, records) = validate_package(&package, &mut reference_diagnostics)
+        .expect("the committed package must pass the pre-extraction validation boundary");
+    assert!(
+        reference_diagnostics.into_diagnostics().is_empty(),
+        "an accepted reference verdict must not retain diagnostics"
+    );
+
+    let expected_count = records.len();
+    let expected_digest = package_digest(&manifest, &records);
+    let declared = manifest
+        .pointer("/spec/contracts/contributions")
+        .and_then(serde_json::Value::as_array)
+        .expect("the accepted manifest must declare its contribution array");
+    let expected_authority = declared
+        .iter()
+        .map(|contribution| {
+            let strings = |pointer: &str| {
+                contribution
+                    .pointer(pointer)
+                    .map_or_else(Vec::new, |value| {
+                        value
+                            .as_array()
+                            .expect("validated authority must be an array")
+                            .iter()
+                            .map(|member| {
+                                member
+                                    .as_str()
+                                    .expect("validated authority members must be strings")
+                                    .to_owned()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+            };
+            (
+                contribution["id"]
+                    .as_str()
+                    .expect("a validated contribution must have an id")
+                    .to_owned(),
+                strings("/surfaces"),
+                strings("/effects"),
+                strings("/permissions"),
+                strings("/requires/capabilities"),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let validated = validate_extension_package(&package)
+        .expect("contribution extraction must not flip an accepted package verdict");
+    let extracted_authority = validated
+        .contributions
+        .iter()
+        .map(|contribution| {
+            (
+                contribution.id.clone(),
+                contribution.surfaces.clone(),
+                contribution.effects.clone(),
+                contribution.permissions.clone(),
+                contribution.required_capabilities.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(validated.contribution_count, expected_count);
+    assert_eq!(validated.package_digest, expected_digest);
+    assert_eq!(validated.contributions.len(), declared.len());
+    assert_eq!(extracted_authority, expected_authority);
+}
+
+#[test]
 fn manifest_is_parsed_from_the_captured_file_handle() {
     let directory = TestDirectory::new("manifest-snapshot");
     let manifest_path = directory.0.join(MANIFEST_NAME);

@@ -605,6 +605,7 @@ fn receipt_contains_only_recorded_evidence_and_marks_missing_identity_unavailabl
         tool: "mcp".to_owned(),
         action: "search_graph".to_owned(),
         actor: "agent:test".to_owned(),
+        program_allowlist: Default::default(),
         tier: IsolationTier::Tier1,
         disposition: ToolDisposition::Completed { exit_code: 0 },
         stdout_sha256: "a".repeat(64),

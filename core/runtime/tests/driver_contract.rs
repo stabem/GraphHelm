@@ -61,6 +61,7 @@ impl ToolPort for FakeToolPort {
             tool: "shell".to_owned(),
             action: "run".to_owned(),
             actor: "agent-runtime".to_owned(),
+            program_allowlist: ["git".to_owned()].into_iter().collect(),
             tier: IsolationTier::Tier1,
             disposition: self.disposition.clone(),
             stdout_sha256: digest_hex(b"TOOL-STDOUT-SENTINEL"),
@@ -1391,7 +1392,7 @@ impl ToolPort for ProcessFixtureToolPort {
     fn invoke<'a>(
         &'a self,
         _call: &'a ToolCall,
-        _lease: &'a ToolLease,
+        lease: &'a ToolLease,
         _actor: &'a str,
     ) -> Pin<Box<dyn Future<Output = ToolPortResult> + Send + 'a>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1412,6 +1413,7 @@ impl ToolPort for ProcessFixtureToolPort {
             tool: "tests".to_owned(),
             action: "run".to_owned(),
             actor: "agent-runtime".to_owned(),
+            program_allowlist: lease.programs.clone(),
             tier: IsolationTier::Tier1,
             disposition,
             stdout_sha256: digest_hex(b""),
@@ -1442,7 +1444,7 @@ impl ToolPort for DeterministicTimeoutToolPort {
     fn invoke<'a>(
         &'a self,
         _call: &'a ToolCall,
-        _lease: &'a ToolLease,
+        lease: &'a ToolLease,
         _actor: &'a str,
     ) -> Pin<Box<dyn Future<Output = ToolPortResult> + Send + 'a>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1452,6 +1454,7 @@ impl ToolPort for DeterministicTimeoutToolPort {
                     tool: "tests".to_owned(),
                     action: "run".to_owned(),
                     actor: "agent-runtime".to_owned(),
+                    program_allowlist: lease.programs.clone(),
                     tier: IsolationTier::Tier1,
                     disposition: ToolDisposition::TimedOut,
                     stdout_sha256: digest_hex(b""),

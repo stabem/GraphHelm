@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use graphhelm_tool_broker::call::{RepositoryAction, ShellAction, TestsAction, ToolCall};
 use graphhelm_tool_broker::effect::IsolationTier;
-use graphhelm_tool_broker::lease::{Capability, ToolLease};
+use graphhelm_tool_broker::lease::{Capability, MAX_PROGRAM_ALLOWLIST_MEMBERS, ToolLease};
 use graphhelm_tool_broker::path::RelativePath;
 use graphhelm_tool_broker::record::{ToolDisposition, digest_hex};
 use graphhelm_tool_host::host::{HostConfig, ToolHost};
@@ -44,6 +44,10 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
 }
 
 fn host(project: &Path, staging: &Path) -> ToolHost {
+    host_with(project, staging, Duration::from_secs(30), "fake_tool")
+}
+
+fn host_with(project: &Path, staging: &Path, timeout: Duration, tests_runner: &str) -> ToolHost {
     // tests_runner stays a bare name ("fake_tool"); its directory reaches the child through
     // HostConfig::path_prepend (the Task 5 mechanism) — no parent-PATH mutation, no bare-name
     // exception.
@@ -54,10 +58,10 @@ fn host(project: &Path, staging: &Path) -> ToolHost {
     ToolHost::new(HostConfig {
         workspace: WorkspaceConfig::validated(project, staging, &[]).unwrap(),
         limits: ProcessLimits {
-            timeout: Duration::from_secs(30),
+            timeout,
             max_output_bytes: 1024 * 1024,
         },
-        tests_runner: "fake_tool".to_owned(),
+        tests_runner: tests_runner.to_owned(),
         tests_runner_env: BTreeMap::new(),
         path_prepend: vec![tool_dir],
         keep_workspace: false,
@@ -125,6 +129,138 @@ fn a_tier_0_read_touches_the_project_and_never_provisions_a_workspace() {
         staging_entries(staging.path()).is_empty(),
         "tier 0 must not provision"
     );
+}
+
+#[test]
+fn the_program_allowlist_in_force_is_recorded_canonically() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let host = host(&project, staging.path());
+    let mut lease = full_lease("agent-auditor");
+    lease.programs = ["rustc", "cargo", "git"]
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
+    let call = ToolCall::Repository(RepositoryAction::ReadFile {
+        path: RelativePath::parse("src/lib.rs").unwrap(),
+    });
+
+    let (record, _) = host.invoke(&call, &lease, "agent-auditor");
+
+    assert_eq!(
+        record.program_allowlist.into_iter().collect::<Vec<_>>(),
+        ["cargo", "git", "rustc"],
+        "the durable record must name the complete canonical authority set"
+    );
+
+    lease.programs = ["python", "git"].map(str::to_owned).into_iter().collect();
+    let (reused, _) = host.invoke(&call, &lease, "agent-auditor");
+    assert!(
+        reused.reused,
+        "the second snapshot-closed read must hit cache"
+    );
+    assert_eq!(
+        reused.program_allowlist.into_iter().collect::<Vec<_>>(),
+        ["git", "python"],
+        "a cache hit must record current authority, not the cache writer's authority"
+    );
+}
+
+#[test]
+fn an_invalid_allowlist_member_is_refused_without_entering_the_record() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let host = host(&project, staging.path());
+    let mut lease = full_lease("agent-auditor");
+    let sentinel = "TOKEN=secret";
+    lease.programs.insert(sentinel.to_owned());
+    let call = ToolCall::Repository(RepositoryAction::ReadFile {
+        path: RelativePath::parse("src/lib.rs").unwrap(),
+    });
+
+    let (record, _) = host.invoke(&call, &lease, "agent-auditor");
+
+    assert!(matches!(
+        record.disposition,
+        ToolDisposition::Denied { ref rule } if rule == "program_allowlist_invalid"
+    ));
+    assert!(record.program_allowlist.is_empty());
+    assert!(!serde_json::to_string(&record).unwrap().contains(sentinel));
+    assert!(staging_entries(staging.path()).is_empty());
+}
+
+#[test]
+fn an_oversized_allowlist_is_refused_before_a_write_effect() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let host = host(&project, staging.path());
+    let before = std::fs::read(project.join("src/lib.rs")).unwrap();
+    let mut lease = full_lease("agent-writer");
+    lease.programs = (0..=MAX_PROGRAM_ALLOWLIST_MEMBERS)
+        .map(|index| format!("p{index}"))
+        .collect();
+    let call = ToolCall::Repository(RepositoryAction::ApplyPatch {
+        patch: PATCH.to_owned(),
+    });
+
+    let (record, streams) = host.invoke(&call, &lease, "agent-writer");
+
+    assert!(matches!(
+        record.disposition,
+        ToolDisposition::Denied { ref rule } if rule == "program_allowlist_invalid"
+    ));
+    assert!(record.program_allowlist.is_empty());
+    assert!(streams.stdout.is_empty());
+    assert!(streams.stderr.is_empty());
+    assert_eq!(std::fs::read(project.join("src/lib.rs")).unwrap(), before);
+    assert!(staging_entries(staging.path()).is_empty());
+}
+
+#[test]
+fn a_timeout_record_keeps_the_complete_program_allowlist() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let host = host_with(
+        &project,
+        staging.path(),
+        Duration::from_millis(100),
+        "fake_tool",
+    );
+    let mut lease = full_lease("agent-sleeper");
+    lease.programs.insert("fake_tool".to_owned());
+    let call = ToolCall::Shell(ShellAction {
+        program: "fake_tool".to_owned(),
+        arguments: vec!["sleep".to_owned()],
+    });
+
+    let (record, _) = host.invoke(&call, &lease, "agent-sleeper");
+
+    assert_eq!(record.disposition, ToolDisposition::TimedOut);
+    assert_eq!(record.program_allowlist, lease.programs);
+}
+
+#[test]
+fn a_host_error_record_keeps_the_complete_program_allowlist() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let host = host_with(
+        &project,
+        staging.path(),
+        Duration::from_secs(30),
+        "INVALID/RUNNER",
+    );
+    let lease = full_lease("agent-tester");
+    let call = ToolCall::Tests(TestsAction {
+        arguments: Vec::new(),
+    });
+
+    let (record, _) = host.invoke(&call, &lease, "agent-tester");
+
+    assert!(matches!(
+        record.disposition,
+        ToolDisposition::HostError { .. }
+    ));
+    assert_eq!(record.program_allowlist, lease.programs);
 }
 
 #[test]
@@ -213,6 +349,11 @@ fn the_shell_tool_respects_the_lease_allowlist_end_to_end() {
         ToolDisposition::Denied { rule } => assert_eq!(rule, "program_denied"),
         other => panic!("expected Denied, got {other:?}"),
     }
+    assert_eq!(
+        record.program_allowlist,
+        ["cargo", "git"].map(str::to_owned).into_iter().collect(),
+        "a refusal still needs its complete presented authorization context"
+    );
     // authorize refuses before the host routes: NOTHING was provisioned.
     assert!(
         staging_entries(staging.path()).is_empty(),

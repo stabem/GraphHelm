@@ -7,6 +7,7 @@
 //! absent here: that mapping belongs to the real executor (05d), not the broker.
 
 use crate::effect::IsolationTier;
+use std::collections::BTreeSet;
 
 /// SHA-256 of `bytes`, lowercase hex. Pinned to the algorithm by test against the standard
 /// empty-input vector so it can never silently change.
@@ -40,6 +41,10 @@ pub struct ToolCallRecord {
     pub tool: String,
     pub action: String,
     pub actor: String,
+    /// Complete bare-program authorization set presented with this call. `BTreeSet` gives one
+    /// canonical wire order; old records decode as an empty, explicitly unknown set.
+    #[serde(default)]
+    pub program_allowlist: BTreeSet<String>,
     pub tier: IsolationTier,
     pub disposition: ToolDisposition,
     pub stdout_sha256: String,

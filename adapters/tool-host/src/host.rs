@@ -57,6 +57,7 @@ fn refusal_rule(refusal: &BrokerRefusal) -> &'static str {
         BrokerRefusal::ActorMismatch { .. } => "actor_mismatch",
         BrokerRefusal::CapabilityMissing { .. } => "capability_missing",
         BrokerRefusal::ProgramDenied => "program_denied",
+        BrokerRefusal::ProgramAllowlistInvalid => "program_allowlist_invalid",
         BrokerRefusal::ActorInvalid => "actor_invalid",
         BrokerRefusal::EffectUnsupported(_) => "effect_unsupported",
     }
@@ -111,6 +112,13 @@ impl ToolHost {
         actor: &str,
     ) -> (ToolCallRecord, CapturedStreams) {
         let (tool, action) = call_names(call);
+        // Recording is its own trust boundary. `authorize` preserves identity/capability
+        // precedence, so an earlier refusal may win over a malformed set; either way rejected
+        // member bytes must never enter the durable record.
+        let program_allowlist = lease
+            .validated_program_allowlist()
+            .cloned()
+            .unwrap_or_default();
         let plan = match authorize(call, lease, actor) {
             Ok(plan) => plan,
             Err(refusal) => {
@@ -122,6 +130,7 @@ impl ToolHost {
                         tool: tool.to_owned(),
                         action: action.to_owned(),
                         actor: actor.to_owned(),
+                        program_allowlist,
                         tier,
                         disposition: ToolDisposition::Denied {
                             rule: refusal_rule(&refusal).to_owned(),
@@ -165,6 +174,7 @@ impl ToolHost {
         {
             record.reused = true;
             record.actor = actor.to_owned();
+            record.program_allowlist = program_allowlist;
             return (record, CapturedStreams { stdout, stderr });
         }
 
@@ -202,6 +212,7 @@ impl ToolHost {
             tool: tool.to_owned(),
             action: action.to_owned(),
             actor: actor.to_owned(),
+            program_allowlist,
             tier: plan.tier,
             disposition,
             stdout_sha256: digest_hex(&captured.stdout),

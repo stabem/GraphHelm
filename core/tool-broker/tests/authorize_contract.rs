@@ -4,7 +4,9 @@
 
 use graphhelm_tool_broker::call::{RepositoryAction, ShellAction, TestsAction, ToolCall};
 use graphhelm_tool_broker::effect::IsolationTier;
-use graphhelm_tool_broker::lease::{BrokerRefusal, Capability, ToolLease, authorize};
+use graphhelm_tool_broker::lease::{
+    BrokerRefusal, Capability, MAX_PROGRAM_ALLOWLIST_MEMBERS, ToolLease, authorize,
+};
 use graphhelm_tool_broker::path::RelativePath;
 
 fn full_lease(actor: &str) -> ToolLease {
@@ -101,6 +103,36 @@ fn a_program_outside_the_lease_allowlist_is_denied() {
     assert!(matches!(
         authorize(&shell_call("curl"), &lease, "agent-builder").unwrap_err(),
         BrokerRefusal::ProgramDenied
+    ));
+}
+
+#[test]
+fn an_invalid_member_makes_the_complete_program_allowlist_fail_closed() {
+    let mut lease = full_lease("agent-builder");
+    lease.programs.insert("TOKEN=secret".to_owned());
+
+    assert!(matches!(
+        authorize(&read_call(), &lease, "agent-builder").unwrap_err(),
+        BrokerRefusal::ProgramAllowlistInvalid
+    ));
+}
+
+#[test]
+fn the_program_allowlist_member_bound_accepts_the_limit_and_refuses_limit_plus_one() {
+    let programs = (0..MAX_PROGRAM_ALLOWLIST_MEMBERS)
+        .map(|index| format!("p{index}"))
+        .collect();
+    let mut lease = full_lease("agent-builder");
+    lease.programs = programs;
+
+    assert!(authorize(&read_call(), &lease, "agent-builder").is_ok());
+
+    lease
+        .programs
+        .insert(format!("p{MAX_PROGRAM_ALLOWLIST_MEMBERS}"));
+    assert!(matches!(
+        authorize(&read_call(), &lease, "agent-builder").unwrap_err(),
+        BrokerRefusal::ProgramAllowlistInvalid
     ));
 }
 

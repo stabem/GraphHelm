@@ -8,6 +8,11 @@ use crate::call::ToolCall;
 use crate::effect::{EffectUnsupported, IsolationTier, ToolEffect, required_tier};
 use crate::path::validate_program_name;
 
+/// Maximum number of distinct bare program names one lease may grant. Each accepted name is at
+/// most 64 bytes, so this also keeps the complete authority record far below Evidence's 16 MiB
+/// item bound before any tool effect can run.
+pub const MAX_PROGRAM_ALLOWLIST_MEMBERS: usize = 256;
+
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize,
 )]
@@ -30,6 +35,28 @@ pub struct ToolLease {
     pub programs: BTreeSet<String>,
 }
 
+impl ToolLease {
+    /// Returns the complete canonical program authority only when every member is a valid bare
+    /// program name and the set stays within its deterministic member bound. A malformed or
+    /// oversized set invalidates the whole authority: callers must never execute under, or
+    /// durably record, a partly trusted lease.
+    ///
+    /// # Errors
+    /// [`BrokerRefusal::ProgramAllowlistInvalid`] without echoing the rejected member.
+    pub fn validated_program_allowlist(&self) -> Result<&BTreeSet<String>, BrokerRefusal> {
+        if self.programs.len() <= MAX_PROGRAM_ALLOWLIST_MEMBERS
+            && self
+                .programs
+                .iter()
+                .all(|program| validate_program_name(program).is_ok())
+        {
+            Ok(&self.programs)
+        } else {
+            Err(BrokerRefusal::ProgramAllowlistInvalid)
+        }
+    }
+}
+
 /// A positive authorization: what the host may now route. The tier came from the effect and
 /// nothing else — the host re-refuses a mismatch as defense in depth (Task 7).
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -49,6 +76,8 @@ pub enum BrokerRefusal {
     CapabilityMissing { capability: Capability },
     #[error("the program is not in the lease's allowlist")]
     ProgramDenied,
+    #[error("the lease's program allowlist is invalid")]
+    ProgramAllowlistInvalid,
     #[error("the actor identifier is not valid")]
     ActorInvalid,
     #[error(transparent)]
@@ -92,13 +121,12 @@ pub fn authorize(
     if !lease.capabilities.contains(&capability) {
         return Err(BrokerRefusal::CapabilityMissing { capability });
     }
+    let programs = lease.validated_program_allowlist()?;
     if let ToolCall::Shell(action) = call {
         // A malformed program name is denied through the same door as an unlisted one: the
         // allowlist only ever holds bare validated names, so failing the shape check IS
         // failing the allowlist.
-        if validate_program_name(&action.program).is_err()
-            || !lease.programs.contains(&action.program)
-        {
+        if validate_program_name(&action.program).is_err() || !programs.contains(&action.program) {
             return Err(BrokerRefusal::ProgramDenied);
         }
     }

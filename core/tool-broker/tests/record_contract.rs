@@ -16,6 +16,10 @@ fn a_record_serializes_without_any_free_form_stream_content() {
         tool: "shell".into(),
         action: "run".into(),
         actor: "agent-builder".into(),
+        program_allowlist: ["rustc", "cargo", "git"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
         tier: graphhelm_tool_broker::effect::IsolationTier::Tier1,
         disposition: ToolDisposition::Completed { exit_code: 0 },
         stdout_sha256: digest_hex(STREAM),
@@ -33,9 +37,41 @@ fn a_record_serializes_without_any_free_form_stream_content() {
         !json.contains("THE-STREAM-CONTENT-SENTINEL"),
         "stream bytes leaked into the record"
     );
-    for key in ["stdoutSha256", "stderrSha256", "disposition", "tier"] {
+    for key in [
+        "stdoutSha256",
+        "stderrSha256",
+        "disposition",
+        "tier",
+        "programAllowlist",
+    ] {
         assert!(json.contains(key), "{key} missing");
     }
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).unwrap()["programAllowlist"],
+        serde_json::json!(["cargo", "git", "rustc"]),
+        "equivalent grants need one canonical wire order"
+    );
+}
+
+#[test]
+fn a_pre_allowlist_record_decodes_with_an_empty_authority_set() {
+    let legacy = serde_json::json!({
+        "tool": "shell",
+        "action": "run",
+        "actor": "agent-builder",
+        "tier": "tier_1",
+        "disposition": { "kind": "completed", "exit_code": 0 },
+        "stdoutSha256": digest_hex(b""),
+        "stdoutBytes": 0,
+        "stderrSha256": digest_hex(b""),
+        "stderrBytes": 0,
+        "truncated": false,
+        "reused": false
+    });
+
+    let record: ToolCallRecord = serde_json::from_value(legacy).unwrap();
+
+    assert!(record.program_allowlist.is_empty());
 }
 
 #[test]

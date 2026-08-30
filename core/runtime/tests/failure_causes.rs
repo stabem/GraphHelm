@@ -68,6 +68,7 @@ impl ToolPort for FakeToolPort {
             tool: "shell".to_owned(),
             action: "run".to_owned(),
             actor: "agent-runtime".to_owned(),
+            program_allowlist: ["git".to_owned()].into_iter().collect(),
             tier: IsolationTier::Tier1,
             disposition: self.disposition.clone(),
             stdout_sha256: digest_hex(b"TOOL-STDOUT-SENTINEL"),

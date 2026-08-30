@@ -907,18 +907,293 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
     let before = head_sequence(&base, &token, execution);
     let (first_status, first_reply) = post_json(&url, &token, &headers, &body);
     assert_eq!(first_status, 200, "{first_reply}");
+    assert!(
+        first_reply["data"].get("idempotency").is_none(),
+        "a fresh mutation must not claim it was a recognized retry: {first_reply}"
+    );
     let first_head = head_sequence(&base, &token, execution);
     assert!(first_head > before, "the fresh signal must have appended");
 
-    let (retry_status, retry_reply) = post_json(&url, &token, &headers, &body);
+    let original_event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    let original_sequence = original_event["sequence"].as_u64().unwrap_or_else(|| {
+        panic!("the original signal event carried no sequence: {original_event}")
+    });
+    let derived_key = original_event["idempotencyKey"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!("the original signal event carried no idempotency key: {original_event}")
+        })
+        .to_owned();
+    assert!(
+        derived_key.starts_with("sig-cmd-retry-1-record-"),
+        "the decision event must carry the server-derived key: {original_event}"
+    );
+
+    // Advance the stream after K was committed. A recognized retry must name K's original
+    // decision sequence, not this newer head and not any caller-supplied sequence.
+    let unrelated_body = serde_json::json!({
+        "signal": signal_envelope("signal-http-unrelated", "unexpected_dependency"),
+        "evidenceOut": directory.path().join("unrelated-evidence.json").to_str().unwrap(),
+    });
+    let (unrelated_status, unrelated_reply) = post_json(
+        &url,
+        &token,
+        &[
+            ("Idempotency-Key", "sig-cmd-unrelated-1"),
+            ("X-GraphHelm-Actor", "agent-other"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &unrelated_body,
+    );
+    assert_eq!(unrelated_status, 200, "{unrelated_reply}");
+    let advanced_head = head_sequence(&base, &token, execution);
+    assert!(
+        advanced_head > original_sequence,
+        "the unrelated mutation must advance past the original decision"
+    );
+
+    let stale_if_match = before.to_string();
+    let retry_headers = [
+        ("Idempotency-Key", "sig-cmd-retry-1"),
+        ("X-GraphHelm-Actor", "agent-planner"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+        ("If-Match", stale_if_match.as_str()),
+    ];
+    let (retry_status, retry_reply) = post_json(&url, &token, &retry_headers, &body);
     assert_eq!(
         retry_status, 200,
         "a full retry is success, not conflict: {retry_reply}"
     );
     assert_eq!(
+        retry_reply["data"]["idempotency"],
+        serde_json::json!({
+            "recognizedRetry": true,
+            "originalDecisionSequence": original_sequence,
+        }),
+        "the retry marker must identify the exact committed decision: {retry_reply}"
+    );
+    assert_ne!(
+        original_sequence,
+        stale_if_match.parse::<u64>().unwrap(),
+        "the proof must not echo the caller's deliberately stale If-Match"
+    );
+    assert_eq!(
+        retry_reply["data"]["headSequence"],
+        serde_json::json!(advanced_head),
+        "the retry still reports current status, whose head may be newer"
+    );
+    assert_eq!(
         head_sequence(&base, &token, execution),
-        first_head,
+        advanced_head,
         "and appends nothing"
+    );
+
+    let tail = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(&token),
+    );
+    let marked_event = tail["data"]["events"]
+        .as_array()
+        .unwrap_or_else(|| panic!("events tail carried no array: {tail}"))
+        .iter()
+        .find(|event| event["sequence"] == original_sequence)
+        .unwrap_or_else(|| {
+            panic!("no event exists at marked sequence {original_sequence}: {tail}")
+        });
+    assert_eq!(marked_event["kind"]["type"], "signal_recorded");
+    assert_eq!(marked_event["idempotencyKey"], derived_key);
+    assert_eq!(marked_event["actor"]["type"], "agent");
+    assert_eq!(marked_event["actor"]["id"], "agent-planner");
+    assert_eq!(marked_event["kind"]["data"]["sourceKind"], "node");
+    assert_eq!(marked_event["kind"]["data"]["sourceId"], "implementation");
+    assert_eq!(marked_event["kind"]["data"]["kind"], "no_progress");
+}
+
+/// An actor header is durable attribution, not display metadata. Two authenticated callers can
+/// submit byte-identical bodies and the same bare Idempotency-Key, but the second caller did not
+/// perform the first caller's mutation. The retry marker must therefore stay absent and the
+/// request must fail closed instead of laundering actor A's committed event into actor B's
+/// success.
+#[test]
+fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-retry-actor-binding";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let body = serde_json::json!({
+        "signal": signal_envelope("signal-http-retry-actor-binding", "no_progress"),
+        "evidenceOut": directory.path().join("actor-evidence.json").to_str().unwrap(),
+    });
+    let url = format!("{base}/v1/executions/{execution}/signal");
+    let (first_status, first_reply) = post_json(
+        &url,
+        &token,
+        &[
+            ("Idempotency-Key", "sig-cmd-retry-actor-binding"),
+            ("X-GraphHelm-Actor", "agent-first"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &body,
+    );
+    assert_eq!(first_status, 200, "{first_reply}");
+    let head_after_first = head_sequence(&base, &token, execution);
+
+    let (second_status, second_reply) = post_json(
+        &url,
+        &token,
+        &[
+            ("Idempotency-Key", "sig-cmd-retry-actor-binding"),
+            ("X-GraphHelm-Actor", "agent-second"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &body,
+    );
+    assert_eq!(
+        second_status, 409,
+        "actor B must not receive recognized success for actor A's event: {second_reply}"
+    );
+    assert!(
+        second_reply["data"].get("idempotency").is_none(),
+        "a mismatched actor must never receive a retry proof: {second_reply}"
+    );
+    assert_eq!(
+        second_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+        "{second_reply}"
+    );
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        head_after_first,
+        "the refused actor mismatch must append nothing"
+    );
+    assert!(
+        !second_reply.to_string().contains("agent-first"),
+        "the refusal must not disclose the original actor: {second_reply}"
+    );
+}
+
+/// Commits a structurally valid event under a caller-selected key, but deliberately gives it the
+/// wrong decision kind. Repository files are untrusted input; key equality alone cannot turn this
+/// event into proof that a different mutation happened.
+fn append_wrong_decision_kind(events: &Path, execution: &str, key: &str, actor: &str) {
+    let store = graphhelm_events::LocalEventRepository::open(
+        events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let (stream, _history) = store.read_unique_replay_stream().unwrap();
+    assert_eq!(
+        stream.scope.execution_id().map(ToString::to_string),
+        Some(execution.to_owned()),
+        "the poisoned event must stay inside the requested execution scope"
+    );
+    let next = store
+        .next_sequence(&stream.scope, &stream.stream_id)
+        .unwrap();
+    let request = graphhelm_events::PreparedAppend::new(
+        stream.scope,
+        graphhelm_protocols::OpaqueId::parse(stream.stream_id).unwrap(),
+        next,
+        vec![graphhelm_protocols::NewEvent::new(
+            graphhelm_protocols::OpaqueId::parse(key).unwrap(),
+            graphhelm_protocols::PersistedActor::new(
+                graphhelm_protocols::PersistedActorType::Agent,
+                graphhelm_protocols::ActorId::parse(actor).unwrap(),
+            ),
+            graphhelm_protocols::Sensitivity::Internal,
+            graphhelm_protocols::EventKind::WakeLease(graphhelm_protocols::WakeLease {
+                execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                session_id: graphhelm_protocols::OpaqueId::parse("session-wrong-kind").unwrap(),
+                cursor: next - 1,
+                rendezvous_id: graphhelm_protocols::OpaqueId::parse("rendezvous-wrong-kind")
+                    .unwrap(),
+                matures_in_seconds: None,
+            }),
+            vec![],
+            vec![],
+        )],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let committed = store.append_atomic(&request).unwrap();
+    assert_eq!(committed.len(), 1);
+    assert_eq!(committed[0].kind.wire_name(), "wake_lease");
+    assert_eq!(committed[0].idempotency_key.as_str(), key);
+}
+
+/// A derived key is only one part of a decision identity. Even with matching actor, execution and
+/// key, a `wake_lease` event is not a `signal_recorded` decision. The Runtime must refuse
+/// the retry without exposing the mismatched envelope and without claiming recognized success.
+#[test]
+fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let probe_events = directory.path().join("probe-events");
+    let target_events = directory.path().join("target-events");
+    let execution = "exec-http-retry-kind-binding";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&probe_events, &fixtures, execution);
+    cli_start(&target_events, &fixtures, execution);
+
+    // Ask the real Runtime to derive the exact key. The target then receives the same key on a
+    // different event kind, avoiding a test-side copy of the digest algorithm that could drift.
+    let body = serde_json::json!({
+        "signal": signal_envelope("signal-http-retry-kind-binding", "no_progress"),
+        "evidenceOut": directory.path().join("kind-evidence.json").to_str().unwrap(),
+    });
+    let headers = [
+        ("Idempotency-Key", "sig-cmd-retry-kind-binding"),
+        ("X-GraphHelm-Actor", "agent-kind"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    let (probe_guard, probe_base, probe_token) = serve(&probe_events);
+    let probe_url = format!("{probe_base}/v1/executions/{execution}/signal");
+    let (probe_status, probe_reply) = post_json(&probe_url, &probe_token, &headers, &body);
+    assert_eq!(probe_status, 200, "{probe_reply}");
+    let derived_key = last_event_of_kind(
+        &probe_base,
+        &probe_token,
+        execution,
+        "signal_recorded",
+    )["idempotencyKey"]
+        .as_str()
+        .expect("the probe signal must carry its derived key")
+        .to_owned();
+    drop(probe_guard);
+
+    append_wrong_decision_kind(&target_events, execution, &derived_key, "agent-kind");
+    let (_target_guard, target_base, target_token) = serve(&target_events);
+    let target_url = format!("{target_base}/v1/executions/{execution}/signal");
+    // The raw event endpoint is the narrow observer for the question here: did the refused retry
+    // append anything? It does not make this guard depend on any aggregate status projection.
+    let raw_events_url = format!("{target_base}/v1/executions/{execution}/events?limit=1000");
+    let head_before_retry = get_json(&raw_events_url, Some(&target_token))["data"]["head"]
+        .as_u64()
+        .expect("the raw event page must report its head");
+    let (retry_status, retry_reply) = post_json(&target_url, &target_token, &headers, &body);
+    assert_eq!(
+        retry_status, 409,
+        "a wrong-kind event must not authenticate the requested signal: {retry_reply}"
+    );
+    assert!(
+        retry_reply["data"].get("idempotency").is_none(),
+        "a wrong-kind event must never produce a retry proof: {retry_reply}"
+    );
+    assert_eq!(
+        retry_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+        "{retry_reply}"
+    );
+    assert_eq!(
+        get_json(&raw_events_url, Some(&target_token))["data"]["head"],
+        serde_json::json!(head_before_retry),
+        "the refused wrong-kind retry must append nothing"
+    );
+    assert!(
+        !retry_reply.to_string().contains("wake_lease"),
+        "the refusal must not expose the mismatched event kind: {retry_reply}"
     );
 }
 
@@ -3272,6 +3547,76 @@ fn a_sweep_over_http_records_once_and_a_retry_appends_nothing() {
         "and appends nothing — the sweep's per-call keys must not defeat the surface's own \
          idempotency contract"
     );
+}
+
+#[test]
+fn an_equivalent_fractional_sweep_instant_is_still_an_exact_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-sweep-fractional-retry";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let url = format!("{base}/v1/executions/{execution}/sweep");
+    let headers = [
+        ("Idempotency-Key", "sweep-fractional-retry-1"),
+        ("X-GraphHelm-Actor", "agent-planner"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    let body = serde_json::json!({"asOf": "2026-08-29T00:00:00.000Z"});
+
+    let (first_status, first_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(first_status, 200, "{first_reply}");
+    let first_head = head_sequence(&base, &token, execution);
+
+    let (retry_status, retry_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(
+        retry_status, 200,
+        "timestamp normalization must not turn a byte-identical retry into a conflict: {retry_reply}"
+    );
+    assert_eq!(
+        retry_reply["data"]["idempotency"]["recognizedRetry"], true,
+        "the normalized persisted instant must still authenticate the original sweep: {retry_reply}"
+    );
+    assert_eq!(head_sequence(&base, &token, execution), first_head);
+}
+
+#[test]
+fn a_null_wake_cursor_retries_the_server_derived_arming() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-wake-null-cursor";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let url = format!("{base}/v1/executions/{execution}/wake-lease");
+    let headers = [
+        ("Idempotency-Key", "wake-null-cursor-retry-1"),
+        ("X-GraphHelm-Actor", "agent-sleeper"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    let body = serde_json::json!({
+        "sessionId": "session-null-cursor",
+        "rendezvousId": "rendezvous-null-cursor",
+        "cursor": null
+    });
+
+    let (first_status, first_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(first_status, 200, "{first_reply}");
+    let first_head = head_sequence(&base, &token, execution);
+
+    let (retry_status, retry_reply) = post_json(&url, &token, &headers, &body);
+    assert_eq!(
+        retry_status, 200,
+        "null means server-derived on both the first request and its exact retry: {retry_reply}"
+    );
+    assert_eq!(
+        retry_reply["data"]["idempotency"]["recognizedRetry"], true,
+        "the retry must name the already committed arming: {retry_reply}"
+    );
+    assert_eq!(head_sequence(&base, &token, execution), first_head);
 }
 
 /// `--sweep-interval` makes the server sweep on its own, and the record says the TICK asked.

@@ -20,7 +20,8 @@ use axum::{Json, Router};
 use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EventEnvelope, OpaqueId, PersistedActor, PersistedActorType, SweepCaller,
+    ActorId, Diagnostic, EventEnvelope, EventKind, OpaqueId, PersistedActor, PersistedActorType,
+    RepositoryScope, SweepCaller,
 };
 
 use crate::args::ServeArgs;
@@ -68,6 +69,10 @@ const NOT_FOUND_CODE: &str = "GHCLI008_SERVE_NOT_FOUND";
 /// audit that silently stops recording reads as "the caller asked nothing", which is the exact
 /// lie the audit exists to prevent.
 const AUDIT_CODE: &str = "GHCLI009_SERVE_AUDIT_FAILED";
+/// A recognized retry could not be annotated because the status command violated its object
+/// response contract. Fail closed: without the marker, HTTP 200 would make an already-applied
+/// request indistinguishable from a fresh mutation whose attributable event is missing.
+const IDEMPOTENCY_REPLY_CODE: &str = "GHCLI023_IDEMPOTENCY_REPLY_INVALID";
 const AUDIT_COMMAND: &str = "serve.read_audit";
 
 /// The command name `serve`'s own pre-bind failures report under — there is no verb, unlike
@@ -535,8 +540,9 @@ fn respond_failure(command: &'static str, failure: execution::Failure) -> Respon
 // that nonetheless shares the same `{command-key}-{suffix}-` prefix as the earlier one, which
 // `classify_one_key` recognizes explicitly as `KeyState::Divergent` and refuses with 409 rather
 // than ever reaching the store. The digest is a divergence *detector*, not a security boundary: a
-// caller can only ever collide with its own past requests, made under its own bearer token — see
-// `request_digest16`'s own doc comment.
+// bearer-authenticated callers can still assert different durable actors, so digest equality is
+// never sufficient proof by itself. Retry classification below also verifies the committed actor,
+// execution scope/stream, and exact decision event kind.
 // -------------------------------------------------------------------------------------------
 
 /// One derived event key: `prefix` is `{Idempotency-Key header}-{suffix}`, and `full` is `prefix`
@@ -548,6 +554,157 @@ fn respond_failure(command: &'static str, failure: execution::Failure) -> Respon
 struct DerivedKey {
     prefix: String,
     full: OpaqueId,
+}
+
+/// The one committed event kind that proves each mutation happened. This is separate from the
+/// key's suffix: `approve` and `amend_budget` both historically use `"outcome"`, but their durable
+/// decisions are different event kinds. `Unrecognized` is deliberately fail-closed for a future
+/// route that forgets to register its proof kind: the first write may still run, but no later
+/// request can manufacture a recognized-retry marker from an event this layer cannot identify.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MutationDecisionKind {
+    ExecutionStarted,
+    SignalRecorded,
+    NodeOutcomeRecorded,
+    ExecutionFormAmended,
+    ExecutionPaused,
+    ExecutionResumed,
+    ExecutionCompleted,
+    SweepPerformed,
+    WakeLease,
+    Unrecognized,
+}
+
+impl MutationDecisionKind {
+    fn for_command(command: &str) -> Self {
+        match command {
+            "execution.start" => Self::ExecutionStarted,
+            "execution.signal" => Self::SignalRecorded,
+            "execution.approve" => Self::NodeOutcomeRecorded,
+            "execution.amend_budget" => Self::ExecutionFormAmended,
+            "execution.pause" => Self::ExecutionPaused,
+            "execution.resume" => Self::ExecutionResumed,
+            "execution.cancel" => Self::ExecutionCompleted,
+            "execution.sweep" => Self::SweepPerformed,
+            "execution.wake_lease" => Self::WakeLease,
+            _ => Self::Unrecognized,
+        }
+    }
+
+    /// Matches both the closed event variant and the execution identity inside its payload. An
+    /// envelope scope alone is not enough: repository files are untrusted, and a payload claiming
+    /// a different execution must never authenticate this request.
+    fn matches(self, kind: &EventKind, execution: &str, request_body: &serde_json::Value) -> bool {
+        match (self, kind) {
+            (Self::ExecutionStarted, EventKind::ExecutionStarted(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && serialized_field_matches(&payload.mode, request_body.get("mode"))
+            }
+            (Self::SignalRecorded, EventKind::SignalRecorded(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body.get("signal").is_some_and(|signal| {
+                        signal.get("id").and_then(serde_json::Value::as_str)
+                            == Some(payload.signal_id.as_str())
+                            && signal
+                                .pointer("/source/id")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(payload.source_id.as_str())
+                            && serialized_field_matches(
+                                &payload.source_kind,
+                                signal.pointer("/source/type"),
+                            )
+                            && signal.get("type").and_then(serde_json::Value::as_str)
+                                == Some(payload.kind.as_str())
+                            && serialized_field_matches(&payload.severity, signal.get("severity"))
+                            && serde_json::to_vec(signal)
+                                .ok()
+                                .and_then(|bytes| raw_content_sha256(&bytes).ok())
+                                .is_some_and(|digest| digest == payload.envelope_sha256)
+                    })
+            }
+            (Self::NodeOutcomeRecorded, EventKind::NodeOutcomeRecorded(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body.get("node").and_then(serde_json::Value::as_str)
+                        == Some(payload.node_id.as_str())
+                    && payload.outcome == graphhelm_protocols::NodeOutcome::Approved
+                    && payload.next_state == graphhelm_protocols::NodeState::Ready
+                    && payload.reason.is_none()
+            }
+            (Self::ExecutionFormAmended, EventKind::ExecutionFormAmended(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body
+                        .get("computedAtSequence")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(payload.computed_at_sequence)
+                    && request_body
+                        .get("node")
+                        .and_then(serde_json::Value::as_str)
+                        .zip(
+                            request_body
+                                .get("seconds")
+                                .and_then(serde_json::Value::as_u64),
+                        )
+                        .is_some_and(|(node, seconds)| {
+                            payload.node_timeout_seconds.len() == 1
+                                && payload.node_timeout_seconds.iter().next().is_some_and(
+                                    |(event_node, event_seconds)| {
+                                        event_node.as_str() == node && *event_seconds == seconds
+                                    },
+                                )
+                        })
+            }
+            (Self::ExecutionPaused, EventKind::ExecutionPaused(payload)) => {
+                payload.execution_id.as_str() == execution
+            }
+            (Self::ExecutionResumed, EventKind::ExecutionResumed(payload)) => {
+                payload.execution_id.as_str() == execution
+            }
+            (Self::ExecutionCompleted, EventKind::ExecutionCompleted(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && payload.status == graphhelm_protocols::SimulationStatus::Cancelled
+            }
+            (Self::SweepPerformed, EventKind::SweepPerformed(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && payload.caller == SweepCaller::Operator
+                    && match request_body.get("asOf") {
+                        None | Some(serde_json::Value::Null) => true,
+                        Some(expected) => expected
+                            .as_str()
+                            .and_then(|value| {
+                                graphhelm_protocols::PersistedTimestamp::parse(value).ok()
+                            })
+                            .is_some_and(|expected| expected == payload.as_of),
+                    }
+            }
+            (Self::WakeLease, EventKind::WakeLease(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body
+                        .get("sessionId")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(payload.session_id.as_str())
+                    && request_body
+                        .get("rendezvousId")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(payload.rendezvous_id.as_str())
+                    && request_body
+                        .get("cursor")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_none_or(|cursor| cursor == payload.cursor)
+                    && request_body
+                        .get("maturesInSeconds")
+                        .and_then(serde_json::Value::as_u64)
+                        == payload.matures_in_seconds
+            }
+            _ => false,
+        }
+    }
+}
+
+fn serialized_field_matches<T: serde::Serialize>(
+    actual: &T,
+    expected: Option<&serde_json::Value>,
+) -> bool {
+    expected.is_some_and(|expected| serde_json::to_value(actual).ok().as_ref() == Some(expected))
 }
 
 /// One mutation's derived identity: the actor its event is attributed to, the deterministic
@@ -575,6 +732,8 @@ struct DerivedKey {
 struct MutationIdentity {
     actor: PersistedActor,
     keys: Vec<DerivedKey>,
+    decision_kind: MutationDecisionKind,
+    request_body: serde_json::Value,
     /// The bare `Idempotency-Key` header value the caller sent, before any suffix or content
     /// digest — named in a `KeyState::Divergent` diagnostic so the caller sees exactly which
     /// header value was reused across two different request bodies.
@@ -689,6 +848,8 @@ fn parse_mutation_headers(
     Ok(MutationIdentity {
         actor: PersistedActor::new(actor_type, actor_id),
         keys,
+        decision_kind: MutationDecisionKind::for_command(command),
+        request_body: body.clone(),
         idempotency_header: idempotency.to_owned(),
         if_match,
     })
@@ -713,9 +874,9 @@ fn parse_mutation_headers(
 /// enough to keep the derived key well inside `OpaqueId`'s cap, long enough (16 hex characters is
 /// 64 bits of entropy) that an accidental collision between two genuinely different bodies is not
 /// a practical concern for what this digest exists to do. This digest is a divergence *detector*,
-/// not a security boundary — a caller can only ever collide with its own past requests, made under
-/// its own bearer token; there is no cross-caller boundary here to defend (`run_idempotent_mutation`
-/// module doc, Task 3).
+/// not a security boundary. The bearer token authenticates access to the local Runtime, not the
+/// durable actor header: `classify_existing_keys` must still bind an exact key to the committed
+/// actor, execution scope/stream, and decision event kind before it can call the request a retry.
 ///
 /// `Err` carries the already-built `Response` to return directly, the same
 /// `clippy::result_large_err` accepted-not-worked-around tradeoff `parse_mutation_headers` and
@@ -848,14 +1009,48 @@ async fn run_idempotent_mutation<'a>(
     wiring: ExecutorWiring,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
-    match classify_existing_keys(
+    run_idempotent_mutation_inner(
         events,
         execution,
-        &identity.keys,
-        &identity.idempotency_header,
-    ) {
-        Ok(KeyState::Complete) => {
-            return reply_with_current_status(events, execution, command, wiring);
+        command,
+        identity,
+        wiring,
+        MutationObservation {
+            after_absent_preflight: std::future::ready(()),
+            post_append_conflict: || {},
+        },
+        run,
+    )
+    .await
+}
+
+/// The mutation algorithm with two private observation points. Production always supplies a
+/// ready future and a no-op closure through `run_idempotent_mutation`; in-process tests can inject
+/// a Tokio rendezvous without adding an environment variable, wire route, sleep, filesystem
+/// write, or other behavior reachable from the shipped server.
+struct MutationObservation<A, C> {
+    after_absent_preflight: A,
+    post_append_conflict: C,
+}
+
+async fn run_idempotent_mutation_inner<'a>(
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    identity: MutationIdentity,
+    wiring: ExecutorWiring,
+    observation: MutationObservation<impl Future<Output = ()> + Send, impl FnOnce() + Send>,
+    run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+) -> Response {
+    match classify_existing_keys(events, execution, &identity) {
+        Ok(KeyState::Complete(original_decision_sequence)) => {
+            return reply_with_current_status(
+                events,
+                execution,
+                command,
+                wiring,
+                original_decision_sequence,
+            );
         }
         Ok(KeyState::Partial(stuck)) => {
             return partial_conflict_response(events, execution, command, &stuck);
@@ -866,6 +1061,8 @@ async fn run_idempotent_mutation<'a>(
         Ok(KeyState::Absent) => {}
         Err(failure) => return respond_failure(command, failure),
     }
+
+    observation.after_absent_preflight.await;
 
     // Milestone 05a Task 4: `If-Match`, checked here — after the idempotency pre-flight has
     // already established this is a genuinely fresh command, never a retry of one that already
@@ -890,7 +1087,7 @@ async fn run_idempotent_mutation<'a>(
     }
 
     let key = identity.keys[0].full.clone();
-    match run(identity.actor, key).await {
+    match run(identity.actor.clone(), key).await {
         Ok(mut value) => {
             // Milestone 05a follow-up Important: a fresh mutation success previously carried no
             // `headSequence` (only `status` and a recognized retry's `reply_with_current_status`
@@ -949,18 +1146,18 @@ async fn run_idempotent_mutation<'a>(
         }
         Err(MutationError::Prepared(response)) => response,
         Err(MutationError::Command(failure)) if failure.code == "GHE003_IDEMPOTENCY_CONFLICT" => {
+            (observation.post_append_conflict)();
             // The race the module doc names: another attempt with the same key committed between
             // the pre-flight check above and this append. Classify again against the store's
             // now-current state rather than trusting the in-flight guess either way.
-            match classify_existing_keys(
-                events,
-                execution,
-                &identity.keys,
-                &identity.idempotency_header,
-            ) {
-                Ok(KeyState::Complete) => {
-                    reply_with_current_status(events, execution, command, wiring)
-                }
+            match classify_existing_keys(events, execution, &identity) {
+                Ok(KeyState::Complete(original_decision_sequence)) => reply_with_current_status(
+                    events,
+                    execution,
+                    command,
+                    wiring,
+                    original_decision_sequence,
+                ),
                 Ok(KeyState::Partial(stuck)) => {
                     partial_conflict_response(events, execution, command, &stuck)
                 }
@@ -988,7 +1185,9 @@ async fn run_idempotent_mutation<'a>(
 /// second store open): see `classify_one_key`.
 enum KeyState {
     Absent,
-    Complete,
+    /// Every expected key exists. Carries the committed sequence of the command's first
+    /// server-derived decision key, never the current head or a caller-supplied sequence.
+    Complete(u64),
     Partial(OpaqueId),
     /// A committed event's key shares this command's `{command-key}-{suffix}-` prefix but was
     /// derived from a *different* request body (a different content digest) — the caller reused
@@ -1002,12 +1201,40 @@ enum KeyState {
 /// semantics" even against legacy history that predates this digest, or against the losing side of
 /// a two-writer race — see the second call site in `run_idempotent_mutation`). Absent an exact
 /// match, a committed event whose key shares this one's `prefix` but carries a *different* digest
-/// means the caller's header was already spent on a different body — `Divergent`. Neither found at
-/// all — genuinely fresh — `Missing`.
+/// means the caller's header was already spent on a different authenticated mutation identity —
+/// `Divergent`. Neither found at all — genuinely fresh — `Missing`.
 enum KeyPresence {
-    Present,
+    /// The exact derived key exists at this committed event sequence.
+    Present(u64),
     Divergent,
     Missing,
+}
+
+/// The full proof identity for one lookup. Every field comes from the authenticated request or the
+/// exact stream `resolve_stream` selected. Nothing from a mismatched event is returned to the
+/// caller; it changes only the classification to `Divergent`.
+struct ExpectedDecision<'a> {
+    actor: &'a PersistedActor,
+    scope: &'a RepositoryScope,
+    stream: &'a str,
+    execution: &'a str,
+    kind: MutationDecisionKind,
+    request_body: &'a serde_json::Value,
+}
+
+impl ExpectedDecision<'_> {
+    fn matches(&self, event: &EventEnvelope) -> bool {
+        event.actor == *self.actor
+            && event.scope == *self.scope
+            && event.stream_id.as_str() == self.stream
+            && event
+                .scope
+                .execution_id()
+                .is_some_and(|execution| execution.as_str() == self.execution)
+            && self
+                .kind
+                .matches(&event.kind, self.execution, self.request_body)
+    }
 }
 
 /// Prefix matching is a plain string `starts_with`, not a delimited-field comparison, so a caller
@@ -1015,17 +1242,26 @@ enum KeyPresence {
 /// suffix as a leading substring (e.g. sending `"sig-cmd-record-extra"` to `signal` after
 /// previously sending `"sig-cmd"` to the same command) could trigger a false `Divergent` against
 /// itself. This is deliberately not hardened against: every key this pre-flight ever compares
-/// belongs to requests made under the one bearer token this server issues (Milestone 05a Task 1) —
-/// there is no other caller to collide with, so a self-inflicted prefix collision only ever costs
-/// the crafting caller its own request, exactly as an accidental one would. The digest is
-/// divergence *detection*, not a cryptographic boundary; see `request_digest16`'s doc comment.
-fn classify_one_key(history: &[EventEnvelope], derived: &DerivedKey) -> KeyPresence {
+/// belongs to requests made under the one bearer token this server issues (Milestone 05a Task 1).
+/// A prefix collision can therefore refuse work inside that authenticated local deployment, but
+/// cannot authorize it: the exact-key path below additionally requires the committed actor,
+/// scope/stream, execution and decision kind. The digest is divergence *detection*, not a
+/// cryptographic boundary; see `request_digest16`'s doc comment.
+fn classify_one_key(
+    history: &[EventEnvelope],
+    derived: &DerivedKey,
+    expected: &ExpectedDecision<'_>,
+) -> KeyPresence {
     let reused_prefix = format!("{}-", derived.prefix);
     let mut divergent = false;
     for event in history {
         let existing = event.idempotency_key.as_str();
         if existing == derived.full.as_str() {
-            return KeyPresence::Present;
+            return if expected.matches(event) {
+                KeyPresence::Present(event.sequence)
+            } else {
+                KeyPresence::Divergent
+            };
         }
         if existing.starts_with(&reused_prefix) {
             divergent = true;
@@ -1041,8 +1277,7 @@ fn classify_one_key(history: &[EventEnvelope], derived: &DerivedKey) -> KeyPrese
 fn classify_existing_keys(
     events: &Path,
     execution: &str,
-    keys: &[DerivedKey],
-    idempotency_header: &str,
+    identity: &MutationIdentity,
 ) -> Result<KeyState, execution::Failure> {
     let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
     // `resolve_stream`'s raw `history` is reused directly below for every key's classification —
@@ -1051,14 +1286,28 @@ fn classify_existing_keys(
     // `resolve_stream`/`read_replay_stream` read from the exact same underlying committed batches,
     // so scanning `history` once here is strictly equivalent for Complete/Partial and additionally
     // enables Divergent detection for free).
-    let (_scope, _stream, history) = execution::resolve_stream(&store, Some(execution))?;
+    let (scope, stream, history) = execution::resolve_stream(&store, Some(execution))?;
+    let expected = ExpectedDecision {
+        actor: &identity.actor,
+        scope: &scope,
+        stream: &stream,
+        execution,
+        kind: identity.decision_kind,
+        request_body: &identity.request_body,
+    };
     let mut present = 0_usize;
+    let mut original_decision_sequence = None;
     let mut first_missing = None;
-    for derived in keys {
-        match classify_one_key(&history, derived) {
-            KeyPresence::Present => present += 1,
+    for derived in &identity.keys {
+        match classify_one_key(&history, derived, &expected) {
+            KeyPresence::Present(sequence) => {
+                present += 1;
+                if original_decision_sequence.is_none() {
+                    original_decision_sequence = Some(sequence);
+                }
+            }
             KeyPresence::Divergent => {
-                return Ok(KeyState::Divergent(idempotency_header.to_owned()));
+                return Ok(KeyState::Divergent(identity.idempotency_header.clone()));
             }
             KeyPresence::Missing => {
                 if first_missing.is_none() {
@@ -1069,8 +1318,11 @@ fn classify_existing_keys(
     }
     Ok(if present == 0 {
         KeyState::Absent
-    } else if present == keys.len() {
-        KeyState::Complete
+    } else if present == identity.keys.len() {
+        KeyState::Complete(
+            original_decision_sequence
+                .expect("a complete non-empty derived-key set has a first decision sequence"),
+        )
     } else {
         KeyState::Partial(first_missing.expect("some but not all present implies one missing"))
     })
@@ -1078,27 +1330,73 @@ fn classify_existing_keys(
 
 /// "Reply 200 with current state, because the caller's command has already happened" (the plan's
 /// own words for the full-retry case) — literally the same `execution.status` read the CLI and
-/// `GET /v1/executions/{id}` both use, so a retried mutation's reply has exactly the shape a
-/// following status read would show. This is a deliberate divergence from a *fresh* success's own
-/// bespoke response shape (`signal`'s `decision`/`mayProposeMutation`, for one) — recomputing that
-/// bespoke shape on retry would mean re-deriving a governance verdict against already-advanced
-/// state, the same category of problem `run_idempotent_mutation`'s pre-flight check exists to
-/// avoid; "current status" is the one shape every mutation can report honestly no matter how long
-/// ago the original attempt actually committed.
+/// `GET /v1/executions/{id}` both use, plus one additive `idempotency` proof naming the original
+/// decision sequence. This is a deliberate divergence from a *fresh* success's own bespoke
+/// response shape (`signal`'s `decision`/`mayProposeMutation`, for one) — recomputing that bespoke
+/// shape on retry would mean re-deriving a governance verdict against already-advanced state, the
+/// same category of problem `run_idempotent_mutation`'s pre-flight check exists to avoid;
+/// "current status" is the one shape every mutation can report honestly no matter how long ago
+/// the original attempt actually committed, while the proof distinguishes that history from a
+/// fresh application.
 fn reply_with_current_status(
     events: &Path,
     execution: &str,
     command: &'static str,
     wiring: ExecutorWiring,
+    original_decision_sequence: u64,
 ) -> Response {
     match execution::status::execute(events, Some(execution)) {
-        Ok(value) => {
-            let mut output = Outcome::success(command, value).output;
-            annotate_fixture_only(&mut output, events, execution, wiring);
-            respond(StatusCode::OK, output)
-        }
+        Ok(value) => reply_with_status_value(
+            events,
+            execution,
+            command,
+            wiring,
+            value,
+            original_decision_sequence,
+        ),
         Err(failure) => respond_failure(command, failure),
     }
+}
+
+fn reply_with_status_value(
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    wiring: ExecutorWiring,
+    mut value: serde_json::Value,
+    original_decision_sequence: u64,
+) -> Response {
+    if let Err(diagnostic) = annotate_recognized_retry(&mut value, original_decision_sequence) {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::domain(command, vec![diagnostic]).output,
+        );
+    }
+    let mut output = Outcome::success(command, value).output;
+    annotate_fixture_only(&mut output, events, execution, wiring);
+    respond(StatusCode::OK, output)
+}
+
+fn annotate_recognized_retry(
+    status: &mut serde_json::Value,
+    original_decision_sequence: u64,
+) -> Result<(), Diagnostic> {
+    let serde_json::Value::Object(data) = status else {
+        return Err(Diagnostic::error(
+            IDEMPOTENCY_REPLY_CODE,
+            "the recognized retry status could not carry its idempotency proof",
+            "/data",
+            SOURCE,
+        ));
+    };
+    data.insert(
+        "idempotency".to_owned(),
+        serde_json::json!({
+            "recognizedRetry": true,
+            "originalDecisionSequence": original_decision_sequence,
+        }),
+    );
+    Ok(())
 }
 
 /// A previous attempt at this command applied only part of it (possible only if that attempt died
@@ -1132,11 +1430,10 @@ fn partial_conflict_response(
     )
 }
 
-/// The caller reused an `Idempotency-Key` across two different request bodies (Milestone 05a
-/// follow-up Critical: "the idempotency pre-flight is content-blind") — refused rather than
-/// silently absorbed as a retry of the first. `header` is the bare `Idempotency-Key` value the
-/// caller sent (not the derived per-event key with its suffix and content digest), named directly
-/// so the caller can see exactly which header value was reused.
+/// The caller's `Idempotency-Key` resolves to a different authenticated mutation identity — body,
+/// actor, execution scope/stream, or decision kind. Refuse without returning which committed field
+/// mismatched: the bare header is already caller-owned and is the only value safe and useful to
+/// name in the diagnostic.
 fn divergent_conflict_response(
     events: &Path,
     execution: &str,
@@ -1153,9 +1450,9 @@ fn divergent_conflict_response(
             diagnostics: vec![Diagnostic::error(
                 "GHE003_IDEMPOTENCY_CONFLICT",
                 format!(
-                    "the Idempotency-Key \"{header}\" was already used to record a different \
-                     request; an Idempotency-Key identifies one logical request and must not be \
-                     reused with a different body"
+                    "the Idempotency-Key \"{header}\" is already committed to a different \
+                     authenticated mutation identity; a retry must match the original request \
+                     body, actor, execution, and decision kind"
                 ),
                 "/idempotencyKey",
                 SOURCE,
@@ -1561,6 +1858,355 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn a_cancel_retry_does_not_accept_a_successful_completion_with_the_same_execution() {
+        let event = EventKind::ExecutionCompleted(graphhelm_protocols::ExecutionCompleted {
+            execution_id: OpaqueId::parse("exec-cancel-proof").unwrap(),
+            status: graphhelm_protocols::SimulationStatus::Completed,
+        });
+
+        assert!(
+            !MutationDecisionKind::ExecutionCompleted.matches(
+                &event,
+                "exec-cancel-proof",
+                &serde_json::Value::Null,
+            ),
+            "cancel must recognize only the cancelled decision, never an unrelated completion"
+        );
+    }
+
+    #[test]
+    fn same_kind_retry_proofs_are_bound_to_the_requested_action_payload() {
+        use graphhelm_protocols::{
+            ExecutionFormAmended, ExecutionMode, ExecutionStarted, NodeOutcome,
+            NodeOutcomeRecorded, NodeState, PersistedTimestamp, SignalRecorded, SignalSeverity,
+            SignalSourceKind, SweepCaller, SweepPerformed, WakeLease, WireHash,
+        };
+
+        let execution = "exec-action-proof";
+        let execution_id = OpaqueId::parse(execution).unwrap();
+        let assert_bound = |decision: MutationDecisionKind,
+                            body: serde_json::Value,
+                            matching: EventKind,
+                            poisoned: EventKind| {
+            assert!(
+                decision.matches(&matching, execution, &body),
+                "the real decision must remain recognizable: {matching:?}"
+            );
+            assert!(
+                !decision.matches(&poisoned, execution, &body),
+                "a same-kind event with different action data must not authenticate: {poisoned:?}"
+            );
+        };
+
+        let start = |mode| {
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode,
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::ExecutionStarted,
+            serde_json::json!({"file": "graph.yaml", "mode": "supervised"}),
+            start(ExecutionMode::Supervised),
+            start(ExecutionMode::Manual),
+        );
+
+        let signal_body = serde_json::json!({
+            "signal": {
+                "id": "signal-requested",
+                "source": {"type": "node", "id": "implementation"},
+                "type": "no_progress",
+                "severity": "high",
+                "description": "bound by the envelope digest",
+                "evidence": [],
+                "emittedAt": "2026-08-30T00:00:00Z"
+            },
+            "evidenceOut": "evidence.json"
+        });
+        let signal_hash = graphhelm_graph::raw_content_sha256(
+            &serde_json::to_vec(&signal_body["signal"]).unwrap(),
+        )
+        .unwrap();
+        let signal = |id: &str| {
+            EventKind::SignalRecorded(SignalRecorded {
+                execution_id: execution_id.clone(),
+                signal_id: OpaqueId::parse(id).unwrap(),
+                source_kind: SignalSourceKind::Node,
+                source_id: OpaqueId::parse("implementation").unwrap(),
+                kind: "no_progress".to_owned(),
+                severity: SignalSeverity::High,
+                envelope_sha256: signal_hash.clone(),
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::SignalRecorded,
+            signal_body,
+            signal("signal-requested"),
+            signal("signal-poisoned"),
+        );
+
+        let outcome = |node: &str| {
+            EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                execution_id: execution_id.clone(),
+                node_id: OpaqueId::parse(node).unwrap(),
+                outcome: NodeOutcome::Approved,
+                next_state: NodeState::Ready,
+                reason: None,
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::NodeOutcomeRecorded,
+            serde_json::json!({"node": "implementation"}),
+            outcome("implementation"),
+            outcome("deploy"),
+        );
+
+        let amendment = |node: &str, seconds| {
+            let node = OpaqueId::parse(node).unwrap();
+            EventKind::ExecutionFormAmended(ExecutionFormAmended {
+                execution_id: execution_id.clone(),
+                computed_at_sequence: 7,
+                node_timeout_seconds: [(node.clone(), seconds)].into_iter().collect(),
+                observed_silence_seconds: [(node, 3)].into_iter().collect(),
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::ExecutionFormAmended,
+            serde_json::json!({
+                "node": "implementation",
+                "seconds": 30,
+                "computedAtSequence": 7
+            }),
+            amendment("implementation", 30),
+            amendment("implementation", 60),
+        );
+
+        let sweep = |instant: &str| {
+            EventKind::SweepPerformed(SweepPerformed {
+                execution_id: execution_id.clone(),
+                as_of: PersistedTimestamp::parse(instant).unwrap(),
+                caller: SweepCaller::Operator,
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::SweepPerformed,
+            serde_json::json!({"asOf": "2026-08-30T00:00:00Z"}),
+            sweep("2026-08-30T00:00:00Z"),
+            sweep("2026-08-29T00:00:00Z"),
+        );
+
+        let wake = |session: &str| {
+            EventKind::WakeLease(WakeLease {
+                execution_id: execution_id.clone(),
+                session_id: OpaqueId::parse(session).unwrap(),
+                cursor: 11,
+                rendezvous_id: OpaqueId::parse("rendezvous-requested").unwrap(),
+                matures_in_seconds: Some(30),
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::WakeLease,
+            serde_json::json!({
+                "sessionId": "session-requested",
+                "rendezvousId": "rendezvous-requested",
+                "cursor": 11,
+                "maturesInSeconds": 30
+            }),
+            wake("session-requested"),
+            wake("session-poisoned"),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_object_retry_status_is_a_serialized_structured_500_response() {
+        let response = reply_with_status_value(
+            Path::new("unused-because-annotation-fails-first"),
+            "exec-unused",
+            "execution.signal",
+            ExecutorWiring::FixtureOnly,
+            serde_json::json!("not-an-object"),
+            17,
+        );
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["command"], "execution.signal");
+        assert_eq!(body["diagnostics"][0]["code"], IDEMPOTENCY_REPLY_CODE);
+        assert_eq!(body["diagnostics"][0]["path"], "/data");
+        assert_eq!(body["diagnostics"][0]["source"], SOURCE);
+    }
+
+    #[tokio::test]
+    async fn a_post_append_same_key_race_marks_only_the_loser_and_appends_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let fixtures = directory.path().join("fixtures.json");
+        std::fs::write(
+            &fixtures,
+            serde_json::to_vec(&serde_json::json!({
+                "nodeOutcomes": {"implementation": "success", "deploy": "success"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("examples/graphs/software-feature.yaml");
+        let loaded = graphhelm_schema::load_graph(&graph).unwrap();
+        let version =
+            crate::commands::publish_loaded(&loaded, crate::commands::owner("owner-test")).unwrap();
+        let execution_id = "exec-unit-retry-race";
+        let started = execution::start::execute(
+            &version,
+            &events,
+            Some(&fixtures),
+            "supervised",
+            Some(execution_id),
+            execution::system_actor(),
+            OpaqueId::parse("unit-start-key").unwrap(),
+        );
+        assert!(started.is_ok(), "the race fixture execution must start");
+
+        let decision_key = OpaqueId::parse("unit-race-record-0123456789abcdef").unwrap();
+        let actor = PersistedActor::new(
+            PersistedActorType::Agent,
+            ActorId::parse("agent-racer").unwrap(),
+        );
+        let signal_value = serde_json::json!({
+            "id": "signal-unit-race",
+            "source": {"type": "node", "id": "implementation"},
+            "type": "no_progress",
+            "severity": "high",
+            "description": "the deploy stage needs a manual review",
+            "evidence": ["exec-1"],
+            "emittedAt": "2026-08-13T00:00:00Z"
+        });
+        let signal = serde_json::to_vec(&signal_value).unwrap();
+        let evidence_out = directory.path().join("race-evidence.json");
+        let identity = || MutationIdentity {
+            actor: actor.clone(),
+            keys: vec![DerivedKey {
+                prefix: "unit-race-record".to_owned(),
+                full: decision_key.clone(),
+            }],
+            decision_kind: MutationDecisionKind::SignalRecorded,
+            request_body: serde_json::json!({
+                "signal": signal_value.clone(),
+                "evidenceOut": evidence_out.clone(),
+            }),
+            idempotency_header: "unit-race".to_owned(),
+            if_match: None,
+        };
+        let before = current_head(&events, execution_id).unwrap();
+        let rendezvous = Arc::new(tokio::sync::Barrier::new(2));
+        let post_append_conflicts = Arc::new(AtomicUsize::new(0));
+
+        let attempt = |identity: MutationIdentity| {
+            let events_for_run = events.clone();
+            let signal = signal.clone();
+            let evidence_out = evidence_out.clone();
+            let rendezvous = Arc::clone(&rendezvous);
+            let post_append_conflicts = Arc::clone(&post_append_conflicts);
+            run_idempotent_mutation_inner(
+                &events,
+                execution_id,
+                "execution.signal",
+                identity,
+                ExecutorWiring::FixtureOnly,
+                MutationObservation {
+                    after_absent_preflight: async move {
+                        rendezvous.wait().await;
+                    },
+                    post_append_conflict: move || {
+                        post_append_conflicts.fetch_add(1, Ordering::SeqCst);
+                    },
+                },
+                move |event_actor, key| {
+                    Box::pin(async move {
+                        Ok(execution::signal::execute(
+                            &events_for_run,
+                            Some(execution_id),
+                            &signal,
+                            &evidence_out,
+                            event_actor,
+                            key,
+                            None,
+                        )?)
+                    })
+                },
+            )
+        };
+
+        let (first, second) = tokio::join!(attempt(identity()), attempt(identity()));
+        let decode = |response: Response| async move {
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            )
+        };
+        let (first, second) = tokio::join!(decode(first), decode(second));
+        assert_eq!(first.0, StatusCode::OK, "{}", first.1);
+        assert_eq!(second.0, StatusCode::OK, "{}", second.1);
+
+        let store = event_store(&events).unwrap();
+        let Ok((_scope, _stream, history)) = execution::resolve_stream(&store, Some(execution_id))
+        else {
+            panic!("the race fixture history must remain readable");
+        };
+        let matching = history
+            .iter()
+            .filter(|event| event.idempotency_key == decision_key)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "the same decision key must commit exactly once"
+        );
+        assert!(matches!(
+            matching[0].kind,
+            graphhelm_protocols::EventKind::SignalRecorded(_)
+        ));
+        assert_eq!(
+            current_head(&events, execution_id),
+            Some(before + 1),
+            "the two attempts must produce exactly one committed event"
+        );
+        assert_eq!(
+            post_append_conflicts.load(Ordering::SeqCst),
+            1,
+            "exactly the append loser must enter post-conflict reclassification"
+        );
+
+        let replies = [&first.1, &second.1];
+        let recognized = replies
+            .iter()
+            .filter(|reply| reply["data"]["idempotency"]["recognizedRetry"] == true)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            recognized.len(),
+            1,
+            "exactly one reply is the recognized loser"
+        );
+        assert_eq!(
+            recognized[0]["data"]["idempotency"],
+            serde_json::json!({
+                "recognizedRetry": true,
+                "originalDecisionSequence": matching[0].sequence,
+            })
+        );
+    }
 
     /// The two-key probe `request_digest16`'s own doc comment promises: two JSON objects carrying
     /// the *same* two keys in *different* source/insertion order must serialize to byte-identical

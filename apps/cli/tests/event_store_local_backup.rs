@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 fn command() -> Command {
@@ -115,6 +115,62 @@ fn restore(into: &Path, archive: &Path) -> (i32, Value) {
         "--archive",
         archive.to_str().unwrap(),
     ])
+}
+
+fn assert_archive_version_rejected_without_target_mutation(
+    directory: &TempDir,
+    archive_version: Option<Value>,
+) {
+    let archive = directory.path().join("unsupported.ghbak");
+    let mut contents = json!({
+        "journal": "",
+        "blobs": {},
+    });
+    if let Some(archive_version) = archive_version {
+        contents["archiveVersion"] = archive_version;
+    }
+    fs::write(&archive, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let destination = directory.path().join("must-remain-absent");
+    assert!(
+        !destination.exists(),
+        "HARNESS-BROKE: rejection target already exists"
+    );
+
+    let (code, value) = restore(&destination, &archive);
+
+    assert_eq!(code, 2, "unsupported archive must be refused: {value}");
+    assert_eq!(
+        value["diagnostics"][0]["code"], "GHCLI002_CONFIG_INVALID",
+        "archive version refusal must use a stable diagnostic code: {value}"
+    );
+    assert_eq!(
+        value["diagnostics"][0]["path"], "/archiveVersion",
+        "archive version refusal must identify the archive field: {value}"
+    );
+    assert!(
+        !destination.exists(),
+        "rejected archive mutated the destination at {}",
+        destination.display()
+    );
+}
+
+#[test]
+fn restore_rejects_a_missing_archive_version_before_target_mutation() {
+    let directory = TempDir::new().unwrap();
+    assert_archive_version_rejected_without_target_mutation(&directory, None);
+}
+
+#[test]
+fn restore_rejects_a_non_string_archive_version_before_target_mutation() {
+    let directory = TempDir::new().unwrap();
+    assert_archive_version_rejected_without_target_mutation(&directory, Some(json!(1)));
+}
+
+#[test]
+fn restore_rejects_an_unsupported_archive_version_before_target_mutation() {
+    let directory = TempDir::new().unwrap();
+    assert_archive_version_rejected_without_target_mutation(&directory, Some(json!("999.0.0")));
 }
 
 /// The guard #336 exists for: the operator's data comes back.

@@ -8,6 +8,7 @@ use super::{Failure, config, config_error, finish, require_existing_file};
 use crate::output::Outcome;
 
 const COMMAND: &str = "events.restore";
+const SUPPORTED_LOCAL_ARCHIVE_VERSION: &str = "1.0.0";
 
 pub(in crate::commands) struct Request<'a> {
     pub(in crate::commands) repository: Option<&'a Path>,
@@ -99,6 +100,12 @@ fn execute_local(root: &Path, archive: &Path) -> Result<serde_json::Value, Failu
         .map_err(|_| local_error("the archive could not be read"))?;
     let value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|_| local_error("the archive is not a valid archive"))?;
+    let archive_version = value["archiveVersion"]
+        .as_str()
+        .ok_or_else(unsupported_archive_version)?;
+    if archive_version != SUPPORTED_LOCAL_ARCHIVE_VERSION {
+        return Err(unsupported_archive_version());
+    }
     let journal = value["journal"]
         .as_str()
         .ok_or_else(|| local_error("the archive carries no journal"))?;
@@ -138,6 +145,13 @@ fn execute_local(root: &Path, archive: &Path) -> Result<serde_json::Value, Failu
 /// Local failures name a class and never a path, matching the Postgres arm's posture.
 fn local_error(message: &str) -> Failure {
     config_error(message, "/repository")
+}
+
+fn unsupported_archive_version() -> Failure {
+    config_error(
+        "the archive version is missing, malformed, or unsupported",
+        "/archiveVersion",
+    )
 }
 
 /// Restore failures are reported by stable class only; a failed target is left disabled behind its

@@ -388,6 +388,94 @@ fn fixture_scoped_rendezvous_id(logical_id: &str, events: &Path) -> String {
     )
 }
 
+#[cfg(windows)]
+fn wake_wait_fixture_rendezvous_id(logical_id: &str, events: &Path) -> String {
+    fixture_scoped_rendezvous_id(logical_id, events)
+}
+
+#[cfg(windows)]
+struct HeldRendezvous {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(windows)]
+impl HeldRendezvous {
+    fn new(rendezvous_id: &str) -> Self {
+        let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let _server = tokio::net::windows::named_pipe::ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .max_instances(1)
+                    .create(&name)
+                    .expect("the old generation owns its rendezvous");
+                ready_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            });
+        });
+        ready_rx.recv().unwrap();
+        Self {
+            release: Some(release_tx),
+            thread: Some(thread),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for HeldRendezvous {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn an_old_fixture_pipe_cannot_satisfy_a_new_wake_wait_observer() {
+    let old_directory = tempfile::tempdir().unwrap();
+    let new_directory = tempfile::tempdir().unwrap();
+    let logical_id = "rvz-wake-wait-generation";
+    let old_id = wake_wait_fixture_rendezvous_id(logical_id, &old_directory.path().join("events"));
+    let new_id = wake_wait_fixture_rendezvous_id(logical_id, &new_directory.path().join("events"));
+    let _old_generation = HeldRendezvous::new(&old_id);
+
+    let names = std::fs::read_dir("//./pipe")
+        .expect("the named-pipe observer is available")
+        // The namespace is global and volatile: an unrelated entry may disappear between
+        // enumeration and inspection. The held old pipe below is the fail-closed positive
+        // control for this fixture; a racing foreign entry is not evidence about either id.
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let old_expected = format!("graphhelm-wake-{old_id}");
+    let new_expected = format!("graphhelm-wake-{new_id}");
+
+    assert!(
+        names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&old_expected)),
+        "positive control: the observer must see the old generation's held pipe"
+    );
+
+    assert!(
+        !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&new_expected)),
+        "a pipe held by the old fixture generation must not satisfy the new generation's observer"
+    );
+}
+
 fn kinds_snapshot(events: &Path) -> Vec<String> {
     let store = open_store(events);
     let (_stream, history) = store.read_unique_replay_stream().unwrap();
@@ -584,8 +672,13 @@ const TEST_WAKE_CAUSAL_TRANSCRIPT_MAX_BYTES: usize = 4 * 1024;
 /// The waiter no longer takes a rendezvous or a deadline from its caller: both come from the
 /// lease this session armed. So the harness arms one, and the test's "timeout" is now the
 /// bound the sleeper DECLARED — which is the point of the step.
-fn spawn_wake_wait(events: &Path, execution: &str, session: &str) -> Child {
-    spawn_wake_wait_with_env(events, execution, session, &[])
+fn spawn_wake_wait(
+    events: &Path,
+    execution: &str,
+    session: &str,
+    logical_rendezvous_id: &str,
+) -> Child {
+    spawn_wake_wait_with_env(events, execution, session, logical_rendezvous_id, &[])
 }
 
 #[cfg(windows)]
@@ -593,8 +686,23 @@ fn spawn_wake_wait_with_env(
     events: &Path,
     execution: &str,
     session: &str,
+    logical_rendezvous_id: &str,
     env: &[(&str, &str)],
 ) -> Child {
+    let expected = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, events);
+    let store = open_store(events);
+    let (stream, history) = store.read_unique_replay_stream().unwrap();
+    let projection = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).unwrap();
+    let lease = projection
+        .wake_leases
+        .get(session)
+        .unwrap_or_else(|| panic!("{session} owns no wake lease before its waiter starts"));
+    assert_eq!(
+        lease.rendezvous_id, expected,
+        "wake-wait fixtures must persist their fixture-scoped physical rendezvous before spawn"
+    );
+    drop(store);
+
     let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
@@ -613,6 +721,108 @@ fn spawn_wake_wait_with_env(
         command.env(key, value);
     }
     command.spawn().unwrap()
+}
+
+/// Owns a wake-wait child while setup and ringing can still panic. `Child` does not terminate its
+/// process on drop, so every failure before the final output collection must explicitly kill and
+/// reap the sidecar or it can retain the test binary and event files.
+#[cfg(windows)]
+type WakeWaitReapResult = (
+    std::io::Result<()>,
+    std::io::Result<std::process::ExitStatus>,
+);
+
+#[cfg(windows)]
+struct WakeWaitChildGuard {
+    child: Option<Child>,
+    reaped: Option<std::sync::mpsc::Sender<WakeWaitReapResult>>,
+}
+
+#[cfg(windows)]
+impl WakeWaitChildGuard {
+    fn new(child: Child) -> Self {
+        Self {
+            child: Some(child),
+            reaped: None,
+        }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("the wake-wait child is owned")
+    }
+
+    fn wait_with_output(mut self) -> std::io::Result<std::process::Output> {
+        use std::io::Read as _;
+
+        let child = self.child_mut();
+        let status = child.wait()?;
+        let mut stdout = Vec::new();
+        if let Some(mut pipe) = child.stdout.take() {
+            pipe.read_to_end(&mut stdout)?;
+        }
+        let mut stderr = Vec::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            pipe.read_to_end(&mut stderr)?;
+        }
+        self.child.take();
+        Ok(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+
+    fn with_reap_observer(
+        child: Child,
+        reaped: std::sync::mpsc::Sender<WakeWaitReapResult>,
+    ) -> Self {
+        Self {
+            child: Some(child),
+            reaped: Some(reaped),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WakeWaitChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let kill_result = child.kill();
+            let wait_result = child.wait();
+            if let Some(reaped) = self.reaped.take() {
+                let _ = reaped.send((kill_result, wait_result));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn wake_wait_child_guard_kills_and_reaps_on_early_exit() {
+    let child = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 60",
+        ])
+        .spawn()
+        .unwrap();
+    let (reaped_tx, reaped_rx) = std::sync::mpsc::channel();
+    let guard = WakeWaitChildGuard::with_reap_observer(child, reaped_tx);
+
+    let cleanup = std::thread::spawn(move || drop(guard));
+
+    let (kill_result, wait_result) = reaped_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("dropping the guard kills and reaps within the cleanup bound");
+    kill_result.expect("dropping the guard successfully kills the live child");
+    let status = wait_result.expect("dropping the guard successfully reaps the child");
+    assert!(
+        !status.success(),
+        "the live child was killed before reaping"
+    );
+    cleanup.join().expect("the cleanup worker does not panic");
 }
 
 /// Reaps a sidecar and returns its exit status together with everything it wrote to
@@ -663,19 +873,28 @@ fn wake_wait_exits_zero_on_ring_and_no_hostile_byte_reaches_stdout() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     start_execution(&events, directory.path(), "exec-sidecar-ring");
-    arm_lease_bounded(&events, "exec-sidecar-ring", "rvz-sidecar-1", 1, Some(20));
-    let child = spawn_wake_wait(&events, "exec-sidecar-ring", "session-sleeper-1");
-    // Give the sidecar a moment to create the rendezvous, then ring with SENTINEL bytes.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match ring_pipe("rvz-sidecar-1", b"SENTINEL-HOSTILE-PAYLOAD") {
-            Ok(()) => break,
-            Err(_) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(error) => panic!("the rendezvous never appeared: {error}"),
-        }
-    }
+    let logical_rendezvous_id = "rvz-sidecar-1";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
+    arm_lease_bounded(
+        &events,
+        "exec-sidecar-ring",
+        &rendezvous_id,
+        1,
+        Some(RACING_WAKE_LEASE_SECONDS),
+    );
+    let child = spawn_wake_wait(
+        &events,
+        "exec-sidecar-ring",
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
+    let mut child = WakeWaitChildGuard::new(child);
+    // Observe the real rendezvous while also proving that its child is still alive. The shared
+    // hang catcher is deliberately below the lease, so a loaded but healthy start is not retried
+    // into success and a dead child fails with its own diagnosis.
+    wait_for_pipe(child.child_mut(), &rendezvous_id);
+    ring_pipe(&rendezvous_id, b"SENTINEL-HOSTILE-PAYLOAD")
+        .expect("the observed live rendezvous accepts the hostile ring");
     let started = Instant::now();
     let output = child.wait_with_output().unwrap();
     assert_eq!(output.status.code(), Some(0), "ring exits 0: {output:?}");
@@ -697,16 +916,17 @@ fn wake_wait_exits_three_on_timeout_and_two_on_a_bad_id() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     start_execution(&events, directory.path(), "exec-sidecar-timeout");
+    let logical_rendezvous_id = "rvz-sidecar-timeout";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
     // The bound is DECLARED on the lease now, so exit 3 can only mean the deadline the sleeper
     // itself set. It stopped being "the number I happened to type ran out".
-    arm_lease_bounded(
+    arm_lease_bounded(&events, "exec-sidecar-timeout", &rendezvous_id, 1, Some(1));
+    let child = spawn_wake_wait(
         &events,
         "exec-sidecar-timeout",
-        "rvz-sidecar-timeout",
-        1,
-        Some(1),
+        "session-sleeper-1",
+        logical_rendezvous_id,
     );
-    let child = spawn_wake_wait(&events, "exec-sidecar-timeout", "session-sleeper-1");
     let output = child.wait_with_output().unwrap();
     assert_eq!(output.status.code(), Some(3), "timeout exits 3: {output:?}");
 
@@ -849,7 +1069,8 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     // deadline from its own lease, so the lease has to exist before it can wait on one. Its
     // one read of the store is local and is not an API request, so the measurement below is
     // unchanged: zero requests cross the proxy between sleep and ring.
-    let rendezvous = "rdv-choreo-a";
+    let logical_rendezvous = "rdv-choreo-a";
+    let rendezvous = wake_wait_fixture_rendezvous_id(logical_rendezvous, &events);
     let replies = mcp_via(
         &proxy.address,
         &token,
@@ -874,7 +1095,7 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
 
     // The sidecar waits on THAT session's lease — the one the arm reply named. It reads the
     // store once, locally, and drops the handle before blocking.
-    let mut sidecar = spawn_wake_wait(&events, execution, &armed_session);
+    let mut sidecar = spawn_wake_wait(&events, execution, &armed_session, logical_rendezvous);
     // WAIT for the rendezvous to exist rather than sleeping and hoping. The sidecar used to be
     // started before the arming, so it always won the race by construction; now it needs the
     // lease first, and a fixed sleep would be a guess about a cold binary's start-up on a
@@ -1081,11 +1302,18 @@ fn a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong() {
     let execution = "exec-wake-deadman";
     start_execution(&events, directory.path(), execution);
     let (guard, base, token) = serve(&events);
-    arm_lease_bounded(&events, execution, "rdv-deadman", 1, Some(2));
+    let logical_rendezvous_id = "rdv-deadman";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
+    arm_lease_bounded(&events, execution, &rendezvous_id, 1, Some(2));
     drop(guard); // the serve dies; nothing will ever ring.
     let _ = (base, token);
 
-    let mut sidecar = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    let mut sidecar = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
     let end = sidecar.wait().unwrap();
     assert_eq!(
         end.code(),
@@ -2080,16 +2308,23 @@ fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
     let events = directory.path().join("events");
     let execution = "exec-88-missed";
     start_execution(&events, directory.path(), execution);
+    let logical_rendezvous_id = "rvz-88-missed";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
     arm_lease_bounded(
         &events,
         execution,
-        "rvz-88-missed",
+        &rendezvous_id,
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
     let armed_at = head(&events);
-    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe(&mut child, "rvz-88-missed");
+    let mut child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
+    wait_for_pipe(&mut child, &rendezvous_id);
     // Sequence-spacer: the burn must NOT sit adjacent to the arm, or its sequence is
     // guessable by `armed + 1` (sabotage s2 proved a guessing implementation survives
     // an adjacent fixture).
@@ -2144,11 +2379,14 @@ fn a_silent_deadline_reports_a_silent_receipt_not_just_silence() {
     let causal_transcript = directory.path().join("wake-wait-causal-transcript");
     let execution = "exec-88-silent";
     start_execution(&events, directory.path(), execution);
-    arm_lease_bounded(&events, execution, "rvz-88-silent", head(&events), Some(1));
+    let logical_rendezvous_id = "rvz-88-silent";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
+    arm_lease_bounded(&events, execution, &rendezvous_id, head(&events), Some(1));
     let child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
+        logical_rendezvous_id,
         &[(
             TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
             causal_transcript.to_str().unwrap(),
@@ -2221,19 +2459,16 @@ fn causal_transcript_refuses_marks_past_its_byte_bound() {
     let causal_transcript = directory.path().join("wake-wait-causal-transcript-at-cap");
     let execution = "exec-88-transcript-cap";
     start_execution(&events, directory.path(), execution);
-    arm_lease_bounded(
-        &events,
-        execution,
-        "rvz-88-transcript-cap",
-        head(&events),
-        Some(1),
-    );
+    let logical_rendezvous_id = "rvz-88-transcript-cap";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
+    arm_lease_bounded(&events, execution, &rendezvous_id, head(&events), Some(1));
     let at_cap = vec![b'x'; TEST_WAKE_CAUSAL_TRANSCRIPT_MAX_BYTES];
     std::fs::write(&causal_transcript, &at_cap).unwrap();
     let child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
+        logical_rendezvous_id,
         &[(
             TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
             causal_transcript.to_str().unwrap(),
@@ -2259,16 +2494,23 @@ fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
     let events = directory.path().join("events");
     let execution = "exec-88-rearm";
     start_execution(&events, directory.path(), execution);
+    let first_logical_rendezvous_id = "rvz-88-rearm-a";
+    let first_rendezvous_id = wake_wait_fixture_rendezvous_id(first_logical_rendezvous_id, &events);
     arm_lease_bounded(
         &events,
         execution,
-        "rvz-88-rearm-a",
+        &first_rendezvous_id,
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
     let first_arming = head(&events);
-    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe(&mut child, "rvz-88-rearm-a");
+    let mut child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        first_logical_rendezvous_id,
+    );
+    wait_for_pipe(&mut child, &first_rendezvous_id);
     let consumed_at = consume_lease(
         &events,
         execution,
@@ -2279,7 +2521,8 @@ fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
     // The host re-arms while the first waiter still sleeps (a distinct rendezvous id keeps
     // the fixture's idempotency keys apart; the field under test is attribution by ARMING
     // SEQUENCE, which #74 established precisely because rendezvous ids repeat).
-    arm_lease(&events, execution, "rvz-88-rearm-b", head(&events));
+    let second_rendezvous_id = wake_wait_fixture_rendezvous_id("rvz-88-rearm-b", &events);
+    arm_lease(&events, execution, &second_rendezvous_id, head(&events));
     let second_arming = head(&events);
 
     let (code, value) = wake_wait_result(child);
@@ -2309,7 +2552,8 @@ fn a_previous_cycles_receipt_never_claims_a_new_waiting() {
     let events = directory.path().join("events");
     let execution = "exec-88-stale";
     start_execution(&events, directory.path(), execution);
-    arm_lease(&events, execution, "rvz-88-stale-a", head(&events));
+    let old_rendezvous_id = wake_wait_fixture_rendezvous_id("rvz-88-stale-a", &events);
+    arm_lease(&events, execution, &old_rendezvous_id, head(&events));
     let old_arming = head(&events);
     consume_lease(
         &events,
@@ -2318,8 +2562,15 @@ fn a_previous_cycles_receipt_never_claims_a_new_waiting() {
         graphhelm_protocols::WakeConsumeReason::Rung,
         Some(old_arming),
     );
-    arm_lease_bounded(&events, execution, "rvz-88-stale-b", head(&events), Some(2));
-    let child = spawn_wake_wait(&events, execution, "session-sleeper-1");
+    let logical_rendezvous_id = "rvz-88-stale-b";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
+    arm_lease_bounded(&events, execution, &rendezvous_id, head(&events), Some(2));
+    let child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
 
     let (code, value) = wake_wait_result(child);
     assert_eq!(code, Some(3), "{value}");
@@ -2344,15 +2595,22 @@ fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
     let events = directory.path().join("events");
     let execution = "exec-88-unreadable";
     start_execution(&events, directory.path(), execution);
+    let logical_rendezvous_id = "rvz-88-unread";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
     arm_lease_bounded(
         &events,
         execution,
-        "rvz-88-unread",
+        &rendezvous_id,
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
-    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe(&mut child, "rvz-88-unread");
+    let mut child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
+    wait_for_pipe(&mut child, &rendezvous_id);
     std::fs::remove_dir_all(&events)
         .expect("the sidecar dropped its handle before blocking, so the store is deletable");
 
@@ -2385,19 +2643,27 @@ fn a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis() {
     let events = directory.path().join("events");
     let execution = "exec-88-misburn";
     start_execution(&events, directory.path(), execution);
-    arm_lease(&events, execution, "rvz-88-mis-a", head(&events));
+    let captured_rendezvous_id = wake_wait_fixture_rendezvous_id("rvz-88-mis-a", &events);
+    arm_lease(&events, execution, &captured_rendezvous_id, head(&events));
     let captured_arming = head(&events);
+    let logical_rendezvous_id = "rvz-88-mis-b";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
     arm_lease_bounded(
         &events,
         execution,
-        "rvz-88-mis-b",
+        &rendezvous_id,
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
     let live_arming = head(&events);
     assert!(captured_arming < live_arming);
-    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe(&mut child, "rvz-88-mis-b");
+    let mut child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
+    wait_for_pipe(&mut child, &rendezvous_id);
     let burned_at = consume_lease(
         &events,
         execution,
@@ -2450,16 +2716,23 @@ fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
     let events = directory.path().join("events");
     let execution = "exec-88-twocycle";
     start_execution(&events, directory.path(), execution);
+    let first_logical_rendezvous_id = "rvz-88-cycle-a";
+    let first_rendezvous_id = wake_wait_fixture_rendezvous_id(first_logical_rendezvous_id, &events);
     arm_lease_bounded(
         &events,
         execution,
-        "rvz-88-cycle-a",
+        &first_rendezvous_id,
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
     let first_arming = head(&events);
-    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe(&mut child, "rvz-88-cycle-a");
+    let mut child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        first_logical_rendezvous_id,
+    );
+    wait_for_pipe(&mut child, &first_rendezvous_id);
     // Sequence-spacer, same reason as G1's: an adjacent burn is guessable by armed+1.
     arm_decoy(&events, execution, "rvz-88-decoy-cycle");
     // Cycle one: MY burn, honest, rung — the byte never crosses.
@@ -2472,7 +2745,8 @@ fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
     );
     // Cycle two, complete, while the first waiter still sleeps: re-arm and burn THAT.
     // After this, wake_last_consumed[session] holds the SECOND burn only.
-    arm_lease(&events, execution, "rvz-88-cycle-b", head(&events));
+    let second_rendezvous_id = wake_wait_fixture_rendezvous_id("rvz-88-cycle-b", &events);
+    arm_lease(&events, execution, &second_rendezvous_id, head(&events));
     let second_arming = head(&events);
     consume_lease(
         &events,
@@ -2519,16 +2793,23 @@ fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
     let events = directory.path().join("events");
     let execution = "exec-88-stale-alive";
     start_execution(&events, directory.path(), execution);
+    let logical_rendezvous_id = "rvz-88-stale-alive";
+    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
     arm_lease_bounded(
         &events,
         execution,
-        "rvz-88-stale-alive",
+        &rendezvous_id,
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
     let armed_at = head(&events);
-    let mut child = spawn_wake_wait(&events, execution, "session-sleeper-1");
-    wait_for_pipe(&mut child, "rvz-88-stale-alive");
+    let mut child = spawn_wake_wait(
+        &events,
+        execution,
+        "session-sleeper-1",
+        logical_rendezvous_id,
+    );
+    wait_for_pipe(&mut child, &rendezvous_id);
     let burned_at = consume_lease(
         &events,
         execution,

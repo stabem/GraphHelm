@@ -4,6 +4,7 @@
 //! test).
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
+const DRIVER_CONTRACT: &str = include_str!("driver_contract.rs");
 
 /// Every `.rs` file under `src/`, discovered by WALKING the directory.
 ///
@@ -114,6 +115,26 @@ fn the_runtime_crate_never_names_an_adapter() {
     for forbidden in ["model-gateway", "tool-host", "postgres-event-store"] {
         assert!(!table.contains(forbidden), "{forbidden} must not appear");
     }
+}
+
+#[test]
+fn the_runtime_package_has_no_adapter_dependency_or_shipped_fixture_binary() {
+    assert!(
+        !MANIFEST.contains("graphhelm-tool-host"),
+        "core/runtime must exercise adapters only through ToolPort"
+    );
+    assert!(
+        !MANIFEST.contains("[[bin]]"),
+        "a test fixture must not become an installable runtime binary"
+    );
+}
+
+#[test]
+fn retry_contract_tests_do_not_decide_outcomes_from_wall_clock_time() {
+    assert!(
+        !DRIVER_CONTRACT.contains("std::time::Instant::now()"),
+        "retry outcomes must come from an explicitly controlled ToolPort"
+    );
 }
 
 #[test]

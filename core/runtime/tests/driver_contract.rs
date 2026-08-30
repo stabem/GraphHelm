@@ -102,6 +102,7 @@ fn cognitive_work() -> NodeWork {
         attempt: 1,
         prompt: prompt(),
         kind: NodeWorkKind::Cognitive,
+        tool_failure_semantics: Default::default(),
         tool_call: None,
         gate_check: None,
         judge: None,
@@ -115,6 +116,7 @@ fn tool_work() -> NodeWork {
         attempt: 1,
         prompt: prompt(),
         kind: NodeWorkKind::Tool,
+        tool_failure_semantics: Default::default(),
         tool_call: Some(ToolCall::Shell(ShellAction {
             program: "git".to_owned(),
             arguments: vec!["status".to_owned()],
@@ -259,7 +261,7 @@ fn a_tool_record_maps_by_disposition_and_seals_record_plus_streams() {
         ),
         (
             ToolDisposition::Completed { exit_code: 101 },
-            NodeOutcome::RetryableFailure,
+            NodeOutcome::TerminalFailure,
         ),
         (ToolDisposition::TimedOut, NodeOutcome::RetryableFailure),
         (
@@ -273,7 +275,7 @@ fn a_tool_record_maps_by_disposition_and_seals_record_plus_streams() {
             ToolDisposition::HostError {
                 code: "GHTOOL003_PREPARE".to_owned(),
             },
-            NodeOutcome::RetryableFailure,
+            NodeOutcome::TerminalFailure,
         ),
     ] {
         let executor = executor(Ok(reply("unused")), disposition.clone());
@@ -293,6 +295,29 @@ fn a_tool_record_maps_by_disposition_and_seals_record_plus_streams() {
             .find(|sealable| sealable.local_ref_suffix == "record")
             .unwrap();
         assert_eq!(record.media_type, "application/json");
+    }
+}
+
+#[test]
+fn permanent_and_cause_ambiguous_host_codes_are_terminal_without_lost_error_kind() {
+    for code in [
+        "GHTOOL001_SPAWN",
+        "GHTOOL002_ENV",
+        "GHTOOL003_PREPARE",
+        "GHTOOL004_CONFIG",
+        "GHTOOL005_ESCAPE",
+        "GHTOOL006_TIER",
+        "GHTOOL007_EXIT_UNKNOWN",
+        "GHTOOL999_FUTURE",
+    ] {
+        let executor = executor(
+            Ok(reply("unused")),
+            ToolDisposition::HostError {
+                code: code.to_owned(),
+            },
+        );
+        let outcome = block_on(executor.execute(&tool_work())).unwrap();
+        assert_eq!(outcome.outcome, NodeOutcome::TerminalFailure, "{code}");
     }
 }
 
@@ -323,9 +348,9 @@ use graphhelm_events::{
     RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest, WrapKeyRequest, WrappedKey, replay,
 };
 use graphhelm_protocols::{
-    ActorId, Clock, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, IdGenerator, NewEvent,
-    OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
-    ReuseKeyComponent, ReuseOutcome, Sensitivity, WireHash, WorkspaceId,
+    ActorId, Clock, EventKind, ExecutionCompleted, ExecutionId, ExecutionMode, ExecutionStarted,
+    IdGenerator, NewEvent, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256,
+    RepositoryScope, ReuseKeyComponent, ReuseOutcome, Sensitivity, WireHash, WorkspaceId,
 };
 use graphhelm_runtime::context_accounting::{ACCOUNTING_RECEIPT_MEDIA_TYPE, MODEL_USAGE_PRODUCER};
 use graphhelm_runtime::driver::record_outcome_with_evidence;
@@ -1136,6 +1161,71 @@ fn agent_graph_node(objective: &str) -> GraphNode {
     }
 }
 
+fn tool_graph_node(failure_semantics: Option<&str>, arguments: Vec<String>) -> GraphNode {
+    let mut properties = std::collections::BTreeMap::new();
+    properties.insert(
+        "tool".to_owned(),
+        serde_json::json!({"call": {"tool": "tests", "arguments": arguments}}),
+    );
+    if let Some(failure_semantics) = failure_semantics {
+        let (field, cause) = match failure_semantics {
+            "verdict_bearing" => ("doNotRetryOn", "tool_exited_non_zero"),
+            "retry_eligible" => ("retryOn", "tool_exited_non_zero"),
+            other => panic!("unknown failure semantics: {other}"),
+        };
+        properties.insert(
+            "retry".to_owned(),
+            serde_json::Value::Object(
+                [(field.to_owned(), serde_json::json!([cause]))]
+                    .into_iter()
+                    .collect(),
+            ),
+        );
+    }
+    GraphNode {
+        node_type: NodeType::Tool,
+        name: "fixture process".to_owned(),
+        objective: "exercise retry semantics against a real child process".to_owned(),
+        optionality: Optionality::Required,
+        properties,
+    }
+}
+
+fn conflicting_retry_tool_graph_node() -> GraphNode {
+    let mut node = tool_graph_node(None, Vec::new());
+    node.properties.insert(
+        "retry".to_owned(),
+        serde_json::json!({
+            "retryOn": ["tool_exited_non_zero"],
+            "doNotRetryOn": ["tool_exited_non_zero"]
+        }),
+    );
+    node
+}
+
+fn malformed_conflicting_retry_tool_graph_node() -> GraphNode {
+    let mut node = tool_graph_node(None, Vec::new());
+    node.properties.insert(
+        "retry".to_owned(),
+        serde_json::json!({
+            "retryOn": ["tool_exited_non_zero"],
+            "doNotRetryOn": ["tool_exited_non_zero", 1]
+        }),
+    );
+    node
+}
+
+fn malformed_retry_tool_graph_node() -> GraphNode {
+    let mut node = tool_graph_node(None, Vec::new());
+    node.properties.insert(
+        "retry".to_owned(),
+        serde_json::json!({
+            "retryOn": [1]
+        }),
+    );
+    node
+}
+
 fn spec_with(nodes: Vec<(&str, GraphNode)>, edges: Vec<(&str, &str)>, parallel: u64) -> GraphSpec {
     let mut spec = GraphSpec {
         entrypoints: nodes
@@ -1210,6 +1300,234 @@ fn opener(directory: std::path::PathBuf) -> StoreOpen {
             Arc::new(SequenceIds::default()),
         )
     })
+}
+
+#[test]
+fn retry_fixture_process() {
+    let Some(mode) = std::env::var_os("GH_RETRY_FIXTURE_MODE") else {
+        return;
+    };
+    match mode.to_string_lossy().as_ref() {
+        "fail_then_pass" => {
+            let marker = std::path::PathBuf::from(
+                std::env::var_os("GH_RETRY_FIXTURE_MARKER").expect("fixture marker"),
+            );
+            if !marker.exists() {
+                std::fs::write(marker, b"first attempt was red").unwrap();
+                panic!("the first real process attempt is deliberately red");
+            }
+        }
+        other => panic!("unknown retry fixture mode: {other}"),
+    }
+}
+
+struct ProcessFixtureToolPort {
+    marker: std::path::PathBuf,
+    calls: AtomicUsize,
+}
+
+const PROCESS_FIXTURE_WAIT_POLLS: usize = 3_000;
+
+struct ProcessFixtureChild {
+    child: Option<std::process::Child>,
+    reaped: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl ProcessFixtureChild {
+    fn new(child: std::process::Child) -> Self {
+        Self {
+            child: Some(child),
+            reaped: None,
+        }
+    }
+
+    fn with_reap_receipt(
+        child: std::process::Child,
+        reaped: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            child: Some(child),
+            reaped: Some(reaped),
+        }
+    }
+
+    fn wait_with_poll_limit(&mut self, poll_limit: usize) -> std::process::ExitStatus {
+        for _ in 0..poll_limit {
+            match self
+                .child
+                .as_mut()
+                .expect("fixture child present")
+                .try_wait()
+            {
+                Ok(Some(status)) => {
+                    self.child.take();
+                    if let Some(reaped) = &self.reaped {
+                        reaped.store(true, Ordering::SeqCst);
+                    }
+                    return status;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(error) => panic!("inspect retry fixture child: {error}"),
+            }
+        }
+        panic!("retry fixture child exceeded its bounded wait");
+    }
+}
+
+impl Drop for ProcessFixtureChild {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let _ = child.kill();
+        let reaped = child.wait().is_ok();
+        if let Some(receipt) = &self.reaped {
+            receipt.store(reaped, Ordering::SeqCst);
+        }
+    }
+}
+
+impl ToolPort for ProcessFixtureToolPort {
+    fn invoke<'a>(
+        &'a self,
+        _call: &'a ToolCall,
+        _lease: &'a ToolLease,
+        _actor: &'a str,
+    ) -> Pin<Box<dyn Future<Output = ToolPortResult> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "retry_fixture_process", "--nocapture"])
+            .env("GH_RETRY_FIXTURE_MODE", "fail_then_pass")
+            .env("GH_RETRY_FIXTURE_MARKER", &self.marker)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn retry fixture child");
+        let mut child = ProcessFixtureChild::new(child);
+        let status = child.wait_with_poll_limit(PROCESS_FIXTURE_WAIT_POLLS);
+        let disposition = ToolDisposition::Completed {
+            exit_code: status.code().unwrap_or(1),
+        };
+        let record = ToolCallRecord {
+            tool: "tests".to_owned(),
+            action: "run".to_owned(),
+            actor: "agent-runtime".to_owned(),
+            tier: IsolationTier::Tier1,
+            disposition,
+            stdout_sha256: digest_hex(b""),
+            stdout_bytes: 0,
+            stderr_sha256: digest_hex(b""),
+            stderr_bytes: 0,
+            truncated: false,
+            reused: false,
+        };
+        Box::pin(async move {
+            ToolPortResult {
+                record,
+                streams: ToolStreams {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                reuse: None,
+            }
+        })
+    }
+}
+
+struct DeterministicTimeoutToolPort {
+    calls: AtomicUsize,
+}
+
+impl ToolPort for DeterministicTimeoutToolPort {
+    fn invoke<'a>(
+        &'a self,
+        _call: &'a ToolCall,
+        _lease: &'a ToolLease,
+        _actor: &'a str,
+    ) -> Pin<Box<dyn Future<Output = ToolPortResult> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            ToolPortResult {
+                record: ToolCallRecord {
+                    tool: "tests".to_owned(),
+                    action: "run".to_owned(),
+                    actor: "agent-runtime".to_owned(),
+                    tier: IsolationTier::Tier1,
+                    disposition: ToolDisposition::TimedOut,
+                    stdout_sha256: digest_hex(b""),
+                    stdout_bytes: 0,
+                    stderr_sha256: digest_hex(b""),
+                    stderr_bytes: 0,
+                    truncated: false,
+                    reused: false,
+                },
+                streams: ToolStreams {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                reuse: None,
+            }
+        })
+    }
+}
+
+fn drive_tool_fixture(
+    port: Arc<dyn ToolPort>,
+    failure_semantics: Option<&str>,
+) -> graphhelm_events::ExecutionProjection {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let execution_id = started_repository(&events);
+    let spec = spec_with(
+        vec![("stage", tool_graph_node(failure_semantics, Vec::new()))],
+        vec![],
+        1,
+    );
+    let executor = Arc::new(PortExecutor {
+        model: Arc::new(FakeModelPort {
+            result: Ok(reply("unused")),
+            calls: AtomicUsize::new(0),
+        }),
+        tools: port.clone(),
+        route_id: "claude_subscription".to_owned(),
+        lease: ToolLease {
+            actor: "agent-runtime".to_owned(),
+            capabilities: [Capability::TestsExecute].into_iter().collect(),
+            programs: std::collections::BTreeSet::new(),
+        },
+        actor: "agent-runtime".to_owned(),
+    });
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(events),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+        ))
+        .unwrap()
+}
+
+fn drive_real_process_fixture(
+    failure_semantics: Option<&str>,
+) -> (graphhelm_events::ExecutionProjection, usize) {
+    let directory = tempfile::tempdir().unwrap();
+    let port = Arc::new(ProcessFixtureToolPort {
+        marker: directory.path().join("retry-marker"),
+        calls: AtomicUsize::new(0),
+    });
+    let projection = drive_tool_fixture(port.clone(), failure_semantics);
+    (projection, port.calls.load(Ordering::SeqCst))
 }
 
 /// A gated model port for the concurrency test: counts in-flight calls, records the maximum,
@@ -1361,6 +1679,245 @@ fn multi_thread_runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("a runtime")
+}
+
+#[test]
+fn a_verdict_bearing_real_process_cannot_retry_from_red_into_green() {
+    let (projection, calls) = drive_real_process_fixture(Some("verdict_bearing"));
+    assert_eq!(projection.node_states["stage"], NodeState::Failed);
+    assert_eq!(calls, 1, "the honest red verdict is never redispatched");
+}
+
+#[test]
+fn an_undeclared_tool_defaults_to_verdict_bearing() {
+    let (projection, calls) = drive_real_process_fixture(None);
+    assert_eq!(projection.node_states["stage"], NodeState::Failed);
+    assert_eq!(calls, 1, "absence uses the safe verdict-bearing default");
+}
+
+#[test]
+fn conflicting_retry_policy_refuses_before_every_node_effect_and_settles_failed() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let port = Arc::new(DeterministicTimeoutToolPort {
+        calls: AtomicUsize::new(0),
+    });
+    let spec = spec_with(
+        vec![
+            ("conflict", conflicting_retry_tool_graph_node()),
+            ("effect-capable", tool_graph_node(None, Vec::new())),
+        ],
+        vec![],
+        2,
+    );
+    let executor = Arc::new(PortExecutor {
+        model: Arc::new(FakeModelPort {
+            result: Ok(reply("unused")),
+            calls: AtomicUsize::new(0),
+        }),
+        tools: port.clone(),
+        route_id: "claude_subscription".to_owned(),
+        lease: ToolLease {
+            actor: "agent-runtime".to_owned(),
+            capabilities: [Capability::TestsExecute].into_iter().collect(),
+            programs: std::collections::BTreeSet::new(),
+        },
+        actor: "agent-runtime".to_owned(),
+    });
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+        ))
+        .unwrap();
+
+    assert_eq!(port.calls.load(Ordering::SeqCst), 0, "no tool may run");
+    assert!(
+        projection.node_states.is_empty(),
+        "preflight refusal must precede even Draft -> Ready approval"
+    );
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Failed)
+    );
+
+    let repository = opener(directory.path().to_path_buf())().unwrap();
+    let history = repository
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::NodeOutcomeRecorded(_))),
+        "a refusal before effects cannot record a node lifecycle hop"
+    );
+    let diagnostics = history
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::GraphValidationFailed(failed) => Some(&failed.diagnostics),
+            _ => None,
+        })
+        .expect("stable refusal diagnostics are journaled");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code(), "GHG015_RETRY_CAUSE_CONFLICT");
+    assert_eq!(diagnostics[0].path().as_str(), "/spec/nodes/conflict/retry");
+    assert_eq!(
+        diagnostics[0].component(),
+        graphhelm_protocols::DiagnosticComponent::Graph
+    );
+    assert_eq!(
+        diagnostics[0].severity(),
+        &graphhelm_protocols::Severity::Error
+    );
+    assert_eq!(history.len(), 3, "start + atomic refusal/settlement pair");
+    assert!(matches!(
+        history.last().map(|event| &event.kind),
+        Some(EventKind::ExecutionCompleted(ExecutionCompleted {
+            status: graphhelm_protocols::SimulationStatus::Failed,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn malformed_conflicting_retry_policy_fails_closed_before_every_node_effect() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let port = Arc::new(DeterministicTimeoutToolPort {
+        calls: AtomicUsize::new(0),
+    });
+    let spec = spec_with(
+        vec![
+            ("conflict", malformed_conflicting_retry_tool_graph_node()),
+            ("effect-capable", tool_graph_node(None, Vec::new())),
+            ("malformed-only", malformed_retry_tool_graph_node()),
+        ],
+        vec![],
+        2,
+    );
+    let executor = Arc::new(PortExecutor {
+        model: Arc::new(FakeModelPort {
+            result: Ok(reply("unused")),
+            calls: AtomicUsize::new(0),
+        }),
+        tools: port.clone(),
+        route_id: "claude_subscription".to_owned(),
+        lease: ToolLease {
+            actor: "agent-runtime".to_owned(),
+            capabilities: [Capability::TestsExecute].into_iter().collect(),
+            programs: std::collections::BTreeSet::new(),
+        },
+        actor: "agent-runtime".to_owned(),
+    });
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+        ))
+        .unwrap();
+
+    assert_eq!(port.calls.load(Ordering::SeqCst), 0, "no tool may run");
+    assert!(projection.node_states.is_empty());
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Failed)
+    );
+
+    let repository = opener(directory.path().to_path_buf())().unwrap();
+    let history = repository
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::NodeOutcomeRecorded(_)))
+    );
+    let diagnostics = history
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::GraphValidationFailed(failed) => Some(&failed.diagnostics),
+            _ => None,
+        })
+        .expect("stable refusal diagnostics are journaled");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.path().as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("GHG015_RETRY_CAUSE_CONFLICT", "/spec/nodes/conflict/retry"),
+            ("GHS003_TYPED", "/spec/nodes/conflict/retry"),
+            ("GHS003_TYPED", "/spec/nodes/malformed-only/retry")
+        ]
+    );
+    assert_eq!(history.len(), 3, "start + atomic refusal/settlement pair");
+    assert!(matches!(
+        history.last().map(|event| &event.kind),
+        Some(EventKind::ExecutionCompleted(ExecutionCompleted {
+            status: graphhelm_protocols::SimulationStatus::Failed,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn a_stuck_retry_fixture_child_is_killed_and_reaped_at_the_wait_bound() {
+    let reaped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let child = KillingToolPort::spawn_sleeper();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
+        let reaped = reaped.clone();
+        move || {
+            let mut child = ProcessFixtureChild::with_reap_receipt(child, reaped);
+            child.wait_with_poll_limit(1);
+        }
+    }));
+    assert!(result.is_err(), "the harness limit must trip for a sleeper");
+    assert!(
+        reaped.load(Ordering::SeqCst),
+        "the timeout path kills and waits for the child before unwinding"
+    );
+}
+
+#[test]
+fn an_explicit_retry_eligible_real_process_may_retry_nonzero_into_green() {
+    let (projection, calls) = drive_real_process_fixture(Some("retry_eligible"));
+    assert_eq!(projection.node_states["stage"], NodeState::Succeeded);
+    assert_eq!(calls, 2, "the explicit declaration permits one redispatch");
+}
+
+#[test]
+fn a_verdict_bearing_timeout_stays_retryable_harness_failure() {
+    let port = Arc::new(DeterministicTimeoutToolPort {
+        calls: AtomicUsize::new(0),
+    });
+    let projection = drive_tool_fixture(port.clone(), Some("verdict_bearing"));
+    let calls = port.calls.load(Ordering::SeqCst);
+    assert_eq!(projection.node_states["stage"], NodeState::Blocked);
+    assert!(calls > 1, "a timeout is not laundered into a verdict");
 }
 
 #[test]

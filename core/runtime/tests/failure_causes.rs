@@ -136,6 +136,7 @@ fn cognitive_work() -> NodeWork {
         attempt: 1,
         prompt: prompt(),
         kind: NodeWorkKind::Cognitive,
+        tool_failure_semantics: Default::default(),
         tool_call: None,
         gate_check: None,
         judge: None,
@@ -149,6 +150,7 @@ fn tool_work() -> NodeWork {
         attempt: 1,
         prompt: prompt(),
         kind: NodeWorkKind::Tool,
+        tool_failure_semantics: Default::default(),
         tool_call: Some(ToolCall::Shell(ShellAction {
             program: "git".to_owned(),
             arguments: vec!["status".to_owned()],

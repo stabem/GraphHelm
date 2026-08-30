@@ -11,8 +11,9 @@ use graphhelm_events::{
 };
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
-    EventEnvelope, EventKind, EvidenceId, IdGenerator, NewEvent, NodeOutcomeRecorded, NodeState,
-    OpaqueId, PersistedActor, RepositoryScope, ReuseDecision, ReusePlane, Sensitivity,
+    DiagnosticComponent, DiagnosticDomainPath, EventEnvelope, EventKind, EvidenceId, IdGenerator,
+    NewEvent, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedDiagnostic,
+    RepositoryScope, ReuseDecision, ReusePlane, Sensitivity, Severity,
 };
 
 use crate::context_accounting::{
@@ -254,8 +255,8 @@ use std::sync::Arc;
 use graphhelm_events::ExecutionProjection;
 use graphhelm_execution::{dispatch_candidates, dispatch_plan};
 use graphhelm_protocols::{
-    EventKind as WireEventKind, ExecutionCompleted, ExecutionPaused, GraphSpec, NodeOutcome,
-    SimulationStatus,
+    EventKind as WireEventKind, ExecutionCompleted, ExecutionPaused, GraphSpec,
+    GraphValidationFailed, NodeOutcome, SimulationStatus,
 };
 
 use crate::executor::{AsyncNodeExecutor, NodeWork, WorkSummary};
@@ -368,6 +369,65 @@ async fn append_plain(
     .expect("the writer task is never cancelled")
 }
 
+const RETRY_CAUSE_CONFLICT_CODE: &str = "GHG015_RETRY_CAUSE_CONFLICT";
+const RETRY_POLICY_TYPED_CODE: &str = "GHS003_TYPED";
+
+/// Record ADR-030's invalid-policy refusal and terminal execution settlement in one batch.
+/// No node lifecycle event may precede this pair: contradictory policy is rejected before work.
+async fn append_retry_policy_refusal(
+    store_open: &StoreOpen,
+    ids: &Arc<dyn IdGenerator>,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    diagnostics: Vec<PersistedDiagnostic>,
+) -> Result<(), DriverError> {
+    let store_open = store_open.clone();
+    let ids = ids.clone();
+    let scope = scope.clone();
+    let stream = stream.clone();
+    let execution_id = execution_id.clone();
+    let actor = actor.clone();
+    tokio::task::spawn_blocking(move || {
+        let store = store_open()?;
+        let next_sequence = store.next_sequence(&scope, stream.as_str())?;
+        let events = vec![
+            NewEvent::new(
+                mint_key(ids.as_ref(), "retry-policy-refused")?,
+                actor.clone(),
+                Sensitivity::Internal,
+                WireEventKind::GraphValidationFailed(GraphValidationFailed { diagnostics }),
+                vec![],
+                vec![],
+            ),
+            NewEvent::new(
+                mint_key(ids.as_ref(), "execution-completed")?,
+                actor,
+                Sensitivity::Internal,
+                WireEventKind::ExecutionCompleted(ExecutionCompleted {
+                    execution_id,
+                    status: SimulationStatus::Failed,
+                }),
+                vec![],
+                vec![],
+            ),
+        ];
+        let request = PreparedAppend::new(
+            scope.clone(),
+            stream.clone(),
+            next_sequence,
+            events,
+            vec![],
+            vec![],
+        )?;
+        store.append_atomic(&request)?;
+        Ok(())
+    })
+    .await
+    .expect("the writer task is never cancelled")
+}
+
 /// One serialized projection reread through `spawn_blocking`.
 async fn reread_async(
     store_open: &StoreOpen,
@@ -454,16 +514,137 @@ fn build_work(
             (crate::prompt::tool_placeholder(), None, Some(check), None)
         }
     };
+    let tool_failure_semantics = if kind == crate::classify::NodeWorkKind::Tool {
+        tool_failure_semantics(graph_node)?
+    } else {
+        crate::executor::ToolFailureSemantics::default()
+    };
     Ok(NodeWork {
         execution_id: execution_id.to_string(),
         node_id: node.to_owned(),
         attempt,
         prompt,
         kind,
+        tool_failure_semantics,
         tool_call,
         gate_check,
         judge,
     })
+}
+
+const TOOL_EXITED_NON_ZERO_CAUSE: &str = "tool_exited_non_zero";
+
+fn tool_failure_semantics(
+    node: &graphhelm_protocols::GraphNode,
+) -> Result<crate::executor::ToolFailureSemantics, crate::executor::ExecutorRefusal> {
+    let Some(retry) = node.properties.get("retry") else {
+        return Ok(Default::default());
+    };
+    let retry = retry
+        .as_object()
+        .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
+    let retry_on = retry_causes(retry, "retryOn")?;
+    let do_not_retry_on = retry_causes(retry, "doNotRetryOn")?;
+    let retry_declared = retry_on
+        .iter()
+        .any(|cause| cause == TOOL_EXITED_NON_ZERO_CAUSE);
+    let terminal_declared = do_not_retry_on
+        .iter()
+        .any(|cause| cause == TOOL_EXITED_NON_ZERO_CAUSE);
+    match (retry_declared, terminal_declared) {
+        (true, true) => Err(crate::executor::ExecutorRefusal::Unassemblable),
+        (true, false) => Ok(crate::executor::ToolFailureSemantics::RetryEligible),
+        (false, _) => Ok(crate::executor::ToolFailureSemantics::VerdictBearing),
+    }
+}
+
+fn retry_causes(
+    retry: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Vec<String>, crate::executor::ExecutorRefusal> {
+    retry
+        .get(key)
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)
+        .map(Option::unwrap_or_default)
+}
+
+fn retry_policy_conflict_diagnostics(
+    spec: &GraphSpec,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for (node_id, node) in &spec.nodes {
+        let Some(retry) = node.properties.get("retry") else {
+            continue;
+        };
+        let (retry_on, do_not_retry_on, malformed) = if let Some(retry) = retry.as_object() {
+            let (retry_on, retry_on_malformed) = preflight_retry_causes(retry.get("retryOn"));
+            let (do_not_retry_on, do_not_retry_on_malformed) =
+                preflight_retry_causes(retry.get("doNotRetryOn"));
+            (
+                retry_on,
+                do_not_retry_on,
+                retry_on_malformed || do_not_retry_on_malformed,
+            )
+        } else {
+            (BTreeSet::new(), BTreeSet::new(), true)
+        };
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/retry"))
+            .map_err(|_| DriverError::Identity)?;
+        if retry_on.iter().any(|cause| do_not_retry_on.contains(cause)) {
+            diagnostics.push(retry_policy_diagnostic(
+                RETRY_CAUSE_CONFLICT_CODE,
+                path.clone(),
+                DiagnosticComponent::Graph,
+            )?);
+        }
+        if malformed {
+            diagnostics.push(retry_policy_diagnostic(
+                RETRY_POLICY_TYPED_CODE,
+                path,
+                DiagnosticComponent::Schema,
+            )?);
+        }
+    }
+    Ok(diagnostics)
+}
+
+fn preflight_retry_causes(value: Option<&serde_json::Value>) -> (BTreeSet<&str>, bool) {
+    let Some(value) = value else {
+        return (BTreeSet::new(), false);
+    };
+    let Some(values) = value.as_array() else {
+        return (BTreeSet::new(), true);
+    };
+    let mut causes = BTreeSet::new();
+    let mut malformed = false;
+    for value in values {
+        if let Some(cause) = value.as_str() {
+            causes.insert(cause);
+        } else {
+            malformed = true;
+        }
+    }
+    (causes, malformed)
+}
+
+fn retry_policy_diagnostic(
+    code: &str,
+    path: DiagnosticDomainPath,
+    component: DiagnosticComponent,
+) -> Result<PersistedDiagnostic, DriverError> {
+    PersistedDiagnostic::new(
+        code.to_owned(),
+        Severity::Error,
+        path,
+        component,
+        None,
+        None,
+    )
+    .map_err(|_| DriverError::Identity)
 }
 
 /// What the certified-or-not-at-all precondition reads: the fold's receipts and the
@@ -506,6 +687,32 @@ pub async fn drive_to_quiescence_async(
     mut cancel: tokio::sync::watch::Receiver<bool>,
     current_suite_digest: Option<String>,
 ) -> Result<ExecutionProjection, DriverError> {
+    let retry_policy_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
+    if !retry_policy_diagnostics.is_empty() {
+        let projection = reread_async(&store_open, &scope, &stream).await?;
+        let already_terminal = matches!(
+            projection.simulation_status,
+            Some(
+                SimulationStatus::Completed
+                    | SimulationStatus::Failed
+                    | SimulationStatus::Cancelled
+            )
+        );
+        if !already_terminal {
+            append_retry_policy_refusal(
+                &store_open,
+                &ids,
+                &scope,
+                &stream,
+                &execution_id,
+                &actor,
+                retry_policy_diagnostics,
+            )
+            .await?;
+        }
+        return reread_async(&store_open, &scope, &stream).await;
+    }
+
     let mut in_flight: tokio::task::JoinSet<(String, Option<WorkOutcome>)> =
         tokio::task::JoinSet::new();
     let mut in_flight_nodes: BTreeSet<String> = BTreeSet::new();

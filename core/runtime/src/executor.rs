@@ -15,6 +15,9 @@ pub struct NodeWork {
     pub attempt: u32,
     pub prompt: crate::prompt::AssembledPrompt,
     pub kind: crate::classify::NodeWorkKind,
+    /// Whether an honest completed non-zero tool exit is a verdict. Absence in the graph
+    /// defaults to verdict-bearing; retries require an explicit declaration.
+    pub tool_failure_semantics: ToolFailureSemantics,
     /// The decided tool call for `Tool`-kind work, built by whoever constructs the work unit
     /// (the driver, from the node's contract). `None` for cognitive work; a `Tool` kind with
     /// no call is unassemblable — the executor must not invent one. (Task 5 extension to the
@@ -28,6 +31,18 @@ pub struct NodeWork {
     /// assembled from the judge's OWN diet and the reply parses under the verdict
     /// contract instead of the plain-reply rule.
     pub judge: Option<crate::judge::JudgeWork>,
+}
+
+/// A tool node's declaration for an honest, completed non-zero process exit.
+///
+/// This declaration never changes timeout or host-failure handling: a timeout delivered no
+/// verdict, while a host record no longer carries the OS `ErrorKind` needed to prove transience.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolFailureSemantics {
+    RetryEligible,
+    #[default]
+    VerdictBearing,
 }
 
 /// One decided gate evaluation: which event-sourced gate definition runs, and the whole
@@ -234,16 +249,27 @@ impl PortExecutor {
         }
     }
 
-    fn tool_outcome(&self, result: crate::ports::ToolPortResult) -> WorkOutcome {
+    fn tool_outcome(
+        &self,
+        result: crate::ports::ToolPortResult,
+        failure_semantics: ToolFailureSemantics,
+    ) -> WorkOutcome {
         use graphhelm_tool_broker::record::ToolDisposition;
         let outcome = match &result.record.disposition {
             ToolDisposition::Completed { exit_code: 0 } => NodeOutcome::Succeeded,
-            ToolDisposition::Completed { .. } | ToolDisposition::TimedOut => {
-                NodeOutcome::RetryableFailure
-            }
+            ToolDisposition::Completed { .. } => match failure_semantics {
+                ToolFailureSemantics::RetryEligible => NodeOutcome::RetryableFailure,
+                ToolFailureSemantics::VerdictBearing => NodeOutcome::TerminalFailure,
+            },
+            // A process killed by its deadline delivered no verdict, regardless of declaration.
+            ToolDisposition::TimedOut => NodeOutcome::RetryableFailure,
             // A lease refusal will not heal by retrying the same call.
             ToolDisposition::Denied { .. } => NodeOutcome::TerminalFailure,
-            ToolDisposition::HostError { .. } => NodeOutcome::RetryableFailure,
+            // The durable record carries only the stable code, not Spawn/Prepare's OS ErrorKind.
+            // Four codes are permanent by construction, and the two ambiguous classes cannot
+            // prove transience after that information loss. Terminal is the conservative rule;
+            // retrying requires a future durable cause contract, not a guess at this consumer.
+            ToolDisposition::HostError { .. } => NodeOutcome::TerminalFailure,
         };
         let exit_code = match &result.record.disposition {
             ToolDisposition::Completed { exit_code } => Some(*exit_code),
@@ -324,7 +350,7 @@ impl AsyncNodeExecutor for PortExecutor {
                         return Err(ExecutorRefusal::Unassemblable);
                     };
                     let result = self.tools.invoke(call, &self.lease, &self.actor).await;
-                    Ok(self.tool_outcome(result))
+                    Ok(self.tool_outcome(result, work.tool_failure_semantics))
                 }
                 crate::classify::NodeWorkKind::GateCheck => {
                     let Some(gate) = work.gate_check.as_ref() else {

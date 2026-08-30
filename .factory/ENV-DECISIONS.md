@@ -1071,6 +1071,118 @@ The second half is read by diffing the merge result against main over the files 
 and inspecting every hunk where the branch **reintroduces** text main removed. `git diff
 <main>..<merge-result>` restricted to those paths shows them as additions the branch did not author.
 
+
+### ED-18, TEST-STAGE PROPOSAL (J) - the fourth route, costed; revised after F's review of #384
+
+The three routes above are all closed by clippy. **A fourth is not**, and it was demonstrated rather
+than argued: a stale array literal in a test (#358) that was compile-clean, clippy-clean, and
+test-red. `cargo check` compiles it; clippy has no opinion about it; only running the test finds it.
+When I recorded that route I said the cost of a test stage was **not measured**. This is the
+measurement, and the first version of it measured the wrong population.
+
+#### Rule, if adopted (stated as a rule, not as advice)
+
+**A test stage MUST NOT be added to the landing check until `wake_http`'s `wait_for_pipe` cluster has
+been measured green in the regime that failed it.** Order is part of the rule, not a preference: a
+gate whose first act is a false red is not obeyed, it is bypassed, and it teaches that a red there is
+something you re-run rather than read. That is the same defect as a refusal message offering the wrong
+exit - the gate trains the behaviour it exists to prevent.
+
+**The condition is stated as a MEASUREMENT rather than as a capability, and the reason is that the
+first wording aged badly in five days.** It read "while that cluster CAN fail on a loaded machine
+(#386)" - a claim about what the code is able to do, which nobody could check without reproducing a
+flake. Re-derived against `origin/main` at `7b55cf0` on 2026-08-30:
+
+```
+#420  f5c6602  MERGED 2026-08-25  both sidecar waits can now see the child they wait for
+#439  bbe6c8e  MERGED 2026-08-26  the pipe wait is bounded BELOW the leases it races, and those
+                                  leases were raised past the measured startup tail (28 concurrent
+                                  sidecars, idle machine: min 1766 / p50 1840 / p90 1926 / max 1953 ms)
+#386           OPEN               the issue itself is not closed
+```
+
+**The premise is unverified, not refuted, and the difference decides the rule.** The mechanism behind
+those failures was measured and attacked by two changes aimed at exactly it - but the failure RATE has
+not been re-measured since either landed, so the evidence that the cluster fails is older than the
+work done against it. **An unmeasured gate condition is not a satisfied one**, and a rule that treated
+"probably fixed" as "measured green" would be the false-red trap arriving through the front door
+instead of the back.
+
+**What lifts it: a run of the cluster in the regime that produced the failures - the whole binary, its
+own test-count of concurrent sidecars - reported with the failure rate rather than with a colour.**
+Until that exists, the stage waits.
+
+#### The scope rule, with the command that makes it executable
+
+**Test the packages that CONSUME the change set, not the packages the change set edits.** Derived,
+not judged:
+
+```
+cargo metadata --no-deps --format-version 1
+  -> for each changed package P, the transitive closure of workspace packages depending on P
+```
+
+Run against this workspace (21 packages):
+
+| changed package | consumer closure | size |
+|---|---|---|
+| `graphhelm-governor` | `graphhelm-cli` | **1** |
+| `graphhelm-protocols` | cli, events, execution, gateway, governor, graph, model-gateway, policy, postgres-event-store, quality, runtime, schema, schema-evolution, sealed-key-provider, simulation, tool-broker, tool-host, acceptance-map | **18 of 21** |
+
+**So the cost is not one number, it is bimodal, and the expensive mode is the one this wave keeps
+hitting.** A leaf-crate change tests one package. A change to `core/protocols` - which is where every
+vocabulary change in #217/#222/#218/#372 landed - has a consumer closure of **18 of 21 packages**,
+which is `--workspace` in all but name.
+
+#### The numbers, with their population named
+
+All single runs (**n=1**), one machine, between **16:14Z and 16:29Z on 2026-08-25**, with other
+agents building concurrently - which matters, because the diagnosis below is about concurrent load.
+
+| stage | population | wall time |
+|---|---|---|
+| `cargo check --workspace --all-targets` | workspace | **177.8s** (cold dir) |
+| `cargo clippy -p graphhelm-cli --all-targets --locked -- -D warnings` | one crate | **33.2s** (warm) |
+| `cargo test -p graphhelm-cli` | **one crate - the EDITED one** | **383.9s** (warm), 390 tests, 35 binaries |
+
+**The last row is a FLOOR, not the proposal's cost.** It measures the edited package; the rule above
+costs the consumer closure, and `consumers ⊇ edited` always. For a `core/protocols` change the real
+figure is an 18-package run that **has not been measured** - deliberately, because taking it while
+40 cargo/rustc processes from other sessions are live would produce a number I would have to void.
+**Measuring it on a quiet machine is a precondition of activation, alongside the de-flake.**
+
+*(This correction is F's, on #384: I measured `-p <edited>` while proposing `<consumers>`. Two
+different populations, and the number belonged to the wrong one.)*
+
+#### The blocking cost is not seconds
+
+**Using the corrected reading of the control below**, the stage produced **15 failures across three
+runs, every one at one assertion site**, `apps/cli/tests/wake_http.rs:1870`:
+
+```
+assert!(Instant::now() < deadline, "the sidecar never created its rendezvous {expected}")
+```
+
+A **10-second poll** inside `#[cfg(windows)] wait_for_pipe()`, waiting for a spawned sidecar to
+create a named pipe: a process-start timeout, not a semantic assertion. Same site 15/15, on main as
+well as on the candidate. Filed as **#386**.
+
+**The control that had to be corrected first.** I initially read the isolation run failing *worse*
+(6 vs 4) as refuting load-sensitivity, and was close to reporting main as semantically red. That
+control was wrong: it isolated the **test binary** while other sessions kept building. **The load
+comes from other agents, not from my own other binaries** - the wrong variable was held fixed.
+Corrected, the reading matches what #351 reported about this suite, and the 15/15 figure above is
+stated on the corrected setup, not the original one.
+
+#### Recommendation
+
+1. **#386 first** - `wait_for_pipe` accounts for every failure observed.
+2. **Measure the consumer-closure run on a quiet machine**, for a `core/protocols`-shaped change,
+   since that is the mode this work actually produces.
+3. **Then** decide, knowing both the honest cost and the reliability.
+
+**The measurement says a one-package stage is affordable. It does not yet say what the real stage
+costs, and it says the suite is not yet reliable.**
 ---
 
 ## ED-19 — `git stash` IS ONE SHARED STACK FOR THE WHOLE REPOSITORY, ACROSS ALL WORKTREES (from F's near-incident)

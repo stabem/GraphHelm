@@ -579,3 +579,52 @@ Compiler, retrieval, formatting, index, and complete provider-total producers re
 under #222; this slice does not close that issue and exposes no new public CLI, API, MCP, Studio, or
 model-gateway surface. This makes D-043 normative, refines ADR-021, ADR-022 and ADR-028, and leaves
 Tool Broker containment unchanged.
+
+## 35. ADR-030 — Fail-closed retry policy for completed tool verdicts and conflicting causes
+
+**Status:** accepted.
+
+**Context:** a tool attempt can end with an honest completed verdict, fail before producing a
+verdict, or time out without completing one. The historical executor plan treated every completed
+non-zero exit and every `HostError` as retryable. That wording collapses distinct facts: a non-zero
+exit is the tool's completed verdict, while the durable `HostError` record retains a stable code but
+not the operating system `ErrorKind` needed to classify the failure as transient or permanent.
+Separately, the Graph DSL permits an author to place the same cause in both `retryOn` and
+`doNotRetryOn`. Choosing either list by precedence would make the result depend on implementation
+order, while discovering the conflict only after scheduling can leave a node `Ready` and the
+execution unfinished.
+
+**Decision:** retry classification is fail-closed and verdict-aware. A completed tool attempt with a
+non-zero exit is terminal by default. A graph author may opt in to retry that cause only with
+`retryOn: [tool_exited_non_zero]`; `doNotRetryOn: [tool_exited_non_zero]` explicitly preserves the
+terminal verdict. A tool timeout remains retryable because no tool verdict completed. Durable
+`HostError` codes are terminal under the current record: the missing `ErrorKind` means GraphHelm has
+no deterministic evidence for a transient/permanent split. GateCheck outcomes and retry semantics
+are unchanged by this ADR.
+
+The sets named by `retryOn` and `doNotRetryOn` must be disjoint. Any overlap is an invalid retry
+policy, not a precedence rule. GraphHelm refuses the conflict deterministically before any node
+effect, records stable diagnostic evidence, and settles the affected execution without silently
+stranding the node in `Ready` or leaving the execution running. Attempt limits and backoff remain
+additional bounds; they never convert a terminal cause into a retryable one.
+
+**Rejected alternatives:** retrying every completed non-zero exit, which repeats a real verdict
+without explicit author intent; treating all durable host errors as retryable, which invents a
+transient classification after `ErrorKind` has been lost; letting `retryOn` or `doNotRetryOn` win by
+precedence, which makes contradictory policy look valid; detecting the overlap only after a node
+effect; and changing GateCheck behavior as part of a tool-outcome decision.
+
+**Compatibility and supersession:** this ADR supersedes only the contradictory retry examples in
+`docs/superpowers/plans/2026-08-14-real-executor.md` that map completed non-zero exits and
+`HostError` to retryable failure. That file remains an immutable historical implementation plan;
+its other design statements are unaffected. Existing graphs with disjoint retry sets retain their
+declared behavior except at the two causes decided here: a completed non-zero exit is retryable only
+through its explicit `retryOn` opt-in, while a durable `HostError` remains terminal under the current
+record regardless of retry declarations. A graph whose lists overlap was ambiguous rather than
+valid and is now refused before effects.
+
+**Consequences:** authors must opt in before GraphHelm retries a completed non-zero tool verdict.
+Timeouts remain recoverable, durable host errors remain honest terminal evidence, and contradictory
+retry declarations cannot hang an execution at `Ready`. Implementations must preserve the stable
+refusal evidence and terminal settlement across replay. This makes D-044 normative, refines ADR-003
+and ADR-005, and does not change GateCheck semantics, schemas, or any public Studio surface.

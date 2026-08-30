@@ -441,6 +441,18 @@ retry:
 
 Retries count toward `maxAttempts`; graph remediation loops are different and are also limited.
 
+Retry classification is fail-closed and verdict-aware. A completed non-zero tool exit is terminal
+by default. `retryOn: [tool_exited_non_zero]` is the explicit opt-in that makes that cause retryable;
+`doNotRetryOn: [tool_exited_non_zero]` explicitly keeps it terminal. A tool timeout remains
+retryable because no tool verdict completed. A durable `HostError` is terminal under the current
+record because its stable code does not preserve the operating system `ErrorKind` needed for a
+deterministic transient/permanent classification. GateCheck semantics are unchanged.
+
+`retryOn` and `doNotRetryOn` are sets and must be disjoint. Listing the same cause in both is an
+invalid retry policy; neither field wins by precedence. GraphHelm must refuse the conflict
+deterministically before any node effect, emit stable diagnostic evidence, and settle the affected
+execution without leaving the node silently stranded in `Ready` or the execution running.
+
 `refresh_context_delta` follows `CONTEXT_KNOWLEDGE_DREAMS.md` §8.3: a retry receives the delta
 since the previous capsule plus stable references, never an unconditional recompilation — full
 recompilation is reserved for failure categories whose failure invalidates the capsule itself

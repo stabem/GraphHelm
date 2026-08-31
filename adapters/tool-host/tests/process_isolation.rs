@@ -227,6 +227,58 @@ fn oversize_output_is_capped_and_marked_truncated_without_deadlock() {
 }
 
 #[test]
+fn a_stdout_cut_is_distinguishable_from_a_stderr_cut() {
+    // #177: `CapturedProcess` fused the two into `stdout_truncated || stderr_truncated`, so a stage
+    // whose stderr was cut and whose stdout was whole was indistinguishable from the reverse. The
+    // per-stream values already existed as locals in `run_in_workspace` and died at the struct
+    // boundary -- this is the boundary, not a new measurement.
+    let cap = 64 * 1024;
+    let limits = ProcessLimits {
+        timeout: Duration::from_secs(30),
+        max_output_bytes: cap,
+    };
+    let out_workspace = tempfile::tempdir().unwrap();
+    let err_workspace = tempfile::tempdir().unwrap();
+    let out_cut = run(out_workspace.path(), &["big-output"], &limits);
+    let err_cut = run(err_workspace.path(), &["big-stderr"], &limits);
+
+    // ARRANGEMENT CONTROL, before the claim: the two runs must really have cut DIFFERENT streams.
+    // Without this the assertion below could pass on two runs that cut the same one, and the test
+    // would be about nothing.
+    assert!(
+        out_cut.stdout.len() >= cap && out_cut.stderr.is_empty(),
+        "big-output must overflow stdout and leave stderr empty: {} / {}",
+        out_cut.stdout.len(),
+        out_cut.stderr.len()
+    );
+    assert!(
+        err_cut.stderr.len() >= cap && err_cut.stdout.len() < cap,
+        "big-stderr must overflow stderr and leave stdout short: {} / {}",
+        err_cut.stdout.len(),
+        err_cut.stderr.len()
+    );
+
+    // The fused flag this replaces says the SAME thing about both, and that identity is the defect
+    // restated: it is kept as a derived value, so this line keeps measuring the loss it caused.
+    assert_eq!(
+        out_cut.truncated, err_cut.truncated,
+        "the derived flag is still the OR of the two, so both cuts still read alike through it"
+    );
+
+    // The claim: the record now says WHICH stream was cut.
+    assert_eq!(
+        (out_cut.stdout_truncated, out_cut.stderr_truncated),
+        (true, false),
+        "stdout was the cut stream"
+    );
+    assert_eq!(
+        (err_cut.stdout_truncated, err_cut.stderr_truncated),
+        (false, true),
+        "stderr was the cut stream"
+    );
+}
+
+#[test]
 fn the_child_runs_in_the_workspace_directory() {
     let workspace = tempfile::tempdir().unwrap();
     let captured = run(workspace.path(), &["cwd"], &limits());

@@ -131,6 +131,8 @@ impl ToolHost {
                         action: action.to_owned(),
                         actor: actor.to_owned(),
                         program_allowlist,
+                        // A DENIAL touched nothing: no stream was read, so neither reached a
+                        // cap. False is the measurement, not a default.
                         tier,
                         disposition: ToolDisposition::Denied {
                             rule: refusal_rule(&refusal).to_owned(),
@@ -201,6 +203,10 @@ impl ToolHost {
                     exit_code: None,
                     stdout: Vec::new(),
                     stderr: Vec::new(),
+                    // Nothing ran, so neither stream reached a cap. False here is a measurement
+                    // about a child that never existed, not a default.
+                    stdout_truncated: false,
+                    stderr_truncated: false,
                     truncated: false,
                     timed_out: false,
                 },

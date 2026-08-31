@@ -12,6 +12,9 @@
 //! - `cwd`: print the current directory, exit 0
 //! - `sleep`: sleep 3600 s (the host must kill it)
 //! - `big-output`: write 8 MiB of `x` to stdout, exit 0
+//! - `big-stderr`: write 8 MiB of `x` to STDERR and one short line to stdout, exit 0.
+//!   The mirror of `big-output`: it exists so a cut on one stream can be told apart
+//!   from a cut on the other, which a single fused flag cannot express (#177).
 //! - `exit-code <n>`: exit with `<n>` parsed as `i32`
 
 use std::io::Write as _;
@@ -49,6 +52,17 @@ fn main() {
             let chunk = vec![b'x'; 64 * 1024];
             for _ in 0..128 {
                 out.write_all(&chunk).expect("stdout");
+            }
+        }
+        "big-stderr" => {
+            // stdout stays SHORT on purpose: the pair (big-output, big-stderr) differs in which
+            // stream overflows, and nothing else.
+            println!("short");
+            let stderr = std::io::stderr();
+            let mut err = stderr.lock();
+            let chunk = vec![b'x'; 64 * 1024];
+            for _ in 0..128 {
+                err.write_all(&chunk).expect("stderr");
             }
         }
         "exit-code" => {

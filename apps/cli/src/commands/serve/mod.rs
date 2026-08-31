@@ -186,6 +186,25 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
 /// fail fast) and the configured `--route` is resolved to a cloned `ModelRoute` — never re-parsed
 /// per drive.
 #[allow(clippy::type_complexity)]
+/// The programs a `serve` execution may spawn when the operator declares none.
+///
+/// #177: this is a SECURITY SURFACE, not configuration — it is the set of executables an execution
+/// is permitted to start. It was previously an inline `vec!["git", "cargo"]` at the substitution
+/// site, which made two different situations indistinguishable to anyone reading the wiring: an
+/// operator who deliberately allowed these two, and an operator who declared nothing and received
+/// them.
+///
+/// **The failure mode this guards is GROWTH, not the current value.** The issue names it exactly:
+/// treated as config, "the allowlist grows one entry per demo until it means nothing". So the
+/// defence is not that these two are the right two — it is that changing the set cannot happen
+/// quietly. `the_default_allow_programs_are_exactly_the_declared_two` below pins it as a closed
+/// vocabulary, so widening it is a visible test change that someone has to justify in a diff,
+/// rather than an edit nobody reviews.
+///
+/// Widening for a particular run belongs at the CALL SITE via `--allow-program`, where it is
+/// declared per execution and travels with that execution's wiring. It does not belong here.
+const DEFAULT_ALLOW_PROGRAMS: [&str; 2] = ["git", "cargo"];
+
 fn build_wiring(
     args: &ServeArgs,
 ) -> Result<(Option<RuntimeWiring>, Option<SignalKeyring>), Failure> {
@@ -252,7 +271,7 @@ fn build_wiring(
             .clone();
         let mut allow_programs = args.allow_program.clone();
         if allow_programs.is_empty() {
-            allow_programs = vec!["git".to_owned(), "cargo".to_owned()];
+            allow_programs = DEFAULT_ALLOW_PROGRAMS.map(str::to_owned).to_vec();
         }
         Some(RuntimeWiring {
             manifest_path: manifest_path.clone(),
@@ -2317,6 +2336,24 @@ mod tests {
         assert!(
             OpaqueId::parse(derived.clone()).is_ok(),
             "the maximum-length derived key must still be a valid OpaqueId: {derived:?}"
+        );
+    }
+    /// Pins the default program allowlist as a CLOSED vocabulary (#177 item 3).
+    ///
+    /// The value is not the claim — the claim is that the value cannot move quietly. A new entry
+    /// here is a failing test that names what was added, which is the whole difference between a
+    /// security surface and a config knob. If you are here because this test failed: say in the
+    /// commit which program you added and why an execution must be able to spawn it.
+    #[test]
+    fn the_default_allow_programs_are_exactly_the_declared_two() {
+        assert_eq!(
+            DEFAULT_ALLOW_PROGRAMS,
+            ["git", "cargo"],
+            "the default allowlist changed; widening it is a decision, not an edit"
+        );
+        assert!(
+            !DEFAULT_ALLOW_PROGRAMS.is_empty(),
+            "an empty default would silently permit nothing and read as 'no policy' rather than              as a refusal -- if that is ever wanted, it needs its own argument"
         );
     }
 }

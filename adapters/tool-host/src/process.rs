@@ -18,6 +18,22 @@ pub struct CapturedProcess {
     pub exit_code: Option<i32>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    /// Whether the STDOUT cap was reached, on its own.
+    ///
+    /// #177: this and `stderr_truncated` were computed inside `run_in_workspace` and then thrown
+    /// away — the struct carried only their OR, so a stage whose stderr was cut and whose stdout
+    /// was whole read identically to the reverse. Nothing new is measured here; the boundary
+    /// simply stopped discarding what the reader already knew. `ProcessResult` in
+    /// `adapters/postgres-event-store/src/backup.rs` has carried the unfused pair all along, so
+    /// this is the repository agreeing with itself rather than a new convention.
+    pub stdout_truncated: bool,
+    /// Whether the STDERR cap was reached, on its own. See `stdout_truncated`.
+    pub stderr_truncated: bool,
+    /// The OR of the two above, kept so existing readers do not change meaning under them.
+    ///
+    /// DERIVED, not a third fact: it stays exactly as informative as it always was, which is the
+    /// point — anything that needs to know WHICH stream was cut must read the per-stream fields,
+    /// and anything that only asks "was anything cut" keeps working unchanged.
     pub truncated: bool,
     pub timed_out: bool,
 }
@@ -241,6 +257,8 @@ pub fn run_in_workspace(
         exit_code: exit_status.and_then(|status| status.code()),
         stdout,
         stderr,
+        stdout_truncated,
+        stderr_truncated,
         truncated: stdout_truncated || stderr_truncated,
         timed_out,
     })

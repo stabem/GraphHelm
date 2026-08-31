@@ -36,6 +36,12 @@ fn in_process(stdout: Vec<u8>, truncated: bool) -> CapturedProcess {
         exit_code: Some(0),
         stdout,
         stderr: Vec::new(),
+        // This synthesizer writes STDOUT and leaves stderr empty, so its truncation is a stdout
+        // truncation by construction -- and saying so is strictly more honest than the fused flag
+        // was, which left a reader unable to tell which of two streams a synthesized cut belonged
+        // to when only one of them can ever carry bytes.
+        stdout_truncated: truncated,
+        stderr_truncated: false,
         truncated,
         timed_out: false,
     }

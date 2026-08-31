@@ -808,3 +808,103 @@ supersedes no prior ADR — no earlier ADR fixed the memory lifecycle's axis cou
 frozen-artifact correction rule — but any future change to the two memory axes, the
 supersedes-as-relationship rule, the withdrawal/erasure boundary, or decision 7's authored-vs-derived
 rule and its control requirement requires a new accepted ADR. This makes D-046 normative.
+
+## 38. ADR-033 — Countersign clearance gains a signature: signed now while the wire is empty, verified at append, never in the fold
+
+**Status:** accepted (2026-08-31 — review by L, both Codex P1 threads triaged with verdicts in the
+PR; the merge of #581 is the acceptance act, matching how ADR-032 landed. The register row D-047
+and this status move together: a proposed ADR must not sit behind a normative register entry, so
+either both land accepted or neither lands).
+
+**Context:** #529 (J's measurement at `e8f5c958`): `ClearanceVerifier::Countersign` carries
+`{identity, key_fingerprint}` and **no signature**. Both fields the fold checks are journal-readable,
+so a countersignature currently adds no authority beyond append access — the mechanism does not do
+the one thing a countersignature is for, which is being a *second* authority independent of whoever
+did the work. This is not remotely exploitable (append requires the local bearer token or filesystem
+access; there is no generic event-append endpoint), and `MachineReplay` is unaffected (verified
+against the journaled evidence digest since #521). Three further measured facts shape the decision:
+**no Countersign event has ever been journaled** — no CLI, HTTP, or MCP surface emits clearance
+commands at all (the append path is #159's pending surface work); `signature_unverifiable` is the
+ninth entry of `REFUSAL_REASON_CODES` (`core/protocols/src/event.rs`), a vocabulary deliberately
+frozen ahead of its producers by four-lane agreement; and PR #527 holds the line with a trap — no
+production surface in `apps/cli` may construct a `Countersign` clearance, so the first producer goes
+red until verification (or this ADR's refusal) lands in the same change. #541 records the trap's
+reach limits. The custody shape was already named in #161's close-out: per-identity public keys as
+verified children of the anchored keyring directory, reusing `open_and_verify` /
+`verify_child_identity` in `adapters/sealed-key-provider` — not a widened `KeyringDocument`. The
+question this ADR answers is the one #161's close-out deferred to #529: does `Countersign` gain a
+signature field (and `signature_unverifiable` gain producers), or is the refusal retired as
+unrepresentable-by-type?
+
+**Decisions:**
+
+1. **`Countersign` gains a mandatory signature field, decided now while the change is free.** The
+   deciding fact is emptiness: zero Countersign events exist in any journal, because zero producers
+   exist. A wire-format change today costs no migration, no compatibility arm, and no versioned
+   variant; every day after the first producer ships, the same change buys a journal migration. The
+   two options are not symmetric in reversibility — retiring the refusal now and adding the
+   signature later pays the migration; adding the field now and (if custody never lands) never
+   verifying it pays nothing.
+2. **The signature binds to the claim instance, not just to the signer.** It must cover, at
+   minimum, the stream identity, the `claim_seq` being cleared, and the claim's journaled evidence
+   digest — so a valid signature cannot be replayed onto a different claim, stream, or bundle. The
+   exact canonical byte form is specified where the schema lives when the producer is implemented,
+   not restated in prose here: a second producer of a canonical form is how two serializations
+   drift while both look correct.
+3. **Verification happens at append time, in the command layer — never in the fold.** The append
+   surface (#159's pending work) verifies the signature against the identity's registered public
+   key and refuses with `signature_unverifiable` on failure — the ninth code gains its producer at
+   the same moment the first Countersign producer exists, which is exactly the sequencing the #527
+   trap enforces by going red on any earlier producer. The fold's check stays journaled-against-
+   journaled (`identity` + `key_fingerprint` against `clearance_registry`): no key material, no
+   I/O, no cryptography in replay, so replay remains a pure function of the log and replays
+   identically forever.
+4. **Custody follows #161's named shape**: per-identity public keys as verified children of the
+   anchored keyring directory, through the sealed-key-provider's existing `open_and_verify` /
+   `verify_child_identity` — not a widened `KeyringDocument`. This ADR inherits that decision
+   rather than reopening it.
+
+**Rejected alternative — retire `signature_unverifiable` as unrepresentable-by-type**, accepting
+that `Countersign` is a journaled attestation trusted at the authenticated append boundary. Its
+costs, named: (a) it forfeits the mechanism's sole purpose — under one shared bearer token, anyone
+who can append can clear as any registered identity, so the identity sets #159's human-judgment
+nodes declare become unverifiable prose; (b) it saves nothing today — the #527 trap already
+prevents accidental producers at zero runtime cost, so there is no burden the retirement would
+lift; (c) removing the ninth code from a vocabulary frozen by four-lane agreement is its own
+coordination cost; and (d) it takes the irreversible branch of the asymmetry in decision 1.
+
+**Consequences:** #159's clearance surface implements sign-and-verify-or-refuse when it builds the
+append path — the signature field, the append-time verification, and the `signature_unverifiable`
+producer land in that lane, red-first, with this ADR as their authority. The #527 trap stands until
+that producer lands and then narrows per #541, whose reach work becomes the guard that keeps every
+producer inside the verified door. `Countersign`'s doc comment stops promising a verification that
+does not exist and points here instead.
+
+**What this ADR does not establish:** the exact signature algorithm and encoding — deferred to the
+implementing lane **under one named constraint that is not deferred: the primitive must be
+asymmetric**, signing capability strictly separate from verifying capability (found by Codex
+review). Measured: the sealed-key-provider today offers only XChaCha20-Poly1305 and HMAC-SHA-256,
+both symmetric, and no signature crate sits in its dependencies — so its current primitives do
+NOT qualify as the signature primitive, though the provider remains the custody home for the keys
+per decision 4. A shared-secret MAC countersign would collapse into the rejected alternative one
+layer down: anyone who can verify can forge, and the registry's journal-readable "fingerprint"
+would name a secret rather than a public key. Also not established: key
+rotation and revocation beyond the `clearance_identity_registered` / `clearance_identity_revoked`
+events that already exist; who may be a countersigning identity for a given node — that is
+graph-definition vocabulary, owned by #159; and **the released-schema question, deferred
+explicitly rather than left looking resolved** (found by L reviewing this ADR): the frozen
+`schemas/releases/1.0.0/event-envelope.schema.json` declares the countersign branch CLOSED —
+`additionalProperties: false` over exactly `type`/`identity`/`keyFingerprint` — so a clearance
+carrying the new field is *refused* by a 1.0.0 validator, not treated as unknown. Whether that
+costs a release bump or is absorbed by the current-schema evolution rules is the implementing
+lane's decision, made when the producer lands. Until it is made, the #527 trap performs a second
+job it is not credited for: keeping any producer from journaling an event the released schema
+would refuse. The emptiness argument of decision 1 covers this axis too, measured: the countersign
+wire word appears in four schema files and nowhere else on the wire, and exactly one constructor
+exists outside the enum's declaration — a test fixture — so the schema, the code, and the
+journals are all still on the cheap side of the change.
+
+**Relationship and supersession:** implements the half of #161's close-out that was measured
+not-implementable-as-written and deferred to #529; consumes #161's custody decision unchanged;
+constrains #159's surface lane and #541's trap-reach lane. Pairs with D-047. It does not modify
+ADR-032 or any earlier ADR.

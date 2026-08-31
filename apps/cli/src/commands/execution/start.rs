@@ -14,6 +14,7 @@ use super::{
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
+use graphhelm_simulation::FixtureExecutor;
 
 const COMMAND: &str = "execution.start";
 
@@ -99,7 +100,7 @@ pub(crate) fn execute(
         &prepared.scope,
         prepared.stream.as_str(),
         &prepared.spec,
-        &prepared.fixtures,
+        &FixtureExecutor::new(prepared.fixtures.clone()),
         &super::system_actor(),
         &Release {
             nodes: &std::collections::BTreeSet::new(),

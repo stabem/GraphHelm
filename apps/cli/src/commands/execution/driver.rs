@@ -23,7 +23,6 @@ use graphhelm_protocols::{
     NodeOutcomeReason, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, RepositoryScope,
     Sensitivity, SimulationStatus,
 };
-use graphhelm_simulation::{FixtureExecutor, SimulationFixtures};
 
 use super::{Failure, RecordedOutcome, execution_state, replay_failure, repository_failure};
 use crate::commands::UuidIds;
@@ -56,7 +55,12 @@ pub(super) fn drive_to_quiescence(
     scope: &RepositoryScope,
     stream: &str,
     spec: &GraphSpec,
-    fixtures: &SimulationFixtures,
+    // INJECTED, not constructed here (#536). The loop used to build its own `FixtureExecutor`
+    // from the fixtures, which left no way to make anything happen BETWEEN two dispatches -- and
+    // that is the only place an ordinary pause can land. A test cannot reach this function's
+    // inside; giving it the executor is the smallest change that makes the window constructible.
+    // Both callers pass exactly what was built here before.
+    executor: &dyn NodeExecutor,
     actor: &PersistedActor,
     release: &Release<'_>,
 ) -> Result<ExecutionProjection, Failure> {
@@ -70,7 +74,6 @@ pub(super) fn drive_to_quiescence(
     })?;
     let execution_id = OpaqueId::parse(execution_id_ref.as_str())
         .map_err(|_| execution_state("the execution identifier is not wire-safe", "/execution"))?;
-    let executor = FixtureExecutor::new(fixtures.clone());
 
     loop {
         approve_untouched(store, scope, &stream_id, &execution_id, spec, actor)?;
@@ -139,18 +142,31 @@ pub(super) fn drive_to_quiescence(
             .filter(|state| **state == NodeState::Running)
             .count();
         let max_parallel = graphhelm_execution::parallel_limit(&spec.budgets);
-        let plan = dispatch_plan(
-            &candidates,
-            &projection.node_attempts,
-            running,
-            max_parallel,
-        )
-        .map_err(|_| {
-            execution_state(
-                "the execution has zero parallelism and can never progress",
-                "/execution/dispatch",
+        // #536: AN ORDINARY PAUSE STOPS DISPATCH, here as in the async driver (#124/#534). The
+        // pause route appends `execution_paused` and signals nothing, and this loop has no cancel
+        // channel at all -- so the only way it can learn is by asking the projection it re-reads
+        // every pass.
+        //
+        // An EMPTY PLAN rather than a new exit: `plan.is_empty()` below is the quiescence exit
+        // this loop already had. Nothing is interrupted and no event is appended; those belong to
+        // `pause {"mode":"immediate"}`, which this driver never serves anyway.
+        let execution_paused = projection.simulation_status == Some(SimulationStatus::Paused);
+        let plan = if execution_paused {
+            Vec::new()
+        } else {
+            dispatch_plan(
+                &candidates,
+                &projection.node_attempts,
+                running,
+                max_parallel,
             )
-        })?;
+            .map_err(|_| {
+                execution_state(
+                    "the execution has zero parallelism and can never progress",
+                    "/execution/dispatch",
+                )
+            })?
+        };
 
         if plan.is_empty() {
             break;
@@ -158,6 +174,30 @@ pub(super) fn drive_to_quiescence(
 
         for node in &plan {
             let projection = reread(store, scope, stream)?;
+            // ASKED AGAIN AT THE POINT OF DISPATCH, because the plan above was computed from an
+            // earlier read and a pause appended since then is invisible to it. Node state cannot
+            // stand in: an ordinary pause moves NO node state, so this node is still `Ready` and
+            // would sail through the gate below with the pause already in the log.
+            //
+            // The break needs the plan gate above to end the pass -- this only skips the rest of
+            // one plan. Both are load-bearing; the async driver's equivalent pair spins forever
+            // when the plan gate alone is removed.
+            // NARROWED, NOT ELIMINATED, and the residual is worth stating rather than leaving for
+            // the next reader to find. A pause appended between this read and the dispatch append
+            // below is still missed: `append_hop` reads `store.next_sequence` immediately before
+            // appending (`driver.rs:257`), so its expected sequence is taken AFTER the pause and
+            // the append succeeds.
+            //
+            // Closing it does NOT need a primitive the codebase lacks -- the store already refuses
+            // a stale expected sequence with `SequenceConflict`
+            // (`core/events/src/local.rs:877-879`). It needs the sequence CAPTURED HERE and
+            // threaded to the append, so that anything landing in between is refused. That is a
+            // behaviour change beyond this fix: it would turn EVERY concurrent append into a
+            // refused dispatch, not only a pause, and the retry policy for that refusal is a
+            // decision nobody has taken.
+            if projection.simulation_status == Some(SimulationStatus::Paused) {
+                break;
+            }
             let current = projection
                 .node_states
                 .get(node)
@@ -435,4 +475,191 @@ fn complete_if_quiesced(
 
 fn idempotency_key(prefix: &'static str) -> OpaqueId {
     OpaqueId::parse(UuidIds.next_id(prefix)).expect("uuid-derived id is wire-safe")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphhelm_protocols::{
+        ExecutionId, ExecutionMode, ExecutionPaused, ExecutionStarted, GraphBudgets, GraphNode,
+        NodeType, Optionality, ProjectId, Sensitivity, WireHash, WorkspaceId,
+    };
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const WORKSPACE: &str = "workspace-1";
+    const PROJECT: &str = "project-1";
+    const EXECUTION: &str = "exec-sync-pause";
+
+    fn scope() -> RepositoryScope {
+        RepositoryScope::new(
+            WorkspaceId::parse(WORKSPACE).unwrap(),
+            ProjectId::parse(PROJECT).unwrap(),
+            Some(ExecutionId::parse(EXECUTION).unwrap()),
+        )
+    }
+
+    fn node(objective: &str) -> GraphNode {
+        GraphNode {
+            node_type: NodeType::Agent,
+            name: "n".to_owned(),
+            objective: objective.to_owned(),
+            optionality: Optionality::Required,
+            properties: BTreeMap::new(),
+        }
+    }
+
+    /// Two INDEPENDENT nodes. `parallel` decides which window the cell exercises: at 1 the pause
+    /// lands between two passes, at 2 it lands between two dispatches of the SAME pass.
+    fn spec(parallel: u64) -> GraphSpec {
+        GraphSpec {
+            entrypoints: vec!["first".to_owned(), "second".to_owned()],
+            nodes: [("first", node("a")), ("second", node("b"))]
+                .into_iter()
+                .map(|(id, n)| (id.to_owned(), n))
+                .collect(),
+            edges: Vec::new(),
+            budgets: GraphBudgets {
+                max_parallel_model_calls: Some(parallel),
+                ..GraphBudgets::default()
+            },
+            policies: Vec::new(),
+            completion: serde_json::Value::Null,
+        }
+    }
+
+    fn started_store(events: &Path) -> LocalEventRepository {
+        let store = crate::commands::event_store(events).unwrap();
+        let request = PreparedAppend::new(
+            scope(),
+            OpaqueId::parse(EXECUTION).unwrap(),
+            1,
+            vec![NewEvent::new(
+                OpaqueId::parse("sync-pause-started").unwrap(),
+                super::super::system_actor(),
+                Sensitivity::Internal,
+                EventKind::ExecutionStarted(ExecutionStarted {
+                    execution_id: OpaqueId::parse(EXECUTION).unwrap(),
+                    graph_version: 1,
+                    graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                    mode: ExecutionMode::Autopilot,
+                }),
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        store.append_atomic(&request).unwrap();
+        store
+    }
+
+    /// THE ARRANGEMENT #536 asked for, and it needs no threads.
+    ///
+    /// An ordinary pause is an APPEND and nothing else — the route appends `execution_paused` and
+    /// returns, signalling nothing. So the pause does not have to arrive from outside the drive:
+    /// the executor can append it, at a moment the test picks exactly. That removes the wall the
+    /// issue recorded (nothing on the sync path can be held open) by removing the need to hold
+    /// anything open at all.
+    struct PauseOnFirstDispatch {
+        calls: AtomicUsize,
+        events: PathBuf,
+    }
+
+    impl NodeExecutor for PauseOnFirstDispatch {
+        fn execute(
+            &self,
+            _node_id: &str,
+            _attempt: u32,
+        ) -> Result<NodeOutcome, graphhelm_execution::ExecutionError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                let store = crate::commands::event_store(&self.events).unwrap();
+                let head = store.read_replay_stream(&scope(), EXECUTION).unwrap().len() as u64;
+                let request = PreparedAppend::new(
+                    scope(),
+                    OpaqueId::parse(EXECUTION).unwrap(),
+                    head + 1,
+                    vec![NewEvent::new(
+                        OpaqueId::parse("sync-ordinary-pause").unwrap(),
+                        super::super::system_actor(),
+                        Sensitivity::Internal,
+                        EventKind::ExecutionPaused(ExecutionPaused {
+                            execution_id: OpaqueId::parse(EXECUTION).unwrap(),
+                        }),
+                        vec![],
+                        vec![],
+                    )],
+                    vec![],
+                    vec![],
+                )
+                .unwrap();
+                store.append_atomic(&request).expect(
+                    "HARNESS-BROKE: the pause never landed, so the cell never posed its question",
+                );
+            }
+            Ok(NodeOutcome::Succeeded)
+        }
+    }
+
+    fn drive_with_pause(parallel: u64) -> usize {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let store = started_store(&events);
+        let executor = PauseOnFirstDispatch {
+            calls: AtomicUsize::new(0),
+            events: events.clone(),
+        };
+        let nothing_to_release = BTreeSet::new();
+        let outcome = drive_to_quiescence(
+            &store,
+            &scope(),
+            EXECUTION,
+            &spec(parallel),
+            &executor,
+            &super::super::system_actor(),
+            &Release {
+                nodes: &nothing_to_release,
+                actor: &super::super::system_actor(),
+            },
+        );
+        // `Failure` carries no `Debug`, so an `unwrap` would not compile and a bare `is_ok` would
+        // hide which drive broke. Name the parallelism instead.
+        assert!(
+            outcome.is_ok(),
+            "the drive at max_parallel={parallel} failed"
+        );
+        executor.calls.load(Ordering::SeqCst)
+    }
+
+    /// #536 window 1 — the pause lands BETWEEN PASSES.
+    ///
+    /// `max_parallel = 1`, so each pass plans one node. The first dispatch appends the pause; the
+    /// pass after it must not plan the second. THE PRODUCTION CHANGE THAT MAKES THIS FAIL:
+    /// computing the plan without asking `simulation_status`.
+    #[test]
+    fn an_ordinary_pause_between_passes_stops_the_sync_drive() {
+        assert_eq!(
+            drive_with_pause(1),
+            1,
+            "the sync drive planned another node after execution_paused was readable"
+        );
+    }
+
+    /// #536 window 2 — the pause lands BETWEEN TWO DISPATCHES OF ONE PASS.
+    ///
+    /// `max_parallel = 2`, so a single plan holds both nodes and the pause arrives after the plan
+    /// was computed. Only a check at the point of dispatch can see it; the plan gate cannot, and
+    /// node state cannot either — an ordinary pause moves no node state, so `second` is still
+    /// `Ready` when its turn comes. THE PRODUCTION CHANGE THAT MAKES THIS FAIL: checking only
+    /// before the plan.
+    #[test]
+    fn an_ordinary_pause_mid_plan_stops_the_sync_drive() {
+        assert_eq!(
+            drive_with_pause(2),
+            1,
+            "the sync drive dispatched the rest of a plan computed before the pause"
+        );
+    }
 }

@@ -751,9 +751,21 @@ pub async fn drive_to_quiescence_async(
         let projection = reread_async(&store_open, &scope, &stream).await?;
 
         // #123's RELEASE. Three conditions, and the third is load-bearing rather than defensive:
-        // an ORDINARY pause does not stop an in-flight drive — the cancel channel above is
-        // signalled only for `mode: immediate` (`serve/routes.rs:579`) — so without re-reading the
-        // aggregate every pass we would release a node the operator paused while this drive ran.
+        // re-reading the aggregate every pass is what lets this section see a pause the operator
+        // already recorded AT THIS REREAD, so release does not re-start a node paused before it.
+        // NARROWED, NOT ELIMINATED: a pause landing after this reread and before the release
+        // append below is the same check-then-act residual #562 documents at the dispatch gate
+        // (`apps/cli/src/commands/execution/driver.rs:185-197`) -- not closed here either, and for
+        // the same reason: closing it is a behaviour change beyond what this comment describes.
+        // (This comment used to claim an ordinary pause does not stop an in-flight drive at
+        // all, on the strength of the cancel channel above being signalled only for
+        // `mode: immediate` — true of that channel, but no longer true of the drive: #124's own
+        // PAIR of gates below in this function stops DISPATCH for an ordinary pause too — the
+        // PLAN gate (`execution_paused` checked before `dispatch_plan` is built) and the
+        // DISPATCH-POINT gate (the same check re-read per node, just before each dispatch). Their
+        // own comment explains why removing either as "covered by the other" is how this becomes
+        // a hang. Landed in 2ea6c6a7. This section's own reasoning about RELEASE never depended on
+        // that claim, so only the claim moves.)
         // A node paused MID-drive is safe by construction: it is not in `release`, which was fixed
         // when the resume handed it over.
         let mut released_any = false;

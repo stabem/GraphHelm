@@ -267,6 +267,46 @@
           "schema": "schemas/retrieval-admission-policy.schema.json"
         },
         {
+          "id": "schema/retrieval-coverage-receipt",
+          "kind": "schema",
+          "path": "schemas/retrieval-coverage-receipt.schema.json",
+          "sha256": "sha256:33e1734e2ce56f28a395b0bbb47d90a4986abb2d2d7baf6a1b6e8ac56d9f6a36",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/retrieval-coverage-receipt-valid",
+          "kind": "fixture",
+          "path": "fixtures/retrieval/coverage-receipt-valid.json",
+          "sha256": "sha256:a1dff9b9ecc1ff338795712afb15f431472451dc6c1790643096bc804ab25fcf",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/retrieval-coverage-receipt.schema.json"
+        },
+        {
+          "id": "fixture/retrieval-coverage-receipt-invalid-best-effort-complete",
+          "kind": "fixture",
+          "path": "fixtures/retrieval/coverage-receipt-invalid-best-effort-complete.json",
+          "sha256": "sha256:9d184c33b4fccdec2dad706a616b18a71051069287524f893d7b2fa8acf70f9d",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
           "id": "policy/memory-admission",
           "kind": "policy",
           "path": "policies/memory-admission.yaml",

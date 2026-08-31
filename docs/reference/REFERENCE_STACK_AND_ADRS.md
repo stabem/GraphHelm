@@ -628,3 +628,44 @@ Timeouts remain recoverable, durable host errors remain honest terminal evidence
 retry declarations cannot hang an execution at `Ready`. Implementations must preserve the stable
 refusal evidence and terminal settlement across replay. This makes D-044 normative, refines ADR-003
 and ADR-005, and does not change GateCheck semantics, schemas, or any public Studio surface.
+## 36. ADR-031 — Immutable retrieval coverage sidecar and fake provider boundary
+
+**Status:** accepted.
+
+**Context:** `RetrievalPlan` is immutable pre-execution intent. The first #219 implementation
+classified a caller-constructed `IndexResponse`, so no producer path emitted durable evidence that
+another journey could join to the exact plan, step, query, project, repository snapshot, index
+generation, provider capability, or Tool Broker call. Adding those observed fields to
+`RetrievalPlan` would mutate intent after execution. Adding another `DevelopmentKind` would also
+expand the approved artifact vocabulary for evidence that belongs beside, not inside, that plan.
+ADR-028 permits strict decoding of recorded provider output but explicitly does not authorize a
+live MCP session.
+
+**Decision:** add the closed `RetrievalCoverageReceipt@1` sidecar. Runtime alone constructs it after
+calling a brand-neutral `StructuralCodeIndex` port and independently checking the provider's echoed
+plan binding, step and query digests, D-027 scope, content-derived repository snapshot, separate
+index generation, provider/capability version, and the digest of the exact durable Tool Broker
+record. The receipt also carries typed path and negative-scope coverage entries with gap ranges,
+terminal non-looping pagination, declared and Runtime-observed result/page/byte/token limits,
+canonical repository-relative hits, typed source/reindex fallback outcomes, and a canonical SHA-256
+digest. Deserialization recomputes those facts against the expected request and Tool Broker record.
+
+The first implementation uses only a deterministic fake port. A `best_effort` provider result can
+never become `complete`. Empty `complete` licenses absence only when every requested path and every
+bounded negative scope has exact complete coverage, terminal pagination, and no gap. Missing,
+partial, skipped, excluded, extraction-gap, unknown, unresolved, or uncovered evidence remains
+`negative_claim_unverified`. Stale generations refuse before receipt publication. Source fallback
+is explicitly `unavailable`; there is no successful fallback spelling until a real producer exists.
+
+**Rejected alternatives:** continuing to accept caller-built `IndexResponse` as producer evidence;
+mutating `RetrievalPlan`; adding a tenth `DevelopmentKind`; trusting provider totals, summaries, or
+coverage confidence; storing a bare Tool Broker stream digest without binding the complete record;
+inventing a successful fallback outcome; opening a direct MCP client; mounting the host provider
+cache; auto-indexing during retrieval; or using a native index before its own contract exists.
+
+**Consequences:** #211 and later journeys can join immutable retrieval evidence to an exact plan,
+but this slice does not establish live provider connectivity or complete repository coverage.
+The current pure codebase-memory decoder remains useful input to a future broker-owned adapter, not
+authority for this fake. Live MCP still requires ADR-028's contained, digest-pinned Tool Broker
+session. No CLI, API, MCP, Studio, network, native-index, or source-reader surface is added. This
+makes D-045 normative, refines ADR-028, and leaves #219 open for the real producer and fallback path.

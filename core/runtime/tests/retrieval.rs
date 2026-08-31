@@ -9,12 +9,25 @@
 //! rather than facts about the INSTRUMENT. Arms B and C follow once A is green.
 
 use graphhelm_protocols::{
-    CoverageState, DeclaredLimits, DevelopmentRefusalCode, OpaqueId, SnapshotBinding,
+    ArtifactBinding, ArtifactId, CoverageState, DeclaredLimits, DevelopmentEnvelope,
+    DevelopmentKind, DevelopmentMetadata, DevelopmentRefusalCode, DevelopmentScope, OpaqueId,
+    ProjectId, ProviderCoverageConfidence, RetrievalCoverageEntry, RetrievalCoverageTarget,
+    RetrievalFallbackKind, RetrievalFallbackOutcome, RetrievalPageEvidence,
+    RetrievalProviderBinding, RetrievalStepBinding, SemanticVersion, SnapshotBinding, WireHash,
+    WorkspaceId,
 };
-use graphhelm_runtime::ports::SourceReader;
+use graphhelm_runtime::ports::{
+    SourceReader, StructuralCodeIndex, StructuralCodeIndexError, StructuralIndexResponse,
+};
 use graphhelm_runtime::retrieval::{
-    IndexResponse, RetrievalOutcome, compile_plan, compile_plan_against, compile_plan_within,
+    IndexResponse, RetrievalOutcome, RetrievalReceiptError, StructuralIndexRequest,
+    ValidatedRetrievalCoverageReceipt, compile_plan, compile_plan_against, compile_plan_within,
+    compile_receipt, retrieve_coverage as retrieve_coverage_against,
+    validate_retrieval_receipt as validate_retrieval_receipt_against,
 };
+use graphhelm_tool_broker::effect::IsolationTier;
+use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition};
+use sha2::Digest as _;
 
 /// A binding whose two identities agree: coordinates resolve safely, so nothing in these arms is
 /// explained by staleness. Staleness is G2/G2b's subject, not G1's.
@@ -300,6 +313,27 @@ impl SourceReader for FakeReader {
     fn current_snapshot(&self) -> OpaqueId {
         OpaqueId::parse(self.current).expect("a well-formed opaque id")
     }
+}
+
+fn receipt_reader() -> FakeReader {
+    FakeReader {
+        current: "tree-content-0001",
+    }
+}
+
+fn retrieve_coverage<I: StructuralCodeIndex + ?Sized>(
+    index: &I,
+    request: &StructuralIndexRequest,
+) -> Result<ValidatedRetrievalCoverageReceipt, RetrievalReceiptError> {
+    retrieve_coverage_against(index, &receipt_reader(), request)
+}
+
+fn validate_retrieval_receipt(
+    bytes: &[u8],
+    request: &StructuralIndexRequest,
+    broker_record: &ToolCallRecord,
+) -> Result<ValidatedRetrievalCoverageReceipt, RetrievalReceiptError> {
+    validate_retrieval_receipt_against(bytes, &receipt_reader(), request, broker_record)
 }
 
 /// G2b — identities AGREE and the bytes moved anyway. The case G2 cannot reach.
@@ -644,7 +678,7 @@ fn g5_a_payload_within_both_bounds_still_compiles() {
     );
 }
 
-/// Every fixture in the extension package is EXERCISED here, not merely shipped.
+/// Every legacy classifier fixture in the extension package is EXERCISED here, not merely shipped.
 ///
 /// A fixture nothing reads is decoration: it validates, it is declared in the manifest, and it
 /// constrains nothing. This arm walks the package's retrieval fixtures and drives each one through
@@ -654,7 +688,7 @@ fn g5_a_payload_within_both_bounds_still_compiles() {
 /// validation layer, UPSTREAM of the compiler, and this arm would then be passing for a reason
 /// that has nothing to do with coverage, staleness or bounds.
 #[test]
-fn every_packaged_retrieval_fixture_compiles_to_its_declared_outcome() {
+fn every_packaged_classifier_fixture_compiles_to_its_declared_outcome() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../extensions/builtin/graphhelm-development-contracts/fixtures/retrieval");
     let entries = std::fs::read_dir(&dir)
@@ -669,6 +703,14 @@ fn every_packaged_retrieval_fixture_compiles_to_its_declared_outcome() {
         let raw = std::fs::read_to_string(&path).expect("a readable fixture");
         let doc: serde_json::Value = serde_json::from_str(&raw)
             .unwrap_or_else(|e| panic!("fixture {} is not valid JSON: {e}", path.display()));
+
+        // `RetrievalCoverageReceipt@1` fixtures in this directory have their own schema and exact
+        // producer guards below. This walker owns only the older `{coverage,hits,expect}` compiler
+        // shape; treating every JSON file as that shape is not exercising a contract, it is
+        // guessing one from its directory.
+        if doc.get("expect").is_none() {
+            continue;
+        }
 
         let coverage = coverage_from_wire(
             doc["coverage"].as_str().expect("a coverage string"),
@@ -1019,5 +1061,714 @@ fn every_row_of_the_policy_admission_table_matches_the_compiler() {
          unexpected {:?}",
         expected.difference(&seen).collect::<Vec<_>>(),
         seen.difference(&expected).collect::<Vec<_>>()
+    );
+}
+
+fn hash(byte: char) -> WireHash {
+    WireHash::parse(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
+}
+
+fn bind_plan_digest(plan: &mut DevelopmentEnvelope, binding: &mut ArtifactBinding) {
+    plan.digest = WireHash::parse(format!(
+        "sha256:{}",
+        hex::encode(sha2::Sha256::digest(plan.digest_input().as_bytes()))
+    ))
+    .unwrap();
+    binding.digest = plan.digest.clone();
+}
+
+fn receipt_request() -> StructuralIndexRequest {
+    let snapshot = OpaqueId::parse("tree-content-0001").unwrap();
+    let scope = DevelopmentScope {
+        workspace_id: WorkspaceId::parse("workspace-retrieval").unwrap(),
+        project_id: ProjectId::parse("project-retrieval").unwrap(),
+        subproject_id: None,
+        execution_id: None,
+    };
+    let mut plan_binding = ArtifactBinding {
+        artifact_id: ArtifactId::parse("retrieval-plan-0001").unwrap(),
+        schema_id: "https://p50.dev/schemas/development-envelope.schema.json".to_owned(),
+        document_version: SemanticVersion::parse("1.0.0").unwrap(),
+        schema_version: SemanticVersion::parse("1.0.0").unwrap(),
+        digest: hash('a'),
+        scope: scope.clone(),
+        producer: OpaqueId::parse("runtime-planner").unwrap(),
+        snapshots: SnapshotBinding {
+            repo_snapshot: snapshot.clone(),
+            index_generation: snapshot,
+        },
+    };
+    let mut plan = DevelopmentEnvelope {
+        api_version: "p50.dev/development/v1".to_owned(),
+        kind: DevelopmentKind::RetrievalPlan,
+        metadata: DevelopmentMetadata {
+            id: plan_binding.artifact_id.clone(),
+            artifact_version: plan_binding.document_version.clone(),
+            scope: scope.clone(),
+        },
+        producer: plan_binding.producer.clone(),
+        producer_version: SemanticVersion::parse("1.0.0").unwrap(),
+        bindings: Vec::new(),
+        spec: serde_json::json!({}),
+        digest: plan_binding.digest.clone(),
+        additional: serde_json::Map::new(),
+    };
+    bind_plan_digest(&mut plan, &mut plan_binding);
+    StructuralIndexRequest {
+        plan,
+        plan_binding,
+        step: RetrievalStepBinding {
+            step_id: OpaqueId::parse("step-structural-search").unwrap(),
+            step_digest: hash('b'),
+            query_digest: hash('c'),
+        },
+        provider: RetrievalProviderBinding {
+            provider_id: OpaqueId::parse("fake-structural-index").unwrap(),
+            capability_id: OpaqueId::parse("search-graph").unwrap(),
+            capability_version: SemanticVersion::parse("1.0.0").unwrap(),
+            tool: "structural-code-index".to_owned(),
+            action: "search_graph".to_owned(),
+        },
+        requested_paths: vec!["core/runtime/src/retrieval.rs".to_owned()],
+        negative_scopes: vec!["core/runtime/src".to_owned()],
+        limits: DeclaredLimits {
+            max_results: 4,
+            max_pages: 2,
+            max_bytes: 512,
+            max_tokens: 128,
+        },
+    }
+}
+
+fn broker_record(request: &StructuralIndexRequest, bytes: u64) -> ToolCallRecord {
+    ToolCallRecord {
+        tool: request.provider.tool.clone(),
+        action: request.provider.action.clone(),
+        actor: "retrieval-runtime".to_owned(),
+        // Empty because this fake port runs in process and authorizes no bare program -- not
+        // because the set is unknown, which is the other thing an empty allowlist can mean on a
+        // record decoded from before the field existed.
+        program_allowlist: std::collections::BTreeSet::new(),
+        tier: IsolationTier::Tier1,
+        disposition: ToolDisposition::Completed { exit_code: 0 },
+        stdout_sha256: "d".repeat(64),
+        stdout_bytes: bytes,
+        stderr_sha256: "e".repeat(64),
+        stderr_bytes: 0,
+        truncated: false,
+        reused: false,
+    }
+}
+
+fn complete_response(request: &StructuralIndexRequest) -> StructuralIndexResponse {
+    let entries = request
+        .requested_paths
+        .iter()
+        .map(|value| RetrievalCoverageEntry {
+            target: RetrievalCoverageTarget::Path,
+            value: value.clone(),
+            coverage: CoverageState::Complete,
+            gap_ranges: Vec::new(),
+        })
+        .chain(
+            request
+                .negative_scopes
+                .iter()
+                .map(|value| RetrievalCoverageEntry {
+                    target: RetrievalCoverageTarget::NegativeScope,
+                    value: value.clone(),
+                    coverage: CoverageState::Complete,
+                    gap_ranges: Vec::new(),
+                }),
+        )
+        .collect();
+    StructuralIndexResponse {
+        plan_binding: request.plan_binding.clone(),
+        step: request.step.clone(),
+        scope: request.plan_binding.scope.clone(),
+        snapshots: request.plan_binding.snapshots.clone(),
+        provider: request.provider.clone(),
+        broker_record: broker_record(request, 64),
+        confidence: ProviderCoverageConfidence::Verified,
+        coverage: CoverageState::Complete,
+        entries,
+        pages: vec![RetrievalPageEvidence {
+            position: "offset:0".to_owned(),
+            results: 0,
+            bytes: 64,
+            has_more: false,
+        }],
+        total_results: 0,
+        hits: Vec::new(),
+    }
+}
+
+type ResponseMutation = Box<dyn Fn(&mut StructuralIndexResponse)>;
+type RequestMutation = Box<dyn Fn(&mut StructuralIndexRequest)>;
+
+struct FakeStructuralCodeIndex {
+    response: StructuralIndexResponse,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FakeStructuralCodeIndex {
+    fn new(response: StructuralIndexResponse) -> Self {
+        Self {
+            response,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl StructuralCodeIndex for FakeStructuralCodeIndex {
+    fn retrieve(
+        &self,
+        _request: &StructuralIndexRequest,
+    ) -> Result<StructuralIndexResponse, StructuralCodeIndexError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.response.clone())
+    }
+}
+
+#[test]
+fn fake_index_produces_a_digest_bound_receipt_that_licenses_only_proven_absence() {
+    let request = receipt_request();
+    let index = FakeStructuralCodeIndex::new(complete_response(&request));
+
+    let receipt = retrieve_coverage(&index, &request).unwrap();
+
+    assert_eq!(
+        index.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the evidence must come through the StructuralCodeIndex port"
+    );
+    assert_eq!(compile_receipt(&receipt), RetrievalOutcome::VerifiedAbsence);
+    assert_eq!(receipt.plan_binding(), &request.plan_binding);
+    assert_eq!(receipt.step(), &request.step);
+    assert_eq!(receipt.provider(), &request.provider);
+    assert_eq!(receipt.scope(), &request.plan_binding.scope);
+    assert_eq!(receipt.snapshots(), &request.plan_binding.snapshots);
+    assert_eq!(
+        receipt.fallback(RetrievalFallbackKind::Source),
+        Some(RetrievalFallbackOutcome::NotRequired)
+    );
+
+    let stable = receipt.stable_bytes().unwrap();
+    let decoded = validate_retrieval_receipt(&stable, &request, receipt.broker_record()).unwrap();
+    assert_eq!(decoded.stable_bytes().unwrap(), stable);
+}
+
+#[test]
+fn best_effort_can_never_be_promoted_to_complete_coverage() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.confidence = ProviderCoverageConfidence::BestEffort;
+
+    let result = retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request);
+
+    assert_eq!(
+        result.unwrap_err(),
+        RetrievalReceiptError::CoveragePromotion
+    );
+}
+
+#[test]
+fn substituted_plan_step_query_scope_snapshot_provider_or_broker_binding_is_refused() {
+    let request = receipt_request();
+    let mut mutations: Vec<ResponseMutation> = vec![
+        Box::new(|response| response.plan_binding.digest = hash('f')),
+        Box::new(|response| response.step.step_digest = hash('f')),
+        Box::new(|response| response.step.query_digest = hash('f')),
+        Box::new(|response| {
+            response.scope.project_id = ProjectId::parse("another-project").unwrap();
+        }),
+        Box::new(|response| {
+            response.snapshots.index_generation = OpaqueId::parse("other-generation").unwrap();
+        }),
+        Box::new(|response| {
+            response.provider.capability_version = SemanticVersion::parse("2.0.0").unwrap();
+        }),
+        Box::new(|response| response.broker_record.action = "another-action".to_owned()),
+    ];
+
+    for mutate in &mut mutations {
+        let mut response = complete_response(&request);
+        mutate(&mut response);
+        let result = retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request);
+        assert!(
+            matches!(
+                result,
+                Err(RetrievalReceiptError::BindingMismatch)
+                    | Err(RetrievalReceiptError::IndexStale)
+                    | Err(RetrievalReceiptError::BrokerRecordInvalid)
+            ),
+            "every authority-bearing substitution must fail closed, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn missing_terminal_page_and_repeated_page_position_are_refused() {
+    let request = receipt_request();
+    let mut unfinished = complete_response(&request);
+    unfinished.pages[0].has_more = true;
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(unfinished), &request).unwrap_err(),
+        RetrievalReceiptError::PaginationUnfinished
+    );
+
+    let mut looped = complete_response(&request);
+    looped.pages = vec![
+        RetrievalPageEvidence {
+            position: "cursor:same".to_owned(),
+            results: 0,
+            bytes: 32,
+            has_more: true,
+        },
+        RetrievalPageEvidence {
+            position: "cursor:same".to_owned(),
+            results: 0,
+            bytes: 32,
+            has_more: false,
+        },
+    ];
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(looped), &request).unwrap_err(),
+        RetrievalReceiptError::PaginationLoop
+    );
+}
+
+#[test]
+fn result_page_byte_and_token_floods_are_measured_by_runtime_and_refused() {
+    let request = receipt_request();
+
+    let mut results = complete_response(&request);
+    results.total_results = 5;
+    results.hits = (0..5).map(|n| format!("src/hit-{n}.rs")).collect();
+    results.pages[0].results = 5;
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(results), &request).unwrap_err(),
+        RetrievalReceiptError::LimitExceeded
+    );
+
+    let mut pages = complete_response(&request);
+    pages.pages = (0..3)
+        .map(|n| RetrievalPageEvidence {
+            position: format!("offset:{n}"),
+            results: 0,
+            bytes: 1,
+            has_more: n != 2,
+        })
+        .collect();
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(pages), &request).unwrap_err(),
+        RetrievalReceiptError::LimitExceeded
+    );
+
+    let mut byte_flood = complete_response(&request);
+    byte_flood.pages[0].bytes = 513;
+    byte_flood.broker_record.stdout_bytes = 513;
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(byte_flood), &request).unwrap_err(),
+        RetrievalReceiptError::LimitExceeded
+    );
+
+    let mut token_request = request.clone();
+    token_request.limits.max_tokens = 127;
+    let mut token_flood = complete_response(&token_request);
+    token_flood.pages[0].bytes = 512;
+    token_flood.broker_record.stdout_bytes = 512;
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(token_flood), &token_request).unwrap_err(),
+        RetrievalReceiptError::LimitExceeded
+    );
+}
+
+#[test]
+fn stale_generation_refuses_before_receipt_publication() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.snapshots.index_generation = OpaqueId::parse("stale-generation").unwrap();
+
+    let result = retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request);
+
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::IndexStale);
+}
+
+#[test]
+fn stale_current_source_snapshot_refuses_before_receipt_publication() {
+    let request = receipt_request();
+    let response = complete_response(&request);
+    let reader = FakeReader {
+        current: "tree-content-0002",
+    };
+
+    let result =
+        retrieve_coverage_against(&FakeStructuralCodeIndex::new(response), &reader, &request);
+
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::IndexStale);
+}
+
+#[test]
+fn stale_current_source_snapshot_refuses_receipt_rehydration() {
+    let request = receipt_request();
+    let receipt = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&request)),
+        &request,
+    )
+    .unwrap();
+    let reader = FakeReader {
+        current: "tree-content-0002",
+    };
+
+    let result = validate_retrieval_receipt_against(
+        &receipt.stable_bytes().unwrap(),
+        &reader,
+        &request,
+        receipt.broker_record(),
+    );
+
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::IndexStale);
+}
+
+#[test]
+fn extraction_gaps_and_uncovered_negative_scopes_never_license_absence() {
+    let request = receipt_request();
+    let mut gap = complete_response(&request);
+    gap.coverage = CoverageState::ExtractionGap;
+    gap.entries[1].coverage = CoverageState::ExtractionGap;
+    gap.entries[1].gap_ranges = vec![graphhelm_protocols::RetrievalGapRange { start: 10, end: 20 }];
+    let gap_receipt = retrieve_coverage(&FakeStructuralCodeIndex::new(gap), &request).unwrap();
+    assert_eq!(
+        compile_receipt(&gap_receipt),
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::NegativeClaimUnverified
+        }
+    );
+    assert_eq!(
+        gap_receipt.fallback(RetrievalFallbackKind::Source),
+        Some(RetrievalFallbackOutcome::Unavailable)
+    );
+
+    let mut uncovered = complete_response(&request);
+    uncovered.entries.pop();
+    let uncovered_receipt =
+        retrieve_coverage(&FakeStructuralCodeIndex::new(uncovered), &request).unwrap();
+    assert_eq!(
+        compile_receipt(&uncovered_receipt),
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::NegativeClaimUnverified
+        }
+    );
+}
+
+#[test]
+fn receipt_digest_or_expected_binding_substitution_fails_on_rehydration() {
+    let request = receipt_request();
+    let receipt = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&request)),
+        &request,
+    )
+    .unwrap();
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    json["digest"] = serde_json::Value::String(format!("sha256:{}", "f".repeat(64)));
+    let tampered = serde_json::to_vec(&json).unwrap();
+    assert_eq!(
+        validate_retrieval_receipt(&tampered, &request, receipt.broker_record()).unwrap_err(),
+        RetrievalReceiptError::DigestMismatch
+    );
+
+    let mut substituted_request = request.clone();
+    substituted_request.step.query_digest = hash('f');
+    assert_eq!(
+        validate_retrieval_receipt(
+            &receipt.stable_bytes().unwrap(),
+            &substituted_request,
+            receipt.broker_record()
+        )
+        .unwrap_err(),
+        RetrievalReceiptError::BindingMismatch
+    );
+}
+
+#[test]
+fn packaged_valid_receipt_is_the_exact_runtime_producer_output() {
+    let request = receipt_request();
+    let receipt = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&request)),
+        &request,
+    )
+    .unwrap();
+    let produced: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../extensions/builtin/graphhelm-development-contracts/fixtures/retrieval/coverage-receipt-valid.json",
+    );
+    let packaged: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+
+    assert_eq!(
+        packaged,
+        produced,
+        "the checked-in fixture must be producer evidence, not a hand-shaped lookalike; produced:\n{}",
+        serde_json::to_string_pretty(&produced).unwrap()
+    );
+}
+
+#[test]
+fn unknown_coverage_or_fallback_wire_spelling_fails_closed() {
+    let request = receipt_request();
+    let receipt = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&request)),
+        &request,
+    )
+    .unwrap();
+    let record = receipt.broker_record().clone();
+    let original: serde_json::Value =
+        serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+
+    for pointer in ["/body/coverage", "/body/fallbacks/0/outcome"] {
+        let mut tampered = original.clone();
+        *tampered.pointer_mut(pointer).unwrap() = serde_json::Value::String("invented".to_owned());
+        assert_eq!(
+            validate_retrieval_receipt(&serde_json::to_vec(&tampered).unwrap(), &request, &record)
+                .unwrap_err(),
+            RetrievalReceiptError::InvalidWire,
+            "unknown closed vocabulary at {pointer} must be refused before use"
+        );
+    }
+}
+
+#[test]
+fn receipt_rehydration_refuses_oversized_wire_before_deserialization() {
+    const MAX_RECEIPT_WIRE_BYTES: usize = 8 * 1024 * 1024;
+    let request = receipt_request();
+    let oversized = vec![b'x'; MAX_RECEIPT_WIRE_BYTES + 1];
+    let result = validate_retrieval_receipt(&oversized, &request, &broker_record(&request, 64));
+
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::LimitExceeded);
+}
+
+#[test]
+fn receipt_producer_refuses_wire_output_above_the_rehydration_cap() {
+    let mut request = receipt_request();
+    request.requested_paths = (0..48)
+        .map(|index| format!("src/file-{index}.rs"))
+        .collect();
+    request.negative_scopes.clear();
+    request.limits.max_results = 48;
+    let mut response = complete_response(&request);
+    response.coverage = CoverageState::ExtractionGap;
+    for entry in &mut response.entries {
+        entry.coverage = CoverageState::ExtractionGap;
+        entry.gap_ranges = vec![
+            graphhelm_protocols::RetrievalGapRange {
+                start: 9_007_199_254_740_991,
+                end: 9_007_199_254_740_991,
+            };
+            4096
+        ];
+    }
+
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap_err(),
+        RetrievalReceiptError::LimitExceeded
+    );
+}
+
+#[test]
+fn receipt_requires_a_matching_retrieval_plan_envelope_and_supported_schema_major() {
+    let mutations: Vec<RequestMutation> = vec![
+        Box::new(|request| {
+            request.plan_binding.schema_id =
+                "https://p50.dev/schemas/event-envelope.schema.json".to_owned();
+        }),
+        Box::new(|request| {
+            request.plan.kind = DevelopmentKind::CodeRule;
+        }),
+        Box::new(|request| {
+            request.plan.api_version = "p50.dev/development/v2".to_owned();
+        }),
+        Box::new(|request| {
+            request.plan_binding.document_version = SemanticVersion::parse("2.0.0").unwrap();
+            request.plan.metadata.artifact_version = SemanticVersion::parse("2.0.0").unwrap();
+        }),
+        Box::new(|request| {
+            request.plan_binding.schema_version = SemanticVersion::parse("2.0.0").unwrap();
+        }),
+        Box::new(|request| {
+            request.plan.digest = hash('f');
+        }),
+        Box::new(|request| {
+            request.plan.spec = serde_json::json!({ "tampered": true });
+        }),
+    ];
+
+    for mutate in mutations {
+        let mut request = receipt_request();
+        mutate(&mut request);
+        let response = complete_response(&request);
+
+        assert_eq!(
+            retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap_err(),
+            RetrievalReceiptError::EvidenceInvalid
+        );
+    }
+
+    let mut compatible = receipt_request();
+    compatible.plan_binding.document_version = SemanticVersion::parse("1.7.0").unwrap();
+    compatible.plan.metadata.artifact_version = SemanticVersion::parse("1.7.0").unwrap();
+    compatible.plan_binding.schema_version = SemanticVersion::parse("1.9.3").unwrap();
+    bind_plan_digest(&mut compatible.plan, &mut compatible.plan_binding);
+    let receipt = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&compatible)),
+        &compatible,
+    )
+    .unwrap();
+    assert_eq!(receipt.plan_binding(), &compatible.plan_binding);
+}
+
+#[test]
+fn complete_zero_without_a_bounded_negative_scope_is_not_verified_absence() {
+    let mut request = receipt_request();
+    request.negative_scopes.clear();
+    let mut response = complete_response(&request);
+    response
+        .entries
+        .retain(|entry| entry.target == RetrievalCoverageTarget::Path);
+    let receipt = retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap();
+
+    assert_eq!(
+        compile_receipt(&receipt),
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::NegativeClaimUnverified
+        }
+    );
+}
+
+#[test]
+fn receipt_refuses_numbers_that_json_consumers_cannot_represent_exactly() {
+    let mut request = receipt_request();
+    request.limits.max_bytes = 9_007_199_254_740_992;
+    let response = complete_response(&request);
+
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap_err(),
+        RetrievalReceiptError::LimitExceeded
+    );
+}
+
+#[test]
+fn receipt_refuses_a_gap_start_above_the_json_safe_integer_boundary() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.coverage = CoverageState::ExtractionGap;
+    response.entries[0].coverage = CoverageState::ExtractionGap;
+    response.entries[0].gap_ranges = vec![graphhelm_protocols::RetrievalGapRange {
+        start: 9_007_199_254_740_992,
+        end: 9_007_199_254_740_992,
+    }];
+
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap_err(),
+        RetrievalReceiptError::EvidenceInvalid
+    );
+}
+
+#[test]
+fn receipt_refuses_a_gap_end_above_the_json_safe_integer_boundary() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.coverage = CoverageState::ExtractionGap;
+    response.entries[0].coverage = CoverageState::ExtractionGap;
+    response.entries[0].gap_ranges = vec![graphhelm_protocols::RetrievalGapRange {
+        start: 1,
+        end: 9_007_199_254_740_992,
+    }];
+
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap_err(),
+        RetrievalReceiptError::EvidenceInvalid
+    );
+}
+
+#[test]
+fn receipt_accepts_gap_endpoints_at_the_json_safe_integer_boundary() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.coverage = CoverageState::ExtractionGap;
+    response.entries[0].coverage = CoverageState::ExtractionGap;
+    response.entries[0].gap_ranges = vec![graphhelm_protocols::RetrievalGapRange {
+        start: 9_007_199_254_740_991,
+        end: 9_007_199_254_740_991,
+    }];
+
+    let receipt = retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap();
+
+    assert_eq!(
+        compile_receipt(&receipt),
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::NegativeClaimUnverified
+        }
+    );
+}
+
+#[test]
+fn runtime_never_emits_a_receipt_outside_its_schema_size_bounds() {
+    let mut long_provider = receipt_request();
+    long_provider.provider.tool = "x".repeat(129);
+    let result = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&long_provider)),
+        &long_provider,
+    );
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::EvidenceInvalid);
+
+    let mut long_target = receipt_request();
+    long_target.negative_scopes = vec!["x".repeat(4097)];
+    let result = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&long_target)),
+        &long_target,
+    );
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::EvidenceInvalid);
+
+    let mut many_pages_request = receipt_request();
+    many_pages_request.limits.max_pages = 1025;
+    let mut many_pages = complete_response(&many_pages_request);
+    many_pages.pages = (0..1025)
+        .map(|page| RetrievalPageEvidence {
+            position: format!("offset:{page}"),
+            results: 0,
+            bytes: 0,
+            has_more: page != 1024,
+        })
+        .collect();
+    many_pages.broker_record.stdout_bytes = 0;
+    let result = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(many_pages),
+        &many_pages_request,
+    );
+    assert_eq!(result.unwrap_err(), RetrievalReceiptError::LimitExceeded);
+}
+
+#[test]
+fn coverage_entry_separator_and_provider_order_do_not_change_receipt_identity() {
+    let request = receipt_request();
+    let canonical = retrieve_coverage(
+        &FakeStructuralCodeIndex::new(complete_response(&request)),
+        &request,
+    )
+    .unwrap();
+    let mut variant = complete_response(&request);
+    variant.entries.reverse();
+    for entry in &mut variant.entries {
+        entry.value = entry.value.replace('/', "\\");
+    }
+    let normalised = retrieve_coverage(&FakeStructuralCodeIndex::new(variant), &request).unwrap();
+
+    assert_eq!(
+        normalised.stable_bytes().unwrap(),
+        canonical.stable_bytes().unwrap(),
+        "provider ordering and platform separators are not semantic receipt identity"
     );
 }

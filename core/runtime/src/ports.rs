@@ -106,3 +106,39 @@ pub trait SourceReader: Send + Sync {
     /// guard, not by the type.
     fn current_snapshot(&self) -> graphhelm_protocols::OpaqueId;
 }
+
+/// A brand-neutral structural-index provider. This port is synchronous because the first #219
+/// slice is a deterministic fake; live MCP sessions remain unavailable under D-042 and will need
+/// a separately designed broker-owned asynchronous adapter.
+pub trait StructuralCodeIndex: Send + Sync {
+    fn retrieve(
+        &self,
+        request: &crate::retrieval::StructuralIndexRequest,
+    ) -> Result<StructuralIndexResponse, StructuralCodeIndexError>;
+}
+
+/// The only provider-side failure this slice can observe. Free-form provider errors do not enter
+/// the receipt or a stable diagnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StructuralCodeIndexError {
+    #[error("structural code index unavailable")]
+    Unavailable,
+}
+
+/// Untrusted evidence returned by [`StructuralCodeIndex`]. Runtime checks every echoed binding,
+/// bound and pagination fact before it can become an immutable receipt.
+#[derive(Clone, Debug)]
+pub struct StructuralIndexResponse {
+    pub plan_binding: graphhelm_protocols::ArtifactBinding,
+    pub step: graphhelm_protocols::RetrievalStepBinding,
+    pub scope: graphhelm_protocols::DevelopmentScope,
+    pub snapshots: graphhelm_protocols::SnapshotBinding,
+    pub provider: graphhelm_protocols::RetrievalProviderBinding,
+    pub broker_record: ToolCallRecord,
+    pub confidence: graphhelm_protocols::ProviderCoverageConfidence,
+    pub coverage: graphhelm_protocols::CoverageState,
+    pub entries: Vec<graphhelm_protocols::RetrievalCoverageEntry>,
+    pub pages: Vec<graphhelm_protocols::RetrievalPageEvidence>,
+    pub total_results: u32,
+    pub hits: Vec<String>,
+}

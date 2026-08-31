@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/retrieval-coverage-receipt.schema.json",
+  "title": "RetrievalCoverageReceipt@1",
+  "description": "Immutable evidence for one Runtime-validated structural-index attempt. It is a sidecar to, never a mutation of, RetrievalPlan.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "schemaVersion", "body", "digest"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "p50.dev/retrieval-coverage-receipt/v1" },
+    "kind": { "const": "RetrievalCoverageReceipt" },
+    "schemaVersion": { "const": "1.0.0" },
+    "body": {
+      "type": "object",
+      "required": ["planBinding", "step", "scope", "snapshots", "provider", "brokerRecord", "confidence", "coverage", "requestedPaths", "negativeScopes", "entries", "pages", "declaredLimits", "receivedLimits", "totalResults", "hits", "fallbacks"],
+      "additionalProperties": false,
+      "properties": {
+        "planBinding": { "$ref": "#/$defs/artifactBinding" },
+        "step": { "$ref": "#/$defs/step" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "snapshots": { "$ref": "#/$defs/snapshots" },
+        "provider": { "$ref": "#/$defs/provider" },
+        "brokerRecord": { "$ref": "#/$defs/brokerRecord" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "requestedPaths": { "$ref": "#/$defs/targets" },
+        "negativeScopes": { "$ref": "#/$defs/targets" },
+        "entries": {
+          "type": "array",
+          "maxItems": 512,
+          "items": { "$ref": "#/$defs/coverageEntry" }
+        },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": { "$ref": "#/$defs/page" }
+        },
+        "declaredLimits": { "$ref": "#/$defs/limits" },
+        "receivedLimits": { "$ref": "#/$defs/receivedLimits" },
+        "totalResults": { "$ref": "#/$defs/u32" },
+        "hits": { "$ref": "#/$defs/targets" },
+        "fallbacks": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "$ref": "#/$defs/sourceFallback" },
+            { "$ref": "#/$defs/reindexFallback" }
+          ],
+          "items": false
+        }
+      }
+    },
+    "digest": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "not": {
+        "properties": {
+          "body": {
+            "required": ["confidence", "coverage"],
+            "properties": {
+              "confidence": { "const": "best_effort" },
+              "coverage": { "const": "complete" }
+            }
+          }
+        },
+        "required": ["body"]
+      }
+    }
+  ],
+  "$defs": {
+    "opaqueId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "semanticVersion": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "u32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "safeInteger": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "scope": {
+      "type": "object",
+      "required": ["workspaceId", "projectId"],
+      "additionalProperties": false,
+      "properties": {
+        "workspaceId": { "$ref": "#/$defs/opaqueId" },
+        "projectId": { "$ref": "#/$defs/opaqueId" },
+        "subprojectId": { "$ref": "#/$defs/opaqueId" },
+        "executionId": { "$ref": "#/$defs/opaqueId" }
+      }
+    },
+    "snapshots": {
+      "type": "object",
+      "required": ["repoSnapshot", "indexGeneration"],
+      "additionalProperties": false,
+      "properties": {
+        "repoSnapshot": { "$ref": "#/$defs/opaqueId" },
+        "indexGeneration": { "$ref": "#/$defs/opaqueId" }
+      }
+    },
+    "artifactBinding": {
+      "type": "object",
+      "required": ["artifactId", "schemaId", "documentVersion", "schemaVersion", "digest", "scope", "producer", "snapshots"],
+      "additionalProperties": false,
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/opaqueId" },
+        "schemaId": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "documentVersion": { "$ref": "#/$defs/semanticVersion" },
+        "schemaVersion": { "$ref": "#/$defs/semanticVersion" },
+        "digest": { "$ref": "#/$defs/hash" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "producer": { "$ref": "#/$defs/opaqueId" },
+        "snapshots": { "$ref": "#/$defs/snapshots" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["stepId", "stepDigest", "queryDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "stepId": { "$ref": "#/$defs/opaqueId" },
+        "stepDigest": { "$ref": "#/$defs/hash" },
+        "queryDigest": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "required": ["providerId", "capabilityId", "capabilityVersion", "tool", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "providerId": { "$ref": "#/$defs/opaqueId" },
+        "capabilityId": { "$ref": "#/$defs/opaqueId" },
+        "capabilityVersion": { "$ref": "#/$defs/semanticVersion" },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "brokerRecord": {
+      "type": "object",
+      "required": ["tool", "action", "actor", "recordDigest", "stdoutDigest", "stdoutBytes", "stderrDigest", "stderrBytes", "reused"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "recordDigest": { "$ref": "#/$defs/hash" },
+        "stdoutDigest": { "$ref": "#/$defs/hash" },
+        "stdoutBytes": { "$ref": "#/$defs/safeInteger" },
+        "stderrDigest": { "$ref": "#/$defs/hash" },
+        "stderrBytes": { "$ref": "#/$defs/safeInteger" },
+        "reused": { "type": "boolean" }
+      }
+    },
+    "confidence": { "enum": ["verified", "best_effort"] },
+    "coverage": { "enum": ["complete", "partial", "excluded", "skipped", "extraction_gap", "stale", "unknown", "unresolved"] },
+    "targets": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+    },
+    "gap": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "end": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "coverageEntry": {
+      "type": "object",
+      "required": ["target", "value", "coverage", "gapRanges"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "enum": ["path", "negative_scope"] },
+        "value": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "gapRanges": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/gap" } }
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": ["position", "results", "bytes", "hasMore"],
+      "additionalProperties": false,
+      "properties": {
+        "position": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "results": { "$ref": "#/$defs/u32" },
+        "bytes": { "$ref": "#/$defs/safeInteger" },
+        "hasMore": { "type": "boolean" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": ["maxResults", "maxPages", "maxBytes", "maxTokens"],
+      "additionalProperties": false,
+      "properties": {
+        "maxResults": { "$ref": "#/$defs/u32" },
+        "maxPages": { "$ref": "#/$defs/u32" },
+        "maxBytes": { "$ref": "#/$defs/safeInteger" },
+        "maxTokens": { "$ref": "#/$defs/u32" }
+      }
+    },
+    "receivedLimits": {
+      "type": "object",
+      "required": ["results", "pages", "bytes", "tokens"],
+      "additionalProperties": false,
+      "properties": {
+        "results": { "$ref": "#/$defs/u32" },
+        "pages": { "$ref": "#/$defs/u32" },
+        "bytes": { "$ref": "#/$defs/safeInteger" },
+        "tokens": { "$ref": "#/$defs/u32" }
+      }
+    },
+    "fallbackOutcome": { "enum": ["not_required", "unavailable"] },
+    "sourceFallback": {
+      "type": "object",
+      "required": ["kind", "outcome"],
+      "additionalProperties": false,
+      "properties": { "kind": { "const": "source" }, "outcome": { "$ref": "#/$defs/fallbackOutcome" } }
+    },
+    "reindexFallback": {
+      "type": "object",
+      "required": ["kind", "outcome"],
+      "additionalProperties": false,
+      "properties": { "kind": { "const": "reindex" }, "outcome": { "$ref": "#/$defs/fallbackOutcome" } }
+    }
+  }
+}

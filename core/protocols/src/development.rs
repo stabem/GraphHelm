@@ -296,6 +296,168 @@ pub struct DeclaredLimits {
     pub max_tokens: u32,
 }
 
+/// The first closed retrieval-evidence sidecar. It is deliberately not a `DevelopmentKind`:
+/// `RetrievalPlan` is immutable pre-execution intent, while this receipt records what one provider
+/// attempt actually covered. See D-045.
+pub const RETRIEVAL_COVERAGE_RECEIPT_API_VERSION: &str = "p50.dev/retrieval-coverage-receipt/v1";
+pub const RETRIEVAL_COVERAGE_RECEIPT_KIND: &str = "RetrievalCoverageReceipt";
+
+wire_vocabulary! {
+    /// Strength the provider can support for its coverage report. `best_effort` is evidence, never
+    /// permission to promote a zero to verified absence.
+    ProviderCoverageConfidence {
+        Verified => "verified",
+        BestEffort => "best_effort",
+    }
+}
+
+wire_vocabulary! {
+    /// What a coverage entry addresses. Paths and bounded negative scopes are intentionally
+    /// separate because proving every cited file is not proof that a directory has no other hit.
+    RetrievalCoverageTarget {
+        Path => "path",
+        NegativeScope => "negative_scope",
+    }
+}
+
+wire_vocabulary! {
+    /// The only fallback classes this first receipt can name.
+    RetrievalFallbackKind {
+        Source => "source",
+        Reindex => "reindex",
+    }
+}
+
+wire_vocabulary! {
+    /// A Runtime-owned fallback result. There is no `succeeded` member in this slice: source
+    /// fallback and reindexing are not implemented, so accepting that spelling would mint proof
+    /// for work no producer can perform.
+    RetrievalFallbackOutcome {
+        NotRequired => "not_required",
+        Unavailable => "unavailable",
+    }
+}
+
+/// The exact step and query inside one immutable `RetrievalPlan`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalStepBinding {
+    pub step_id: OpaqueId,
+    pub step_digest: WireHash,
+    pub query_digest: WireHash,
+}
+
+/// Brand-neutral provider and capability identity. The concrete adapter name is evidence, never
+/// authority to bypass the Tool Broker.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalProviderBinding {
+    pub provider_id: OpaqueId,
+    pub capability_id: OpaqueId,
+    pub capability_version: SemanticVersion,
+    pub tool: String,
+    pub action: String,
+}
+
+/// One inclusive source gap. Lines are one-based and validated by Runtime before publication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalGapRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Coverage for one exact path or one bounded negative scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalCoverageEntry {
+    pub target: RetrievalCoverageTarget,
+    pub value: String,
+    pub coverage: CoverageState,
+    pub gap_ranges: Vec<RetrievalGapRange>,
+}
+
+/// Runtime-observed evidence for one page. `position` is opaque and exists to prove progress and
+/// detect loops; it never becomes a provider command.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalPageEvidence {
+    pub position: String,
+    pub results: u32,
+    pub bytes: u64,
+    pub has_more: bool,
+}
+
+/// What Runtime actually received, computed from pages and hits rather than copied from a provider
+/// self-report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalReceivedLimits {
+    pub results: u32,
+    pub pages: u32,
+    pub bytes: u64,
+    pub tokens: u32,
+}
+
+/// Digest binding to the exact durable Tool Broker record. Core protocols cannot depend on the
+/// broker crate, so the Runtime computes this from the complete record and carries the fields an
+/// operator needs to join it without duplicating the broker's disposition vocabulary here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalBrokerRecordBinding {
+    pub tool: String,
+    pub action: String,
+    pub actor: String,
+    pub record_digest: WireHash,
+    pub stdout_digest: WireHash,
+    pub stdout_bytes: u64,
+    pub stderr_digest: WireHash,
+    pub stderr_bytes: u64,
+    pub reused: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalFallbackReceipt {
+    pub kind: RetrievalFallbackKind,
+    pub outcome: RetrievalFallbackOutcome,
+}
+
+/// Everything covered by the receipt digest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalCoverageReceiptBody {
+    pub plan_binding: ArtifactBinding,
+    pub step: RetrievalStepBinding,
+    pub scope: DevelopmentScope,
+    pub snapshots: SnapshotBinding,
+    pub provider: RetrievalProviderBinding,
+    pub broker_record: RetrievalBrokerRecordBinding,
+    pub confidence: ProviderCoverageConfidence,
+    pub coverage: CoverageState,
+    pub requested_paths: Vec<String>,
+    pub negative_scopes: Vec<String>,
+    pub entries: Vec<RetrievalCoverageEntry>,
+    pub pages: Vec<RetrievalPageEvidence>,
+    pub declared_limits: DeclaredLimits,
+    pub received_limits: RetrievalReceivedLimits,
+    pub total_results: u32,
+    pub hits: Vec<String>,
+    pub fallbacks: Vec<RetrievalFallbackReceipt>,
+}
+
+/// Immutable, canonical retrieval evidence. Runtime validates every binding before constructing
+/// this value and verifies them again when rehydrating bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalCoverageReceiptV1 {
+    pub api_version: String,
+    pub kind: String,
+    pub schema_version: SemanticVersion,
+    pub body: RetrievalCoverageReceiptBody,
+    pub digest: WireHash,
+}
+
 /// The common envelope every new artifact carries.
 ///
 /// **NOT `deny_unknown_fields`, and that is the criterion rather than an oversight.** #217 requires
@@ -457,4 +619,96 @@ pub fn canonical_json(value: &serde_json::Value) -> String {
 pub fn normalise_path_separators(value: &str) -> String {
     const WINDOWS_SEPARATOR: char = '\\';
     value.replace(WINDOWS_SEPARATOR, "/")
+}
+
+#[cfg(test)]
+mod receipt_schema_tests {
+    use super::*;
+
+    #[test]
+    fn receipt_schema_accepts_the_valid_fixture_and_rejects_best_effort_complete() {
+        let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../extensions/builtin/graphhelm-development-contracts");
+        let read_json = |relative: &str| {
+            let path = package.join(relative);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .unwrap_or_else(|error| panic!("invalid JSON in {}: {error}", path.display()))
+        };
+        let schema = read_json("schemas/retrieval-coverage-receipt.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("receipt schema compiles");
+        let valid = read_json("fixtures/retrieval/coverage-receipt-valid.json");
+        let promoted =
+            read_json("fixtures/retrieval/coverage-receipt-invalid-best-effort-complete.json");
+
+        assert!(
+            validator.is_valid(&valid),
+            "the valid receipt fixture must conform"
+        );
+        assert!(
+            !validator.is_valid(&promoted),
+            "best_effort plus complete must be structurally unrepresentable on the wire"
+        );
+
+        let mut newer_bound_contract = valid.clone();
+        newer_bound_contract["body"]["planBinding"]["documentVersion"] =
+            serde_json::Value::String("2.1.0".to_owned());
+        newer_bound_contract["body"]["planBinding"]["schemaVersion"] =
+            serde_json::Value::String("2.0.0".to_owned());
+        newer_bound_contract["body"]["provider"]["capabilityVersion"] =
+            serde_json::Value::String("3.4.5".to_owned());
+        assert!(
+            validator.is_valid(&newer_bound_contract),
+            "receipt v1 binds exact external versions; it does not require them to also be v1"
+        );
+
+        let schema_confidence = schema["$defs"]["confidence"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        let rust_confidence = ProviderCoverageConfidence::every()
+            .iter()
+            .map(|value| value.wire_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(schema_confidence, rust_confidence);
+
+        let schema_coverage = schema["$defs"]["coverage"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        let rust_coverage = CoverageState::every()
+            .iter()
+            .map(|value| value.wire_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(schema_coverage, rust_coverage);
+
+        let schema_targets = schema["$defs"]["coverageEntry"]["properties"]["target"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        let rust_targets = RetrievalCoverageTarget::every()
+            .iter()
+            .map(|value| value.wire_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(schema_targets, rust_targets);
+
+        let schema_fallbacks = schema["$defs"]["fallbackOutcome"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        let rust_fallbacks = RetrievalFallbackOutcome::every()
+            .iter()
+            .map(|value| value.wire_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(schema_fallbacks, rust_fallbacks);
+    }
 }

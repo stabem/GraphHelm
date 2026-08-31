@@ -19,7 +19,8 @@ pub struct Cli {
 pub enum TopLevel {
     Graph(GraphArgs),
     Schema(SchemaArgs),
-    /// Extension package operations. Validation is offline and never installs or activates.
+    /// Extension package operations. Validation stays offline; the lifecycle subcommands
+    /// (install, switch, rollback, uninstall) act on an install root under an exclusive claim.
     Extension(ExtensionArgs),
     /// Development-contract Runtime services (#223), exposed identically here, over MCP, and
     /// over HTTP. This surface is under construction: the existence-parity guard in
@@ -67,6 +68,34 @@ pub enum ExtensionCommand {
         actor: String,
         #[arg(long = "ttl-seconds")]
         ttl_seconds: u64,
+    },
+    /// #212: stage, verify and adopt a package under the install root's versions/ tree. Does
+    /// not switch; the adopted digest is printed for the switch that follows.
+    Install {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        package: PathBuf,
+    },
+    /// #212: atomically make an adopted version the active one. The target is re-verified at
+    /// the moment of use, and any refusal leaves the previous version active.
+    Switch {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        digest: String,
+    },
+    /// #212: atomically return to the previous known-good version.
+    Rollback {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// #212: remove one adopted version that the active pointer no longer names.
+    Uninstall {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        digest: String,
     },
     /// #213: flips `revoked` on a presented token file's JSON and prints the result to stdout
     /// -- every other bound field is untouched. The caller decides where the revoked bytes

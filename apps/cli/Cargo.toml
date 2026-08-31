@@ -16,6 +16,7 @@ clap.workspace = true
 getrandom.workspace = true
 graphhelm-events = { path = "../../core/events" }
 graphhelm-execution = { path = "../../core/execution" }
+graphhelm-extension-host = { path = "../../core/extension-host" }
 graphhelm-gateway = { path = "../../core/gateway" }
 graphhelm-governor = { path = "../../core/governor" }
 graphhelm-graph = { path = "../../core/graph" }

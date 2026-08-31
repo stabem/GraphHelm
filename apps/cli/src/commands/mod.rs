@@ -87,6 +87,12 @@ pub fn run(command: TopLevel) -> Outcome {
         },
         TopLevel::Extension(extension_args) => match extension_args.command {
             ExtensionCommand::Validate { package } => extension::run(&package),
+            ExtensionCommand::Install { root, package } => extension::run_install(&root, &package),
+            ExtensionCommand::Switch { root, digest } => extension::run_switch(&root, &digest),
+            ExtensionCommand::Rollback { root } => extension::run_rollback(&root),
+            ExtensionCommand::Uninstall { root, digest } => {
+                extension::run_uninstall(&root, &digest)
+            }
             ExtensionCommand::MintMcpToken {
                 package,
                 contribution,

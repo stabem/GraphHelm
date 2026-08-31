@@ -889,6 +889,7 @@ dependencies = [
  "graphhelm-development-benchmark",
  "graphhelm-events",
  "graphhelm-execution",
+ "graphhelm-extension-host",
  "graphhelm-gateway",
  "graphhelm-governor",
  "graphhelm-graph",

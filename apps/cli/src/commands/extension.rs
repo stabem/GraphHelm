@@ -26,6 +26,158 @@ pub fn run(package: &Path) -> Outcome {
 const MCP_TOKEN_INVALID: &str = "GHCLI020_MCP_TOKEN_INVALID";
 const SOURCE: &str = "extension-mcp-token";
 
+/// One code for the lifecycle's refusals (#212), because the consumer is a script's if-statement:
+/// what varies per refusal is the MESSAGE, which names the exact variant, while the code answers
+/// the only question the script asks -- "did the lifecycle refuse?". Splitting codes per variant
+/// would force every consumer to enumerate them to make that one decision.
+///
+/// The variants do NOT share a remedy (AlreadyHeld wants backoff, Invalid wants the package
+/// fixed, VersionRetained wants a switch first), and what decides for one code anyway is the
+/// asymmetry of reversibility: promoting later is cheap ONLY as a machine-readable FIELD added
+/// beside this code with the code intact -- splitting the code itself later breaks the first
+/// script that leaned on it. Whoever needs per-variant dispatch: add the field, keep the code.
+const LIFECYCLE_REFUSED: &str = "GHCLI024_EXTENSION_LIFECYCLE_REFUSED";
+const LIFECYCLE_SOURCE: &str = "extension-lifecycle";
+
+fn lifecycle_refusal(command: &'static str, message: &str, pointer: &str) -> Outcome {
+    Outcome::domain(
+        command,
+        vec![Diagnostic::error(
+            LIFECYCLE_REFUSED,
+            message,
+            pointer,
+            LIFECYCLE_SOURCE,
+        )],
+    )
+}
+
+fn claim_refusal(
+    command: &'static str,
+    refusal: graphhelm_extension_host::ClaimRefusal,
+) -> Outcome {
+    use graphhelm_extension_host::ClaimRefusal;
+    let message = match refusal {
+        ClaimRefusal::AlreadyHeld => "another activation already holds this root's claim",
+        ClaimRefusal::LegacyUnverifiable => {
+            "a pre-metadata claim cannot be proven stale and is left untouched"
+        }
+        ClaimRefusal::UnsafeClaimPath => "the claim path is a link or otherwise unsafe",
+        ClaimRefusal::Unwritable => "the claim could not be written",
+        ClaimRefusal::UnsupportedPlatform => "this operating system has no proven claim authority",
+    };
+    lifecycle_refusal(command, message, "/root")
+}
+
+/// `target` is the pointer of the argument that NAMED the tree for this command -- `/package`
+/// for install, `/digest` for switch and uninstall, `/root` for rollback, whose only argument
+/// is the root. A variant-fixed pointer pointed clients at arguments the invoking command does
+/// not have (switch has no `--package`), which is exactly what a pointer exists to prevent.
+/// (Codex P2 on #591.)
+fn install_refusal(
+    command: &'static str,
+    refusal: graphhelm_extension_host::InstallRefusal,
+    target: &'static str,
+) -> Outcome {
+    use graphhelm_extension_host::InstallRefusal;
+    let (message, pointer) = match refusal {
+        InstallRefusal::Invalid => ("the tree does not validate", target),
+        InstallRefusal::AdoptedBytesChanged => (
+            "the tree no longer matches the digest it was adopted under",
+            target,
+        ),
+        InstallRefusal::UnknownVersion => ("this digest was never adopted under this root", target),
+        InstallRefusal::NoPreviousVersion => {
+            ("no previous version is recorded to roll back to", "/root")
+        }
+        InstallRefusal::CorruptPointer => (
+            "the active-version pointer exists but cannot be read",
+            "/root",
+        ),
+        InstallRefusal::UnsafePackagePath => (
+            "the package tree carries a link the copier refuses to follow",
+            target,
+        ),
+        InstallRefusal::VersionRetained => (
+            "the active pointer still names this version as current or previous",
+            target,
+        ),
+        InstallRefusal::Unwritable => ("the install layout could not be written", "/root"),
+    };
+    lifecycle_refusal(command, message, pointer)
+}
+
+/// #212: stage, verify, adopt. The claim is acquired first -- authority before any write, the
+/// same order the library enforces at compile level.
+pub fn run_install(root: &Path, package: &Path) -> Outcome {
+    const COMMAND: &str = "extension.install";
+    let claim = match graphhelm_extension_host::ActivationClaim::acquire(root) {
+        Ok(claim) => claim,
+        Err(refusal) => return claim_refusal(COMMAND, refusal),
+    };
+    match graphhelm_extension_host::install_package(&claim, root, package) {
+        // The digest ONLY. The adopted path is an absolute path under the caller's root, and
+        // normal CLI JSON is prohibited from exposing user-home paths (AGENTS.md): stdout gets
+        // persisted into logs by automation, and whoever knows --root can derive the layout
+        // locally. The digest is the identity every later command speaks.
+        Ok(installed) => {
+            Outcome::success(COMMAND, serde_json::json!({ "digest": installed.digest }))
+        }
+        Err(refusal) => install_refusal(COMMAND, refusal, "/package"),
+    }
+}
+
+/// #212: the atomic flip. Refusals leave the previous version active, and that property is the
+/// library's, pinned by its own tests -- this handler only carries it across the binary boundary.
+pub fn run_switch(root: &Path, digest: &str) -> Outcome {
+    const COMMAND: &str = "extension.switch";
+    let claim = match graphhelm_extension_host::ActivationClaim::acquire(root) {
+        Ok(claim) => claim,
+        Err(refusal) => return claim_refusal(COMMAND, refusal),
+    };
+    match graphhelm_extension_host::switch_active(&claim, root, digest) {
+        Ok(active) => Outcome::success(
+            COMMAND,
+            serde_json::json!({
+                "current": active.current,
+                "previous": active.previous,
+            }),
+        ),
+        Err(refusal) => install_refusal(COMMAND, refusal, "/digest"),
+    }
+}
+
+/// #212: return to the previous known-good.
+pub fn run_rollback(root: &Path) -> Outcome {
+    const COMMAND: &str = "extension.rollback";
+    let claim = match graphhelm_extension_host::ActivationClaim::acquire(root) {
+        Ok(claim) => claim,
+        Err(refusal) => return claim_refusal(COMMAND, refusal),
+    };
+    match graphhelm_extension_host::roll_back(&claim, root) {
+        Ok(active) => Outcome::success(
+            COMMAND,
+            serde_json::json!({
+                "current": active.current,
+                "previous": active.previous,
+            }),
+        ),
+        Err(refusal) => install_refusal(COMMAND, refusal, "/root"),
+    }
+}
+
+/// #212: remove one adopted version the pointer no longer names.
+pub fn run_uninstall(root: &Path, digest: &str) -> Outcome {
+    const COMMAND: &str = "extension.uninstall";
+    let claim = match graphhelm_extension_host::ActivationClaim::acquire(root) {
+        Ok(claim) => claim,
+        Err(refusal) => return claim_refusal(COMMAND, refusal),
+    };
+    match graphhelm_extension_host::uninstall_version(&claim, root, digest) {
+        Ok(()) => Outcome::success(COMMAND, serde_json::json!({ "digest": digest })),
+        Err(refusal) => install_refusal(COMMAND, refusal, "/digest"),
+    }
+}
+
 fn refuse(command: &'static str, message: &str, pointer: &str) -> Outcome {
     Outcome::domain(
         command,

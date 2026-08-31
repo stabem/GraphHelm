@@ -318,3 +318,74 @@ fn a_restored_store_rebuilds_its_active_markers_on_open() {
          `LayoutState::RecoverableDirs` states that assumption in the store's own source"
     );
 }
+
+/// #601 — THE ESCALATION CELL, and it cannot run on this house's gate.
+///
+/// `execute_local` enumerated `blobs/` and called `read_to_string` on every entry, following
+/// symlinks. A service account that can write `blobs/` could therefore aim a root-run backup at a
+/// file only root can read, and the target's bytes land in the portable archive under the link's
+/// name. Found by the Codex reviewer on #595, where the scheduled backup runs as root.
+///
+/// `#[cfg(unix)]` is not a preference. Measured on this machine:
+/// `std::os::windows::fs::symlink_file` fails with *"A required privilege is not held by the
+/// client. (os error 1314)"*, so the escalation cannot be PLANTED here and this cell never runs on
+/// the Windows gate. It carries the real threat wherever a unix runner exists; the cell below
+/// carries the weaker half that this gate can actually observe. Which half is load-bearing where
+/// is written down rather than left to whoever reads a green suite.
+#[cfg(unix)]
+#[test]
+fn backup_refuses_a_symlinked_blob_instead_of_following_it() {
+    let directory = TempDir::new().unwrap();
+    let source = populated_local_repository(&directory);
+    let secret = directory.path().join("root-only.txt");
+    fs::write(&secret, "SECRET-BYTES").unwrap();
+    std::os::unix::fs::symlink(&secret, source.join("blobs").join("planted")).unwrap();
+
+    let archive = directory.path().join("archive.json");
+    let (code, value) = back_up(&source, &archive);
+
+    assert_ne!(
+        code, 0,
+        "the backup followed a symlink out of blobs/ and archived what it pointed at: {value}"
+    );
+    assert!(
+        !archive.exists()
+            || !fs::read_to_string(&archive)
+                .unwrap()
+                .contains("SECRET-BYTES"),
+        "the linked file's bytes reached the archive"
+    );
+}
+
+/// #601 — THE WEAKER HALF, and it is the only one this gate can run.
+///
+/// A directory is the other non-regular entry and needs no privilege to plant. Before the guard it
+/// also failed the backup -- `read_to_string` on a directory errors -- so the observable change
+/// here is the REASON, not the refusal: *"a repository blob could not be read"* is a true statement
+/// at the wrong grain, since the entry was read fine and simply is not a blob.
+///
+/// Recorded plainly: this cell does NOT demonstrate the escalation. It demonstrates that the guard
+/// exists and classifies. A reader who takes a green here as proof the symlink hole is closed has
+/// read more than it says.
+#[test]
+fn backup_refuses_a_blob_entry_that_is_not_a_regular_file() {
+    let directory = TempDir::new().unwrap();
+    let source = populated_local_repository(&directory);
+    fs::create_dir(source.join("blobs").join("planted")).unwrap();
+
+    let archive = directory.path().join("archive.json");
+    let (code, value) = back_up(&source, &archive);
+
+    assert_ne!(
+        code, 0,
+        "a non-regular entry in blobs/ must refuse: {value}"
+    );
+    let message = value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.contains("not a regular file"),
+        "the refusal must name what is wrong with the entry, not report a read failure that did \
+         not happen; got {message:?}"
+    );
+}

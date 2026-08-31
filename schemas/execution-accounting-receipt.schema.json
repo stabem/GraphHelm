@@ -153,6 +153,7 @@
       ]
     },
     "providerReportedInputField": {
+      "description": "Raw input token count the serving provider reported for the request, covering the ENTIRE prompt (the assembled system block plus the task). May exclude cache-read and cache-creation tokens, which is why it is reported separately from provider_total_input_tokens. It is a PROVIDER-side total: it is not attributable to any one part of the input.",
       "allOf": [
         {"$ref": "#/$defs/costField"},
         {
@@ -178,6 +179,7 @@
       ]
     },
     "providerTotalInputField": {
+      "description": "Total input tokens for the request INCLUDING cache-read and cache-creation. Unavailable while the provider boundary reports only the figure carried by provider_reported_input_tokens; a total that silently omitted the cache components would be a smaller number wearing the name of a complete one.",
       "allOf": [
         {"$ref": "#/$defs/costField"},
         {

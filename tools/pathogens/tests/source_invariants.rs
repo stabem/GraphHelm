@@ -243,7 +243,7 @@ fn refusal_strings_carry_no_collapsed_indentation() {
 
     assert!(
         offenders.is_empty(),
-        "these string literals carry runs of whitespace, which a reader gets verbatim. A continued literal keeps the next line indentation inside it: put the string on one line, or concatenate explicitly.\n{}",
+        "these string literals carry runs of whitespace, which a reader gets verbatim. The `\\` continuation that would have removed them was lost before the file was written -- commonly a generator consuming the escape (#440). Remove the run here; if a script wrote this file, fix the script too or it comes back.\n{}",
         offenders.join("\n")
     );
 }

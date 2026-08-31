@@ -17,9 +17,16 @@ include!(concat!(
     "/../../tools/source-invariants/detect.rs"
 ));
 
-/// The defect the predicate exists to catch: a line continuation inside a string literal
-/// keeps the next line's indentation INSIDE the literal, and `cargo fmt` then joins the
-/// pieces into one plausible-looking line.
+/// The defect the predicate exists to catch: a run of spaces inside a string literal, which a
+/// reader gets verbatim.
+///
+/// It arrives when a `\` continuation is lost BEFORE the file is written -- a code generator
+/// consuming the escape, which is MEASURED (#440); any other upstream rewriter is conjecture --
+/// so what lands is one line with the indentation already inside it. **Neither `rustc` nor `cargo fmt` can produce it, and the sentence this replaces
+/// named both**: the continuation escape consumes the next line's indentation, and
+/// `format_strings` is absent from this repository's `rustfmt.toml` (default `false`), so rustfmt
+/// never edits inside a literal. Both measured in #440. I wrote the wrong version here; it is
+/// refuted by the lane that proved it.
 #[test]
 fn it_catches_a_collapsed_run_inside_a_literal() {
     assert!(has_run_in_literal(

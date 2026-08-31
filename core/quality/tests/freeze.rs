@@ -119,8 +119,12 @@ fn every_frozen_prefix_is_named_here_so_removing_one_deletes_an_assertion() {
 
     assert!(
         frozen("docs/gates/"),
-        "docs/gates/ left the freeze. It holds the gate stamps a stream is certified by, so a \
-         branch that restamps while changing what the stamp attests has certified itself"
+        "docs/gates/ left the freeze. It holds the freeze charter itself (docs/gates/freeze.md), \
+         so a branch that rewrites what the freeze means alongside the code the freeze judges has \
+         amended the law in the same breath as the act. (This message once claimed the directory \
+         held gate stamps; measured in #282, no stamp was ever written there -- certification is \
+         a GateCertified event in the stream, and the directory was empty until the charter \
+         moved in.)"
     );
 
     assert!(

@@ -452,11 +452,16 @@ fn contrast_ratio(a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
 }
 
 /// The gate-freeze rule (M06 binding decision 5) as a pure check over a changed-path
-/// list: a change touching the GATE MACHINERY (this crate, the pathogen suite, a stream's
-/// gate stamps, or the shared source-invariant predicate, which IS a gate rather than an
-/// input to one) together with anything OUTSIDE it is a hard violation — the
+/// list: a change touching the GATE MACHINERY (this crate, the pathogen suite, the freeze
+/// charter under `docs/gates/`, or the shared source-invariant predicate, which IS a gate
+/// rather than an input to one) together with anything OUTSIDE it is a hard violation — the
 /// judge and the judged never move in one PR. Returns the offending pair for the refusal
 /// message; `None` is a clean diff.
+///
+/// This doc used to describe the `docs/gates/` entry as "a stream's gate stamps". Measured
+/// (#282): no stamp was ever written there — certification is a `GateCertified` EVENT in the
+/// stream, not a file — and the directory was empty until the charter moved in. A description
+/// of contents that never existed is how an empty prefix survives review looking deliberate.
 #[must_use]
 pub fn freeze_violation(changed_paths: &[&str]) -> Option<(String, String)> {
     const GATE_MACHINERY: [&str; 4] = [

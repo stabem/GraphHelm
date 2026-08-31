@@ -669,3 +669,142 @@ The current pure codebase-memory decoder remains useful input to a future broker
 authority for this fake. Live MCP still requires ADR-028's contained, digest-pinned Tool Broker
 session. No CLI, API, MCP, Studio, network, native-index, or source-reader surface is added. This
 makes D-045 normative, refines ADR-028, and leaves #219 open for the real producer and fallback path.
+
+## 37. ADR-032 — Two-axis memory lifecycle: semantic validity separate from publication state
+
+**Status:** accepted.
+
+**Context:** #220 (task-004) shipped the safe `MemoryAdmissionRefused` slice (#488): a durable
+refusal event that never carries rejected content, gated on explicit per-project opt-in, with the
+disabled and incoherent-input arms returning before any repository access. That slice deliberately
+excluded any lifecycle decision. Ahead of it, task-004 had already built `MemoryState`
+(`provisional | published | superseded | withdrawn`) and `MemoryTransition`
+(`publish | supersede | withdraw`) as a single closed axis (`core/governor/src/memory.rs`,
+`policies/memory-transition.yaml`, `schemas/memory-transition.schema.json`), with `apply_transition`
+enforcing exactly three legal tuples.
+
+A current-main audit (`cdf1fc4`) found this one-axis model conflicts with a normative contract that
+already exists: [Data & Protocols](../architecture/DATA_AND_PROTOCOLS.md) §16 declares
+`memory_record.status` as `candidate | validated | deprecated | contradicted | expired` — the same
+five-value semantic vocabulary §15 already uses for `claim.status`, with `claim.relationships.supersedes`
+as a reference to another claim, never a state name. Task-004's axis is a different, narrower set that
+conflates two questions a memory record's caller can face independently: *is this content still
+believed* (semantic) and *is this content visible in the default read* (publication). Concretely,
+`superseded` — as shipped — is a STATE a record enters, collapsing three distinct reasons a caller
+must be able to tell apart: a predecessor DEPRECATED by policy, one CONTRADICTED by new evidence, and
+one merely superseded by a better observation with no fault in the original. One state name for all
+three erases which repair an operator should make. The issue's own audit trail records that "full
+lifecycle work must wait for an accepted ADR plus Decision Register entry; an RFC alone is not
+authority" before this contradiction may be frozen into a wire contract — this ADR is that decision,
+formalizing D-046. It is documentation only: no code, schema, or test changes accompany it, and #220
+stays open after it lands.
+
+**Decisions:**
+
+1. **Two independent axes replace the single `MemoryState` axis.** Semantic:
+   `candidate | validated | contradicted | deprecated | expired`, wire-identical to
+   `memory_record.status` in Data & Protocols §16 — this ADR does not change that document, it makes
+   an implementation obligated to honor the field that was already normative there. Publication:
+   `unpublished | proposed | published | withdrawn`. A record's full state is the ordered PAIR of both
+   axes; no implementation may flatten them back into one enum for storage, wire, or comparison.
+2. **`superseded` is removed as a state.** A record that supersedes an earlier one carries a
+   `supersedes` relationship to that predecessor's immutable identity, mirroring `claim.relationships`
+   in Data & Protocols §15. The predecessor's own semantic axis moves to `deprecated` or `contradicted`
+   according to the caller's stated reason — decided by the caller at the transition site, never
+   inferred by the mechanism from the fact that a successor exists.
+3. **Withdrawal moves only the publication axis, never the semantic axis, and never deletes or
+   rewrites the journal.** Withdrawn content stays fully replayable and auditable, satisfying #220's
+   own acceptance criterion ("expired/stale/withdrawn memory is excluded by default but remains
+   auditable") without tension: exclusion from the default view is a publication-axis fact, not an
+   erasure. Opt-in governs CAPTURE; withdrawal governs the VIEW. These are different clocks and neither
+   is read against the other.
+4. **Erasure is a distinct operation from withdrawal and is not reinvented here.** A memory record's
+   evidence may be erased through the cryptographic-erasure mechanism ADR-021 (D-035) already
+   establishes for the Event/Evidence Store (`EvidenceErasureRequested` /
+   `EvidenceErasureCompleted` / `EvidenceCiphertextDeleted`): the decryption key is destroyed, the
+   ciphertext and audit trail remain, and replay reports unavailability rather than fabricating
+   content or silently succeeding. Erasure is orthogonal to both lifecycle axes — a record in any
+   semantic/publication pair may have its evidence erased without changing either axis's value.
+5. **A handoff into a scope without capture opt-in is refused by name at the transition site.** The
+   refusal carries a closed code (e.g. `handoff_target_not_opted_in`) rather than silently completing
+   the transition or silently dropping it.
+6. **A refusal record carries only a closed code and a closed location, never the content, excerpt, or
+   a content-derived digest that caused it.** `MemoryAdmissionRefused` (#488) already implements this;
+   this decision extends the same constraint to every refusal-shaped event the lifecycle implementation
+   adds under this ADR, so the guard is a standing rule rather than a property of one shipped event
+   type.
+7. **General rule for a frozen `1.0.0` artifact found wrong: authored content in a frozen release
+   never changes; derived metadata that was derived wrong is re-derived in place, with the guard
+   updated in the same commit and provenance recorded — and the correction must EXHIBIT a control
+   proving it touched only derived metadata, never assert it.** This answers the question #220's own
+   audit trail named as this ADR's to decide ("whether the checked-in pre-release `1.0.0` artifacts
+   are corrected in place or versioned"), and it is grounded in the first real instance rather than
+   argued in the abstract: `#508`/PR `#511` found the `event-envelope` catalog digest recorded in
+   BOTH the live catalog and the frozen `releases/1.0.0/` snapshot never matched the schema's own
+   canonical digest. The digest field is a derivation over already-shipped, byte-frozen schema
+   content, not authored content itself, and re-deriving it corrects the record to describe the bytes
+   it always claimed to describe without touching a single authored byte. The fix's own diff is the
+   control that makes this checkable rather than asserted: two one-line catalog entries plus a guard
+   comment recording why the correction is legal, **zero `*.schema.json` files touched** — the
+   empty set over authored files is the evidence, not the claim, that only a derivation moved. The
+   rejected alternative (a versioned `1.0.1`) would leave `1.0.0` self-inconsistent forever and
+   require a permanent exemption cell in the very integrity guard that caught the error — a standing
+   lie with a standing waiver, for a value nobody outside the tree ever depended on being that
+   specific wrong number.
+8. **The memory-transition schema/policy pair is a narrower instance of decision 7's rule, one step
+   easier.** Neither `memory-transition.schema.json` nor `memory-transition.yaml` is part of any
+   snapshot under `schemas/releases/1.0.0/` at all (verified against `origin/main` at `1a5ff3b`: that
+   directory has no `memory-*` entry) — nothing has published these wire spellings yet, so there is no
+   frozen release to preserve and no derived-vs-authored question to answer. ADR-022's "no legacy
+   compatibility layer" precedent applies directly: the two-axis shape replaces the one-axis shape
+   byte-for-byte in the same files, with no migration, alias, or intermediate release, and no control
+   diff is required because nothing shipped is being corrected.
+
+**Rejected alternatives:**
+
+- **Keep the one-axis model and special-case the three collapsed reasons inside `superseded`'s own
+  handling.** This is the flattening pattern the audit already named: the state name stops
+  distinguishing what an operator must respond to differently, and the distinction has to be
+  reconstructed from context every time instead of being carried on the record.
+- **Add a `published: bool` beside the existing one-axis enum instead of a true second axis.** Does
+  not resolve the semantic/publication conflation this ADR exists to fix, and cannot express states a
+  real correction workflow needs — e.g. content already CONTRADICTED by new evidence that a caller has
+  not yet unpublished, a transient and legitimate combination a boolean bolted onto one enum cannot
+  represent without becoming a second enum in practice.
+- **Defer the decision until Studio ships a lifecycle UI.** Rejected: this is a data-model question
+  independent of any UI, #220 has stayed open on this exact blocker, and every day of deferral is a day
+  the shipped one-axis model can gain more callers to migrate later.
+
+**Consequences:** #220's full lifecycle implementation is unblocked and must consume this ADR's two
+axes rather than extend the one-axis model. `MemoryState`, `MemoryTransition`, `apply_transition`,
+`MemoryRecord` (`core/governor/src/memory.rs`), the shipped policy/schema pair, and every test binding
+them (`core/governor/tests/memory.rs`, `apps/cli/tests/development_cli.rs`) must be rewritten for the
+two-axis shape as follow-up implementation work — none of that is done by this ADR itself. The
+`wire_vocabulary!`/`closed_vocabulary!` macro machinery already in place for these types (#362, #381)
+is reused as the spelling generator for both new axes; it is a generator, not the axis count, so
+nothing about it constrains this decision. `MemoryAdmissionRefused` (#488) needs no change: it never
+encoded the one-axis model and satisfies decision 6 already. Decision 7's rule is standing beyond
+memory: it governs any future correction to a checked-in `1.0.0` artifact anywhere in this
+repository, not only the memory schemas, and any such correction must cite decision 7 and exhibit
+the same kind of control (`git diff --stat` naming zero authored files touched, or the equivalent for
+the artifact class in question) rather than assert derivation.
+
+**What this ADR does not establish**, named so nobody reads more into it than is decided: it does not
+implement the two-axis types, the transition matrix, event persistence for lifecycle transitions, or
+any schema/policy edit — those remain #220's open implementation work. It does not decide which
+actor/authority may move which axis, the exact set of legal (semantic, publication) pairs, or how
+`expired` interacts with a caller-chosen retention window — those are implementation-time decisions
+within the two-axis frame this ADR fixes, not decisions this ADR is making for them.
+
+**Relationship and supersession:** this ADR refines ADR-021 (D-035) by routing memory-record erasure
+through the identical mechanism rather than inventing a second one, and is the first ADR to make
+Data & Protocols §16's `memory_record.status` field normative for an implementation rather than a
+descriptive reference. Decision 7 answers, for the whole repository and not only for memory, the
+"corrected in place or versioned" question `#220`'s own audit trail named as this ADR's to decide;
+it is grounded in `#508`/PR `#511` — the `event-envelope` catalog digest recorded wrong in both the
+live catalog and the frozen `releases/1.0.0/` snapshot, fixed in place with a two-file,
+zero-`*.schema.json` diff as the exhibited control — rather than argued from a hypothetical. This ADR
+supersedes no prior ADR — no earlier ADR fixed the memory lifecycle's axis count or the
+frozen-artifact correction rule — but any future change to the two memory axes, the
+supersedes-as-relationship rule, the withdrawal/erasure boundary, or decision 7's authored-vs-derived
+rule and its control requirement requires a new accepted ADR. This makes D-046 normative.

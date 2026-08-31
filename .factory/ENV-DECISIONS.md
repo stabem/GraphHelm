@@ -1098,19 +1098,28 @@ flake. Re-derived against `origin/main` at `7b55cf0` on 2026-08-30:
 #439  bbe6c8e  MERGED 2026-08-26  the pipe wait is bounded BELOW the leases it races, and those
                                   leases were raised past the measured startup tail (28 concurrent
                                   sidecars, idle machine: min 1766 / p50 1840 / p90 1926 / max 1953 ms)
-#386           OPEN               the issue itself is not closed
+#386           CLOSED 2026-08-31  closed by the measurement below
 ```
 
-**The premise is unverified, not refuted, and the difference decides the rule.** The mechanism behind
-those failures was measured and attacked by two changes aimed at exactly it - but the failure RATE has
-not been re-measured since either landed, so the evidence that the cluster fails is older than the
-work done against it. **An unmeasured gate condition is not a satisfied one**, and a rule that treated
-"probably fixed" as "measured green" would be the false-red trap arriving through the front door
-instead of the back.
+**The lifting run happened, and the condition SPLIT instead of lifting clean.** A's sealed measurement
+(2026-08-31, #386 comment 5472590167): the `wait_for_pipe` cluster went **0 red in 10 whole-binary
+runs at `1a5ff3b`, in the regime that used to fail it, with the regime verified present by a
+during-run sampler** (cpu median 84%, up to 5 concurrent cargo) - excluding the pre-fix ~1-in-2 rate
+at 99.9% (and NOT excluding 1-in-50, which the report says). **The cluster's half of this condition is
+satisfied by measurement, and #386 is closed on it.**
 
-**What lifts it: a run of the cluster in the regime that produced the failures - the whole binary, its
-own test-count of concurrent sidecars - reported with the failure rate rather than with a colour.**
-Until that exists, the stage waits.
+**The stage still waits, on a different named subject: the same 10 runs produced 1 red with a NEW
+shape** - signal accepted (200) but zero rings observed by the armed sleeper, `wake_http.rs:603`,
+on a 106s run against a 60-65s norm - filed as **#514**, pooled with nothing above. Lifting the stage
+clean on the cluster's green would launder that 1-in-10: a stage that fails one run in ten for a new
+reason trains the same re-run-instead-of-read the rule exists to prevent. **The stage is gated on
+#514's rate now; the cluster's condition does not regenerate.**
+
+**What lifts it: a run of the whole binary in the regime that produced #514, reported as a rate with
+named bases and a verified regime - the same bar the cluster just cleared. Until that exists, the
+stage waits.** And if the cluster itself goes red again after this retirement, that red re-enters as
+a NEW subject with its own ticket and its own rate - the 0/10 above explicitly does not exclude
+1-in-50, so a returning cluster red is a finding, never a violation of this record.
 
 #### The scope rule, with the command that makes it executable
 

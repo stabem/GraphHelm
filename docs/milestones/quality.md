@@ -94,8 +94,12 @@ independently); wake_status cannot say whether the alarm fired. The execution en
 BECAUSE the judge refused. Those findings are the recorded backlog seed for M07.
 
 The gate-freeze rule ships as a pure check (`freeze_violation`): a diff touching gate
-machinery (`core/quality/`, `tools/pathogens/`, `docs/gates/`) together with anything
-outside it is a hard violation — the judge and the judged never move in one PR.
+machinery together with anything outside it is a hard violation — the judge and the judged
+never move in one PR. The rule's charter lives inside the freeze at `docs/gates/freeze.md`,
+and the authoritative prefix list is the `GATE_MACHINERY` constant beside `freeze_violation`.
+(This paragraph used to restate the list and drifted — it still said three prefixes after
+`tools/source-invariants/` made four (#361, found in #282). A restated list is a second
+producer of one set, and the copy is the side nothing checks.)
 
 `graphhelm quality certify` debuts GHCLI018_GATE_INVALID; its registry is CLOSED
 (gate-geometry; adding a gate means adding its thymus adapter — no generic door), and the

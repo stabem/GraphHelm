@@ -2353,7 +2353,7 @@ mod tests {
         );
         assert!(
             !DEFAULT_ALLOW_PROGRAMS.is_empty(),
-            "an empty default would silently permit nothing and read as 'no policy' rather than              as a refusal -- if that is ever wanted, it needs its own argument"
+            "an empty default would silently permit nothing and read as 'no policy' rather than as a refusal -- if that is ever wanted, it needs its own argument"
         );
     }
 }

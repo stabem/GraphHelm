@@ -160,6 +160,7 @@ fn the_identity_round_trips_and_old_records_decode_as_none() {
             path: "C:/tier1/provider.exe".to_owned(),
             sha256: digest_hex(b"the provider bytes"),
         }),
+        contained_session: None,
     };
     let wire = serde_json::to_string(&record).expect("encodes");
     let back: ToolCallRecord = serde_json::from_str(&wire).expect("decodes");

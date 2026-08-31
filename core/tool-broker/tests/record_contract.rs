@@ -29,6 +29,7 @@ fn a_record_serializes_without_any_free_form_stream_content() {
         truncated: false,
         reused: false,
         verified_executable: None,
+        contained_session: None,
     };
     let json = serde_json::to_string(&record).unwrap();
     // The record is what 05d will externalize beside Evidence; the streams themselves must

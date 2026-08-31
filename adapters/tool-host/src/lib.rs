@@ -6,6 +6,7 @@
 pub mod cache;
 pub mod host;
 pub mod process;
+pub mod session;
 pub mod snapshot;
 pub mod tools;
 pub mod verified;

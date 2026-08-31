@@ -148,6 +148,7 @@ impl ToolHost {
                         truncated: false,
                         reused: false,
                         verified_executable: None,
+                        contained_session: None,
                     },
                     CapturedStreams {
                         stdout: Vec::new(),
@@ -236,6 +237,7 @@ impl ToolHost {
             // verified doorway's consumer is #543's provider session. Absent, explicitly
             // unknown -- never invented (D-042).
             verified_executable: None,
+            contained_session: None,
         };
         // Store only clean completions of cache-eligible calls; a storage failure is not a
         // call failure (the cache is an economy, not a dependency).

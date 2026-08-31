@@ -68,6 +68,13 @@ pub struct ToolCallRecord {
     /// (#425's shape); whoever adds it must version the record instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_executable: Option<VerifiedExecutableIdentity>,
+    /// The broker-owned session this call ran in (#552). `None` for everything that is not a
+    /// provider-session call, and for records that predate the field. Same compatibility
+    /// dependency as `verified_executable` above: the new-record-to-old-reader direction rests
+    /// on this struct NOT carrying `deny_unknown_fields` — hardening it later must version the
+    /// record instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contained_session: Option<ContainedSessionIdentity>,
 }
 
 /// The identity half of #540, as the record carries it: which absolute path, which bytes.
@@ -76,4 +83,21 @@ pub struct ToolCallRecord {
 pub struct VerifiedExecutableIdentity {
     pub path: String,
     pub sha256: String,
+}
+
+/// The contained-session half of D-042's primary clause (#552): which CONTAINED one-shot
+/// spawn a provider call ran in, and over which snapshot generation -- the name says what the
+/// mechanism DOES (a contained one-shot invocation), not the protocol a consumer may speak over
+/// it. Beside `verified_executable`, this is what
+/// lets a `RetrievalCoverageReceipt` bind "a named program in a named session".
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContainedSessionIdentity {
+    /// Derived deterministically from the composition (executable digest, snapshot generation,
+    /// workspace), so an auditor can re-derive it from the record's own fields.
+    pub session_id: String,
+    pub snapshot_generation: String,
+    /// The digest of the binary the session runs — self-contained on purpose, so the session
+    /// identity names its program even when read apart from `verified_executable`.
+    pub executable_sha256: String,
 }

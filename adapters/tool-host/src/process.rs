@@ -57,6 +57,15 @@ pub enum HostError {
     /// depth: `authorize` can never produce the shape, and the host refuses it anyway.
     #[error("the plan's tier cannot carry its effect")]
     TierViolation,
+    /// The program is not an identity the broker can verify (#540): a relative name would be
+    /// resolved by the OS's search order, which is how one name runs two binaries.
+    #[error("the executable is not pinned: {rule}")]
+    ExecutableNotPinned { rule: &'static str },
+    /// The bytes at the pinned path do not hash to the expected value (#540). Carries both so
+    /// the operator can decide between re-pinning and investigating; never falls back to
+    /// running.
+    #[error("the executable does not match its pin")]
+    ExecutableMismatch { expected: String, actual: String },
 }
 
 /// The fixed inheritance allowlist. Everything else the parent holds — passphrases, tokens,
@@ -112,6 +121,33 @@ fn extra_env_name_allowed(name: &str) -> bool {
         return false;
     }
     !FIXED_GIT.iter().any(|(fixed, _)| *fixed == upper)
+}
+
+/// Spawn a [`crate::verified::VerifiedExecutable`] in the workspace (#540): the program the
+/// child runs IS the absolute path the verification hashed. Everything else — scrubbed
+/// environment, deadline, caps — is [`run_in_workspace`], unchanged: one spawn funnel, one
+/// verified doorway into it.
+///
+/// # Errors
+/// Exactly [`run_in_workspace`]'s.
+pub fn run_verified_in_workspace(
+    root: &Path,
+    verified: &crate::verified::VerifiedExecutable,
+    arguments: &[String],
+    extra_env: &BTreeMap<String, String>,
+    path_prepend: &[PathBuf],
+    stdin_bytes: Option<&[u8]>,
+    limits: &ProcessLimits,
+) -> Result<CapturedProcess, HostError> {
+    run_in_workspace(
+        root,
+        &verified.path().display().to_string(),
+        arguments,
+        extra_env,
+        path_prepend,
+        stdin_bytes,
+        limits,
+    )
 }
 
 /// Spawns `program` with `arguments` (argv only — never a shell) in `root`, with the scrubbed

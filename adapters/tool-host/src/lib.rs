@@ -7,4 +7,5 @@ pub mod cache;
 pub mod host;
 pub mod process;
 pub mod tools;
+pub mod verified;
 pub mod workspace;

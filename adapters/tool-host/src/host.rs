@@ -72,6 +72,9 @@ fn host_error_code(error: &HostError) -> String {
         HostError::Config { .. } => "GHTOOL004_CONFIG".to_owned(),
         HostError::Escape => "GHTOOL005_ESCAPE".to_owned(),
         HostError::TierViolation => "GHTOOL006_TIER".to_owned(),
+        // GHTOOL007 is taken by EXIT_UNKNOWN at the disposition layer.
+        HostError::ExecutableNotPinned { .. } => "GHTOOL008_EXECUTABLE_UNPINNED".to_owned(),
+        HostError::ExecutableMismatch { .. } => "GHTOOL009_EXECUTABLE_MISMATCH".to_owned(),
     }
 }
 
@@ -143,6 +146,7 @@ impl ToolHost {
                         stderr_bytes: 0,
                         truncated: false,
                         reused: false,
+                        verified_executable: None,
                     },
                     CapturedStreams {
                         stdout: Vec::new(),
@@ -227,6 +231,10 @@ impl ToolHost {
             stderr_bytes: captured.stderr.len() as u64,
             truncated: captured.truncated,
             reused,
+            // Builtin tools run in-process or through the unverified funnel today; the
+            // verified doorway's consumer is #543's provider session. Absent, explicitly
+            // unknown -- never invented (D-042).
+            verified_executable: None,
         };
         // Store only clean completions of cache-eligible calls; a storage failure is not a
         // call failure (the cache is an economy, not a dependency).

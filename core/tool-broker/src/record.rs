@@ -55,4 +55,25 @@ pub struct ToolCallRecord {
     /// Whether this record was served from the snapshot-keyed read cache instead of a fresh
     /// execution (Task 9b). A reused record's digests are byte-identical to the original's.
     pub reused: bool,
+    /// The verified identity of the binary that ran, when the call went through the verified
+    /// doorway (#540): absolute path plus SHA-256 of the bytes at verification time. `None` for
+    /// builtin in-process tools and for records that predate the field — absent, explicitly
+    /// unknown, never invented (D-042: GraphHelm does not invent executable identity absent
+    /// from `ToolCallRecord`; now the record has somewhere for a REAL one to live).
+    ///
+    /// COMPATIBILITY DEPENDENCY (L's #550 review): a new record CARRYING this field stays
+    /// readable by an old reader only because `ToolCallRecord` has no `deny_unknown_fields` —
+    /// the safety of that direction rests on the ABSENCE of an attribute. Hardening this struct
+    /// with `deny_unknown_fields` later would silently convert that row into a reader break
+    /// (#425's shape); whoever adds it must version the record instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_executable: Option<VerifiedExecutableIdentity>,
+}
+
+/// The identity half of #540, as the record carries it: which absolute path, which bytes.
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifiedExecutableIdentity {
+    pub path: String,
+    pub sha256: String,
 }

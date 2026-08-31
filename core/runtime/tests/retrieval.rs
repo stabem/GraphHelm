@@ -21,8 +21,9 @@ use graphhelm_runtime::ports::{
 };
 use graphhelm_runtime::retrieval::{
     IndexResponse, RetrievalOutcome, RetrievalReceiptError, StructuralIndexRequest,
-    ValidatedRetrievalCoverageReceipt, compile_plan, compile_plan_against, compile_plan_within,
-    compile_receipt, retrieve_coverage as retrieve_coverage_against,
+    UnavailableStructuralCodeIndex, ValidatedRetrievalCoverageReceipt, compile_attempt,
+    compile_plan, compile_plan_against, compile_plan_within, compile_receipt,
+    retrieve_coverage as retrieve_coverage_against,
     validate_retrieval_receipt as validate_retrieval_receipt_against,
 };
 use graphhelm_tool_broker::effect::IsolationTier;
@@ -1770,5 +1771,83 @@ fn coverage_entry_separator_and_provider_order_do_not_change_receipt_identity() 
         normalised.stable_bytes().unwrap(),
         canonical.stable_bytes().unwrap(),
         "provider ordering and platform separators are not semantic receipt identity"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// #219 slice 2 -- fail-closed as a property of the PRODUCT, not of the test fixtures.
+//
+// Before this slice the ONLY implementation of `StructuralCodeIndex` in this repository was
+// `FakeStructuralCodeIndex`, above, in this file. `retrieve_coverage` had no caller outside tests
+// either. So nothing shipped decided what an unavailable provider MEANS, and the first production
+// caller would have decided it alone, at the moment of writing, with the cheapest shape being an
+// empty result -- which `compile_receipt` is entitled to read as proven absence.
+// ---------------------------------------------------------------------------------------------
+
+/// The provider that ships until a real one exists. Its whole job is to refuse.
+#[test]
+fn the_shipping_provider_refuses_instead_of_answering_empty() {
+    let request = receipt_request();
+    assert_eq!(
+        UnavailableStructuralCodeIndex.retrieve(&request).err(),
+        Some(StructuralCodeIndexError::Unavailable),
+        "the shipping provider must REFUSE. An implementation that returns an empty response \
+         instead is the defect this slice exists to make impossible: an empty response with \
+         complete coverage is a licensed absence claim, and this provider has searched nothing"
+    );
+}
+
+/// The load-bearing half. A provider that never answered must not become a fact about the subject.
+#[test]
+fn an_unavailable_provider_compiles_to_a_typed_refusal_and_never_to_absence() {
+    let request = receipt_request();
+    let outcome = compile_attempt(&UnavailableStructuralCodeIndex, &receipt_reader(), &request);
+
+    // Asserted FIRST and separately, because it is the specific wrong answer rather than any
+    // wrong answer: `VerifiedAbsence` is the value a caller is licensed to publish as "there is
+    // none", and a provider that refused has established nothing about the subject at all.
+    assert_ne!(
+        outcome,
+        RetrievalOutcome::VerifiedAbsence,
+        "an unavailable provider compiled to VerifiedAbsence -- a zero from an instrument that \
+         never spoke was turned into a fact about the subject"
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::NegativeClaimUnverified
+        },
+        "an unavailable provider must compile to negative_claim_unverified: the refusal has to \
+         reach the caller in the DEVELOPMENT vocabulary, not as a local construction error that \
+         each caller re-interprets"
+    );
+}
+
+/// The split I made in `compile_attempt` has two arms, and an untested arm is decoration.
+///
+/// Staleness is the one failure whose repair is known, so it must NOT arrive as the same
+/// refusal as "the evidence did not survive validation" -- a caller that can act is told to
+/// act, and one that cannot is told it cannot. Sabotaging the split (pooling `IndexStale` with
+/// the rest) reddens here and nowhere else in this file.
+#[test]
+fn a_stale_attempt_keeps_its_own_refusal_instead_of_pooling_with_the_unverified() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.snapshots.index_generation = OpaqueId::parse("stale-generation").unwrap();
+
+    let outcome = compile_attempt(
+        &FakeStructuralCodeIndex::new(response),
+        &receipt_reader(),
+        &request,
+    );
+
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        },
+        "a stale attempt must refuse as index_stale, not as negative_claim_unverified: the two \
+         differ in what the caller can DO about it, and pooling them tells someone whose index \
+         merely needs rebuilding that their search can never be completed"
     );
 }

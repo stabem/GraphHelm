@@ -253,6 +253,78 @@ pub fn validate_retrieval_receipt<R: crate::ports::SourceReader + ?Sized>(
     })
 }
 
+/// The `StructuralCodeIndex` that ships until a real producer exists.
+pub struct UnavailableStructuralCodeIndex;
+
+impl crate::ports::StructuralCodeIndex for UnavailableStructuralCodeIndex {
+    fn retrieve(
+        &self,
+        _request: &StructuralIndexRequest,
+    ) -> Result<crate::ports::StructuralIndexResponse, crate::ports::StructuralCodeIndexError> {
+        Err(crate::ports::StructuralCodeIndexError::Unavailable)
+    }
+}
+
+/// One retrieval attempt, compiled to an outcome a caller may act on.
+///
+/// This exists so that "a failed attempt is not an absence" is decided here, once, for every
+/// caller that comes through this door -- rather than by each caller at the moment it first needs
+/// an answer. Before it, the only implementation of the port lived in a test file and
+/// `retrieve_coverage` had no production caller at all: the decision was unmade, and the cheapest
+/// shape available to whoever made it first is an empty result, which `compile_receipt` is
+/// entitled to read as proven absence.
+///
+/// **The limit, stated because the stronger sentence is the tempting one.** `retrieve_coverage`
+/// remains `pub`, so this is the safe door and not the only one: an integrator can still call it
+/// directly and interpret the `Err` alone. What ships is a correct answer available to everyone,
+/// not an incorrect answer made unreachable. Whether that door narrows -- `pub(crate)` costs one
+/// import today -- is #219's decision and not this slice's.
+///
+/// **No error arm may produce `Claim` or `VerifiedAbsence`.** Those two are claims about the
+/// SUBJECT; an error is a fact about the ATTEMPT, and an instrument that did not speak has
+/// established nothing about what it was pointed at.
+#[must_use]
+pub fn compile_attempt<
+    I: crate::ports::StructuralCodeIndex + ?Sized,
+    R: crate::ports::SourceReader + ?Sized,
+>(
+    index: &I,
+    reader: &R,
+    request: &StructuralIndexRequest,
+) -> RetrievalOutcome {
+    let error = match retrieve_coverage(index, reader, request) {
+        Ok(receipt) => return compile_receipt(&receipt),
+        Err(error) => error,
+    };
+    // Matched exhaustively rather than with a wildcard, for the reason `compile_plan` gives about
+    // `CoverageState`: a variant added upstream must break this build instead of falling into
+    // whatever the catch-all happened to say. A refusal vocabulary that shrinks in silence is the
+    // failure this whole path exists to prevent.
+    let code = match error {
+        // Staleness is NOT pooled, and the split is the same one `compile_plan` already makes:
+        // it is the single failure whose repair is known and nameable, so a caller who wants to
+        // fix the situation needs it told apart from "the search was never finished".
+        RetrievalReceiptError::IndexStale => DevelopmentRefusalCode::IndexStale,
+        // Everything else pools deliberately. These differ in WHERE Runtime caught the provider
+        // out, and not one of them changes what the caller may now say about the subject: the
+        // evidence did not survive validation, so no negative claim is verified. Pooling here is
+        // a statement about the caller's licence, not an admission that the causes are alike --
+        // the cause is already named by `RetrievalReceiptError`, which is what a debugger reads.
+        RetrievalReceiptError::ProviderUnavailable
+        | RetrievalReceiptError::BindingMismatch
+        | RetrievalReceiptError::BrokerRecordInvalid
+        | RetrievalReceiptError::CoveragePromotion
+        | RetrievalReceiptError::PaginationUnfinished
+        | RetrievalReceiptError::PaginationLoop
+        | RetrievalReceiptError::PaginationInconsistent
+        | RetrievalReceiptError::LimitExceeded
+        | RetrievalReceiptError::EvidenceInvalid
+        | RetrievalReceiptError::InvalidWire
+        | RetrievalReceiptError::DigestMismatch => DevelopmentRefusalCode::NegativeClaimUnverified,
+    };
+    RetrievalOutcome::Refused { code }
+}
+
 /// Compile only from a validated producer receipt. Positive findings retain their coverage; a zero
 /// becomes absence only when every path and bounded negative scope has exact complete coverage.
 #[must_use]

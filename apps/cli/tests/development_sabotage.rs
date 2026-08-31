@@ -378,6 +378,64 @@ fn s4_unsafe_compression_is_still_accepted() {
     }
 }
 
+/// Closing S4 moves a RELEASED schema, and the red window above does not say so.
+///
+/// The three red-window entries read as one class — the harness doc says "S2, S4 and S5a retain
+/// their prior status" in a single breath — but their remedies land in three different places, and
+/// only one of them is expensive. Measured on `origin/main` at `da1ae632`:
+///
+/// | entry | the protection edits | released? |
+/// |---|---|---|
+/// | S2 | `extensions/builtin/graphhelm-development-contracts/schemas/development-envelope.schema.json` | no — free to tighten |
+/// | S4 | `schemas/context-capsule.schema.json` | **yes** — byte-identical to `schemas/releases/1.0.0/` |
+/// | S5a | nothing — captured journey evidence has no schema in this tree | not applicable |
+///
+/// S4's stated remedy is a TIGHTENING: `excluded` becomes required, or the sections gain `minItems`.
+/// Applied to the working copy, that same tightening lands on the frozen `1.0.0` baseline, and every
+/// capsule already legal under it stops validating. That is a release decision, not a schema edit,
+/// and it belongs to the same class ADR-033 deferred for the countersign signature field — a closed
+/// released shape refuses a document carrying the new requirement rather than ignoring it.
+///
+/// The control that gives this cell its force: all fifteen root schemas with a `1.0.0` counterpart
+/// are byte-identical to it today, so divergence is not the local habit and cannot be waved through
+/// as one. Whoever closes S4 by editing the working copy alone has silently moved the release.
+///
+/// **What this cell asserts is the identity, not the tightening.** It fails the moment the two
+/// copies part, which is exactly when the reader needs the sentence above — before the PR, not
+/// after. It cannot prevent the edit; it makes the edit announce itself. A guard that fires for the
+/// right reason with the wrong name costs a debugging session, so the message names the decision
+/// rather than the mismatch.
+#[test]
+fn closing_s4_would_move_the_released_capsule_schema() {
+    let working = root_schemas().join("context-capsule.schema.json");
+    let released = root_schemas()
+        .join("releases/1.0.0")
+        .join("context-capsule.schema.json");
+
+    // CONTROL FIRST. Two unreadable paths compare equal as errors and would satisfy the assertion
+    // below while observing nothing.
+    let working_bytes = fs::read(&working)
+        .unwrap_or_else(|error| panic!("HARNESS-BROKE: {} unreadable: {error}", working.display()));
+    let released_bytes = fs::read(&released).unwrap_or_else(|error| {
+        panic!("HARNESS-BROKE: {} unreadable: {error}", released.display())
+    });
+    assert!(
+        !working_bytes.is_empty() && !released_bytes.is_empty(),
+        "HARNESS-BROKE: an empty schema file makes the comparison below meaningless"
+    );
+
+    assert_eq!(
+        working_bytes, released_bytes,
+        "`schemas/context-capsule.schema.json` no longer matches `schemas/releases/1.0.0/`. If this \
+         is the S4 protection landing (requiring `excluded`, or `minItems` on the sections), then \
+         the tightening has moved the FROZEN 1.0.0 baseline and every capsule already legal under \
+         it stops validating -- a release decision, not a schema edit, and the same class ADR-033 \
+         deferred for the countersign signature. If it is anything else, this cell is the wrong \
+         reader and should be retired with its reason. Either way the answer belongs in the commit \
+         that parts them, written down."
+    );
+}
+
 /// S1b — MARKED. The schema accepts both fixtures because identity joins are outside JSON Schema;
 /// the journey-contract gate then refuses the actor-as-observer attack and accepts the independent
 /// control.
@@ -506,6 +564,368 @@ fn the_observer_requirement_is_mandatory_which_is_why_s1b_bites() {
         Verdict::Refused(_) => {}
         other => panic!("requiredObserverCapability is not enforced after all: {other:?}"),
     }
+}
+
+/// One citation from the harness doc: the file, the line it names, and the token it promises there.
+#[derive(Debug)]
+struct Citation {
+    path: String,
+    line: usize,
+    token: String,
+}
+
+/// Every `path.rs:LINE` citation in the harness doc, paired with the token it promises at that line.
+///
+/// The population is DERIVED from the document, never hand-copied: a hand list would be a second
+/// copy of the thing under test, and the copy is the side nothing checks. A citation added to the
+/// doc joins this population by being written, which is the only way a coverage claim stays true.
+///
+/// The token is the first identifier-shaped word after the citation -- on the same line where the
+/// doc writes `memory.rs:240   if content_is_secret_shaped(...)`, or on the next non-empty line
+/// where it writes the path and indents the symbol beneath it. Both spellings appear in section 7.
+fn doc_citations(text: &str) -> Vec<Citation> {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut found = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        for word in line.split_whitespace() {
+            // The doc writes most citations inside backticks, and some end in a comma or a full
+            // stop. Trimming the wrapper is not cosmetic: an untrimmed "`core/..." fails the
+            // is_file check below and the citation is skipped SILENTLY, which is a guard that reads
+            // half its population while its name claims all of it. Measured, that half was 6 of 13.
+            let raw = word.trim_matches(|c: char| !(c.is_alphanumeric() || c == '_' || c == '/'));
+            let Some((path, rest)) = raw.split_once(".rs:") else {
+                continue;
+            };
+            let path = format!("{path}.rs");
+            // A range (`:364-368`) names a region rather than one line; the guard below asks about
+            // an exact line, so a range is out of its reach and is skipped rather than guessed at.
+            let Ok(number) = rest.parse::<usize>() else {
+                continue;
+            };
+            if !repository_root().join(&path).is_file() {
+                continue;
+            }
+            let tail = line
+                .split_once(word)
+                .map(|(_, after)| after.to_owned())
+                .unwrap_or_default();
+            // The next line answers for this citation ONLY when the citation stands alone on its
+            // own -- the code-fence spelling where the path sits on one line and the symbol is
+            // indented beneath it. Letting prose fall through to the next line makes a citation
+            // borrow the FOLLOWING citation's symbol and then accuse its own file of not containing
+            // it: measured, `memory.rs:512` was reported missing a token belonging to
+            // `jpd_plugin.rs`. A guard that invents a failure is worse than one that misses.
+            let token = if tail.trim().is_empty() {
+                lines
+                    .iter()
+                    .skip(index + 1)
+                    .find(|candidate| !candidate.trim().is_empty())
+                    .filter(|candidate| !candidate.contains(".rs:"))
+                    .and_then(|candidate| identifier_in(candidate))
+            } else {
+                identifier_in(&tail)
+            };
+            if let Some(token) = token {
+                found.push(Citation {
+                    path,
+                    line: number,
+                    token,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// The first word long enough to be a symbol rather than prose punctuation.
+fn identifier_in(text: &str) -> Option<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .find(|word| {
+            word.len() >= 5
+                && word.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                && word.chars().any(|c| c == '_' || c.is_uppercase())
+        })
+        .map(str::to_owned)
+}
+
+/// Every JSON fixture in the sabotage corpus, where provenance fields live beside the attacks.
+fn corpus_provenance_files() -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![corpus()];
+    while let Some(directory) = stack.pop() {
+        let entries = fs::read_dir(&directory).unwrap_or_else(|error| {
+            panic!("HARNESS-BROKE: {} unreadable: {error}", directory.display())
+        });
+        for entry in entries {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                files.push(path);
+            }
+        }
+    }
+    assert!(
+        !files.is_empty(),
+        "HARNESS-BROKE: the sabotage corpus holds no JSON, so its citations go unread"
+    );
+    files
+}
+
+/// Append every string under a `_`-prefixed key, one per line, so the doc extractor can read it.
+///
+/// **A `_` key marks its whole SUBTREE as provenance, not just a string sitting directly under it.**
+/// The first version of this collector took only direct string children, and `markers.json` writes
+/// its citations as `"_detectors": {"memory": "...", "durable": "..."}` -- one level down, under
+/// keys that carry no underscore of their own. The widening looked live and read nothing. It was
+/// caught by re-rotting the fixture's citation and watching the guard stay GREEN, never by reading
+/// this function.
+///
+/// One string per line matters: the extractor's alone-on-its-line rule decides whether a citation
+/// may borrow the next line's symbol, and running two provenance fields together would let one
+/// answer for the other -- a defect this extractor already had once.
+fn collect_underscore_strings(value: &Value, out: &mut String) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if key.starts_with('_') {
+                    collect_every_string(child, out);
+                } else {
+                    collect_underscore_strings(child, out);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_underscore_strings(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Every string anywhere inside a subtree already known to be provenance.
+fn collect_every_string(value: &Value, out: &mut String) {
+    match value {
+        Value::String(text) => {
+            out.push('\n');
+            out.push_str(text);
+        }
+        Value::Object(map) => {
+            for child in map.values() {
+                collect_every_string(child, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_every_string(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Every cited line still holds the symbol the doc promises there.
+///
+/// Section 7 opens with *"Every site below is measured at `origin/main`"*, and that sentence reads
+/// as a standing property when it records a single past act. Nothing re-measured the sites, and
+/// four of the first four spot-checked had ROTTED: the protections are all intact and merely moved,
+/// but `development_contract_schemas.rs:358` had drifted by **209 lines** -- line 367, the doc's
+/// "would fall at", lands inside an unrelated JSON literal today. A reader following a rotted
+/// coordinate finds nothing where a protection was promised, and the honest conclusion available to
+/// them is that the protection is gone. That is the closed half of this corpus reporting itself as
+/// open, which is the exact dishonesty section 7 exists to prevent.
+///
+/// **This is why the cell asks about CONTENT, not existence.** A citation whose file still exists
+/// and whose line still fits inside it passes any weaker check while pointing at the wrong code --
+/// rot is invisible to a bounds test, and the failure mode is silent by construction.
+///
+/// Every rotted citation is reported together rather than the first one found: a repair pass wants
+/// the list, and stopping at the first turns one fix into one run each.
+#[test]
+fn every_cited_line_in_the_harness_doc_still_holds_its_symbol() {
+    let doc = repository_root().join("docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md");
+    let text = fs::read_to_string(&doc)
+        .unwrap_or_else(|error| panic!("HARNESS-BROKE: the harness doc is unreadable: {error}"));
+    // The corpus fixtures cite the same protections the doc does, and the rot was in BOTH: the doc
+    // said `memory.rs:285` and so did `markers.json`. A guard whose population is only the document
+    // would have reported the class closed with half of it still rotting.
+    //
+    // Only `_`-prefixed keys are read, and that boundary is not cosmetic. Fixture payloads carry
+    // SYNTHETIC paths of the same shape -- `core/auth/middleware.rs:42` is invented journey data,
+    // and a retrieval fixture lists `core/runtime/src/lib.rs:1` as a made-up hit. Those are not
+    // claims about this repository, and flagging them would be a guard fabricating failures out of
+    // test data. The corpus reserves `_safety`, `_measured_at`, `_detectors`, `_shape`, `_note` for
+    // provenance, so provenance is what this reads.
+    let mut text = text;
+    for path in corpus_provenance_files() {
+        collect_underscore_strings(&load_json(&path), &mut text);
+    }
+    let citations = doc_citations(&text);
+
+    // POPULATION CONTROL. An extractor that matched nothing would satisfy the loop below while
+    // reading no citation at all, and the doc's whole point is that it cites.
+    assert!(
+        citations.len() >= 4,
+        "HARNESS-BROKE: only {} citations extracted from the harness doc, so a green below would \
+         mean the extractor stopped working rather than the coordinates being sound",
+        citations.len()
+    );
+
+    let mut rotted = Vec::new();
+    for citation in &citations {
+        let source = fs::read_to_string(repository_root().join(&citation.path))
+            .unwrap_or_else(|error| panic!("HARNESS-BROKE: {} unreadable: {error}", citation.path));
+        let cited = source.lines().nth(citation.line - 1).unwrap_or("");
+        if !cited.contains(&citation.token) {
+            let moved = source
+                .lines()
+                .position(|line| line.contains(&citation.token))
+                .map(|index| format!("now at :{}", index + 1))
+                .unwrap_or_else(|| "not found in the file at all".to_owned());
+            rotted.push(format!(
+                "{}:{} promises `{}` -- {moved}",
+                citation.path, citation.line, citation.token
+            ));
+        }
+    }
+
+    assert!(
+        rotted.is_empty(),
+        "{} of {} cited coordinates in the harness doc have ROTTED. The protections may be intact \
+         and merely moved -- check before editing anything but the doc -- but a reader following \
+         these lands on unrelated code and concludes the protection was removed:\n  {}",
+        rotted.len(),
+        citations.len(),
+        rotted.join("\n  ")
+    );
+}
+
+/// S5a — the marker corpus's own claims, MEASURED against both shipped detectors.
+///
+/// S5a is the only red-window entry with no cell in this suite, and the harness doc gives the
+/// honest reason: captured journey evidence has no schema in this tree, so validating a shape
+/// chosen here against a schema chosen here is a tautology. That argument rules out a SCHEMA-grain
+/// cell. It does not rule out this one.
+///
+/// `markers.json` declares, per marker, whether each shipped detector refuses it — eight booleans
+/// across four markers, every one of them written BY HAND and read by nothing. They encode the
+/// oracle divergence the doc records as drift: the memory screen is a bare `contains("ghp_")`,
+/// while the durable scanner requires a prefix AND a tail of 16 or more. `ghp_` alone therefore
+/// splits them, and the corpus says so in a field no test has ever executed.
+///
+/// **Why an unmeasured field here is worse than a missing one.** When the S5a protection lands it
+/// will reuse a shipped detector, and these markers are what it will be tested against. A marker
+/// the real detector does not recognise makes the future guard pass while refusing nothing — the
+/// sabotage accepted for the wrong reason, wearing a green. That is the fixture-and-defect-share-a
+/// -shape failure, pre-installed, and the moment to catch it is before the protection exists.
+///
+/// Both doors are the PUBLIC ones — `admit_memory_candidate` and `validate_durable_content` — not
+/// the private predicates the corpus cites. The private function is not what production calls, and
+/// a detector reachable only through a path nobody uses is not the detector under test.
+///
+/// The markers are synthetic by construction and the corpus says so at `_safety`: each carries the
+/// SHAPE a detector matches, none is a credential, and none authenticates anything.
+#[test]
+fn every_s5a_marker_behaves_as_the_corpus_says_against_both_shipped_detectors() {
+    use graphhelm_governor::{MemoryCandidate, MemoryRefusalCode, admit_memory_candidate};
+    use graphhelm_graph::{DurableContentError, validate_durable_content};
+    use graphhelm_protocols::{DevelopmentScope, ProjectId, WorkspaceId};
+
+    let markers = load_json(&corpus().join("s5a-secret-capture/markers.json"));
+    let markers = markers["markers"]
+        .as_array()
+        .expect("the marker corpus carries a markers array");
+    assert_eq!(
+        markers.len(),
+        4,
+        "the marker corpus changed size: re-read its classes before trusting the loop below"
+    );
+
+    let scope = DevelopmentScope {
+        workspace_id: WorkspaceId::parse("workspace-s5a").expect("a valid workspace id"),
+        project_id: ProjectId::parse("project-s5a").expect("a valid project id"),
+        subproject_id: None,
+        execution_id: None,
+    };
+
+    // CONTROL FIRST. Both detectors must be shown to ACCEPT something before a refusal means
+    // anything: a screen that refuses every input satisfies every `true` below while observing
+    // nothing, and half these markers assert `false`.
+    let benign = "an ordinary sentence with no credential shape in it";
+    assert!(
+        admit_memory_candidate(&MemoryCandidate::draft(scope.clone(), benign), &scope).is_ok(),
+        "CONTROL FAILED: the memory screen refused benign content, so every verdict below is noise"
+    );
+    assert!(
+        validate_durable_content(&serde_json::json!({ "text": benign }), &[]).is_ok(),
+        "CONTROL FAILED: the durable scanner refused benign content, so every verdict below is \
+         noise"
+    );
+
+    let mut divergences = Vec::new();
+    for marker in markers {
+        let id = marker["id"].as_str().expect("every marker has an id");
+        let value = marker["value"].as_str().expect("every marker has a value");
+
+        let memory_refuses = match admit_memory_candidate(
+            &MemoryCandidate::draft(scope.clone(), value),
+            &scope,
+        ) {
+            Ok(()) => false,
+            Err(refusal) => {
+                // A refusal for the WRONG cause would satisfy a boolean check while proving
+                // nothing about secret detection. The code is what the corpus is claiming.
+                assert_eq!(
+                    refusal.code(),
+                    MemoryRefusalCode::SecretDetected,
+                    "marker {id} was refused by the memory screen for `{:?}`, not for carrying a \
+                     secret shape -- the corpus claim is about secret detection",
+                    refusal.code()
+                );
+                true
+            }
+        };
+        // Same grain as the memory side above, and for the same reason: `LimitExceeded` is also an
+        // error, and a marker refused for its SIZE would satisfy a bare `is_err()` while proving
+        // nothing about secret detection. `Unsafe` is the only verdict the corpus is claiming.
+        let durable_refuses =
+            match validate_durable_content(&serde_json::json!({ "text": value }), &[]) {
+                Ok(()) => false,
+                Err(DurableContentError::Unsafe) => true,
+                Err(other) => panic!(
+                    "marker {id} was refused by the durable scanner as `{other:?}`, not as unsafe \
+                     content -- the corpus claim is about secret detection"
+                ),
+            };
+
+        for (detector, measured, declared) in [
+            ("memory", memory_refuses, marker["memory_refuses"].as_bool()),
+            (
+                "durable",
+                durable_refuses,
+                marker["durable_refuses"].as_bool(),
+            ),
+        ] {
+            let declared =
+                declared.unwrap_or_else(|| panic!("marker {id} declares no {detector}_refuses"));
+            if declared != measured {
+                divergences.push(format!(
+                    "{id}: `{detector}_refuses` says {declared}, the shipped detector says \
+                     {measured}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        divergences.is_empty(),
+        "the S5a marker corpus disagrees with the detectors it was measured against. Either a \
+         detector changed and the corpus was not re-measured, or the corpus was wrong when \
+         written -- and whichever it is, the S5a protection built on these markers would be tested \
+         against fixtures that do not bite:\n  {}",
+        divergences.join("\n  ")
+    );
 }
 
 /// Every corpus entry ships its own README, and the MARKED companion exists.

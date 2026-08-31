@@ -74,8 +74,8 @@ detect the defect is absent, optional, or unlinked.
 
 **S1b was a third-site finding, not a missing check.** The discipline *"independence is compared by
 identity, never by count"* is applied twice with the reasoning written down —
-`core/governor/src/memory.rs:512` (a validator roster may not be the producer) and
-`apps/cli/tests/jpd_plugin.rs:1550` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
+`core/governor/src/memory.rs:764` (a validator roster may not be the producer) and
+`apps/cli/tests/jpd_plugin.rs:1560` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
 was absent on the promise-to-observer pair. `JourneyContractGate` now binds the validated contract,
 its validated observation obligations, and its verification result by `contractId` and trusted
 `contractDigest`. For each promise it requires one or more obligations with the same `promiseId`,
@@ -87,12 +87,12 @@ Two actors may therefore observe one another without the global roster being fal
 per-promise assignment.
 
 **A guard that passes, and what it does not prove.**
-`apps/cli/tests/development_contract_schemas.rs:223` compares the `coverageState` enum on both
+`apps/cli/tests/development_contract_schemas.rs:418` compares the `coverageState` enum on both
 sides and asserts there are eight states. It is careful and correct. It says nothing about whether
 anything references the definition or carries the value. *"The coverage vocabulary is guarded"* is
 true; *"coverage is enforced"* is what it will be taken to mean.
 
-**Oracle drift, recorded as drift.** `core/governor/src/memory.rs:285` screens with
+**Oracle drift, recorded as drift.** `core/governor/src/memory.rs:294` screens with
 `content.contains("ghp_")`; `core/graph/src/persistence.rs:736` requires a prefix **and** a tail of
 16 or 20. A bare `ghp_` is refused by the first and not the second. The direction is fail-safe —
 memory refuses more — so this is logged as divergence between two oracles, **not** as a
@@ -519,7 +519,7 @@ than a silent reinterpretation.
 
 | | site | trigger |
 |---|---|---|
-| memory admission | `core/governor/src/memory.rs:285` | `content.contains("ghp_")` — one prefix, no tail requirement |
+| memory admission | `core/governor/src/memory.rs:294` | `content.contains("ghp_")` — one prefix, no tail requirement |
 | durable content | `core/graph/src/persistence.rs:736` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, authorization, environment-URI and reference-name forms |
 
 `memory.rs` documents its own boundary, and that doc comment was **verified against
@@ -609,9 +609,9 @@ them:
 
 ```
 core/protocols/src/development.rs      is_fresh() -> repo_snapshot == index_generation
-apps/cli/tests/development_contract_schemas.rs:358
+apps/cli/tests/development_contract_schemas.rs:567
        freshness_is_the_relation_between_the_two_snapshot_identities
-apps/cli/tests/development_contract_schemas.rs:364-368
+apps/cli/tests/development_contract_schemas.rs:574-576
        stale.snapshots.index_generation = OpaqueId::parse("snapshot-h")
        assert!(!stale.snapshots.is_fresh(), "an index built from another snapshot is stale ...")
 ```
@@ -619,7 +619,7 @@ apps/cli/tests/development_contract_schemas.rs:364-368
 **Trigger it would catch.** Invert the identity comparison in `is_fresh()` — different reading as
 fresh.
 
-**Would fall at.** `development_contract_schemas.rs:367`.
+**Would fall at.** `development_contract_schemas.rs:576`.
 
 **Why it cannot be red-first.** The protection AND its guard shipped with task-001. Recorded in the
 blueprint as a correction: the plan names "stale snapshots" only under task-010, so the term's
@@ -633,10 +633,10 @@ protection's location.**
 **Protection.**
 
 ```
-core/governor/src/memory.rs:240   if content_is_secret_shaped(content) { ... }
-core/governor/src/memory.rs:245   code: MemoryRefusalCode::SecretDetected
-core/governor/src/memory.rs:285   fn content_is_secret_shaped -> content.contains("ghp_")
-core/governor/tests/memory.rs:43, 472, 501
+core/governor/src/memory.rs:249   if content_is_secret_shaped(content) { ... }
+core/governor/src/memory.rs:254   code: MemoryRefusalCode::SecretDetected
+core/governor/src/memory.rs:294   fn content_is_secret_shaped -> content.contains("ghp_")
+core/governor/tests/memory.rs:63, 858, 887
 ```
 
 **Trigger it would catch.** Remove the screen call at :240, or widen `content_is_secret_shaped` to
@@ -655,7 +655,7 @@ carry it into the journal through the one path this design argued was safe."*
 **Protection.**
 
 ```
-core/governor/src/memory.rs:512-528
+core/governor/src/memory.rs:744-768
     let producer = candidate.produced_by.as_deref();
     let independent = validators.iter().any(|v| Some(*v) != producer);
     if !independent { ... MemoryRefusalCode::SelfValidated ... }
@@ -680,8 +680,8 @@ The required capability is not mistaken for an identity.
 **Protection.**
 
 ```
-core/governor/src/memory.rs:216-226   if scope != admitting_into { ... ScopeMismatch ... }
-apps/cli/tests/development_contract_schemas.rs:302
+core/governor/src/memory.rs:230-232   if scope != admitting_into { ... ScopeMismatch ... }
+apps/cli/tests/development_contract_schemas.rs:511
        a_scope_mismatch_is_refused_under_its_own_code
 ```
 

@@ -865,7 +865,7 @@
           "id": "fixture/sabotage-s5a-secret-capture-markers",
           "kind": "fixture",
           "path": "fixtures/sabotage/s5a-secret-capture/markers.json",
-          "sha256": "sha256:a77ae5fd769da774cfa55e9e0bf58b10072ac34dfd3579200c7377d8bc8c9177",
+          "sha256": "sha256:b59fe1570457ba3698935928b8ab04aee77d3beab07521489e1bee3d54610112",
           "effects": [],
           "permissions": [],
           "requires": {

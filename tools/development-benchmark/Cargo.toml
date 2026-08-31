@@ -22,3 +22,7 @@ tempfile.workspace = true
 [[bin]]
 name = "graphhelm-development-benchmark"
 path = "src/main.rs"
+
+[[bin]]
+name = "paired-driver"
+path = "src/bin/paired-driver.rs"

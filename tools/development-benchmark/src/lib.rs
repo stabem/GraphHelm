@@ -91,6 +91,11 @@ pub enum BenchmarkRefusal {
     /// be seen, this one says it was seen and was zero. The remedies point in opposite directions
     /// -- go and find the counter, versus go and look at why the baseline did no work.
     BaselineZero { field: String },
+    /// The shipped plan discipline refused a frozen retrieval artifact.
+    ///
+    /// Carries the WIRE code (`index_stale`, `scope_mismatch`, ...) rather than a paraphrase, so
+    /// the operator lands on the same vocabulary `compile_plan` speaks everywhere else.
+    RetrievalRefused { code: String, case: String },
 }
 
 /// What one arm was given.
@@ -257,6 +262,337 @@ pub fn verify_frozen_files(
     Ok(())
 }
 
+/// The one bar a run directory's receipts can carry today, with its anti-gaming tail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputRatioReport {
+    /// median(compiled) / median(baseline) -- a ratio of MEDIANS (blueprint SS2), never a median
+    /// of per-case ratios: the derived quantity is defined over the two measured columns.
+    pub input_ratio: f64,
+    pub cases_measured: usize,
+    /// The worst per-case ratio, published BESIDE the median (Bar 1's tail rule): a design that
+    /// halves fifty easy cases and doubles five hard ones passes a median bar comfortably.
+    pub worst_case_ratio: f64,
+    pub cases_where_compiled_exceeded_baseline: usize,
+}
+
+/// Read a paired driver's run directory against the frozen case list.
+///
+/// `arms.json` carries the two `ArmDeclaration`s and is compared BEFORE any number; each
+/// `cases/<id>.json` carries one `CostField` per arm under the receipt vocabulary
+/// (`provider_reported_input_tokens`), so unavailability arrives with provenance and is refused
+/// through the same defence #222 built -- never read as zero. A missing case is a partial run
+/// (a DIFFERENT corpus); an extra case is a receipt nothing froze; both refuse by name.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunArmsFile {
+    baseline: ArmDeclaration,
+    compiled: ArmDeclaration,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunCaseFile {
+    case_id: String,
+    baseline: RunCaseArm,
+    compiled: RunCaseArm,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunCaseArm {
+    /// Snake on the wire ON PURPOSE: this key is the receipt vocabulary, verbatim.
+    provider_reported_input_tokens: graphhelm_runtime::context_accounting::CostField,
+    #[serde(rename = "requiredEvidenceFound")]
+    /// Whether this arm's inputs contained every oracle-required path. Modelled NOW so the
+    /// format cannot fork (deny_unknown_fields would refuse a writer that records it); Bar 2
+    /// starts CONSUMING it when the recall gate joins the report.
+    #[allow(dead_code)]
+    required_evidence_found: bool,
+}
+
+const PROVIDER_INPUT_FIELD: &str = "provider_reported_input_tokens";
+
+pub fn read_run_directory(
+    root: &std::path::Path,
+    cases: &[Case],
+) -> Result<InputRatioReport, BenchmarkRefusal> {
+    let arms_text = std::fs::read_to_string(root.join("arms.json")).map_err(|error| {
+        BenchmarkRefusal::Unreadable {
+            detail: format!("arms.json: {error}"),
+        }
+    })?;
+    let arms: RunArmsFile =
+        serde_json::from_str(&arms_text).map_err(|error| BenchmarkRefusal::Unreadable {
+            detail: format!("arms.json: {error}"),
+        })?;
+    // BEFORE any number, same as the in-memory path: a run whose arms differ has nothing to
+    // compare, and reading its receipts first would put a ratio in scrollback anyway.
+    compare_arms(&arms.baseline, &arms.compiled)?;
+
+    // The stranger check first: receipts for a case nothing froze. A directory listing is the
+    // only way to SEE the extra file, so the sweep is explicit rather than lookup-driven.
+    let frozen: std::collections::BTreeSet<&str> =
+        cases.iter().map(|case| case.id.as_str()).collect();
+    let entries =
+        std::fs::read_dir(root.join("cases")).map_err(|error| BenchmarkRefusal::Unreadable {
+            detail: format!("cases/: {error}"),
+        })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| BenchmarkRefusal::Unreadable {
+            detail: format!("cases/: {error}"),
+        })?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let id = name.strip_suffix(".json").unwrap_or(&name);
+        if !frozen.contains(id) {
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!("cases/{name}: receipt for a case the manifest never froze"),
+            });
+        }
+    }
+
+    let mut baseline_values: Vec<u64> = Vec::new();
+    let mut compiled_values: Vec<u64> = Vec::new();
+    let mut worst_case_ratio: f64 = 0.0;
+    let mut exceeded = 0usize;
+    for case in cases {
+        let path = root.join("cases").join(format!("{}.json", case.id));
+        let text = std::fs::read_to_string(&path).map_err(|error| {
+            // A missing case is a PARTIAL RUN -- a different corpus, never a lower N.
+            BenchmarkRefusal::Unreadable {
+                detail: format!("cases/{}.json: {error}", case.id),
+            }
+        })?;
+        let record: RunCaseFile =
+            serde_json::from_str(&text).map_err(|error| BenchmarkRefusal::Unreadable {
+                detail: format!("cases/{}.json: {error}", case.id),
+            })?;
+        if record.case_id != case.id {
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!(
+                    "cases/{}.json: carries caseId `{}`",
+                    case.id, record.case_id
+                ),
+            });
+        }
+        // Rebuild real receipts and let compare_cost decide: provenance, unavailability and the
+        // zero-baseline rule all live there, and a second copy here would drift.
+        let baseline_receipt = graphhelm_runtime::context_accounting::AccountingReceipt::new()
+            .with_field(
+                PROVIDER_INPUT_FIELD,
+                record.baseline.provider_reported_input_tokens,
+            )
+            .map_err(|_| BenchmarkRefusal::Unreadable {
+                detail: format!("cases/{}.json: unbuildable baseline receipt", case.id),
+            })?;
+        let compiled_receipt = graphhelm_runtime::context_accounting::AccountingReceipt::new()
+            .with_field(
+                PROVIDER_INPUT_FIELD,
+                record.compiled.provider_reported_input_tokens,
+            )
+            .map_err(|_| BenchmarkRefusal::Unreadable {
+                detail: format!("cases/{}.json: unbuildable compiled receipt", case.id),
+            })?;
+        let comparison = compare_cost(PROVIDER_INPUT_FIELD, &baseline_receipt, &compiled_receipt)?;
+        if comparison.ratio > worst_case_ratio {
+            worst_case_ratio = comparison.ratio;
+        }
+        if comparison.ratio > 1.0 {
+            exceeded += 1;
+        }
+        baseline_values.push(comparison.baseline);
+        compiled_values.push(comparison.compiled);
+    }
+    if baseline_values.is_empty() {
+        return Err(BenchmarkRefusal::EmptyRun);
+    }
+
+    // Ratio of MEDIANS (blueprint SS2): the derived quantity is defined over the two measured
+    // columns, and a median of per-case ratios is a different number the fixture separates.
+    let median = |values: &mut Vec<u64>| -> u64 {
+        values.sort_unstable();
+        values[values.len() / 2]
+    };
+    let baseline_median = median(&mut baseline_values);
+    let compiled_median = median(&mut compiled_values);
+    if baseline_median == 0 {
+        return Err(BenchmarkRefusal::BaselineZero {
+            field: PROVIDER_INPUT_FIELD.to_owned(),
+        });
+    }
+    #[allow(clippy::cast_precision_loss)]
+    Ok(InputRatioReport {
+        input_ratio: compiled_median as f64 / baseline_median as f64,
+        cases_measured: cases.len(),
+        worst_case_ratio,
+        cases_where_compiled_exceeded_baseline: exceeded,
+    })
+}
+
+/// One frozen retrieval, exactly as the index answered it (#506 selector design).
+///
+/// Flat on purpose: this file is committed and digest-frozen beside the corpus, so its shape is
+/// wire, not convenience. `repo_snapshot`/`index_generation` are the `SnapshotBinding` halves;
+/// the four bounds are `DeclaredLimits`; `coverage` is the closed `CoverageState` vocabulary.
+/// Rebuilding the runtime types at read time keeps the SHIPPED plan discipline the only judge.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrievalArtifact {
+    pub case_id: String,
+    /// The one query, the case objective verbatim -- the mechanical rule that squeezes the
+    /// harness's discretion out of the selection.
+    pub query: String,
+    pub repo_snapshot: String,
+    pub index_generation: String,
+    pub hits: Vec<String>,
+    pub coverage: String,
+    pub pages: u32,
+    pub max_results: u32,
+    pub max_pages: u32,
+    pub max_bytes: u64,
+    pub max_tokens: u32,
+}
+
+/// A compiled arm's context, plus the paths that went into it (recall is judged against these).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompiledContext {
+    pub capsule: Vec<u8>,
+    pub evidence_paths: Vec<String>,
+}
+
+/// Compile one case's capsule from its frozen retrieval artifact.
+///
+/// The artifact passes through `compile_plan_within` -- the SHIPPED discipline: a stale binding
+/// refuses, an escaping hit refuses, over-budget refuses rather than truncates -- and only the
+/// surviving hits are read. The section decision is made HERE, explicitly (`task` for the
+/// objective, `evidence` for the hits), which is what the #404 seal said content wiring needs.
+pub fn capsule_for_case(
+    objective: &str,
+    artifact: &RetrievalArtifact,
+    repo_root: &std::path::Path,
+) -> Result<CompiledContext, BenchmarkRefusal> {
+    // Rebuilt through serde so the runtime types' own vocabulary is the parser -- a hand-rolled
+    // match over coverage strings would be a second copy of a closed set.
+    let binding: graphhelm_protocols::SnapshotBinding = serde_json::from_value(serde_json::json!({
+        "repoSnapshot": artifact.repo_snapshot,
+        "indexGeneration": artifact.index_generation,
+    }))
+    .map_err(|error| BenchmarkRefusal::Unreadable {
+        detail: format!("artifact {}: binding: {error}", artifact.case_id),
+    })?;
+    let coverage: graphhelm_protocols::CoverageState = serde_json::from_value(
+        serde_json::Value::String(artifact.coverage.clone()),
+    )
+    .map_err(|error| BenchmarkRefusal::Unreadable {
+        detail: format!("artifact {}: coverage: {error}", artifact.case_id),
+    })?;
+    let response =
+        graphhelm_runtime::retrieval::IndexResponse::new(artifact.hits.clone(), coverage)
+            .after_pages(artifact.pages);
+    let limits = graphhelm_protocols::DeclaredLimits {
+        max_results: artifact.max_results,
+        max_pages: artifact.max_pages,
+        max_bytes: artifact.max_bytes,
+        max_tokens: artifact.max_tokens,
+    };
+    let hits = match graphhelm_runtime::retrieval::compile_plan_within(&binding, &response, &limits)
+    {
+        graphhelm_runtime::retrieval::RetrievalOutcome::Claim { hits, .. } => hits,
+        graphhelm_runtime::retrieval::RetrievalOutcome::VerifiedAbsence => {
+            // For a benchmark case a verified nothing is still nothing to compile against.
+            return Err(BenchmarkRefusal::RetrievalRefused {
+                code: "verified_absence".to_owned(),
+                case: artifact.case_id.clone(),
+            });
+        }
+        graphhelm_runtime::retrieval::RetrievalOutcome::Refused { code } => {
+            return Err(BenchmarkRefusal::RetrievalRefused {
+                code: code.wire_name().to_owned(),
+                case: artifact.case_id.clone(),
+            });
+        }
+    };
+
+    let mut items: Vec<String> = Vec::with_capacity(hits.len());
+    for hit in &hits {
+        let content = std::fs::read_to_string(repo_root.join(hit)).map_err(|error| {
+            BenchmarkRefusal::Unreadable {
+                detail: format!("artifact {}: {hit}: {error}", artifact.case_id),
+            }
+        })?;
+        items.push(format!("{hit}\n{content}"));
+    }
+    // The section decision, made explicitly: this is the half the #404 seal reserved for the
+    // item's owner, and here the owner is the benchmark caller.
+    let capsule = graphhelm_runtime::context_compiler::compile_capsule(
+        &artifact.case_id,
+        1,
+        &[
+            ("task".to_owned(), vec![objective.to_owned()]),
+            ("evidence".to_owned(), items),
+        ],
+    );
+    Ok(CompiledContext {
+        capsule,
+        evidence_paths: hits,
+    })
+}
+
+/// The naive arm's context: the objective, then every evidence file in full, in order.
+///
+/// A declared LOWER bound on what a traditional agent reads -- the real one greps, opens
+/// neighbours and retries. The conservative side of the ratio is the publishable side.
+pub fn naive_context(
+    objective: &str,
+    evidence: &[String],
+    repo_root: &std::path::Path,
+) -> Result<String, BenchmarkRefusal> {
+    let mut context = objective.to_owned();
+    for path in evidence {
+        let content = std::fs::read_to_string(repo_root.join(path)).map_err(|error| {
+            BenchmarkRefusal::Unreadable {
+                detail: format!("naive evidence {path}: {error}"),
+            }
+        })?;
+        context.push_str("\n\n");
+        context.push_str(path);
+        context.push('\n');
+        context.push_str(&content);
+    }
+    Ok(context)
+}
+
+/// Read an oracle file and return ONLY its evidence paths (plus the raw text the caller may hash
+/// for provenance -- with the answer field stripped, so nothing downstream can carry it).
+pub fn oracle_evidence_paths(
+    oracle: &std::path::Path,
+) -> Result<(Vec<String>, String), BenchmarkRefusal> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    // NOT deny_unknown_fields, deliberately: the oracle file carries the answer, and this reader
+    // exists precisely so the answer never reaches the arms -- it deserializes only the two
+    // fields below and drops the rest on the floor.
+    struct OracleEvidence {
+        oracle_id: String,
+        required_evidence: Vec<String>,
+    }
+    let text = std::fs::read_to_string(oracle).map_err(|error| BenchmarkRefusal::Unreadable {
+        detail: format!("{}: {error}", oracle.display()),
+    })?;
+    let parsed: OracleEvidence =
+        serde_json::from_str(&text).map_err(|error| BenchmarkRefusal::Unreadable {
+            detail: format!("{}: {error}", oracle.display()),
+        })?;
+    // The "raw" the caller may hash for provenance is REBUILT from what this function is allowed
+    // to see, never the file text: returning the file text would hand the answer to whoever
+    // concatenates carelessly.
+    let stripped = format!(
+        "{}\n{}",
+        parsed.oracle_id,
+        parsed.required_evidence.join("\n")
+    );
+    Ok((parsed.required_evidence, stripped))
+}
+
 /// The digest that freezes a corpus.
 ///
 /// Taken over the CANONICAL form, so that reformatting the manifest does not read as tampering.
@@ -347,6 +683,10 @@ pub fn read_counter_column(field: &str, values: &[u64]) -> Result<ColumnReading,
 pub struct Comparison {
     /// compiled / baseline.
     pub ratio: f64,
+    /// The two observed terms, carried so a consumer can aggregate COLUMNS (a ratio of medians)
+    /// without re-reading receipts -- a bare ratio cannot be re-aggregated honestly.
+    pub baseline: u64,
+    pub compiled: u64,
     /// How observed the ratio is. A ratio is only as observed as its least observed term.
     pub provenance: graphhelm_runtime::context_accounting::CostProvenance,
 }
@@ -411,6 +751,8 @@ pub fn compare_cost(
     #[allow(clippy::cast_precision_loss)]
     Ok(Comparison {
         ratio: compiled_value as f64 / baseline_value as f64,
+        baseline: baseline_value,
+        compiled: compiled_value,
         provenance,
     })
 }

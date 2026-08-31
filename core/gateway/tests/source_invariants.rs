@@ -13,6 +13,12 @@ const MANIFEST: &str = include_str!("../Cargo.toml");
 /// **The population is the directory, not a list.** A hand-written list guards the file that MOVES
 /// and is blind to the file that is ADDED, and nothing says so. Demonstrated before this change: a
 /// probe file written to BREAK the invariant below was invisible to the hand-listed guard.
+///
+/// **The population stops at `src/` on purpose (#503).** Purity is a claim about the CRATE, not
+/// about its tests: a test that touches the filesystem or reads a clock is doing its job, not
+/// violating this invariant. Widening this walk to `tests/` — the natural move for a reader
+/// arriving from #438's sweeps-cover-both-roots work — turns every legitimate test IO call into a
+/// red.
 fn sources() -> Vec<(String, String)> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let entries =

@@ -15,6 +15,12 @@ const MANIFEST: &str = include_str!("../Cargo.toml");
 /// crate's `mcp_capability.rs` arrived in `6b0b058` (#307) while this guard had not been touched
 /// since `9d15bf4` (#47), so the invariant below simply never ran on it -- and a probe file written
 /// to BREAK the invariant passed unnoticed before this change.
+///
+/// **The population stops at `src/` on purpose (#503).** Purity is a claim about the CRATE, not
+/// about its tests: a test that touches the filesystem or reads a clock is doing its job, not
+/// violating this invariant. Widening this walk to `tests/` — the natural move for a reader
+/// arriving from #438's sweeps-cover-both-roots work — turns every legitimate test IO call into a
+/// red.
 fn sources() -> Vec<(String, String)> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let entries =

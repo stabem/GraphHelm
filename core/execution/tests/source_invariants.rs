@@ -119,6 +119,13 @@ fn the_execution_crate_depends_on_exactly_the_declared_crates() {
 /// compile time and never cared about the working directory, but reading a directory at
 /// runtime does, and a `cd` that did not survive a backgrounded command bit this pair the
 /// same day this test was written.
+///
+/// **The population stops at `src/` on purpose (#503).** Purity is a claim about the CRATE, not
+/// about its tests: a test that reads a clock or seeds randomness is doing its job, not
+/// violating this invariant. The authored-string sweep lower in this same file walks BOTH roots
+/// — the two populations differ because the INVARIANTS differ, not because one walk is
+/// unfinished, and a reader arriving from #438's sweeps-cover-both-roots work should widen
+/// neither on the strength of the other.
 fn every_source_file() -> Vec<(String, String)> {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();

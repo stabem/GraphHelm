@@ -11,6 +11,13 @@ const DRIVER_CONTRACT: &str = include_str!("driver_contract.rs");
 /// **The population is the directory, not a list.** A hand-written list guards the file that MOVES
 /// and is blind to the file that is ADDED, and nothing says so. Demonstrated before this change: a
 /// probe file written to BREAK the invariant below was invisible to the hand-listed guard.
+///
+/// **The population stops at `src/` on purpose (#503).** Purity is a claim about the CRATE, not
+/// about its tests: a test that spawns a process or speaks HTTP is doing its job, not violating
+/// this invariant. This walk has already refused a widening once — #407 adopted the
+/// authored-string class in `authored_string_invariants.rs` with its OWN two-root walk precisely
+/// because pointing THIS `sources()` at `tests/` would turn every legitimate test subprocess and
+/// HTTP call into a red, and the tempting remedy would be to weaken the purity guard to fit.
 fn sources() -> Vec<(String, String)> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let entries =

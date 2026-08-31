@@ -76,7 +76,12 @@ const INHERITED: &[&str] = &[
 ];
 
 /// The names the host redirects into the workspace rather than inheriting.
-const REDIRECTED: &[&str] = &["HOME", "USERPROFILE", "TEMP", "TMP"];
+///
+/// `CBM_CACHE_DIR` is #538 (D-042's last clause): a broker-run index provider's cache is confined
+/// to the sandbox exactly the way HOME and TEMP are -- set by the host to a workspace path, denied
+/// in `extra_env`, and structurally absent from inheritance via `env_clear`. Confinement by the
+/// same mechanism as its siblings, so one sweep of this list answers "what does Tier 1 redirect".
+const REDIRECTED: &[&str] = &["HOME", "USERPROFILE", "TEMP", "TMP", "CBM_CACHE_DIR"];
 
 /// The fixed git posture: no system config, no prompts, no optional locks, and a synthetic
 /// commit identity — `env_clear` plus an empty redirected HOME leaves git with no
@@ -139,8 +144,10 @@ pub fn run_in_workspace(
 
     let home = root.join(".home");
     let tmp = root.join(".tmp");
+    let cbm_cache = root.join(".cbm-cache");
     std::fs::create_dir_all(&home).map_err(|source| HostError::Prepare { source })?;
     std::fs::create_dir_all(&tmp).map_err(|source| HostError::Prepare { source })?;
+    std::fs::create_dir_all(&cbm_cache).map_err(|source| HostError::Prepare { source })?;
 
     // Child PATH = path_prepend (host configuration, never caller input) ahead of the
     // parent's PATH, joined the OS way.
@@ -178,6 +185,7 @@ pub fn run_in_workspace(
     }
     command.env("HOME", &home).env("USERPROFILE", &home);
     command.env("TEMP", &tmp).env("TMP", &tmp);
+    command.env("CBM_CACHE_DIR", &cbm_cache);
     for (name, value) in FIXED_GIT {
         command.env(name, value);
     }

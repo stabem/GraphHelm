@@ -289,3 +289,98 @@ fn the_child_runs_in_the_workspace_directory() {
         workspace.path().canonicalize().unwrap()
     );
 }
+
+/// #538 (D-042's last clause): the provider cache directory is CONFINED — set by the host to a
+/// path inside the workspace, exactly as HOME and TEMP already are. A broker-run index process
+/// must have nowhere to write except its sandbox, and nowhere to read a host cache from.
+#[test]
+fn cbm_cache_dir_is_redirected_into_the_workspace() {
+    let workspace = tempfile::tempdir().unwrap();
+    let captured = run(workspace.path(), &["env-dump"], &limits());
+    let dump = String::from_utf8_lossy(&captured.stdout);
+
+    let line = dump
+        .lines()
+        .find(|line| line.starts_with("CBM_CACHE_DIR="))
+        .unwrap_or_else(|| {
+            panic!("CBM_CACHE_DIR must be SET for the child, inside the workspace; dump:\n{dump}")
+        });
+    let value = line.trim_start_matches("CBM_CACHE_DIR=");
+    let canonical_root = workspace.path().canonicalize().unwrap();
+    let canonical_value = Path::new(value)
+        .canonicalize()
+        .expect("the confined cache dir must exist before the child runs");
+    assert!(
+        canonical_value.starts_with(&canonical_root),
+        "the cache dir must live INSIDE the workspace root: {value}"
+    );
+}
+
+/// The refusal half: a caller cannot smuggle its own cache path through `extra_env` — the name
+/// is refused BEFORE anything runs, case-insensitively (Windows env names are case-insensitive,
+/// so `cbm_cache_dir` would shadow the confinement just as surely).
+#[test]
+fn an_extra_env_cbm_cache_dir_is_refused_before_the_process_starts() {
+    use graphhelm_tool_host::process::HostError;
+
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["CBM_CACHE_DIR", "cbm_cache_dir"] {
+        let mut extra = BTreeMap::new();
+        extra.insert(name.to_owned(), "C:/somewhere/outside".to_owned());
+        let refused = run_in_workspace(
+            workspace.path(),
+            &fake_tool(),
+            &["env-dump".to_owned()],
+            &extra,
+            &[],
+            None,
+            &limits(),
+        )
+        .expect_err("a caller-supplied cache path must be refused, not honoured");
+        assert!(
+            matches!(refused, HostError::ExtraEnvDenied { name: denied } if denied == name),
+            "the refusal names the exact key handed in"
+        );
+        // L's #544 pin: the refusal precedes the workspace preparation, so a pre-spawn refusal
+        // cannot have created the sandbox dirs -- this is what makes "before the process starts"
+        // an ASSERTION instead of a name, and it reddens the moment the check moves later.
+        assert!(
+            !workspace.path().join(".cbm-cache").exists(),
+            "a PRE-SPAWN refusal cannot have created the sandbox dirs"
+        );
+    }
+}
+
+/// The host's own cache path is unreachable: a parent carrying CBM_CACHE_DIR (as the operator's
+/// shell realistically does) never leaks it — the child sees the CONFINED value, not the host's.
+/// Same two-piece wrapper as the secrets cell: the sentinel must sit in a REAL parent process
+/// environment.
+#[test]
+fn a_host_cbm_cache_dir_never_reaches_the_child() {
+    if std::env::var_os("GH_TOOL_HOST_INNER_CBM").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "a_host_cbm_cache_dir_never_reaches_the_child",
+                "--nocapture",
+            ])
+            .env("GH_TOOL_HOST_INNER_CBM", "1")
+            .env("CBM_CACHE_DIR", "C:/SENTINEL-host-cache")
+            .status()
+            .expect("re-executing the test binary");
+        assert!(status.success(), "the inner assertion run must pass");
+        return;
+    }
+
+    let workspace = tempfile::tempdir().unwrap();
+    let captured = run(workspace.path(), &["env-dump"], &limits());
+    let dump = String::from_utf8_lossy(&captured.stdout);
+    assert!(
+        !dump.contains("SENTINEL-host-cache"),
+        "the host's cache path leaked into the Tier 1 child"
+    );
+    assert!(
+        dump.lines().any(|line| line.starts_with("CBM_CACHE_DIR=")),
+        "the confined value must be present in its place"
+    );
+}

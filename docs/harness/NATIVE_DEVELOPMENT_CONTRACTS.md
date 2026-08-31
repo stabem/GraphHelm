@@ -5,7 +5,8 @@
 Delivered for issue #226 (task-010). This document records what was **measured**, and is deliberate
 about the difference between what has been proven and what has only been written.
 
-Wiring to the generic candidate gate (#211) is **pending** and named as such in section 7.
+The S1b journey-contract obligation now executes through the generic candidate gate. The broader
+public quality command/API/MCP contract from #211 remains pending and is named in section 7.
 
 ## 1. Purpose
 
@@ -23,8 +24,8 @@ the cell could ever have been red.
 |---|---|
 | `extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.yaml` | the journey: the development contracts exercised against themselves |
 | `extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.fixtures.json` | six cases — two honest, four refusals — binding the journey to the corpus |
-| `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s{1b,2,4,5a}-*/` | the red-window entries, each with its own README |
-| `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/MARKED.md` | the five entries whose protections already shipped |
+| `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s{1b,2,4,5a}-*/` | the original red-window entries; S1b is now marked by its executed gate |
+| Appendix B of this document | the five entries whose protections predated the corpus; S1b's later transition remains beside its original red-window record |
 | `apps/cli/tests/development_journey.rs` | holds the graph and its fixtures against each other |
 | `apps/cli/tests/development_sabotage.rs` | holds the corpus against the schemas it attacks |
 
@@ -42,13 +43,12 @@ declares, and both must name the same property or the sabotage has nothing to bi
 
 ## 3. Two columns, and why the labels matter
 
-**Red window (4):** the protection has not been written, so the sabotage can be genuinely red today.
-`S1b` observer-is-the-actor · `S2` false structural absence · `S4` unsafe compression ·
-`S5a` secret capture, open half.
+**Red window (3):** the protection has not been written, so the sabotage can be genuinely red today.
+`S2` false structural absence · `S4` unsafe compression · `S5a` secret capture, open half.
 
-**Marked (5):** the protection shipped before the entry was written. A red is impossible by
-chronology rather than by carelessness, and each entry says so, names its trigger, and names the
-site it would fall at. `S3` · `S5b` · `S6` · `S7` · `S8`.
+**Marked (6):** five protections shipped before their entries were written; S1b is the sixth and
+carries a measured red-to-green transition. Each entry names its trigger and refusal site.
+`S1b` · `S3` · `S5b` · `S6` · `S7` · `S8`.
 
 Nine entries from eight named sabotages — `S5` splits into an open and a closed half.
 
@@ -64,22 +64,27 @@ vacuously forever, and counting it as coverage would be the exact error this cor
 Every claim below carries the command's own base (`origin/main`) and was taken by walking parsed
 documents rather than by pattern-matching text.
 
-**The three red-window entries against shipped artifacts share one shape**: the record needed to
+**The remaining red-window entries against shipped artifacts share one shape**: the record needed to
 detect the defect is absent, optional, or unlinked.
 
 | entry | artifact | the record is... | measurement |
 |---|---|---|---|
 | S2 | development envelope | **absent** | `#/$defs/coverageState` has **0** `$ref`s under BOTH populations: all 57 schema files (1211 refs, control `#/$defs/opaqueId` = 206) and the 42 live ones excluding `schemas/releases/` pinned copies (890 refs, control = 108). The envelope root does not set `additionalProperties: false`, so a `coverage` field is carried and never checked against the closed vocabulary that exists to constrain it. |
 | S4 | context capsule | **optional** | `sections` is required with six keys, none carrying `minItems`; `excluded` is not required and is unconstrained. A capsule may empty every section, omit `excluded`, and validate. |
-| S1b | journey contract + result | **unlinked** | Actor identity lives in the contract, observer identity in the verification result, and the result binds the contract by `contractDigest` — so the join is available. Nothing records an obligation to perform it. |
 
-**S1b is a third-site finding, not a missing check.** The discipline *"independence is compared by
+**S1b was a third-site finding, not a missing check.** The discipline *"independence is compared by
 identity, never by count"* is applied twice with the reasoning written down —
 `core/governor/src/memory.rs:512` (a validator roster may not be the producer) and
 `apps/cli/tests/jpd_plugin.rs:1550` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
-is absent on the promise-to-observer pair. The repository has beaten this defect twice and stopped
-one relation short. **The fix needs no invention: `identityDistinctValidation` is already shipped and
-tested.**
+was absent on the promise-to-observer pair. `JourneyContractGate` now binds the validated contract,
+its validated observation obligations, and its verification result by `contractId` and trusted
+`contractDigest`. For each promise it requires one or more obligations with the same `promiseId`,
+validates every obligation, matches `requiredObserverCapability` to each
+`resolution.capabilityBinding.capabilityId`, and confirms that every bound `observerId` is present
+in the verification result's global observer roster. Each exact observer is compared with the
+`actorId` on the promise's referenced step. Any equality refuses the promise with a stable finding.
+Two actors may therefore observe one another without the global roster being falsely treated as a
+per-promise assignment.
 
 **A guard that passes, and what it does not prove.**
 `apps/cli/tests/development_contract_schemas.rs:223` compares the `coverageState` enum on both
@@ -96,8 +101,8 @@ vulnerability. Its real cost is false positives on prose that mentions the prefi
 **A declared gap is not a hidden one.** The memory screen ships a section headed *"WHAT THIS SCREEN
 DOES NOT REJECT, declared rather than left to be inferred from the cases that are covered."* The
 marker corpus records those as `DECLARED_GAP` rather than attacking them, which turns it into a
-regression net on the declaration itself. S1b, by contrast, is silence — and silence is what a
-sabotage corpus is for.
+regression net on the declaration itself. S1b entered the corpus as silence and is now an executed
+obligation.
 
 ## 5. How the guards avoid passing vacuously
 
@@ -125,20 +130,28 @@ sabotage corpus is for.
 negative controls that each fail by a different mechanism. Every fixture case names a node the graph
 defines and a file that exists. The journey graph satisfies the shipped graph schema.
 
-**Not proven.** **No `cargo` has run.** The two test files are written and their assertions were
-simulated against the real artifacts, but neither has been compiled. Per the standing rule, a red
-counts only once the run proves the subject BUILT and the named test RAN — `exit 101` does not
-separate *"tests failed"* from *"did not build"*, and the bias runs one way, because a sabotage that
-fails to compile looks like confirmation.
+**S1b proof executed.** The first behavioral mutation held `requiredObserverCapability` constant at
+`browser.semantic-journey` and changed the real observer identity. Against head `37cdffb`, the actor
+identity incorrectly passed; the named test failed on its verdict assertion. A later review found
+that the verification result's `bindings.observers[]` is only a global roster, not a per-promise
+assignment. The next RED cell proved the consequence: A observing B and B observing A was falsely
+refused, while missing obligation links incorrectly passed. GREEN now executes in this test against
+the judge frozen on `main` at `7b55cf0`. The gate joins each promise through one or more observation
+obligations' `resolution.capabilityBinding.{capabilityId,observerId}` values and uses the result
+roster only to confirm each observer's participation. Every matching obligation is validated;
+multiple independent obligations are accepted, while any actor-as-observer binding refuses the
+promise. Mismatched contract ids, digests, capabilities, missing roster identities, and missing
+obligations are refused before any identity claim is made. A renamed actor/observer pair is still
+caught, and schema-bounded duplicate records produce one finding per promise rather than amplifying
+diagnostics. S2, S4 and S5a retain their prior status; this slice makes no claim about them.
 
-The four red-window entries are therefore **RED PENDING BUILD-PROOF**, which is not a weaker result
-than a red. It is not a result.
-
-**A gap between instruments, named in advance.** Fixtures were validated with a JSON-Schema
-validator; the tests use `load_graph` and `OfflineSchemaSet`, which additionally type the document
-and enforce their own depth, size and resource limits. **Nothing run so far covers the space between
-those instruments.** The first real `cargo test` is the first measurement of that space, and should
-be read as such rather than as a regression.
+**A gap between instruments, still bounded rather than hidden.** The executed sabotage test now
+validates the S1b artifacts through `OfflineSchemaSet` and passes the validated evidence to the
+typed journey gate. `cargo test -p graphhelm-cli --test development_sabotage --locked` is the
+executed measurement of that path. Other journey tests use `load_graph`, which additionally types
+graph documents and enforces its own depth, size, and resource limits. No differential corpus proves
+that these instruments accept and refuse exactly the same full input space. The executed S1b path
+is evidence for that path, not a universal equivalence claim.
 
 **One entry is thinner than the others.** S5a has no schema-grain guard, because captured journey
 evidence has no schema in this tree — validating a shape chosen here against a schema also chosen
@@ -158,31 +171,27 @@ and label rather than coordinates. **This journey exposes none of them**: every 
 retrieval or evidence step with no rendered surface. The qualifier arguably makes it inapplicable
 rather than failed — but the reader should be told which, and not left to infer it from silence.
 
-**Agent consensus is asserted nowhere.** The criteria require that *"the generic gate certifies typed
-evidence; agent consensus remains advisory."* The first half is exercised; the second half has **no
-cell in this corpus**. That the property holds today is visible in the gate's own source — the JPD
-module states the council is not read *"not carefully — at all"*, because a gate that consulted
-consensus merely to REFUSE would still be letting agreement move the verdict — but reading a
-comment is not testing a property. **This is the whole authority boundary resting on one unguarded
-sentence**, and the sabotage it needs must fall on the VERDICT moving, never on the council field
-being present: a specimen asserting only that consensus is recorded would pass against an
-implementation that records it and lets it decide.
+**Agent consensus is advisory in both directions.** The same typed verification evidence is tested
+with a schema-valid council recommendation and a schema-valid blocked council result. Both produce
+the same verdict and findings as the legal direct-tier baseline. This is tested for both
+verification-result and journey-contract gates. Journey evidence may carry a council binding inside
+its verification result, but neither gate has a council-dependent code path.
 
 ## 7. What must change when a protection lands
 
 Each red-window guard asserts what is true **today**: the sabotage is accepted. When one fails, the
 protection has landed. Then, and only then:
 
-1. move the entry from the red window to `MARKED.md`, with its owning issue and close state;
+1. mark the entry in this document, with its owning issue and close state;
 2. invert its guard in `development_sabotage.rs`, so it now asserts the refusal;
 3. record the transition pair — `red @ <sha>` and `green @ <sha>` — in the sealed expectations file.
 
 The pair is the certification. A lone green is not: it cannot distinguish a protection that works
 from a cell that was never able to fail.
 
-**Pending on #211.** The corpus must ultimately execute *through* the generic candidate gate. That
-wiring is not written, and the validation commands in the issue body cannot pass until the gate
-lands. Reporting that as pending is part of this deliverable, not a gap in it.
+**Partially delivered by #211.** S1b now executes through a generic typed-evidence gate. S2 remains
+blocked on #219 and S4 on #222. The public quality command/API/MCP contract that accepts typed JPD
+evidence and returns structured diagnostics also remains open under #211.
 
 ## 8. Provenance
 
@@ -191,24 +200,25 @@ Expectations were sealed before each fixture existed, append-only, in
 a pointer rather than edited in place, so an entry that changed can be read against what it replaced
 — including the several corrections that measurement forced along the way.
 
-## Appendix A — the red-window entries, in full
+## Appendix A — the original red-window entries and their transitions, in full
 
 Each entry below shipped as a README beside its fixtures. It lives here instead because an
 extension package declares its own inventory and there is no contribution kind for prose: a file
 the manifest cannot declare is a file the package guard refuses. The reasoning still travels with
 the corpus, one document further out.
 
-## S1b — the observer is the actor
+## S1b — the observer is the actor (marked by #211)
 
 Fixtures: `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s1b-observer-is-the-actor/`
 
-Sabotage corpus entry for #226 (task-010). **Protection is mine to write.** Red window.
+Sabotage corpus entry for #226 (task-010). Protection landed in the S1b slice of #211 after the
+corpus had already recorded the red window.
 
 ### What it attacks
 
-Declared independence that is not independent: a promise whose `requiredObserverCapability` resolves
-to the same identity as the step's `actorId`. The actor vouches for itself, and every field the
-design uses to express independence is filled in correctly.
+Declared independence that is not independent: the observer bound in the verification result has
+the same identity as the promise step's `actorId`. The actor vouches for itself, while the required
+capability can keep a different, valid name.
 
 ### Why this variant and not the other two
 
@@ -251,9 +261,12 @@ identityDistinct            : 0
 requiredObserverCapability  : 0
 ```
 
-The actor identity lives in the **contract** (`step.actorId`); the observer identity lives in the
-**result** (`bindings.observers[].observerId`). The result binds to the contract through
-`contractId` and `contractDigest`, so **the join is available**.
+The actor identity lives in the **contract** (`step.actorId`). The result's
+`bindings.observers[].observerId` values form a global roster and do not say which observer served
+which promise. The exact assignment lives in the **observation obligation**: root `contractId`,
+`contractDigest`, and `promiseId`, plus
+`resolution.capabilityBinding.{capabilityId,observerId}`. The result roster confirms that the named
+observer participated; it cannot create the per-promise relationship by itself.
 
 **What is missing is not the ability to compare — it is any recorded obligation to.** No schema, no
 test, and no declaration ties the two identities together.
@@ -267,11 +280,16 @@ different thing from silence, and this is silence.
 
 | file | role |
 |---|---|
-| `contract-observer-is-the-actor.json` | the attack — `requiredObserverCapability` == `steps[0].actorId` |
-| `contract-observer-independent.json` | positive control — a distinct observer identity |
+| `contract-observer-is-the-actor.json` | the original schema-valid contract subject |
+| `contract-observer-independent.json` | the original schema-valid contract control |
 
-The control is load-bearing: without it, an assertion could be satisfied by refusing every contract,
-and the property is *"the observer is someone else"*, not *"observers are suspicious"*.
+The executed mutation keeps `requiredObserverCapability` constant and binds each contract to a
+validated observation obligation and verification result. The obligation's
+`capabilityBinding.observerId` changes between actor and independent cases, while the result roster
+confirms that identity. A second control has both actors in the global roster while the obligations
+cross-bind A to B and B to A; it proves the roster is not being misread as two per-promise
+self-observation assignments. The controls are load-bearing: without them, an assertion could be
+satisfied by refusing every evidence bundle.
 
 ### Measured state today (`origin/main`, zero cargo)
 
@@ -289,20 +307,19 @@ NEGATIVE CONTROLS   version != 1                       REJECTED (const)
 mechanism** — including one proving `requiredObserverCapability` is genuinely required, which is
 what makes the attack a *satisfied* requirement rather than a missing one.
 
-### Expected assertion (registered before the fixture)
+### Assertion (registered before the fixture, now executed)
 
-Verification refuses the promise, naming the capability and stating that its identity is not
+Verification refuses the promise, naming the bound observer and stating that its identity is not
 distinct from the actor performing the step. The refusal must be for **non-independence
 specifically**, not for absence — an implementation that only checks presence would pass this
 fixture, since the field is present and well-formed.
 
 ### What is NOT claimed
 
-- **No red is recorded.** No cargo has run; there is no slot. Status: **RED PENDING BUILD-PROOF**.
+- S2, S4, and S5a are not repaired by S1b's executed red-to-green transition.
 - Variants 1 and 2 are **not** claimed as gaps; they are discarded as plausibly already mechanical.
-- The measurement above says the obligation is unrecorded. It does **not** claim no runtime code
-  anywhere performs such a comparison — only that nothing in the schemas, the one existing
-  independence mechanism, or the verification result records it.
+- The historical measurement above established the pre-protection state at its recorded base. It
+  is not a claim that the obligation remains unrecorded after `JourneyContractGate` landed.
 
 Sealed expectation record: `.factory/n-agent-226-sabotage-expectations.md` (S1, ADDENDUM-1/4/8).
 
@@ -653,8 +670,8 @@ core/governor/src/memory.rs:512-528
 > writes validate(self), they write a roster that happens to contain themselves.
 
 **That is the same defect as S1b, solved here.** See `S1b — the observer is the actor`: the journey
-promise names a `requiredObserverCapability` and nothing compares it to the step's actor. The
-discipline is applied at two sites with the reason written down, and not at the third.
+result binds a real `observerId`, and the gate compares that identity with the promise step's actor.
+The required capability is not mistaken for an identity.
 
 ---
 
@@ -702,7 +719,7 @@ evidential weight and should not be read as if they did.
 
 ### Denominator
 
-**5 MARKED entries** (S3, S5b, S6, S7, S8) against **4 red-window entries** (S1b, S2, S4, S5a).
+**6 MARKED entries** (S1b, S3, S5b, S6, S7, S8) against **3 red-window entries** (S2, S4, S5a).
 Total **9** entries from **8** named sabotages — S5 splits into S5a (open) and S5b (closed).
 
 S1a (`requires.observers` never emitted in the extension manifest) is retained separately in the

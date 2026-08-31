@@ -21,8 +21,11 @@ use std::path::{Path, PathBuf};
 
 use graphhelm_protocols::Diagnostic;
 use graphhelm_schema::OfflineSchemaSet;
-use pathogens::certify;
-use pathogens::jpd::{JpdFailureAxis, VerificationResultGate, jpd_suite};
+use pathogens::jpd::{
+    JourneyContractEvidence, JourneyContractGate, JourneyDiagnosticSeverity, JpdEvidence,
+    JpdFailureAxis, VerificationResultGate, journey_contract_suite, jpd_suite,
+};
+use pathogens::{EvidenceGate, certify};
 use serde_json::Value;
 
 /// The message `OfflineSchemaSet::validate` returns when the root schema is absent from the set.
@@ -110,6 +113,35 @@ fn judge(set: &OfflineSchemaSet, id: &str, document: &Value, source: &str) -> Ve
     }
 }
 
+fn assert_journey_evidence_is_schema_valid(
+    set: &OfflineSchemaSet,
+    directory: &Path,
+    evidence: &JpdEvidence,
+    source: &str,
+) {
+    let JpdEvidence::JourneyContract(evidence) = evidence else {
+        panic!("{source}: expected journey-contract evidence");
+    };
+    let contract_id = schema_id(directory, "journey-contract.schema.json");
+    let obligation_id = schema_id(directory, "observation-obligation.schema.json");
+    let result_id = schema_id(directory, "journey-verification-result.schema.json");
+
+    for (id, document, suffix) in [
+        (&contract_id, &evidence.contract, "contract"),
+        (
+            &obligation_id,
+            &evidence.observation_obligations[0],
+            "obligation",
+        ),
+        (&result_id, &evidence.verification_result, "result"),
+    ] {
+        match judge(set, id, document, &format!("{source}-{suffix}")) {
+            Verdict::Accepted => {}
+            other => panic!("{source}-{suffix}: expected schema-valid evidence, got {other:?}"),
+        }
+    }
+}
+
 fn development_schemas() -> PathBuf {
     repository_root().join("extensions/builtin/graphhelm-development-contracts/schemas")
 }
@@ -124,6 +156,96 @@ fn root_schemas() -> PathBuf {
 
 fn corpus() -> PathBuf {
     repository_root().join("extensions/builtin/graphhelm-development-contracts/fixtures/sabotage")
+}
+
+fn matched_s1b_obligation(contract_digest: &str, capability_id: &str, observer_id: &str) -> Value {
+    serde_json::json!({
+        "obligationId": "obligation/receipt-durable",
+        "contractId": "journey/checkout-s1b",
+        "contractDigest": contract_digest,
+        "promiseId": "promise/receipt-durable",
+        "fact": "content_rendered",
+        "requiredEvidenceKinds": ["dom_semantic_snapshot"],
+        "observerRequirements": {
+            "capability": capability_id,
+            "minimumTrust": "first_party_instrumented",
+            "maxAgeSeconds": 30,
+            "absenceWindowSeconds": null
+        },
+        "resolution": {
+            "status": "matched",
+            "catalogBinding": {
+                "kind": "observer_catalog",
+                "catalogId": "graphhelm-jpd/observer-catalog",
+                "catalogVersion": "1.0.0",
+                "catalogDigest": format!("sha256:{}", "1".repeat(64))
+            },
+            "capabilityBinding": {
+                "kind": "observer_capability",
+                "capabilityId": capability_id,
+                "observerId": observer_id,
+                "observerVersion": "1.0.0",
+                "capabilityDigest": format!("sha256:{}", "2".repeat(64))
+            },
+            "configurationDigest": format!("sha256:{}", "3".repeat(64)),
+            "environmentDigest": format!("sha256:{}", "4".repeat(64)),
+            "observedTrust": "first_party_instrumented",
+            "trustCompatibilityCandidate": {
+                "authority": "candidate",
+                "latticeBinding": {
+                    "latticeId": "graphhelm-jpd/evidence-strength-lattice",
+                    "latticeVersion": "1.0.0",
+                    "latticeDigest": "sha256:d1aa1ccfd7fa32be662230098cc1c513fd9edee79c569b2e0ca8aa383c6c5531"
+                },
+                "relationId": "graphhelm-jpd/trust-compatibility",
+                "relationVersion": "1.0.0",
+                "decision": "compatible_candidate",
+                "inputDigest": format!("sha256:{}", "c".repeat(64)),
+                "receipt": {
+                    "evidenceId": "evidence.trust-compatibility-candidate.s1b",
+                    "contentSha256": "d".repeat(64),
+                    "ciphertextSha256": "e".repeat(64)
+                }
+            },
+            "capabilityReceipt": {
+                "capturedAtUnixSeconds": 1_777_000_000_u64,
+                "receipt": {
+                    "evidenceId": "evidence.observer-capability.s1b",
+                    "contentSha256": "5".repeat(64),
+                    "ciphertextSha256": "6".repeat(64)
+                }
+            },
+            "matchedEvidence": [{
+                "evidenceKind": "dom_semantic_snapshot",
+                "capturedAtUnixSeconds": 1_777_000_001_u64,
+                "receipt": {
+                    "evidenceId": "evidence.dom-semantic-snapshot.s1b",
+                    "contentSha256": "7".repeat(64),
+                    "ciphertextSha256": "8".repeat(64)
+                }
+            }],
+            "freshnessEvaluation": {
+                "clock": "unix_seconds",
+                "evaluatedAtUnixSeconds": 1_777_000_005_u64,
+                "maximumObservedAgeSeconds": 5,
+                "requiredMaxAgeSeconds": 30,
+                "requiredAbsenceWindowSeconds": null,
+                "absenceWindow": null,
+                "result": "satisfied"
+            },
+            "evidenceMatchEvaluation": {
+                "evaluatorId": "graphhelm-jpd/evidence-matcher",
+                "evaluatorVersion": "1.0.0",
+                "evaluationSemantics": "registered_deterministic",
+                "inputDigest": format!("sha256:{}", "9".repeat(64)),
+                "receipt": {
+                    "evidenceId": "evidence.evidence-match-evaluation.s1b",
+                    "contentSha256": "a".repeat(64),
+                    "ciphertextSha256": "b".repeat(64)
+                }
+            }
+        }
+    })
 }
 
 /// A wrong schema id is HARNESS-BROKE, never a refusal.
@@ -180,6 +302,36 @@ fn the_development_schema_set_discriminates() {
     }
 }
 
+#[test]
+fn council_direction_fixtures_are_schema_valid() {
+    let directory = jpd_schemas();
+    let set = schema_set(&directory);
+    let id = schema_id(&directory, "journey-verification-result.schema.json");
+    let fixture = repository_root().join(
+        "extensions/builtin/graphhelm-jpd/fixtures/positive/journey-verification-accepted-with-waiver.json",
+    );
+    let executed = load_json(&fixture);
+    let mut direct = executed.clone();
+    direct["bindings"]["council"] =
+        serde_json::json!({ "status": "not_applicable", "reason": "direct_tier" });
+    let recommended = executed.clone();
+    let mut blocked = executed;
+    blocked["bindings"]["council"]["result"]["status"] = Value::String("blocked".to_owned());
+    blocked["bindings"]["council"]["result"]["decision"]["status"] =
+        Value::String("blocked".to_owned());
+
+    for (name, document) in [
+        ("direct", direct),
+        ("council-recommended-with-dissent", recommended),
+        ("council-blocked", blocked),
+    ] {
+        match judge(&set, &id, &document, name) {
+            Verdict::Accepted => {}
+            other => panic!("{name}: council direction fixture is not schema-valid: {other:?}"),
+        }
+    }
+}
+
 /// S2 — RED WINDOW. Evidence claiming a conclusive zero is accepted, and so is an unknown coverage
 /// token, because nothing on the wire references the closed vocabulary that would constrain it.
 ///
@@ -226,27 +378,111 @@ fn s4_unsafe_compression_is_still_accepted() {
     }
 }
 
-/// S1b — RED WINDOW. A journey contract whose promise names the step's own actor as the observer
-/// capability is accepted, because nothing obliges the two identities to be compared.
-///
-/// The independent-observer control is checked too, so a protection cannot satisfy this by refusing
-/// every contract.
+/// S1b — MARKED. The schema accepts both fixtures because identity joins are outside JSON Schema;
+/// the journey-contract gate then refuses the actor-as-observer attack and accepts the independent
+/// control.
 #[test]
-fn s1b_observer_is_the_actor_is_still_accepted() {
+fn s1b_observer_is_the_actor_is_refused_by_the_journey_contract_gate() {
     let directory = jpd_schemas();
     let set = schema_set(&directory);
     let id = schema_id(&directory, "journey-contract.schema.json");
 
-    for fixture in [
-        "s1b-observer-is-the-actor/contract-observer-is-the-actor.json",
-        "s1b-observer-is-the-actor/contract-observer-independent.json",
-    ] {
-        let document = load_json(&corpus().join(fixture));
-        match judge(&set, &id, &document, fixture) {
-            Verdict::Accepted => {}
-            other => panic!("{fixture}: expected accepted, got {other:?}"),
+    let attack = "s1b-observer-is-the-actor/contract-observer-is-the-actor.json";
+    let attack_document = load_json(&corpus().join(attack));
+    assert!(matches!(
+        judge(&set, &id, &attack_document, attack),
+        Verdict::Accepted
+    ));
+    let contract_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    let required_observer_capability = "browser.semantic-journey";
+    let verification_fixture = repository_root().join(
+        "extensions/builtin/graphhelm-jpd/fixtures/positive/journey-verification-first-pass.json",
+    );
+    let bound_evidence = |mut contract: Value, observer_id: &str| {
+        contract["promises"][0]["requiredObserverCapability"] =
+            Value::String(required_observer_capability.to_owned());
+        let mut verification_result = load_json(&verification_fixture);
+        verification_result["contractId"] = Value::String("journey/checkout-s1b".to_owned());
+        verification_result["contractDigest"] = Value::String(contract_digest.to_owned());
+        verification_result["bindings"]["observers"][0]["observerId"] =
+            Value::String(observer_id.to_owned());
+        JpdEvidence::JourneyContract(JourneyContractEvidence {
+            contract,
+            contract_digest: contract_digest.to_owned(),
+            observation_obligations: vec![matched_s1b_obligation(
+                contract_digest,
+                required_observer_capability,
+                observer_id,
+            )],
+            verification_result,
+        })
+    };
+    let attack_evidence = bound_evidence(attack_document, "agent/checkout-driver");
+    assert_journey_evidence_is_schema_valid(&set, &directory, &attack_evidence, "s1b-attack");
+    let attack_diagnostics = JourneyContractGate.diagnostics(&attack_evidence);
+    assert_eq!(attack_diagnostics.len(), 1);
+    assert_eq!(
+        attack_diagnostics[0].code,
+        "GHJPD001_ACTOR_SELF_OBSERVATION"
+    );
+    assert_eq!(
+        attack_diagnostics[0].path,
+        "/observationObligations/0/resolution/capabilityBinding/observerId"
+    );
+    assert_eq!(
+        attack_diagnostics[0].severity,
+        JourneyDiagnosticSeverity::Error
+    );
+    assert_eq!(
+        attack_diagnostics[0].source_file,
+        "observation-obligations.json"
+    );
+    let attack_verdict = JourneyContractGate.evaluate(&attack_evidence);
+    assert!(!attack_verdict.passed, "the actor cannot observe itself");
+    assert_eq!(
+        attack_verdict.findings,
+        [
+            "promise promise/receipt-durable is bound to observer agent/checkout-driver, which is also the actor for step step/submit-order; the observer must be independent from the actor"
+        ]
+    );
+
+    let control = "s1b-observer-is-the-actor/contract-observer-independent.json";
+    let control_document = load_json(&corpus().join(control));
+    assert!(matches!(
+        judge(&set, &id, &control_document, control),
+        Verdict::Accepted
+    ));
+    let control_evidence = bound_evidence(control_document, "graphhelm-browser-user-journey");
+    for (name, evidence) in [("attack", &attack_evidence), ("control", &control_evidence)] {
+        let JpdEvidence::JourneyContract(evidence) = evidence else {
+            panic!("{name}: expected journey evidence");
+        };
+        for capability in [
+            evidence
+                .contract
+                .pointer("/promises/0/requiredObserverCapability"),
+            evidence.observation_obligations[0].pointer("/observerRequirements/capability"),
+            evidence.observation_obligations[0]
+                .pointer("/resolution/capabilityBinding/capabilityId"),
+        ] {
+            assert_eq!(
+                capability.and_then(Value::as_str),
+                Some(required_observer_capability),
+                "{name}: capability must stay constant so only observer identity moves"
+            );
         }
+        assert_ne!(
+            required_observer_capability, "agent/checkout-driver",
+            "the fixed capability must not itself be the actor identity"
+        );
     }
+    assert_journey_evidence_is_schema_valid(&set, &directory, &control_evidence, "s1b-control");
+    let control_verdict = JourneyContractGate.evaluate(&control_evidence);
+    assert!(
+        control_verdict.passed,
+        "the independent observer must remain accepted: {:?}",
+        control_verdict.findings
+    );
 }
 
 /// The JPD set refuses a contract missing the observer requirement.
@@ -290,16 +526,16 @@ fn every_corpus_entry_carries_its_reasoning() {
         )
     });
 
-    let red_window = [
+    let corpus_entries = [
         "s1b-observer-is-the-actor",
         "s2-false-structural-absence",
         "s4-unsafe-compression",
         "s5a-secret-capture",
     ];
-    for entry in red_window {
+    for entry in corpus_entries {
         assert!(
             corpus().join(entry).is_dir(),
-            "red-window entry {entry} has no fixtures"
+            "corpus entry {entry} has no fixtures"
         );
         assert!(
             text.contains(entry),
@@ -310,9 +546,14 @@ fn every_corpus_entry_carries_its_reasoning() {
         text.contains("Appendix B"),
         "the MARKED entries are gone from the doc: the corpus would imply the closed boundaries were never considered"
     );
+    let red_window = [
+        "s2-false-structural-absence",
+        "s4-unsafe-compression",
+        "s5a-secret-capture",
+    ];
     assert_eq!(
         red_window.len(),
-        4,
+        3,
         "the red-window denominator changed without this guard being updated"
     );
 
@@ -391,36 +632,41 @@ fn the_shipped_gate_is_certified_against_the_shipped_suite() {
         certification.specimens, 2,
         "the shipped floor is two specimens; a change here must be read against this corpus"
     );
+
+    let journey_certification = certify(&JourneyContractGate, &journey_contract_suite())
+        .unwrap_or_else(|refusal| {
+            panic!("the journey-contract gate was fooled by its own suite: {refusal:?}")
+        });
+    assert_eq!(journey_certification.gate_id, "gate/jpd-journey-contract");
+    assert_eq!(journey_certification.specimens, 1);
 }
 
-/// The axis vocabulary is exactly two, and this corpus attacks properties NONE of them names.
+/// The axis vocabulary now includes S1b; S2, S4 and S5a still have no axis.
 ///
 /// A denominator guard. When a third axis lands this fails, and whoever adds it is pointed at the
 /// entries still waiting for one.
 ///
 /// S1b used to map onto `SelfValidation`. #294 removed that arm rather than translating it, because
 /// a verification result carries no producer/validator identity, so the axis was not expressible
-/// against that document — and an axis with no basis in the evidence is worse than a missing one,
-/// since it REPORTS that something was checked. S1b therefore joins S2 and S4 as having no axis.
+/// against that document — and an axis with no basis in the evidence is worse than a missing one.
 ///
-/// The property did not die with the arm. Actor identity lives in the journey contract and observer
-/// identity in the verification result, and the result binds the contract by `contractDigest`, so
-/// the join is expressible over the PAIR and merely not over the result alone. An axis can be
-/// reborn by whoever reads both documents together.
+/// The replacement axis reads the journey contract's actual relation: each promise references a
+/// step, and its required observer identity must differ from that step's actor identity.
 #[test]
-fn the_axis_set_is_two_and_no_corpus_property_has_an_axis() {
+fn the_axis_set_includes_s1b_while_the_other_red_window_entries_remain_open() {
     let axes = [
+        JpdFailureAxis::ActorUsedAsOwnObserver,
         JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
         JpdFailureAxis::FlakyClaimedAsProven,
     ];
     assert_eq!(
         axes.len(),
-        2,
+        3,
         "the JPD failure axes changed: re-read this corpus for entries that now have a home"
     );
 }
 
-/// Section 6 of the harness doc names every acceptance criterion it does NOT prove.
+/// Section 6 of the harness doc names the current status of every acceptance criterion.
 ///
 /// The hazard is that section 6 reads as exhaustive: it already declares that no cargo had run and
 /// that a gap between instruments was unmeasured, so a reader takes anything ABSENT from it as
@@ -432,7 +678,7 @@ fn the_axis_set_is_two_and_no_corpus_property_has_an_axis() {
 /// This guard is keyed to the criteria rather than to prose, so adding a criterion to the issue
 /// without declaring its status here fails rather than passes quietly.
 #[test]
-fn the_doc_declares_every_criterion_it_does_not_prove() {
+fn the_doc_declares_the_status_of_every_criterion() {
     let doc = repository_root().join("docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md");
     let text = fs::read_to_string(&doc)
         .unwrap_or_else(|error| panic!("the harness doc is unreadable: {error}"));
@@ -445,7 +691,7 @@ fn the_doc_declares_every_criterion_it_does_not_prove() {
     for criterion in ["Replay preservation", "browser", "advisory", "S5a", "cargo"] {
         assert!(
             section.contains(criterion),
-            "section 6 never mentions `{criterion}`, so a reader takes it as proven"
+            "section 6 never mentions `{criterion}`, so its status is hidden"
         );
     }
 }

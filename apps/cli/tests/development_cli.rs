@@ -8,7 +8,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use graphhelm_governor::{MemoryRecord, MemoryState, MemoryTransition, apply_transition};
+use graphhelm_governor::{
+    MemoryPublicationState, MemoryPublicationTransition, MemoryRecord, MemorySemanticState,
+    apply_publication_transition,
+};
+use graphhelm_protocols::OpaqueId;
 use serde_json::Value;
 
 fn repository_root() -> PathBuf {
@@ -97,8 +101,15 @@ fn memory_status_reports_the_shipped_policy_rather_than_a_copy_of_it() {
     let policy = shipped_policy();
 
     // Landmark: the policy really carries the fields compared below. Without this, a policy that
-    // lost `states` would make the comparison pass over two absent values.
-    for field in ["policyVersion", "states", "transitions", "allowed"] {
+    // lost one of them would make the comparison pass over an absent value.
+    for field in [
+        "policyVersion",
+        "semanticStates",
+        "publicationStates",
+        "publicationTransitions",
+        "allowedPublicationTransitions",
+        "supersessionReasons",
+    ] {
         assert!(
             !policy[field].is_null(),
             "HARNESS-BROKE: the shipped policy has no {field:?}, so comparing it below would \
@@ -115,25 +126,31 @@ fn memory_status_reports_the_shipped_policy_rather_than_a_copy_of_it() {
 /// **The shipped policy and the Runtime's own check are two copies of one rule, and nothing bound
 /// them until this test.**
 ///
-/// `policies/memory-transition.yaml` says *"Only the VERDICT is written here"*. `apply_transition`
-/// says *"The allowed set is written out because it is POLICY."* Both are right, and both are
-/// authoritative-sounding, which is the problem: a tuple added to one and forgotten in the other
-/// leaves the document and the enforcement disagreeing with nobody watching.
+/// `policies/memory-transition.yaml` says *"Only the VERDICT is written here"*.
+/// `apply_publication_transition` says *"The allowed set is written out because it is POLICY."*
+/// Both are right, and both are authoritative-sounding, which is the problem: a tuple added to one
+/// and forgotten in the other leaves the document and the enforcement disagreeing with nobody
+/// watching.
 ///
 /// The comparison is DERIVED on both sides. The runtime half is obtained by asking
-/// `apply_transition` about every state-transition pair — the one oracle, probed, never a
-/// transcription of it — and the policy half by reading the shipped document. A hand-written
-/// expectation on either side would be a third copy.
+/// `apply_publication_transition` about every publication-state/transition pair — the one oracle,
+/// probed, never a transcription of it — and the policy half by reading the shipped document. A
+/// hand-written expectation on either side would be a third copy.
+///
+/// Scoped to the PUBLICATION axis (ADR-032): the shipped policy's `allowedPublicationTransitions`
+/// only ever governs that axis. The semantic axis moves through `supersede`, a relationship
+/// between two records rather than a transition one policy tuple can express, and is out of this
+/// bind's scope by construction.
 ///
 /// The production change this catches: adding an allowed move to the policy without teaching the
 /// Runtime, or the reverse. Both are silent today.
 #[test]
-fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_moves() {
+fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_publication_moves() {
     let policy = shipped_policy();
 
-    let declared: BTreeSet<(String, String, String)> = policy["allowed"]
+    let declared: BTreeSet<(String, String, String)> = policy["allowedPublicationTransitions"]
         .as_array()
-        .expect("the policy carries an `allowed` sequence")
+        .expect("the policy carries an `allowedPublicationTransitions` sequence")
         .iter()
         .map(|entry| {
             (
@@ -147,16 +164,23 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_moves() {
         })
         .collect();
 
+    let record_id = OpaqueId::parse("rec-cli-publication-matrix")
+        .expect("HARNESS-BROKE: the fixture label is not a legal OpaqueId");
+
     let mut enforced = BTreeSet::new();
     let mut refused = 0_usize;
-    for state in MemoryState::every() {
-        for transition in MemoryTransition::every() {
-            let mut record = MemoryRecord::at(*state);
-            if apply_transition(&mut record, *transition).is_ok() {
+    for publication in MemoryPublicationState::every() {
+        for transition in MemoryPublicationTransition::every() {
+            let mut record = MemoryRecord::at(
+                record_id.clone(),
+                MemorySemanticState::Candidate,
+                *publication,
+            );
+            if apply_publication_transition(&mut record, *transition).is_ok() {
                 enforced.insert((
-                    state.wire_name().to_owned(),
+                    publication.wire_name().to_owned(),
                     transition.wire_name().to_owned(),
-                    record.state().wire_name().to_owned(),
+                    record.publication().wire_name().to_owned(),
                 ));
             } else {
                 refused += 1;
@@ -178,7 +202,8 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_moves() {
 
     assert_eq!(
         enforced, declared,
-        "the shipped policy and the Runtime disagree about which moves are allowed. Left is what \
-         `apply_transition` actually does, right is what memory-transition.yaml declares."
+        "the shipped policy and the Runtime disagree about which publication moves are allowed. \
+         Left is what `apply_publication_transition` actually does, right is what \
+         memory-transition.yaml declares."
     );
 }

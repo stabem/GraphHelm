@@ -23,10 +23,11 @@ pub use materialize::{
 };
 pub use memory::{
     CaptureOptIn, CaptureTouch, EvidenceBinding, MemoryAdmissionRefusalRequest, MemoryCandidate,
-    MemoryField, MemoryOrigin, MemoryRecord, MemoryRefusal, MemoryRefusalCode, MemoryState,
-    MemoryTransition, PublicationStep, admit_memory_candidate, apply_transition, bind_evidence,
-    capture_memory, check_dependency_freshness, publication_steps, record_memory_admission_refusal,
-    republish, validate_candidate,
+    MemoryField, MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition, MemoryRecord,
+    MemoryRefusal, MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
+    admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
+    check_dependency_freshness, publication_steps, record_memory_admission_refusal, republish,
+    supersede, validate_candidate,
 };
 pub use publish::{
     PublicationPreparationObserver, PublicationPreparationServices, PublicationStage,

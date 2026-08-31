@@ -1,11 +1,13 @@
 {
   "policyVersion": "1.0.0",
-  "states": ["provisional", "published"],
-  "transitions": ["publish"],
-  "allowed": [
+  "semanticStates": ["candidate", "validated"],
+  "publicationStates": ["unpublished", "published"],
+  "publicationTransitions": ["publish"],
+  "allowedPublicationTransitions": [
     {
-      "from": "provisional",
+      "from": "unpublished",
       "transition": "publish"
     }
-  ]
+  ],
+  "supersessionReasons": ["deprecated"]
 }

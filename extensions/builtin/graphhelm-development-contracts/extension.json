@@ -324,7 +324,7 @@
           "id": "policy/memory-transition",
           "kind": "policy",
           "path": "policies/memory-transition.yaml",
-          "sha256": "sha256:9de92a611f0c7552c9d17777ac4276c5ee398d980387e7bf43138674e9b53476",
+          "sha256": "sha256:3136870af1e96246a8b751d3f52e29e0490ff4110d185926241ff4391305877b",
           "schema": "schemas/memory-transition.schema.json",
           "effects": [],
           "permissions": [],
@@ -351,7 +351,7 @@
           "id": "schema/memory-transition",
           "kind": "schema",
           "path": "schemas/memory-transition.schema.json",
-          "sha256": "sha256:58abeef85e25d90e98d154596a1d46b4f08046e54b2d5998b1aab13b242bf20a",
+          "sha256": "sha256:0c1219b68ebce8125aefbbe135f87834582738a417c5628a418ee573823fe762",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -403,7 +403,7 @@
           "id": "fixture/memory-invalid-transition-tuple-missing-its-target",
           "kind": "fixture",
           "path": "fixtures/memory/invalid/transition-tuple-missing-its-target.json",
-          "sha256": "sha256:d4aa1982fd1b45c7518aa5ea9e016a57599cfad26aae2b899149811fdae6da70",
+          "sha256": "sha256:d498211a7c0a2d3a49c438ae53c5c13f31f2eff934aa581abcbdc32d93669238",
           "effects": [],
           "permissions": [],
           "requires": {

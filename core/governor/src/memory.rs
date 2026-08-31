@@ -469,67 +469,139 @@ pub fn record_memory_admission_refusal(
 }
 
 closed_vocabulary! {
-    /// The states a memory record can be in.
-    ///
-    /// The wire spellings are the AUTHORITATIVE side shared with
-    /// `policies/memory-transition.yaml` and `schemas/memory-transition.schema.json`; all three
-    /// are compared in both directions in `tests/memory.rs` (#362). Before this, the enum had
-    /// `every()` and `Debug` and nothing that named it on a wire -- `apps/cli/tests/
-    /// development_cli.rs` carried a hand-written `wire_state` map as a stopgap, removed now that
-    /// the type carries its own spelling.
-    MemoryState {
-        /// Captured and admitted, not yet published.
-        Provisional => "provisional",
+    /// Whether a memory record's content is still believed. Independent of publication (#220,
+    /// ADR-032): a record can be `Contradicted` and still `Published` for a beat, or `Deprecated`
+    /// while still `Unpublished`. This is not a new vocabulary invented here -- it matches
+    /// `memory_record.status` in `docs/architecture/DATA_AND_PROTOCOLS.md` §16, already normative;
+    /// this is the first implementation that consumes it instead of a parallel enum drifting from
+    /// it. Replaces the one-axis `MemoryState` (#362), whose `Superseded` value conflated three
+    /// distinct repair reasons into one name -- see [`SupersessionReason`] and [`supersede`].
+    MemorySemanticState {
+        /// Captured, not yet checked.
+        Candidate => "candidate",
+        /// Checked and believed.
+        Validated => "validated",
+        /// Contradicted by new evidence. A caller's stated reason, never inferred.
+        Contradicted => "contradicted",
+        /// Deprecated by policy, without disputing the content. A caller's stated reason, never
+        /// inferred.
+        Deprecated => "deprecated",
+        /// Past its validity window.
+        Expired => "expired",
+    }
+}
+
+closed_vocabulary! {
+    /// Whether a memory record is visible in the default view. Independent of semantic validity
+    /// (#220, ADR-032): withdrawal moves this axis alone, never the semantic axis, and never
+    /// deletes or rewrites anything durable -- opt-in governs CAPTURE, withdrawal governs the VIEW.
+    MemoryPublicationState {
+        /// Captured, not yet requested for publication.
+        Unpublished => "unpublished",
+        /// Requested, pending publication.
+        Proposed => "proposed",
         /// Published and in the default view.
         Published => "published",
-        /// Replaced by a later record.
-        Superseded => "superseded",
-        /// Withdrawn from use. Still auditable: withdrawal closes USE, never the record.
+        /// Withdrawn from the default view. Still auditable: withdrawal closes USE, never the
+        /// record.
         Withdrawn => "withdrawn",
     }
 }
 
 closed_vocabulary! {
-    /// The transitions a memory record can be asked to make.
+    /// The transitions a memory record's PUBLICATION axis can be asked to make. Never touches the
+    /// semantic axis -- see [`supersede`] for the operation that moves a PREDECESSOR's semantic
+    /// axis, which is a relationship between two records rather than a transition on one.
     ///
     /// The wire spellings are the AUTHORITATIVE side shared with
-    /// `policies/memory-transition.yaml` and `schemas/memory-transition.schema.json`; see
-    /// [`MemoryState`]'s own doc for why this arm replaces the un-spelled one (#362).
-    MemoryTransition {
-        /// Provisional becomes published.
+    /// `policies/memory-transition.yaml` and `schemas/memory-transition.schema.json`.
+    MemoryPublicationTransition {
+        /// Unpublished becomes proposed.
+        Propose => "propose",
+        /// Proposed becomes published.
         Publish => "publish",
-        /// Published is replaced by a later record.
-        Supersede => "supersede",
         /// Published leaves the default view.
         Withdraw => "withdraw",
     }
 }
 
-impl MemoryTransition {
-    /// The state this transition lands in when it is allowed.
+impl MemoryPublicationTransition {
+    /// The publication state this transition lands in when it is allowed.
     #[must_use]
-    pub const fn target(self) -> MemoryState {
+    pub const fn target(self) -> MemoryPublicationState {
         match self {
-            Self::Publish => MemoryState::Published,
-            Self::Supersede => MemoryState::Superseded,
-            Self::Withdraw => MemoryState::Withdrawn,
+            Self::Propose => MemoryPublicationState::Proposed,
+            Self::Publish => MemoryPublicationState::Published,
+            Self::Withdraw => MemoryPublicationState::Withdrawn,
+        }
+    }
+}
+
+closed_vocabulary! {
+    /// Why a predecessor is being superseded. Closed to exactly the two values ADR-032 names:
+    /// there is no generic "superseded" reason, because the reason is exactly the information a
+    /// caller must supply and [`supersede`] must never infer from the relationship existing.
+    SupersessionReason {
+        /// New evidence disagrees with the predecessor's content.
+        Contradicted => "contradicted",
+        /// Policy retires the predecessor without disputing its content.
+        Deprecated => "deprecated",
+    }
+}
+
+impl SupersessionReason {
+    /// The predecessor's semantic state once this reason is recorded.
+    #[must_use]
+    pub const fn target(self) -> MemorySemanticState {
+        match self {
+            Self::Contradicted => MemorySemanticState::Contradicted,
+            Self::Deprecated => MemorySemanticState::Deprecated,
         }
     }
 }
 
 /// A memory record, at some point in its life.
+///
+/// The two axes are independent fields, never flattened into one enum (ADR-032). `supersedes` is
+/// the RELATIONSHIP that replaces the old `Superseded` STATE: this record's own `semantic` says
+/// whether ITS content is still believed, while `supersedes` says whether it displaces an earlier
+/// record -- a different question, decided by [`supersede`], never by this type inferring one from
+/// the other.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemoryRecord {
-    state: MemoryState,
+    id: OpaqueId,
+    semantic: MemorySemanticState,
+    publication: MemoryPublicationState,
+    supersedes: Option<OpaqueId>,
     dependencies: Vec<(String, String)>,
 }
 
 impl MemoryRecord {
-    /// A record in the given state.
+    /// A fresh record with the given identity: `Candidate` and `Unpublished`, superseding nothing.
     #[must_use]
-    pub const fn at(state: MemoryState) -> Self {
+    pub fn new(id: OpaqueId) -> Self {
         Self {
-            state,
+            id,
+            semantic: MemorySemanticState::Candidate,
+            publication: MemoryPublicationState::Unpublished,
+            supersedes: None,
+            dependencies: Vec::new(),
+        }
+    }
+
+    /// A record with the given identity and axis pair, for fixtures that need to start somewhere
+    /// other than the fresh default.
+    #[must_use]
+    pub fn at(
+        id: OpaqueId,
+        semantic: MemorySemanticState,
+        publication: MemoryPublicationState,
+    ) -> Self {
+        Self {
+            id,
+            semantic,
+            publication,
+            supersedes: None,
             dependencies: Vec::new(),
         }
     }
@@ -541,21 +613,39 @@ impl MemoryRecord {
         self
     }
 
-    /// The state this record is in.
+    /// This record's identity.
     #[must_use]
-    pub const fn state(&self) -> MemoryState {
-        self.state
+    pub const fn id(&self) -> &OpaqueId {
+        &self.id
+    }
+
+    /// Whether this record's content is still believed.
+    #[must_use]
+    pub const fn semantic(&self) -> MemorySemanticState {
+        self.semantic
+    }
+
+    /// Whether this record is visible in the default view.
+    #[must_use]
+    pub const fn publication(&self) -> MemoryPublicationState {
+        self.publication
+    }
+
+    /// The predecessor this record supersedes, if any.
+    #[must_use]
+    pub const fn supersedes(&self) -> Option<&OpaqueId> {
+        self.supersedes.as_ref()
     }
 }
 
-/// Apply a transition to a record, or refuse it.
+/// Move a record's PUBLICATION axis, or refuse it. Never touches the semantic axis.
 ///
 /// # Errors
 ///
 /// Returns [`MemoryRefusal`] when the tuple is not allowed. The record is left untouched.
-pub fn apply_transition(
+pub fn apply_publication_transition(
     record: &mut MemoryRecord,
-    transition: MemoryTransition,
+    transition: MemoryPublicationTransition,
 ) -> Result<(), MemoryRefusal> {
     // The tuple is judged BEFORE the record moves. Judged after, the check reads the value it just
     // wrote -- and a refusal then returns an error over a record that has already changed, which is
@@ -564,10 +654,17 @@ pub fn apply_transition(
     // The allowed set is written out because it is POLICY. The matrix that exercises it is derived
     // from `every()`, so a tuple nobody thought about is still visited; only the verdict is listed.
     let allowed = matches!(
-        (record.state, transition),
-        (MemoryState::Provisional, MemoryTransition::Publish)
-            | (MemoryState::Published, MemoryTransition::Supersede)
-            | (MemoryState::Published, MemoryTransition::Withdraw)
+        (record.publication, transition),
+        (
+            MemoryPublicationState::Unpublished,
+            MemoryPublicationTransition::Propose
+        ) | (
+            MemoryPublicationState::Proposed,
+            MemoryPublicationTransition::Publish
+        ) | (
+            MemoryPublicationState::Published,
+            MemoryPublicationTransition::Withdraw
+        )
     );
 
     if !allowed {
@@ -577,7 +674,42 @@ pub fn apply_transition(
         });
     }
 
-    record.state = transition.target();
+    record.publication = transition.target();
+    Ok(())
+}
+
+/// Supersede `predecessor` with `successor`, for the stated reason.
+///
+/// This is the relationship ADR-032 requires in place of the old `Superseded` STATE: it moves the
+/// PREDECESSOR's semantic axis to the reason's target and records the relationship on the
+/// SUCCESSOR. Neither record's publication axis is touched -- superseding is a semantic-axis fact,
+/// and a caller that also wants the predecessor out of the default view withdraws it separately
+/// through [`apply_publication_transition`].
+///
+/// # Errors
+///
+/// Returns [`MemoryRefusal`] when `predecessor` and `successor` are the same record, or when
+/// `successor` already supersedes another record. Neither record is changed on refusal.
+pub fn supersede(
+    predecessor: &mut MemoryRecord,
+    successor: &mut MemoryRecord,
+    reason: SupersessionReason,
+) -> Result<(), MemoryRefusal> {
+    if predecessor.id == successor.id {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::TransitionNotAllowed,
+            field: MemoryField::State,
+        });
+    }
+    if successor.supersedes.is_some() {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::TransitionNotAllowed,
+            field: MemoryField::State,
+        });
+    }
+
+    predecessor.semantic = reason.target();
+    successor.supersedes = Some(predecessor.id.clone());
     Ok(())
 }
 

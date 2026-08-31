@@ -20,10 +20,11 @@ use graphhelm_events::{
 };
 use graphhelm_governor::{
     CaptureOptIn, CaptureTouch, MemoryAdmissionRefusalRequest, MemoryCandidate, MemoryField,
-    MemoryOrigin, MemoryRecord, MemoryRefusalCode, MemoryState, MemoryTransition, PublicationStep,
-    admit_memory_candidate, apply_transition, bind_evidence, capture_memory,
+    MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition, MemoryRecord,
+    MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
+    admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
     check_dependency_freshness, publication_steps, record_memory_admission_refusal, republish,
-    validate_candidate,
+    supersede, validate_candidate,
 };
 use graphhelm_protocols::{
     ActorId, ArtifactId, Clock, DevelopmentScope, EventEnvelope, EventKind, EvidenceId,
@@ -363,8 +364,16 @@ fn an_enabled_secret_refusal_persists_only_code_local_and_bytes() {
 /// entire reason they exist. A future reader who deletes them to remove redundancy would be
 /// applying the house rule correctly and removing the only independent witness. Update them by
 /// looking at the enum, never by copying from a failure message.
-const STATE_NAMES: [&str; 4] = ["Provisional", "Published", "Superseded", "Withdrawn"];
-const TRANSITION_NAMES: [&str; 3] = ["Publish", "Supersede", "Withdraw"];
+const SEMANTIC_STATE_NAMES: [&str; 5] = [
+    "Candidate",
+    "Validated",
+    "Contradicted",
+    "Deprecated",
+    "Expired",
+];
+const PUBLICATION_STATE_NAMES: [&str; 4] = ["Unpublished", "Proposed", "Published", "Withdrawn"];
+const PUBLICATION_TRANSITION_NAMES: [&str; 3] = ["Propose", "Publish", "Withdraw"];
+const SUPERSESSION_REASON_NAMES: [&str; 2] = ["Contradicted", "Deprecated"];
 
 /// Compare a hand-written vocabulary against the generated one IN BOTH DIRECTIONS, naming the two
 /// counts and the difference on each side. A one-way check passes when the generated list grows,
@@ -393,35 +402,58 @@ fn cross_check<T: std::fmt::Debug>(hand: &[&str], generated: &[T], what: &str) {
     );
 }
 
-/// G3 of the blueprint. The matrix is DERIVED from the vocabularies rather than hand-listed, so a
-/// tuple nobody thought about is still exercised; the allowed set stays explicit because that part
-/// is policy, not enumeration.
+fn record_id(label: &str) -> OpaqueId {
+    OpaqueId::parse(label).expect("HARNESS-BROKE: the fixture label is not a legal OpaqueId")
+}
+
+/// G3 of the blueprint, ported to the PUBLICATION axis (ADR-032): the matrix is DERIVED from the
+/// vocabularies rather than hand-listed, so a tuple nobody thought about is still exercised; the
+/// allowed set stays explicit because that part is policy, not enumeration.
 ///
 /// The production change this catches: a refused transition that mutates the predecessor on its way
 /// out -- the record moves and the caller is told it did not.
 #[test]
-fn every_state_transition_tuple_either_applies_or_leaves_the_predecessor_untouched() {
-    cross_check(&STATE_NAMES, MemoryState::every(), "state");
-    cross_check(&TRANSITION_NAMES, MemoryTransition::every(), "transition");
+fn every_publication_transition_tuple_either_applies_or_leaves_the_predecessor_untouched() {
+    cross_check(
+        &PUBLICATION_STATE_NAMES,
+        MemoryPublicationState::every(),
+        "publication state",
+    );
+    cross_check(
+        &PUBLICATION_TRANSITION_NAMES,
+        MemoryPublicationTransition::every(),
+        "publication transition",
+    );
 
     let mut applied = 0_usize;
     let mut refused = 0_usize;
 
-    for state in MemoryState::every() {
-        for transition in MemoryTransition::every() {
+    for publication in MemoryPublicationState::every() {
+        for transition in MemoryPublicationTransition::every() {
             // The fixture carries a SECOND field, and the refusal arm compares the WHOLE
-            // predecessor. Asserting `record.state()` alone leaves every other field of the record
-            // unguarded, and with `MemoryRecord::at()` the dependency list was always empty -- so
-            // no sabotage of the refusal path could turn this red on that half.
-            let mut record = MemoryRecord::at(*state).depending_on("policy", "v1");
+            // predecessor. Asserting `record.publication()` alone leaves every other field of the
+            // record unguarded, and with a bare `MemoryRecord::at()` the dependency list was
+            // always empty -- so no sabotage of the refusal path could turn this red on that half.
+            let mut record = MemoryRecord::at(
+                record_id("rec-publication-matrix"),
+                MemorySemanticState::Candidate,
+                *publication,
+            )
+            .depending_on("policy", "v1");
             let before = record.clone();
 
-            match apply_transition(&mut record, *transition) {
+            match apply_publication_transition(&mut record, *transition) {
                 Ok(()) => {
                     assert_eq!(
-                        record.state(),
+                        record.publication(),
                         transition.target(),
-                        "an allowed {state:?} -> {transition:?} landed in the wrong state"
+                        "an allowed {publication:?} -> {transition:?} landed in the wrong state"
+                    );
+                    assert_eq!(
+                        record.semantic(),
+                        before.semantic(),
+                        "a publication transition moved the SEMANTIC axis (ADR-032 decision 3: \
+                         these axes are independent)"
                     );
                     applied += 1;
                 }
@@ -429,8 +461,8 @@ fn every_state_transition_tuple_either_applies_or_leaves_the_predecessor_untouch
                     assert_eq!(
                         record,
                         before,
-                        "a refused {state:?} -> {transition:?} changed its predecessor; the \
-                         refusal reported {:?}",
+                        "a refused {publication:?} -> {transition:?} changed its predecessor; \
+                         the refusal reported {:?}",
                         refusal.code()
                     );
                     refused += 1;
@@ -445,7 +477,121 @@ fn every_state_transition_tuple_either_applies_or_leaves_the_predecessor_untouch
     assert!(refused > 0, "HARNESS-BROKE: no tuple was ever refused");
     assert_eq!(
         applied + refused,
-        STATE_NAMES.len() * TRANSITION_NAMES.len()
+        PUBLICATION_STATE_NAMES.len() * PUBLICATION_TRANSITION_NAMES.len()
+    );
+}
+
+/// ADR-032's own reason for existing: `superseded` is a RELATIONSHIP, not a state. Superseding
+/// moves the PREDECESSOR's semantic axis to the reason's target and records the relationship on
+/// the SUCCESSOR -- and nothing else moves, which is the property a flattened one-axis state could
+/// never express (the old model could not distinguish "superseded because contradicted" from
+/// "superseded because deprecated": one wire spelling for two operator responses).
+///
+/// The production change this catches: inferring the reason from the relationship existing,
+/// instead of requiring the caller to state it -- both reasons are exercised so a hard-coded one
+/// cannot pass.
+#[test]
+fn supersede_moves_the_predecessors_semantic_axis_and_records_the_relationship_on_the_successor() {
+    // Both hand-written witnesses checked here: this test is the one place both vocabularies
+    // (the axis `supersede` moves, and the closed reason set it accepts) are exercised together.
+    cross_check(
+        &SEMANTIC_STATE_NAMES,
+        MemorySemanticState::every(),
+        "semantic state",
+    );
+    cross_check(
+        &SUPERSESSION_REASON_NAMES,
+        SupersessionReason::every(),
+        "supersession reason",
+    );
+
+    for reason in SupersessionReason::every() {
+        let mut predecessor = MemoryRecord::at(
+            record_id("rec-predecessor"),
+            MemorySemanticState::Validated,
+            MemoryPublicationState::Published,
+        );
+        let mut successor = MemoryRecord::new(record_id("rec-successor"));
+        let predecessor_publication_before = predecessor.publication();
+        let successor_semantic_before = successor.semantic();
+
+        supersede(&mut predecessor, &mut successor, *reason)
+            .expect("HARNESS-BROKE: a legal supersession was refused");
+
+        assert_eq!(
+            predecessor.semantic(),
+            reason.target(),
+            "supersede({reason:?}) did not move the predecessor's semantic axis to the reason's \
+             own target"
+        );
+        assert_eq!(
+            successor.supersedes(),
+            Some(predecessor.id()),
+            "the successor does not record the predecessor it supersedes"
+        );
+        assert_eq!(
+            predecessor.publication(),
+            predecessor_publication_before,
+            "supersede touched the predecessor's PUBLICATION axis; ADR-032 decision 2 makes this \
+             a semantic-axis-only operation, withdrawal is a separate act"
+        );
+        assert_eq!(
+            successor.semantic(),
+            successor_semantic_before,
+            "supersede touched the successor's own semantic axis, which it must not: the \
+             successor's belief in its OWN content is unrelated to which predecessor it replaces"
+        );
+    }
+}
+
+/// The refusal half of `supersede`: a record cannot supersede itself.
+#[test]
+fn a_record_cannot_supersede_itself() {
+    let id = record_id("rec-self");
+    let mut predecessor = MemoryRecord::new(id.clone());
+    let mut successor = MemoryRecord::new(id);
+
+    let refusal = supersede(
+        &mut predecessor,
+        &mut successor,
+        SupersessionReason::Deprecated,
+    )
+    .expect_err("a record was allowed to supersede itself");
+    assert_eq!(refusal.code(), MemoryRefusalCode::TransitionNotAllowed);
+}
+
+/// The refusal half of `supersede`: a successor cannot supersede two predecessors -- the
+/// relationship is one field, not a list, so a second call must refuse rather than silently
+/// overwrite the first predecessor's identity.
+#[test]
+fn a_successor_cannot_supersede_twice() {
+    let mut first_predecessor = MemoryRecord::new(record_id("rec-first-predecessor"));
+    let mut second_predecessor = MemoryRecord::new(record_id("rec-second-predecessor"));
+    let mut successor = MemoryRecord::new(record_id("rec-successor-twice"));
+
+    supersede(
+        &mut first_predecessor,
+        &mut successor,
+        SupersessionReason::Deprecated,
+    )
+    .expect("HARNESS-BROKE: the first supersession must succeed for this test to mean anything");
+
+    let refusal = supersede(
+        &mut second_predecessor,
+        &mut successor,
+        SupersessionReason::Contradicted,
+    )
+    .expect_err("a successor was allowed to supersede a second predecessor");
+    assert_eq!(refusal.code(), MemoryRefusalCode::TransitionNotAllowed);
+    assert_eq!(
+        successor.supersedes(),
+        Some(first_predecessor.id()),
+        "the refused second call overwrote the first supersession's relationship"
+    );
+    assert_eq!(
+        second_predecessor.semantic(),
+        MemorySemanticState::Candidate,
+        "the refused second call still moved the second predecessor's semantic axis"
     );
 }
 
@@ -670,7 +816,8 @@ fn a_failed_reseal_does_not_publish_over_the_previous_evidence() {
 /// and it is answered yes by the wrong version too.
 #[test]
 fn a_record_built_against_a_moved_dependency_is_refused() {
-    let record = MemoryRecord::at(MemoryState::Published).depending_on("policy", "v1");
+    let record =
+        MemoryRecord::new(record_id("rec-dependency-freshness")).depending_on("policy", "v1");
 
     // Landmark: the unmoved dependency is accepted, so the refusal is about the VERSION.
     check_dependency_freshness(&record, &[("policy", "v1")])
@@ -808,9 +955,9 @@ fn every_refusal_code_is_declared_in_the_shipped_policy_and_the_reverse() {
 
 const PACKAGE: &str = "../../extensions/builtin/graphhelm-development-contracts";
 
-/// The refusal vocabulary written out BY HAND, for the same reason as `STATE_NAMES`: it is the only
-/// witness that can contradict the generated one. Deliberately not derived. See the note on
-/// `STATE_NAMES` before deleting it as redundant.
+/// The refusal vocabulary written out BY HAND, for the same reason as `SEMANTIC_STATE_NAMES`: it
+/// is the only witness that can contradict the generated one. Deliberately not derived. See the
+/// note on `SEMANTIC_STATE_NAMES` before deleting it as redundant.
 const REFUSAL_CODE_NAMES: [&str; 8] = [
     "opt_in_absent",
     "scope_mismatch",
@@ -912,7 +1059,7 @@ fn the_shipped_fixtures_are_accepted_and_refused_for_their_own_reasons() {
         (
             &transition,
             "fixtures/memory/invalid/transition-tuple-missing-its-target.json",
-            "/allowed/0",
+            "/allowedPublicationTransitions/0",
         ),
         // Unknown fields: `additionalProperties: false` is declared in the schema and, until this
         // case, nothing exercised it. A declared constraint with no fixture is the same shape as a
@@ -940,13 +1087,26 @@ fn the_shipped_fixtures_are_accepted_and_refused_for_their_own_reasons() {
     }
 }
 
-/// #362: the state vocabulary written out BY HAND, for the same reason as `REFUSAL_CODE_NAMES`:
-/// it is the only witness that can contradict the generated one. Deliberately not derived.
-const STATE_WIRE_NAMES: [&str; 4] = ["provisional", "published", "superseded", "withdrawn"];
+/// ADR-032: the semantic-state vocabulary written out BY HAND, for the same reason as
+/// `REFUSAL_CODE_NAMES`: it is the only witness that can contradict the generated one. Wire-
+/// identical to `memory_record.status` in `docs/architecture/DATA_AND_PROTOCOLS.md` §16.
+const SEMANTIC_STATE_WIRE_NAMES: [&str; 5] = [
+    "candidate",
+    "validated",
+    "contradicted",
+    "deprecated",
+    "expired",
+];
 
-/// #362: the transition vocabulary written out BY HAND, for the same reason as
-/// `STATE_WIRE_NAMES`.
-const TRANSITION_WIRE_NAMES: [&str; 3] = ["publish", "supersede", "withdraw"];
+/// ADR-032: the publication-state vocabulary written out BY HAND, same reason.
+const PUBLICATION_STATE_WIRE_NAMES: [&str; 4] =
+    ["unpublished", "proposed", "published", "withdrawn"];
+
+/// ADR-032: the publication-transition vocabulary written out BY HAND, same reason.
+const PUBLICATION_TRANSITION_WIRE_NAMES: [&str; 3] = ["propose", "publish", "withdraw"];
+
+/// ADR-032: the supersession-reason vocabulary written out BY HAND, same reason.
+const SUPERSESSION_REASON_WIRE_NAMES: [&str; 2] = ["contradicted", "deprecated"];
 
 /// A minimal YAML list reader: everything under `header` (e.g. `"states:"`) indented as
 /// `  - item`, stopping at the first non-list, non-blank, non-comment line. Matches the shape
@@ -972,42 +1132,64 @@ fn parse_yaml_list(text: &str, header: &str) -> Vec<String> {
     items
 }
 
-/// #362: `MemoryState` and `MemoryTransition` now carry wire spellings, closing the co-drift gap
-/// named in `apps/cli/tests/development_cli.rs`'s former `wire_state`/`wire_transition`
-/// functions -- removed by that change, since the guard that made them a stopgap now exists
-/// here instead.
+/// ADR-032: the four lifecycle vocabularies (both axes, publication transitions, and supersession
+/// reasons) now carry wire spellings via the same `closed_vocabulary!` shape #362 gave
+/// `MemoryState`/`MemoryTransition`, which this ADR retires.
 ///
-/// Binds BOTH vocabularies against the shipped policy, in both directions, the same shape
+/// Binds all four against the shipped policy, in both directions, the same shape
 /// `every_refusal_code_is_declared_in_the_shipped_policy_and_the_reverse` uses for
 /// `MemoryRefusalCode` above.
 #[test]
-fn every_memory_state_and_transition_is_declared_in_the_shipped_policy_and_the_reverse() {
+fn every_lifecycle_vocabulary_is_declared_in_the_shipped_policy_and_the_reverse() {
     let policy = std::fs::read_to_string(
         "../../extensions/builtin/graphhelm-development-contracts/policies/memory-transition.yaml",
     )
     .expect("HARNESS-BROKE: the shipped policy file is not readable from the crate root");
 
-    let states_declared = parse_yaml_list(&policy, "states:");
-    let transitions_declared = parse_yaml_list(&policy, "transitions:");
+    let semantic_declared = parse_yaml_list(&policy, "semanticStates:");
+    let publication_declared = parse_yaml_list(&policy, "publicationStates:");
+    let transitions_declared = parse_yaml_list(&policy, "publicationTransitions:");
+    let reasons_declared = parse_yaml_list(&policy, "supersessionReasons:");
 
     assert!(
-        !states_declared.is_empty() && !transitions_declared.is_empty(),
-        "HARNESS-BROKE: no states or transitions were parsed out of the policy, so the \
+        !semantic_declared.is_empty()
+            && !publication_declared.is_empty()
+            && !transitions_declared.is_empty()
+            && !reasons_declared.is_empty(),
+        "HARNESS-BROKE: at least one lifecycle vocabulary parsed empty out of the policy, so the \
          comparison below would pass against an empty set"
     );
 
-    let states_compiled: Vec<String> = MemoryState::every()
+    let semantic_compiled: Vec<String> = MemorySemanticState::every()
         .iter()
         .map(|state| state.wire_name().to_owned())
         .collect();
-    let transitions_compiled: Vec<String> = MemoryTransition::every()
+    let publication_compiled: Vec<String> = MemoryPublicationState::every()
+        .iter()
+        .map(|state| state.wire_name().to_owned())
+        .collect();
+    let transitions_compiled: Vec<String> = MemoryPublicationTransition::every()
         .iter()
         .map(|transition| transition.wire_name().to_owned())
         .collect();
+    let reasons_compiled: Vec<String> = SupersessionReason::every()
+        .iter()
+        .map(|reason| reason.wire_name().to_owned())
+        .collect();
 
     for (what, compiled, declared) in [
-        ("state", &states_compiled, &states_declared),
-        ("transition", &transitions_compiled, &transitions_declared),
+        ("semantic state", &semantic_compiled, &semantic_declared),
+        (
+            "publication state",
+            &publication_compiled,
+            &publication_declared,
+        ),
+        (
+            "publication transition",
+            &transitions_compiled,
+            &transitions_declared,
+        ),
+        ("supersession reason", &reasons_compiled, &reasons_declared),
     ] {
         let missing_from_policy: Vec<&String> =
             compiled.iter().filter(|c| !declared.contains(c)).collect();
@@ -1027,60 +1209,106 @@ fn every_memory_state_and_transition_is_declared_in_the_shipped_policy_and_the_r
     }
 }
 
-/// #362: the shipped SCHEMA is a third declaration of the state and transition vocabularies, and
-/// the reason a co-drift (renaming a spelling in the policy AND in the enum together) is caught:
-/// the schema is a spelling nobody touches for a policy or Rust-side rename, so it is the
-/// independent witness the two-way bind above cannot provide alone.
+/// ADR-032: the shipped SCHEMA is a third declaration of the four lifecycle vocabularies, and the
+/// reason a co-drift (renaming a spelling in the policy AND in the enum together) is caught: the
+/// schema is a spelling nobody touches for a policy or Rust-side rename, so it is the independent
+/// witness the two-way bind above cannot provide alone.
 #[test]
-fn the_schema_the_enum_and_the_hand_written_list_are_one_state_and_transition_vocabulary() {
+fn the_schema_the_enum_and_the_hand_written_list_are_one_lifecycle_vocabulary() {
     let schema = package_json("schemas/memory-transition.schema.json");
 
-    let from_schema_states: Vec<String> = schema["$defs"]["state"]["enum"]
-        .as_array()
-        .expect("HARNESS-BROKE: the schema has no $defs/state/enum to read")
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .expect("HARNESS-BROKE: a state in the schema is not a string")
-                .to_owned()
-        })
-        .collect();
-    let from_schema_transitions: Vec<String> = schema["$defs"]["transition"]["enum"]
-        .as_array()
-        .expect("HARNESS-BROKE: the schema has no $defs/transition/enum to read")
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .expect("HARNESS-BROKE: a transition in the schema is not a string")
-                .to_owned()
-        })
-        .collect();
+    let read_schema_enum = |defs_key: &str, what: &str| -> Vec<String> {
+        schema["$defs"][defs_key]["enum"]
+            .as_array()
+            .unwrap_or_else(|| {
+                panic!("HARNESS-BROKE: the schema has no $defs/{defs_key}/enum to read")
+            })
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .unwrap_or_else(|| {
+                        panic!("HARNESS-BROKE: a {what} in the schema is not a string")
+                    })
+                    .to_owned()
+            })
+            .collect()
+    };
+
+    let from_schema_semantic = read_schema_enum("semanticState", "semantic state");
+    let from_schema_publication = read_schema_enum("publicationState", "publication state");
+    let from_schema_transitions =
+        read_schema_enum("publicationTransition", "publication transition");
+    let from_schema_reasons = read_schema_enum("supersessionReason", "supersession reason");
 
     assert!(
-        !from_schema_states.is_empty() && !from_schema_transitions.is_empty(),
-        "HARNESS-BROKE: the schema declared no states or transitions, so every comparison below \
-         would pass against an empty set"
+        !from_schema_semantic.is_empty()
+            && !from_schema_publication.is_empty()
+            && !from_schema_transitions.is_empty()
+            && !from_schema_reasons.is_empty(),
+        "HARNESS-BROKE: the schema declared at least one empty lifecycle vocabulary, so every \
+         comparison below would pass against an empty set"
     );
 
-    let compiled_states: Vec<String> = MemoryState::every()
+    let compiled_semantic: Vec<String> = MemorySemanticState::every()
         .iter()
         .map(|state| state.wire_name().to_owned())
         .collect();
-    let compiled_transitions: Vec<String> = MemoryTransition::every()
+    let compiled_publication: Vec<String> = MemoryPublicationState::every()
+        .iter()
+        .map(|state| state.wire_name().to_owned())
+        .collect();
+    let compiled_transitions: Vec<String> = MemoryPublicationTransition::every()
         .iter()
         .map(|transition| transition.wire_name().to_owned())
         .collect();
-    let hand_states: Vec<String> = STATE_WIRE_NAMES.iter().map(|n| (*n).to_owned()).collect();
-    let hand_transitions: Vec<String> = TRANSITION_WIRE_NAMES
+    let compiled_reasons: Vec<String> = SupersessionReason::every()
+        .iter()
+        .map(|reason| reason.wire_name().to_owned())
+        .collect();
+
+    let hand_semantic: Vec<String> = SEMANTIC_STATE_WIRE_NAMES
+        .iter()
+        .map(|n| (*n).to_owned())
+        .collect();
+    let hand_publication: Vec<String> = PUBLICATION_STATE_WIRE_NAMES
+        .iter()
+        .map(|n| (*n).to_owned())
+        .collect();
+    let hand_transitions: Vec<String> = PUBLICATION_TRANSITION_WIRE_NAMES
+        .iter()
+        .map(|n| (*n).to_owned())
+        .collect();
+    let hand_reasons: Vec<String> = SUPERSESSION_REASON_WIRE_NAMES
         .iter()
         .map(|n| (*n).to_owned())
         .collect();
 
     for (left_name, left, right_name, right) in [
-        ("schema", &from_schema_states, "compiled", &compiled_states),
-        ("hand-written", &hand_states, "schema", &from_schema_states),
+        (
+            "schema",
+            &from_schema_semantic,
+            "compiled",
+            &compiled_semantic,
+        ),
+        (
+            "hand-written",
+            &hand_semantic,
+            "schema",
+            &from_schema_semantic,
+        ),
+        (
+            "schema",
+            &from_schema_publication,
+            "compiled",
+            &compiled_publication,
+        ),
+        (
+            "hand-written",
+            &hand_publication,
+            "schema",
+            &from_schema_publication,
+        ),
         (
             "schema",
             &from_schema_transitions,
@@ -1093,12 +1321,24 @@ fn the_schema_the_enum_and_the_hand_written_list_are_one_state_and_transition_vo
             "schema",
             &from_schema_transitions,
         ),
+        (
+            "schema",
+            &from_schema_reasons,
+            "compiled",
+            &compiled_reasons,
+        ),
+        (
+            "hand-written",
+            &hand_reasons,
+            "schema",
+            &from_schema_reasons,
+        ),
     ] {
         let only_left: Vec<&String> = left.iter().filter(|v| !right.contains(v)).collect();
         let only_right: Vec<&String> = right.iter().filter(|v| !left.contains(v)).collect();
         assert!(
             only_left.is_empty() && only_right.is_empty(),
-            "the {left_name} and {right_name} state/transition vocabularies disagree.
+            "the {left_name} and {right_name} lifecycle vocabularies disagree.
   {left_name} ({}): {left:?}
   {right_name} ({}): {right:?}
   in {left_name} but NOT in {right_name}: {only_left:?}

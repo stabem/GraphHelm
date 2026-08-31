@@ -256,3 +256,43 @@ fn inline_secret_in_forward_compatible_metadata_is_rejected() {
         .insert("token".into(), serde_json::json!("plaintext-secret"));
     assert_code(&invalid, "GHG008_INLINE_SECRET", "/metadata/token");
 }
+
+/// #545: the population of GHG102 is a hand-typed list, and it omits three node types that park
+/// exactly as `Agent` does.
+///
+/// `classify::work_kind` dispatches `Agent | Planner | Classifier | Evaluator` through ONE match
+/// arm, as Cognitive work. `WaitingInput` is not gated by node type at all -- the state machine
+/// says `(Running, NeedsInput) => WaitingInput` -- so every type that arm dispatches can park.
+/// The lint names `Agent` and not its three siblings, and the existing pair above stays green
+/// through the whole defect because it exercises ONE node.
+///
+/// This is the population half of a guard whose two hand-chosen parameters are its POPULATION and
+/// its FORM. The form was measured; this is the half that was not.
+#[test]
+fn every_cognitive_sibling_of_agent_is_warned_when_it_declares_no_budgets() {
+    // Each of these is dispatched by the same arm as `Agent`, so each can reach `WaitingInput`.
+    for node_type in [
+        NodeType::Agent,
+        NodeType::Planner,
+        NodeType::Classifier,
+        NodeType::Evaluator,
+    ] {
+        let mut graph = graph();
+        let node = graph.spec.nodes.get_mut("implement").unwrap();
+        node.node_type = node_type.clone();
+        node.properties.remove("completion");
+
+        let warnings = lint(&graph, "fixture.yaml");
+        assert!(
+            warnings.warnings.iter().any(|item| {
+                item.code == "GHG102_UNBOUNDED_CUSTOMS"
+                    && item.path == "/spec/nodes/implement/completion/customs"
+            }),
+            "a {node_type:?} node with no customs budgets parks forever and is named by nothing: \
+             it is dispatched through the same match arm as Agent, and WaitingInput is reached by \
+             a state transition rather than by node type, so the authoring warning is the only \
+             thing between this graph and permanent quarantine. Warnings seen: {:?}",
+            warnings.warnings
+        );
+    }
+}

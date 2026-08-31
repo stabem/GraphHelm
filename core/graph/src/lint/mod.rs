@@ -90,6 +90,55 @@ pub fn lint(graph: &ExecutionGraph, source: &str) -> LintReport {
         }
     }
 
+    /// Can this node type reach `WaitingInput`, and therefore park?
+    ///
+    /// EXHAUSTIVE ON PURPOSE, and the wildcard is the defect this function was extracted to remove
+    /// (#545). The rule was a `matches!` over six hand-typed names, and it omitted `Planner`,
+    /// `Classifier` and `Evaluator` -- three types `classify::work_kind` dispatches through the SAME
+    /// match arm as `Agent`. A `Planner` that parked with no budgets was named by nothing, at
+    /// authoring time or ever, which is the exact silence GHG102 exists to end. Written as an
+    /// exhaustive match so the next variant added to `NodeType` breaks this build instead of
+    /// inheriting "not parkable" in silence.
+    ///
+    /// **TWO AUTHORITIES, AND THIS IS ONLY ONE OF THEM.** Whether a node parks is decided by the state
+    /// machine -- `(Running, NeedsInput) => WaitingInput`, which is not gated by node type at all --
+    /// so the real population is "what gets dispatched and run", and that lives in
+    /// `graphhelm_runtime::classify::work_kind`. `core/graph` does not depend on `core/runtime` and
+    /// should not start here, so the two lists are kept in agreement by DECLARATION rather than by
+    /// derivation. Nothing in one crate fails when the other moves. If that agreement is ever worth
+    /// a guard, it needs a witness that sees both crates and does not derive from either -- a test
+    /// mirroring this match against itself would prove only that the file equals the file.
+    fn can_park_for_input(node_type: &NodeType) -> bool {
+        match node_type {
+            // Dispatched as work and therefore able to be Running: these park by the state machine.
+            // The four cognitive kinds travel together in `work_kind` and must travel together here.
+            NodeType::Agent
+            | NodeType::Planner
+            | NodeType::Classifier
+            | NodeType::Evaluator
+            | NodeType::Tool => true,
+            // Kept deliberately, and the reason is forward-looking rather than current: the executor
+            // refuses these today, so they cannot be Running and cannot park yet. Warning about a node
+            // that cannot park costs an author one line; staying silent about one that can costs a
+            // parked execution nobody is watching. `HumanDecision` is the clearest case -- a node whose
+            // entire purpose is to wait for a person is the one most able to wait forever.
+            NodeType::HumanDecision
+            | NodeType::Deploy
+            | NodeType::Rollback
+            | NodeType::ArtifactTransform => true,
+            // Structural or terminal: never dispatched as work, so never Running, so never parked.
+            // `DeadLetter` is where work STOPS -- a graveyard that could go overdue would be a queue.
+            NodeType::Gate
+            | NodeType::Fork
+            | NodeType::Join
+            | NodeType::Timer
+            | NodeType::Trigger
+            | NodeType::Subgraph
+            | NodeType::Materializer
+            | NodeType::DeadLetter => false,
+        }
+    }
+
     // M11 #160 (G2 part 1): a node that can PARK FOR INPUT and declares no customs budgets can
     // wait forever, and nothing in the system will ever say so. The sweep raises an overdue
     // exception from a stage deadline, a stage deadline comes from a declared budget, and an
@@ -107,15 +156,7 @@ pub fn lint(graph: &ExecutionGraph, source: &str) -> LintReport {
     // dispatched and run. `HumanDecision` is IN and is the clearest case: a node whose entire
     // purpose is to wait for a person is the one most able to wait forever.
     for (id, node) in &graph.spec.nodes {
-        let can_park = matches!(
-            node.node_type,
-            NodeType::Agent
-                | NodeType::Tool
-                | NodeType::HumanDecision
-                | NodeType::Deploy
-                | NodeType::Rollback
-                | NodeType::ArtifactTransform
-        );
+        let can_park = can_park_for_input(&node.node_type);
         let declares_customs = node
             .properties
             .get("completion")

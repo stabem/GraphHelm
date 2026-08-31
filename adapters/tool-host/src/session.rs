@@ -77,6 +77,19 @@ impl ContainedProviderSession {
         &self.identity
     }
 
+    /// The verified executable this session runs — exposed so a producer can put the FULL
+    /// `VerifiedExecutableIdentity` (path + digest) on the broker record beside the session's.
+    #[must_use]
+    pub fn executable(&self) -> &VerifiedExecutable {
+        &self.executable
+    }
+
+    /// The pinned snapshot this session reads over.
+    #[must_use]
+    pub fn snapshot(&self) -> &PinnedSnapshot {
+        &self.snapshot
+    }
+
     /// One provider invocation: re-verify the pin at the instant of use, then run the verified
     /// binary through the one spawn funnel with the snapshot handed over confined.
     ///

@@ -925,9 +925,13 @@ dependencies = [
 name = "graphhelm-codebase-memory-mcp"
 version = "0.1.0"
 dependencies = [
+ "graphhelm-protocols",
+ "graphhelm-runtime",
  "graphhelm-tool-broker",
+ "graphhelm-tool-host",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

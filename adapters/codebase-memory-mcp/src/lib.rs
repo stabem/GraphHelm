@@ -687,3 +687,5 @@ fn check_json_nesting(bytes: &[u8], maximum: usize) -> Result<(), DecodeError> {
     }
     Ok(())
 }
+
+pub mod provider;

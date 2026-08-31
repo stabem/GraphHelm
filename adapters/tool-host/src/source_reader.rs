@@ -46,8 +46,10 @@ pub struct WorkspaceSourceReader {
     /// the root REPEATS across instances — reader A and reader B, first failure each, same id —
     /// and a binding recorded during unreadability would then compare EQUAL against a fresh
     /// reader's failure and read FRESH: a fail-open inside the fail-closed mechanism, in the
-    /// exact scenario it exists for. The salt mixes the process id and the instant of
-    /// construction, so no two instances — across threads or processes — share a failure id.
+    /// exact scenario it exists for. Three sources, each named for the collision IT covers: the
+    /// process id separates processes, the construction instant separates pid reuse across
+    /// boots, and the process-wide instance sequence is what separates two readers inside one
+    /// process — including two opened in the same clock tick, which the instant alone cannot.
     instance_salt: String,
 }
 

@@ -291,6 +291,80 @@ fn operator_strings_carry_no_collapsed_indentation() {
     );
 }
 
+/// #161's declared gap, pinned at the place it would be violated: no production surface in this
+/// crate may append a `Countersign` clearance while nothing can verify one.
+///
+/// MEASURED rather than assumed. `ClearanceVerifier::Countersign` carries `identity` and
+/// `key_fingerprint` and **no signature**. Its own doc says the cryptographic verification
+/// "happens at append time" -- but nothing in the workspace appends a clearance at any layer
+/// (`CompletionCleared` appears only in the fold and the protocol declarations), and there is
+/// nothing on the event to verify even if it did. The fold compares identity and fingerprint
+/// against the registry, and BOTH are public journal data, so anyone able to append can name any
+/// registered identity.
+///
+/// `MachineReplay` is deliberately NOT covered: since #161 the fold re-derives its evidence
+/// digest, so producing one is safe. Covering both would refuse a correct future change.
+///
+/// WHAT THIS WATCHES, AND WHAT IT DOES NOT (D's review of #527). This walks `apps/cli/src` only —
+/// one crate of several that append events. Measured on `origin/main`: of 90 append sites across
+/// production `src/`, 20 are here; `core/events` (34), `core/runtime` (15) and `core/governor` (3)
+/// are outside this walk, and `core/runtime`/`core/governor` are where an AUTOMATIC clearance would
+/// most plausibly land. (D counted 22 of 51 under a narrower predicate; the totals differ, the
+/// conclusion does not.)
+///
+/// The obvious remedy is the WRONG one: copying this guard into six crates would duplicate an
+/// ORACLE, and six copies drift into six meanings. The right shape is the workspace-wide walk
+/// already on main from #530, and adopting it is follow-up rather than something to improvise here.
+/// Until then the name says `apps_cli` so the scope is in the assertion's own title, not only in
+/// this paragraph.
+///
+/// This is a TRAP, not a prohibition. The day a surface appends a countersignature this goes red,
+/// and whoever adds it must land the verification -- or the `signature_unverifiable` refusal the
+/// issue names -- in the SAME change, instead of discovering the gap afterwards.
+#[test]
+fn no_apps_cli_surface_appends_an_unverifiable_countersignature() {
+    let scanned = sources();
+    let production: Vec<_> = scanned
+        .iter()
+        .filter(|(path, _)| path.starts_with("src/"))
+        .collect();
+
+    // Presence control for an absence guard: an empty population would make the assertion below
+    // pass while measuring nothing at all.
+    assert!(
+        !production.is_empty(),
+        "precondition: the walk must have returned production sources, or the absence asserted below is the absence of a SCAN, not of a countersignature"
+    );
+
+    let offenders: Vec<String> = production
+        .iter()
+        .flat_map(|(path, text)| {
+            text.lines()
+                .enumerate()
+                .filter(|(_, line)| {
+                    // Comments are excluded on purpose. A guard that reddens when someone
+                    // DOCUMENTS the gap would teach the next reader to delete the sentence
+                    // rather than fix the code, and the message it prints would be wrong.
+                    // The exemption is UNQUALIFIED: it exempts by line SHAPE, never by what the
+                    // comment says, so commented-out construction is exempt too (D). Accepted —
+                    // commented-out code appends nothing.
+                    let trimmed = line.trim_start();
+                    !trimmed.starts_with("//")
+                        && line.contains("ClearanceVerifier::Countersign")
+                })
+                .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim()))
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "a production surface builds a Countersign clearance, but nothing can verify one: the event carries no signature, and the fold checks only journal-public identity and fingerprint. Land the verification, or refuse the append with signature_unverifiable (#161), in the SAME change.
+{}",
+        offenders.join("
+")
+    );
+}
+
 /// Complete in-memory model of the filesystem subset the walker consumes.
 ///
 /// Directory children come from the node map. Metadata preserves both a link's identity and its

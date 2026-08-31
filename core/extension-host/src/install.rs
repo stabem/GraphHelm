@@ -42,6 +42,9 @@ pub enum InstallRefusal {
     CorruptPointer,
     /// The package tree carries a symbolic link or another entry the copier refuses to follow.
     UnsafePackagePath,
+    /// The pointer still names this version as current or previous, so removing it would cost
+    /// the machine its active version or rollback its target.
+    VersionRetained,
     /// The layout could not be written at all.
     Unwritable,
 }
@@ -72,13 +75,25 @@ struct PersistedPointer {
 ///
 /// Digests read `sha256:<hex>`, and `:` is not a legal filename byte on Windows, so the adopted
 /// directory spells the same identity with `-`. The mapping lives HERE and nowhere else: a second
-/// spelling of it would drift, and the digest is validator-produced so anything that does not
-/// match the expected shape is refused rather than escaped.
-fn directory_for_digest(digest: &str) -> Result<String, InstallRefusal> {
+/// spelling of it would drift, and every consumer -- install, switch, rollback, uninstall --
+/// closes or opens together with this function.
+///
+/// **The shape is exact: `sha256:` + 64 lowercase hex, one spelling per identity.** The first
+/// version checked only the ALPHABET (any casing, any length), and that was a P1 found by D on
+/// #535: retention compares exact strings while the filesystem lookup on Windows is
+/// case-insensitive, so `sha256:1ABB...` walked past the retention check as a stranger and then
+/// FOUND the current version's directory -- one shouted digit uninstalled the active version.
+/// The search accepted an identity retention did not recognize; casing was an instance of the
+/// gap, not the gap. Canonical-or-refused is what makes the two sides agree by construction.
+pub(crate) fn directory_for_digest(digest: &str) -> Result<String, InstallRefusal> {
     let hex = digest
         .strip_prefix("sha256:")
         .ok_or(InstallRefusal::UnknownVersion)?;
-    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return Err(InstallRefusal::UnknownVersion);
     }
     Ok(format!("sha256-{hex}"))
@@ -106,7 +121,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), InstallRefusal> {
     Ok(())
 }
 
-fn read_pointer(install_root: &Path) -> Result<Option<ActiveVersions>, InstallRefusal> {
+pub(crate) fn read_pointer(install_root: &Path) -> Result<Option<ActiveVersions>, InstallRefusal> {
     let bytes = match std::fs::read(install_root.join(POINTER_NAME)) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

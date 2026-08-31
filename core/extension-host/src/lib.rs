@@ -4,6 +4,7 @@ mod activation;
 mod discovery;
 mod install;
 mod staging;
+mod uninstall;
 
 pub use activation::{
     ActivationClaim, ActivationRecord, ActivationStep, ClaimRefusal, ClaimStatus, activation_steps,
@@ -14,3 +15,4 @@ pub use install::{
     switch_active,
 };
 pub use staging::{StagingRefusal, VerifiedStaging, activate_staged, verify_staged};
+pub use uninstall::uninstall_version;

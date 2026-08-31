@@ -10,7 +10,10 @@ use sha2::{Digest, Sha256};
 /// The oracle is referenced by ID and never carried here: a case that contains its own answer is a
 /// case the compiled arm can read.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+// deny_unknown_fields is K's #504 finding 2, measured with a probe: an injected field was
+// ACCEPTED with the digest byte-identical, because serde dropped it and the digest is taken over
+// a re-serialisation of the parsed struct -- unmodelled content invisible twice.
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Case {
     pub id: String,
     pub oracle_id: String,
@@ -18,10 +21,18 @@ pub struct Case {
 
 /// A frozen benchmark manifest.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
     pub manifest_version: u32,
     pub corpus_digest: String,
+    /// Raw-bytes freeze of `oracle/<id>.json` per case (K's #504 finding 1): Bar 2 judges recall
+    /// against `requiredEvidence`, so an oracle that nothing digests can be softened without
+    /// moving the freeze -- and the blueprint predicts the oracle weakens exactly when retrieval
+    /// is optimised.
+    pub oracle_digest: String,
+    /// Same freeze for what the arms are HANDED: an objective edited after the freeze changes
+    /// what the run measures just as silently.
+    pub objectives_digest: String,
     pub cases: Vec<Case>,
 }
 
@@ -64,6 +75,16 @@ pub enum BenchmarkRefusal {
     /// removed. Telling an operator that the oracle is reachable without saying through what leaves
     /// them to find the entry themselves.
     OracleReachable { arm: String, path: String },
+    /// A frozen file digest does not match the files on disk.
+    ///
+    /// Separate from `CorpusDigestMismatch` because the remedies differ: that one says the
+    /// manifest's CASE LIST moved, this one says the case list is intact and the CONTENT it
+    /// points at moved -- an oracle softened, an objective rewritten.
+    FrozenFilesMismatch {
+        kind: String,
+        declared: String,
+        actual: String,
+    },
     /// The baseline was OBSERVED to be zero, so there is nothing to be a fraction of.
     ///
     /// Deliberately NOT the same variant as `CostUnavailable`: that one says the number could not
@@ -74,12 +95,19 @@ pub enum BenchmarkRefusal {
 
 /// What one arm was given.
 ///
-/// The issue fixes ten items; this carries ELEVEN fields, because `model route/settings` names two
-/// things that can differ independently -- a run can hold the route and move the temperature.
+/// The issue fixes ten items; this carries FIFTEEN fields: `model route/settings` names two
+/// things that can differ independently, the blueprint splits "snapshots" into repository and
+/// index (index freshness is not repository freshness -- #219's INDEX_STALE), and it adds three
+/// axes the issue's list never held: build identity (B10), environment record (B11), and cache
+/// discipline (B3).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArmDeclaration {
     pub snapshot: String,
+    /// The INDEX snapshot, split from the repository snapshot on purpose (blueprint SS3, K's
+    /// finding 3 on #504): index freshness is not repository freshness -- #219's INDEX_STALE is a
+    /// distinct failure -- and a run where only one arm has an index is not a pairing.
+    pub index_snapshot: String,
     pub objective: String,
     pub permissions: Vec<String>,
     pub model_route: String,
@@ -92,6 +120,19 @@ pub struct ArmDeclaration {
     pub clock: String,
     pub budget: u64,
     pub acceptance_contract: String,
+    /// Digest of the ONE build both arms execute (#225 blueprint B10, F's finding). A rebuild
+    /// between arms that stayed deterministic passes the receipt-equality check while leaving a
+    /// difference between arms explainable by a code change rather than by the treatment.
+    pub binary_digest: String,
+    /// The environment record the binary ran under (B11). Separate from the digest ON PURPOSE:
+    /// a digest fixes the code, not what the code READS -- the same artifact under a different
+    /// RUST_LOG, locale, or target dir is a different treatment with an identical digest.
+    pub environment: String,
+    /// The cache warmth protocol this arm followed (B3). Held EQUAL like every other axis: a warm
+    /// compiled arm against a cold baseline is the single cheapest way to manufacture a good
+    /// ratio, and it leaves no trace in a mean. Cache STORES must still not cross arms -- that is
+    /// a receipt-level property (#222), not this field's.
+    pub cache_discipline: String,
 }
 
 /// Refuse unless both arms were given the same thing.
@@ -116,6 +157,10 @@ pub fn compare_arms(
     };
 
     check("snapshot", baseline.snapshot == compiled.snapshot);
+    check(
+        "indexSnapshot",
+        baseline.index_snapshot == compiled.index_snapshot,
+    );
     check("objective", baseline.objective == compiled.objective);
     check("permissions", baseline.permissions == compiled.permissions);
     check("modelRoute", baseline.model_route == compiled.model_route);
@@ -132,12 +177,84 @@ pub fn compare_arms(
         "acceptanceContract",
         baseline.acceptance_contract == compiled.acceptance_contract,
     );
+    check(
+        "binaryDigest",
+        baseline.binary_digest == compiled.binary_digest,
+    );
+    check("environment", baseline.environment == compiled.environment);
+    check(
+        "cacheDiscipline",
+        baseline.cache_discipline == compiled.cache_discipline,
+    );
 
     if fields.is_empty() {
         return Ok(());
     }
     fields.sort();
     Err(BenchmarkRefusal::AsymmetricRun { fields })
+}
+
+/// Digest the FILES a corpus points at, raw bytes bound to case ids (K's #504 finding 1).
+///
+/// Per case, in manifest order: `sha256(file bytes)` bound to the case id; then one digest over
+/// the ordered id:hash lines. Raw bytes rather than canonical JSON, per the SS7b decision -- these
+/// files exist to be REPLAYED, and a canonical digest is deliberately blind to bytes that differ.
+/// `kind` is the directory the corpus keeps them in ("oracle" or "objectives"); each case's file
+/// is `<kind>/<case id>.json`.
+///
+/// A case whose file cannot be read refuses naming it: a digest over the readable subset would be
+/// a digest of a DIFFERENT corpus.
+pub fn frozen_files_digest(
+    root: &std::path::Path,
+    kind: &str,
+    cases: &[Case],
+) -> Result<String, BenchmarkRefusal> {
+    let mut lines = String::new();
+    for case in cases {
+        let path = root.join(kind).join(format!("{}.json", case.id));
+        let bytes = std::fs::read(&path).map_err(|error| BenchmarkRefusal::Unreadable {
+            detail: format!("{kind}/{}.json: {error}", case.id),
+        })?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        // The id is bound BESIDE the hash, so the same bytes under another case cannot collide
+        // with the original: which bytes belong to which case is part of the freeze.
+        lines.push_str(&format!(
+            "{}:{}
+",
+            case.id,
+            hex::encode(hasher.finalize())
+        ));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(lines.as_bytes());
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+
+/// Verify a manifest's frozen file digests against the files on disk.
+///
+/// Split from `load_manifest` because the loader owns TEXT and this owns the FILESYSTEM: callers
+/// that only need the corpus identity (most tests) keep a pure function, and the runner -- which
+/// is about to hand these files to two arms -- calls this beside it. Refuses with the declared
+/// and actual digests, same shape as the corpus check, so an operator sees WHICH freeze moved.
+pub fn verify_frozen_files(
+    manifest: &Manifest,
+    root: &std::path::Path,
+) -> Result<(), BenchmarkRefusal> {
+    for (kind, declared) in [
+        ("oracle", &manifest.oracle_digest),
+        ("objectives", &manifest.objectives_digest),
+    ] {
+        let actual = frozen_files_digest(root, kind, &manifest.cases)?;
+        if &actual != declared {
+            return Err(BenchmarkRefusal::FrozenFilesMismatch {
+                kind: kind.to_owned(),
+                declared: declared.clone(),
+                actual,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The digest that freezes a corpus.
@@ -184,6 +301,45 @@ pub fn load_manifest(text: &str) -> Result<Manifest, BenchmarkRefusal> {
     }
 
     Ok(manifest)
+}
+
+/// How a counter column over the whole corpus reads (#225 blueprint B8).
+///
+/// Two renderings, and the word matters: `NotExercised` is not a zero. A zero says the cost was
+/// paid and measured at nothing; not-exercised says the corpus never made the counter move, so
+/// the column proves nothing about the cost. Publishing the second as the first is the flattering
+/// misread the blueprint's zero bar exists to refuse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ColumnReading {
+    /// At least one case moved the counter; the column carries signal.
+    Exercised {
+        field: String,
+        total: u64,
+        nonzero_cases: usize,
+    },
+    /// Every case observed zero. The counter has no control in this corpus.
+    NotExercised { field: String },
+}
+
+/// Render one counter column, refusing the empty case rather than defaulting it.
+pub fn read_counter_column(field: &str, values: &[u64]) -> Result<ColumnReading, BenchmarkRefusal> {
+    // No observations is not a quiet column -- it is a run with no cases, and that refusal
+    // already has a name. An empty slice falling through would render NotExercised, which
+    // flatters twice: it hides the missing run AND reads as a statement about the corpus.
+    if values.is_empty() {
+        return Err(BenchmarkRefusal::EmptyRun);
+    }
+    let nonzero_cases = values.iter().filter(|value| **value != 0).count();
+    if nonzero_cases == 0 {
+        return Ok(ColumnReading::NotExercised {
+            field: field.to_owned(),
+        });
+    }
+    Ok(ColumnReading::Exercised {
+        field: field.to_owned(),
+        total: values.iter().sum(),
+        nonzero_cases,
+    })
 }
 
 /// A ratio between the two arms for one cost field, carrying how well it is known.

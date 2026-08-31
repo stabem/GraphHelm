@@ -1,0 +1,1 @@
+{"oracleId":"oracle-accounting-unavailable","requiredEvidence":["core/runtime/src/context_accounting.rs"],"answer":"Every field carries provenance; unavailable is an explicit state, never 0 -- collapsing them would let a blind counter publish as a cheap one. The benchmark mirrors this as CostUnavailable, not zero."}

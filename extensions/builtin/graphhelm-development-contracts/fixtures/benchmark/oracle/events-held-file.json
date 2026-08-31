@@ -1,0 +1,1 @@
+{"oracleId":"oracle-events-held-file","requiredEvidence":["core/events/src/local.rs","core/events/tests/held_file_contention.rs"],"answer":"No: ERROR_SHARING_VIOLATION (32) in open_child_file_for_delete returns Ok(None) -- in flight is not abandoned; reconcile skips the child."}

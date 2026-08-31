@@ -18,6 +18,8 @@ fn frozen_manifest(case_ids: &[&str]) -> String {
     serde_json::json!({
         "manifestVersion": 1,
         "corpusDigest": digest,
+        "oracleDigest": "sha256:not-checked-by-the-loader",
+        "objectivesDigest": "sha256:not-checked-by-the-loader",
         "cases": cases,
     })
     .to_string()
@@ -106,4 +108,46 @@ fn an_untouched_frozen_manifest_loads() {
     let manifest = load_manifest(&frozen).expect("nothing was edited after the freeze");
 
     assert_eq!(manifest.cases.len(), 3);
+}
+
+/// K's review probe on #504, kept as the red fixture it was: an unknown field on a case was
+/// ACCEPTED with the digest byte-identical, because serde dropped it and the digest is taken over
+/// a re-serialisation of the parsed struct -- unmodelled content invisible twice. Material, not
+/// theoretical: the blueprint puts the criticality flag in the FROZEN manifest, so the day it
+/// becomes a case field it would not be frozen by this digest.
+#[test]
+fn an_unknown_field_on_a_case_cannot_survive_the_freeze() {
+    let manifest = r#"{
+        "manifestVersion": 1,
+        "corpusDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "oracleDigest": "sha256:0",
+        "objectivesDigest": "sha256:0",
+        "cases": [{ "id": "a", "oracleId": "oracle-a", "criticality": "critical" }]
+    }"#;
+
+    let refusal = load_manifest(manifest)
+        .expect_err("a case field the model does not carry was silently dropped by the freeze");
+
+    assert!(
+        matches!(refusal, BenchmarkRefusal::Unreadable { .. }),
+        "unmodelled content is a manifest this loader cannot vouch for, not a digest question: \
+         got {refusal:?}"
+    );
+}
+
+/// Same property one level up: an unknown MANIFEST field must refuse, not vanish.
+#[test]
+fn an_unknown_field_on_the_manifest_cannot_survive_the_freeze() {
+    let manifest = r#"{
+        "manifestVersion": 1,
+        "corpusDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "oracleDigest": "sha256:0",
+        "objectivesDigest": "sha256:0",
+        "judgeSpread": 0.02,
+        "cases": []
+    }"#;
+
+    let refusal = load_manifest(manifest).expect_err("an unknown manifest field was dropped");
+
+    assert!(matches!(refusal, BenchmarkRefusal::Unreadable { .. }));
 }

@@ -16,6 +16,9 @@ graphhelm-protocols = { path = "../../core/protocols" }
 graphhelm-runtime = { path = "../../core/runtime" }
 serde_yaml_ng.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [[bin]]
 name = "graphhelm-development-benchmark"
 path = "src/main.rs"

@@ -1,0 +1,1 @@
+{"oracleId":"oracle-events-open-verdict","requiredEvidence":["core/events/src/local.rs","core/events/src/store.rs"],"answer":"GHE008_STORAGE_FAILURE, decided by open_failure in core/events/src/local.rs; NotFound alone keeps GHE005_INTEGRITY_FAILURE because a pinned child that vanished is damage."}

@@ -13,6 +13,7 @@ use graphhelm_development_benchmark::{ArmDeclaration, BenchmarkRefusal, compare_
 fn arm() -> ArmDeclaration {
     ArmDeclaration {
         snapshot: "snap-1".to_owned(),
+        index_snapshot: "index-snap-1".to_owned(),
         objective: "answer the corpus".to_owned(),
         permissions: vec!["read".to_owned()],
         model_route: "route-a".to_owned(),
@@ -23,6 +24,9 @@ fn arm() -> ArmDeclaration {
         clock: "2026-08-24T12:00:00Z".to_owned(),
         budget: 100_000,
         acceptance_contract: "contract-1".to_owned(),
+        binary_digest: "sha256:build-1".to_owned(),
+        environment: "env-record-1".to_owned(),
+        cache_discipline: "cold".to_owned(),
     }
 }
 

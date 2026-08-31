@@ -1,0 +1,1 @@
+{"oracleId":"oracle-events-idempotency","requiredEvidence":["core/events/src/local.rs"],"answer":"EventRepositoryError::IdempotencyConflict, from io::ErrorKind::AlreadyExists inside link_retained_file_between; every other link failure is Storage."}

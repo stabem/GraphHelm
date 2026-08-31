@@ -1,0 +1,1 @@
+{"caseId":"benchmark-recall-order","objective":"Why does the benchmark evaluator settle required-evidence recall BEFORE any mean exists, instead of letting a miss lower the score? Name the function and the failure shape this order forecloses."}

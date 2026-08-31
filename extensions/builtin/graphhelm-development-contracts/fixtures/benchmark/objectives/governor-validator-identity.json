@@ -1,0 +1,1 @@
+{"caseId":"governor-validator-identity","objective":"How does the governor prevent a producer from counting as its own validator? Is the comparison by count or by identity, and where?"}

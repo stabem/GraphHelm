@@ -886,6 +886,7 @@ dependencies = [
  "chrono",
  "clap",
  "getrandom 0.4.3",
+ "graphhelm-development-benchmark",
  "graphhelm-events",
  "graphhelm-execution",
  "graphhelm-gateway",
@@ -941,6 +942,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]

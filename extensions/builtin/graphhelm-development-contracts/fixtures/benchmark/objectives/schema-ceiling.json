@@ -1,0 +1,1 @@
+{"caseId":"schema-ceiling","objective":"Every *WithinSeconds field in the shipped schemas enforces one house ceiling. What is the value, in which files does node.schema.json apply it, and where is the rationale recorded?"}

@@ -1,0 +1,1 @@
+{"caseId":"extension-inventory","objective":"A discoverable file is added under the development-contracts package without a manifest entry. What refuses it, with which diagnostic code, and which test aims that validator at the real package?"}

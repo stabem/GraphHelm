@@ -242,10 +242,30 @@ pub enum NodeType {
     /// It joins the STRUCTURAL (refused-to-execute) set in `classify::work_kind`: a dead-lettered
     /// node is not work waiting to happen, it is work that stopped. Putting it anywhere else would
     /// make the scheduler treat a graveyard as a queue.
+    ///
+    /// THIS PARAGRAPH IS NOT THE MECHANISM, and #425 measured the difference. Every sentence above
+    /// was true and none of it was checked: changing the refusal arm to `Ok(Cognitive)` -- wrong
+    /// but legal, so nothing failed to compile -- left both classification tables GREEN, because
+    /// each named sixteen of the seventeen variants and neither named this one. What holds the
+    /// three claims now:
+    ///
+    /// ```text
+    /// no driver dispatches it   core/runtime/tests/gate_nodes.rs   (walks EVERY_VARIANT)
+    /// no Rust emits it          core/protocols/tests/dead_letter_is_declared_only.rs
+    /// no document authors it    the same file, second sweep
+    /// ```
+    ///
+    /// The second sweep exists because a source sweep cannot see the other production path: the
+    /// wire name deserializes straight into this variant, and `node_type_vocabularies_agree.rs`
+    /// REQUIRES the authoring schema to accept it, so a graph document can produce one with no
+    /// mention of the identifier anywhere in Rust.
+    ///
+    /// If you are about to emit one, that is a decision about the 1.0.0 node schema and not an
+    /// implementation detail -- widen the tables in the same change that bumps `documentVersion`.
     DeadLetter,
 }
 
-// ONE SOURCE, TWO PRODUCTS — the same shape `wire_names!` uses for `EventKind`, and here for the
+// ONE SOURCE, THREE PRODUCTS — the same shape `wire_names!` uses for `EventKind`, and here for the
 // same measured reason.
 //
 // `EventKind` has `EVERY_WIRE_NAME`, and that list is why a forgotten event kind goes red BY NAME:
@@ -266,6 +286,16 @@ macro_rules! node_type_names {
             ///
             /// Derived from the same list as [`NodeType::as_str`], so the two cannot drift.
             pub const EVERY_WIRE_NAME: &'static [&'static str] = &[$($name),+];
+
+            /// Every variant this enum has, in declaration order.
+            ///
+            /// The third product of the same list. `EVERY_WIRE_NAME` lets a guard compare the
+            /// enum against a schema; this lets a guard put every variant THROUGH something and
+            /// find the one nobody classified. A hand-written array of variants in a test drifts
+            /// exactly like the hand-written name list this macro exists to prevent -- measured
+            /// on #425, where BOTH classification tables named sixteen of seventeen variants and
+            /// the seventeenth could be made dispatchable with the whole suite green.
+            pub const EVERY_VARIANT: &'static [NodeType] = &[$(Self::$variant),+];
 
             /// This variant's serde spelling — the string it carries in a graph document and in a
             /// persisted topology.

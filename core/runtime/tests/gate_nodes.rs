@@ -1,44 +1,108 @@
 //! M06 Task 4: Gate nodes execute — certified or not at all.
 //!
-//! The classification table is pinned WHOLE: exactly one refusal arm dies in this
-//! milestone (Gate), and the other fifteen node types keep their 05d behavior
-//! byte-identical. A Gate node runs only under a live certification against the CURRENT
+//! The classification table is pinned WHOLE, and #425 made that literal: the pin walks
+//! `NodeType::EVERY_VARIANT` rather than a hand list, because the hand list said "whole"
+//! while missing `DeadLetter`. Exactly one refusal arm dies in this milestone (Gate); the
+//! other SIXTEEN node types keep their 05d behavior byte-identical -- sixteen, not the
+//! fifteen this header used to say, because #288 added a seventeenth variant and nothing
+//! made the count go red. A Gate node runs only under a live certification against the CURRENT
 //! pathogen-suite digest; its verdict is appended beside the node outcome in the same
 //! durable batch, and a failing verdict is the outcome the graph routes on.
 
 use graphhelm_protocols::NodeType;
 use graphhelm_runtime::classify::{NodeWorkKind, work_kind};
+use graphhelm_runtime::executor::ExecutorRefusal;
 
+/// Every `NodeType` the enum has, put through `work_kind`, against a table written out here.
+///
+/// WHY EVERY VARIANT AND NOT A HAND LIST, measured on #425. This test was already called
+/// "pinned whole" and named SIXTEEN of the seventeen variants; `driver_contract.rs` named the
+/// same sixteen. `DeadLetter` was in neither. Changing its arm in `classify::work_kind` from
+/// `Err(Unsupported)` to `Ok(Cognitive)` -- wrong but perfectly legal, so the compiler has no
+/// objection -- was measured GREEN across both files:
+///
+/// ```text
+/// error[E in the build                                        0
+/// `running` blocks (both test binaries executed)              2
+/// the_classification_table_is_pinned_whole                    ok
+/// node_types_classify_cognitive_or_tool_and_nothing_else...   ok
+/// ```
+///
+/// So the sub-claim "no driver dispatches a dead-letter node" rested on a match arm that no
+/// assertion read. The exhaustive `match` in `classify` forces a NEW variant to be decided; it
+/// does nothing about an EXISTING arm being changed, and that is the half a test has to hold.
+///
+/// The fix is not "add the missing name" -- that leaves the next variant in the same hole. The
+/// pin now walks `NodeType::EVERY_VARIANT`, which the same macro emits as the wire-name list, so
+/// a variant cannot be absent from this table without the count assertion below failing by name.
+///
+/// LOOKUP BY VARIANT, NEVER BY INDEX. `graph.rs` promises that reordering the variants stays a
+/// cosmetic edit; pairing this table to the enum positionally would quietly turn that promise
+/// into a lie, and the failure would accuse the wrong edit.
 #[test]
 fn the_classification_table_is_pinned_whole() {
     use NodeType::{
-        Agent, ArtifactTransform, Classifier, Deploy, Evaluator, Fork, Gate, HumanDecision, Join,
-        Materializer, Planner, Rollback, Subgraph, Timer, Tool, Trigger,
+        Agent, ArtifactTransform, Classifier, DeadLetter, Deploy, Evaluator, Fork, Gate,
+        HumanDecision, Join, Materializer, Planner, Rollback, Subgraph, Timer, Tool, Trigger,
     };
-    // The 05d cognitive four, byte-identical.
-    for cognitive in [Agent, Planner, Classifier, Evaluator] {
-        assert_eq!(work_kind(&cognitive), Ok(NodeWorkKind::Cognitive));
-    }
-    // The 05c/05d tool path, byte-identical.
-    assert_eq!(work_kind(&Tool), Ok(NodeWorkKind::Tool));
-    // The ONE arm this milestone opens: deterministic gate work, no model port.
-    assert_eq!(work_kind(&Gate), Ok(NodeWorkKind::GateCheck));
-    // Everything else still refuses — the exhaustive-match posture unchanged.
-    for refused in [
-        Fork,
-        Join,
-        HumanDecision,
-        Timer,
-        Trigger,
-        Subgraph,
-        Materializer,
-        Deploy,
-        Rollback,
-        ArtifactTransform,
-    ] {
-        assert!(
-            work_kind(&refused).is_err(),
-            "{refused:?} must still refuse"
+
+    let refused = Err(ExecutorRefusal::Unsupported);
+    let expected: &[(NodeType, Result<NodeWorkKind, ExecutorRefusal>)] = &[
+        // The 05d cognitive four, byte-identical.
+        (Agent, Ok(NodeWorkKind::Cognitive)),
+        (Planner, Ok(NodeWorkKind::Cognitive)),
+        (Classifier, Ok(NodeWorkKind::Cognitive)),
+        (Evaluator, Ok(NodeWorkKind::Cognitive)),
+        // The 05c/05d tool path, byte-identical.
+        (Tool, Ok(NodeWorkKind::Tool)),
+        // The ONE arm M06 opens: deterministic gate work, no model port.
+        (Gate, Ok(NodeWorkKind::GateCheck)),
+        // Everything else refuses. These are "no driver yet" -- work waiting for one.
+        (Fork, refused),
+        (Join, refused),
+        (HumanDecision, refused),
+        (Timer, refused),
+        (Trigger, refused),
+        (Subgraph, refused),
+        (Materializer, refused),
+        (Deploy, refused),
+        (Rollback, refused),
+        (ArtifactTransform, refused),
+        // #288/#425: the dead-letter node refuses for a STRONGER reason than its neighbours --
+        // permanently, not pending. It shares their arm because `Unsupported` is what the
+        // executor can act on today. This row is the one the old pin was missing.
+        (DeadLetter, refused),
+    ];
+
+    // Non-vacuity FIRST: an empty variant list would make the loop below assert nothing while
+    // reading as full coverage.
+    assert!(
+        !NodeType::EVERY_VARIANT.is_empty(),
+        "an empty EVERY_VARIANT would satisfy the whole table vacuously"
+    );
+
+    // The count is what makes this WHOLE rather than merely long. A new variant lands here
+    // before it can land anywhere else.
+    assert_eq!(
+        NodeType::EVERY_VARIANT.len(),
+        expected.len(),
+        "every NodeType variant needs a row in this table; the enum has {} and the table \
+         has {}. A new variant must declare here whether the driver dispatches it -- that \
+         decision is what the 1.0.0 node-type promise is made of, not the fact that \
+         `classify` compiles.",
+        NodeType::EVERY_VARIANT.len(),
+        expected.len()
+    );
+
+    for variant in NodeType::EVERY_VARIANT {
+        let (_, want) = expected
+            .iter()
+            .find(|(named, _)| named == variant)
+            .unwrap_or_else(|| panic!("{variant:?} has no row in the classification table"));
+        assert_eq!(
+            &work_kind(variant),
+            want,
+            "{variant:?} must classify exactly as this table says"
         );
     }
 }

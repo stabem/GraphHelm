@@ -66,6 +66,10 @@ pub enum HostError {
     /// running.
     #[error("the executable does not match its pin")]
     ExecutableMismatch { expected: String, actual: String },
+    /// The index-snapshot copy no longer hashes to its recorded generation (#539). Carries both
+    /// values — re-pin or investigate, never read anyway.
+    #[error("the index snapshot does not match its pin")]
+    SnapshotMismatch { expected: String, actual: String },
 }
 
 /// The fixed inheritance allowlist. Everything else the parent holds — passphrases, tokens,

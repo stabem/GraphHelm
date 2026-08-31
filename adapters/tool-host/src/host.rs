@@ -75,6 +75,7 @@ fn host_error_code(error: &HostError) -> String {
         // GHTOOL007 is taken by EXIT_UNKNOWN at the disposition layer.
         HostError::ExecutableNotPinned { .. } => "GHTOOL008_EXECUTABLE_UNPINNED".to_owned(),
         HostError::ExecutableMismatch { .. } => "GHTOOL009_EXECUTABLE_MISMATCH".to_owned(),
+        HostError::SnapshotMismatch { .. } => "GHTOOL010_SNAPSHOT_MISMATCH".to_owned(),
     }
 }
 

@@ -801,13 +801,36 @@ pub async fn drive_to_quiescence_async(
             .into_iter()
             .filter(|node| !in_flight_nodes.contains(node) && !refused.contains(node))
             .collect();
-        let plan = dispatch_plan(
-            &candidates,
-            &projection.node_attempts,
-            in_flight_nodes.len(),
-            max_parallel,
-        )
-        .map_err(|_| DriverError::Transition)?;
+        // #124: AN ORDINARY PAUSE STOPS DISPATCH. The pause route appends `execution_paused` and
+        // signals nothing -- the cancel channel is written only for `mode: immediate`
+        // (`serve/routes.rs`). So without this the stream records the pause at sequence T and node
+        // outcomes at T+1: an operator reads `paused` while the machine keeps going, which is the
+        // log-that-lies class at the exact moment of intervention.
+        //
+        // An EMPTY PLAN rather than a new exit, and the choice is the whole design. Anything
+        // already in flight keeps running and is still joined below; when the last one lands, the
+        // pass after it finds an empty plan and an empty `in_flight` and leaves through the
+        // quiescence exit that was always there. Nothing is aborted, nothing is recorded
+        // `Interrupted`, and `execution_paused` is not appended a second time -- all three belong
+        // to immediate-stop, and #124 declined to collapse the two verbs.
+        //
+        // So the distinction survives with its meaning intact: immediate INTERRUPTS work,
+        // ordinary DECLINES TO START MORE.
+        // Read AFTER the rebind above, never before it. `projection` is replaced when a release
+        // appended, so a value taken earlier in this pass describes a store that has since moved --
+        // and the whole point of this check is to see an append that arrived late.
+        let execution_paused = projection.simulation_status == Some(SimulationStatus::Paused);
+        let plan = if execution_paused {
+            Vec::new()
+        } else {
+            dispatch_plan(
+                &candidates,
+                &projection.node_attempts,
+                in_flight_nodes.len(),
+                max_parallel,
+            )
+            .map_err(|_| DriverError::Transition)?
+        };
 
         if plan.is_empty() && in_flight.is_empty() {
             break false;
@@ -830,8 +853,25 @@ pub async fn drive_to_quiescence_async(
             };
             // Dispatch hops flow through the same writer BEFORE the executor future starts,
             // so sequencing matches 04f exactly.
-            let current = reread_async(&store_open, &scope, &stream)
-                .await?
+            // ASKED AT THE POINT OF DISPATCH, from the projection this point actually holds.
+            // The plan was computed from a read taken earlier in the pass; a pause appended since
+            // then is invisible to it, and this per-node reread is the only place that can see it.
+            // Node state alone cannot stand in: an ordinary pause moves NO node state (it sets
+            // `simulation_status` and nothing else), so a planned node is still `Ready` here and
+            // sails through the gate below with the pause already in the log. Blindness by
+            // construction, not by race.
+            //
+            // THIS BREAK NEEDS THE PLAN GATE ABOVE TO TERMINATE, and the two are not redundant.
+            // Measured by removing each alone: with the plan gate gone this loop SPINS FOREVER --
+            // the plan stays non-empty, every node breaks out before dispatch, `in_flight` stays
+            // empty, and the `plan.is_empty() && in_flight.is_empty()` exit is never reached.
+            // One stops a dispatch mid-plan; the other ends the pass. Removing either as
+            // "covered by the other" is how this becomes a hang.
+            let at_dispatch = reread_async(&store_open, &scope, &stream).await?;
+            if at_dispatch.simulation_status == Some(SimulationStatus::Paused) {
+                break;
+            }
+            let current = at_dispatch
                 .node_states
                 .get(node)
                 .copied()

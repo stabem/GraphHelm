@@ -2244,3 +2244,192 @@ fn a_cancelled_tool_child_is_actually_dead() {
         "the interrupted tool node is blocked for triage"
     );
 }
+
+/// A model port that hangs its FIRST call and answers every later one immediately.
+///
+/// `HangingModelPort` hangs every call, which is right for immediate-stop (the drive is killed
+/// while the node is held) and wrong here: an ordinary pause must let the drive REACH its next
+/// dispatch decision, and a port that hangs forever would make this test hang rather than fail.
+/// A red that hangs is not a red -- nobody can tell it from a slow machine.
+struct HangsOnceModelPort {
+    called: AtomicUsize,
+    /// A SEMAPHORE, not a `Notify`, and the difference is a hang.
+    ///
+    /// `called` is published by `fetch_add` BEFORE the wait registers, so a test that sees the
+    /// counter move and releases immediately can land in the gap. `notify_waiters` keeps no permit
+    /// for a waiter that has not arrived yet, so that release would be dropped and the call would
+    /// wait forever — a CI hang with no assertion to read, which is the failure mode this file
+    /// already argues against in `HangsOnceModelPort`'s own reason for existing.
+    ///
+    /// A permit added to a semaphore is RETAINED. Release before the wait and the wait returns at
+    /// once; release after and it wakes normally. The race stops being a race.
+    wake: tokio::sync::Semaphore,
+}
+
+impl HangsOnceModelPort {
+    fn new() -> Self {
+        Self {
+            called: AtomicUsize::new(0),
+            wake: tokio::sync::Semaphore::new(0),
+        }
+    }
+
+    fn release(&self) {
+        self.wake.add_permits(1);
+    }
+}
+
+impl ModelPort for HangsOnceModelPort {
+    fn call<'a>(
+        &'a self,
+        _route_id: &'a str,
+        _call: &'a ModelCall,
+    ) -> Pin<Box<dyn Future<Output = Result<ModelReply, GatewayError>> + Send + 'a>> {
+        Box::pin(async move {
+            let first = self.called.fetch_add(1, Ordering::SeqCst) == 0;
+            if first {
+                let permit = self
+                    .wake
+                    .acquire()
+                    .await
+                    .expect("the semaphore is never closed");
+                permit.forget();
+            }
+            Ok(reply("DONE"))
+        })
+    }
+}
+
+/// #124 — AN ORDINARY PAUSE MUST STOP THE DRIVE, and today it does not.
+///
+/// The defect is stated in main's own source: *"an ORDINARY (non-immediate) pause does NOT stop an
+/// in-flight drive -- the serve route signals the driver's cancel channel only when
+/// `mode == "immediate"`"*. `#123` added a guard that reads `simulation_status` each pass, but it
+/// guards RELEASE only; dispatch never consults it. So the stream records `execution_paused` at
+/// sequence T and node outcomes at T+1, T+2 -- the log-that-lies class at the exact moment of
+/// operator intervention.
+///
+/// ARRANGEMENT, and the reason for each part. Two INDEPENDENT nodes with `max_parallel = 1`, so
+/// exactly one is in flight and the other is a dispatch the drive has not made yet. The pause is
+/// appended out of band, which is precisely what the ordinary pause route does (it appends and
+/// returns; it signals nothing). Only then is the held node released, so the drive must make its
+/// next dispatch decision with `Paused` already readable.
+///
+/// WHAT THIS ASSERTS AND WHAT IT DOES NOT. It asserts the drive stops DISPATCHING. It does not
+/// assert the in-flight node is killed -- that is immediate-stop's promise, and collapsing the two
+/// verbs into one is the exit #124 explicitly declined. The distinction survives: immediate
+/// interrupts, ordinary declines to start more.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL once the fix lands: removing the paused check from
+/// the loop head, or moving it below the dispatch that follows.
+#[test]
+fn an_ordinary_pause_stops_the_drive_before_it_dispatches_more_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            ("first", agent_graph_node("held")),
+            ("second", agent_graph_node("held")),
+        ],
+        vec![],
+        1,
+    );
+    let model = Arc::new(HangsOnceModelPort::new());
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
+    let ids = Arc::new(SequenceIds::default());
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+
+    let runtime = multi_thread_runtime();
+    let projection = runtime.block_on(async {
+        let driver = tokio::spawn(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            protector.clone(),
+            ids,
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id.clone(),
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+        ));
+
+        while model.called.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        // The ordinary pause: an append and nothing else. No channel, no signal -- the route's
+        // whole behaviour, reproduced.
+        append_execution_paused(directory.path(), &execution_id);
+
+        // Release the held node ONLY now, so the next dispatch decision is made with the pause
+        // already in the log. Releasing first would let the drive finish before it could read it,
+        // and the test would pass without ever posing the question.
+        model.release();
+        driver.await.unwrap().unwrap()
+    });
+
+    assert_eq!(
+        model.called.load(Ordering::SeqCst),
+        1,
+        "the drive dispatched more work AFTER execution_paused was readable: the pause is \
+         recorded and the machine keeps going, which is what an operator reading `paused` cannot \
+         see. Node states: {:?}",
+        projection.node_states
+    );
+    assert!(
+        !matches!(
+            projection.node_states.get("second"),
+            Some(NodeState::Running | NodeState::Succeeded | NodeState::Failed)
+        ),
+        "`second` was never dispatched, so it cannot have run: {:?}",
+        projection.node_states
+    );
+}
+
+/// Appends `execution_paused` the way the ordinary pause route does: straight onto the stream,
+/// with no signal to anything. Retries on a sequence conflict because a live drive is appending
+/// too -- a conflict here is contention, not a verdict.
+fn append_execution_paused(directory: &std::path::Path, execution_id: &OpaqueId) {
+    let repository = LocalEventRepository::open(
+        directory,
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    )
+    .unwrap();
+    let scope = driver_scope();
+    for attempt in 0..64 {
+        let head = repository
+            .read_replay_stream(&scope, DRIVER_STREAM)
+            .unwrap()
+            .len() as u64;
+        let request = PreparedAppend::new(
+            scope.clone(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            head + 1,
+            vec![plain_event(
+                &format!("ordinary-pause-{attempt}"),
+                EventKind::ExecutionPaused(graphhelm_protocols::ExecutionPaused {
+                    execution_id: execution_id.clone(),
+                }),
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        if repository.append_atomic(&request).is_ok() {
+            return;
+        }
+    }
+    panic!("HARNESS-BROKE: execution_paused never landed, so the test never posed its question");
+}

@@ -697,7 +697,101 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             true,
         ),
     ];
-    assert_eq!(variants.len() + 1, 16); // publication has dedicated lineage/bijection tests.
+    // No length literal (#190): the old `assert_eq!(variants.len() + 1, 16)` compared this
+    // vec's own length to a hand-written number, so it could never fail regardless of how many
+    // real EventKind variants exist or how many of them this vec actually lists — the same
+    // shape already fixed in `conformance.rs` and `persistence_wire.rs` (#160/#167).
+    //
+    // This test does NOT gain 28 new fixtures here. Inventing schema-correct JSON for events
+    // this file has never exercised risks wrong-but-plausible coverage — worse than the gap it
+    // would claim to close. Instead: the gap is PINNED, by name, same shape as #478's tripwire.
+    // A new EventKind variant, or the accidental loss of an existing fixture, changes this
+    // test's own comparison and turns it red — nothing can silently drift again.
+    let covered: std::collections::BTreeSet<&str> = variants
+        .iter()
+        .map(|(json, _)| json["type"].as_str().expect("fixture carries a type tag"))
+        .collect();
+    let non_publication: std::collections::BTreeSet<&str> = EventKind::EVERY_WIRE_NAME
+        .iter()
+        .copied()
+        .filter(|name| *name != "graph_version_published")
+        .collect();
+    // (1) Every fixture above names a real, current, non-publication variant — catches a typo'd
+    // or retired "type" tag in this vec, which the diff in (2) alone would not distinguish from
+    // a genuinely uncovered variant.
+    let covered_but_unreal: Vec<&&str> = covered.difference(&non_publication).collect();
+    assert!(
+        covered_but_unreal.is_empty(),
+        "fixture(s) above name a type tag EventKind does not currently produce: {covered_but_unreal:?}"
+    );
+    // (2) TECH DEBT, PINNED (tracking issue #569): these 28
+    // non-publication variants have zero generation-handler coverage today. This is the exact
+    // gap #190 found hidden behind the old vacuous length check. Landing this fix does not close
+    // that gap — it makes it visible and load-bearing. A fixture added for any of these MUST
+    // remove that name from this list in the SAME commit; leaving it here after coverage exists
+    // is a false debt entry, which is its own kind of lie.
+    //
+    // 6 of these (dlq_redrive/dlq_returned/dlq_routed/overdue_exception/sweep_performed/
+    // memory_admission_refused) were NOT present when #190 was first measured (2026-08-20;
+    // non-publication count was 31 then, 43 now). Precisely: 5 of the 6 landed 2026-08-24, a
+    // week before this fix started; only memory_admission_refused (2026-08-30) landed during
+    // this work. What is true either way, and what this test actually demonstrates: it failed
+    // on its own, by name, against a fresh checkout of its own PR base (84aa4e37) — a census
+    // taken 11 days before the tree it finally ran against, catching the gap by name rather
+    // than silently. That is the mechanism working; the "caught live" framing overstated when,
+    // not whether. (D, review on #571.)
+    const UNCOVERED_PIN: &[&str] = &[
+        "clearance_identity_registered",
+        "clearance_identity_revoked",
+        "completion_claimed",
+        "completion_cleared",
+        "completion_refused",
+        "completion_rejected",
+        "dlq_redrive",
+        "dlq_returned",
+        "dlq_routed",
+        "execution_completed",
+        "execution_form_amended",
+        "execution_form_declared",
+        "execution_mode_changed",
+        "execution_paused",
+        "execution_resumed",
+        "execution_started",
+        "gate_certified",
+        "gate_verdict",
+        "ghost_node_proposed",
+        "memory_admission_refused",
+        "mutation_accepted",
+        "node_outcome_recorded",
+        "overdue_exception",
+        "reuse_decision",
+        "signal_recorded",
+        "sweep_performed",
+        "wake_lease",
+        "wake_lease_consumed",
+    ];
+    let pinned: std::collections::BTreeSet<&str> = UNCOVERED_PIN.iter().copied().collect();
+    let actually_uncovered: std::collections::BTreeSet<&str> =
+        non_publication.difference(&covered).copied().collect();
+    // Two directions, two questions, two messages (D, review on #571): a single "these sets
+    // differ" comparison prints both 28-entry sides in full and offers a menu of unequal-cost
+    // fixes, so the reader defaults to the cheap one (add a name to the pin) even when that is
+    // the wrong branch. Splitting by direction forces the actual question each drift shape asks.
+    let newly_uncovered: Vec<&&str> = actually_uncovered.difference(&pinned).collect();
+    assert!(
+        newly_uncovered.is_empty(),
+        "these non-publication variant(s) are uncovered and NOT in UNCOVERED_PIN — a new \
+         EventKind variant arrived (it compiles because the enum's exhaustive matches force \
+         handling, but this test still needs it CLASSIFIED): either write a fixture now, or add \
+         it to UNCOVERED_PIN as new declared debt. Do not leave it unclassified: {newly_uncovered:?}"
+    );
+    let stale_pin_entries: Vec<&&str> = pinned.difference(&actually_uncovered).collect();
+    assert!(
+        stale_pin_entries.is_empty(),
+        "these UNCOVERED_PIN name(s) are no longer uncovered — either a fixture now exists for \
+         them (remove the name from UNCOVERED_PIN in the SAME commit as the fixture, per the \
+         comment above) or the variant no longer exists at all: {stale_pin_entries:?}"
+    );
     for (kind, project_level) in variants {
         let event_scope = if project_level {
             RepositoryScope::new(

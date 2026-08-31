@@ -349,8 +349,7 @@ fn no_apps_cli_surface_appends_an_unverifiable_countersignature() {
                     // comment says, so commented-out construction is exempt too (D). Accepted —
                     // commented-out code appends nothing.
                     let trimmed = line.trim_start();
-                    !trimmed.starts_with("//")
-                        && line.contains("ClearanceVerifier::Countersign")
+                    !trimmed.starts_with("//") && line.contains("ClearanceVerifier::Countersign")
                 })
                 .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim()))
         })

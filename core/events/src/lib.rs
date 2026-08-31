@@ -37,10 +37,10 @@ pub use local::{
 pub use memory::{MemoryAdmissionRefusalAppend, prepare_memory_admission_refusal};
 pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
-    claim_evidence_digest,
     MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt, OpenClaim, OpenWait, OverdueStage,
     ProjectionGeneration, ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository,
-    ProjectionWatermark, ReplayError, overdue_at, project_customs_stage, replay,
+    ProjectionWatermark, ReplayError, claim_evidence_digest, overdue_at, project_customs_stage,
+    replay,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

@@ -73,7 +73,10 @@ fn certify_retry_lineage() -> Result<pathogens::Certification, pathogens::Certif
 /// The reasoning lives HERE, on the thing that creates the property, rather than on the refusal
 /// that merely benefits from it. A defensive arm for a dead state rots: it carries a string
 /// nothing can render, so nothing goes red when someone edits it -- which nearly happened to that
-/// very string, via a line continuation the formatter collapsed. (L's refinement.)
+/// very string, via a `\` continuation lost before the file was written. **The formatter did not
+/// collapse it and cannot**: `format_strings` is absent from this repository's `rustfmt.toml`, so
+/// rustfmt never edits inside a literal (#440). The refinement this once credited to L is refuted
+/// by L; the finding it supports — that a defensive arm for a dead state rots unread — stands.
 ///
 /// **If id and certifier are ever separated again, the split must come back.** L's finding holds
 /// for that shape; the shape is what changed, not the finding.

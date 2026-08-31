@@ -3,8 +3,16 @@
 //! A documented control which no test enforces is not a control. Operator-facing strings are such
 //! a control: nothing renders them except a human, so a defect in them leaves every test green.
 //!
-//! The defect: a line continuation inside a string literal keeps the NEXT line's indentation
-//! inside the literal, and `cargo fmt` joins the pieces into one line. The source reads plausibly
+//! The defect: a run of spaces inside a string literal, which a reader gets verbatim. It arrives
+//! when a `\` continuation is lost BEFORE the file is written — a code generator consuming the
+//! escape, which is MEASURED (#440); any other upstream rewriter is conjecture — so what lands is
+//! one line with the indentation already inside it.
+//!
+//! **Neither `rustc` nor `cargo fmt` can produce it, and the sentence this replaces named both**:
+//! the continuation escape consumes the next line's indentation, and `format_strings` is absent
+//! from this repository's `rustfmt.toml` (default `false`), so rustfmt never edits inside a
+//! literal. Both measured in #440. If you write Rust through a script this is your defect, and the
+//! explanation that stood here pointed away from it. The source reads plausibly
 //! while the reader of a failure gets `must stop being named, or the rule is not          reading
 //! the declaration`.
 //!

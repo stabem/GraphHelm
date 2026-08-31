@@ -524,6 +524,30 @@ fn release_catalog_directory_must_match_its_release_version() {
 
 // Prevents the single public baseline from being partial or diverging between mutable root and
 // immutable snapshot bytes.
+//
+// #508: this test was RED on main from `14f82b2` until the hotfix that carries this comment. The
+// `event-envelope` entry in BOTH catalogs — live and the frozen `releases/1.0.0/` snapshot —
+// recorded `sha256:214527df…` for bytes whose canonical digest is `sha256:d6041b65…`. The hotfix
+// re-derived both entries with the house instrument (`schema_digest` over `canonical_json`, NOT a
+// sha over raw file bytes).
+//
+// WHY EDITING THE FROZEN SNAPSHOT'S ENTRY IS LEGAL, and it is the whole argument — do not revert
+// this as vandalism. What this guard protects is the AUTHORED artifact: the schema BYTES. Those are
+// untouched, and the hotfix's diff proves it (two catalog files changed, zero `*.schema.json`).
+// A digest entry is not authored content, it is a DERIVATION over those bytes, and this one was
+// derived wrong at authoring time. Re-deriving corrects the record to describe the bytes it always
+// claimed to describe. The alternative — a 1.0.1 that leaves 1.0.0 self-inconsistent forever —
+// would need a permanent exemption cell right here: a standing lie with a standing waiver.
+//
+// PROVENANCE, measured rather than guessed. `14f82b2` ("feat(memory): persist safe admission
+// refusal events") edited the schema and wrote the entry in the same commit. Its parent was
+// CONSISTENT (recorded `b45ddada…` == actual `b45ddada…`), so this is not a stale pin someone
+// forgot to bump: a stale pin would still read `b45ddada…`. The recorded value matches neither the
+// before-bytes nor the after-bytes. Five candidate derivations of the shipped bytes were tried —
+// raw bytes as stored, raw bytes with CRLF, canonical JSON, `json.dumps` defaults, and canonical
+// JSON with key order preserved — and NONE produces `214527df…`. So HOW it was computed is not
+// established; the likeliest story, marked as inference and not measurement, is a digest taken over
+// an intermediate draft during that commit and never recomputed against the bytes that shipped.
 #[test]
 fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
     let root = repository_root();

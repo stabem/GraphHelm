@@ -36,7 +36,7 @@
       "id": "https://p50.dev/schemas/event-envelope.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/event-envelope.schema.json",
-      "sha256": "sha256:214527df31d09e3104780fc79df5cacf9aef84d453ccb5951a2064d65270a62e"
+      "sha256": "sha256:d6041b65c74125a0d28a674fb5dc3cd8be4e3d94a00c6a5332716c50ee17c41b"
     },
     "evidence-record": {
       "id": "https://p50.dev/schemas/evidence-record.schema.json",

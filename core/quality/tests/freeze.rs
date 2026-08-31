@@ -134,3 +134,95 @@ fn every_frozen_prefix_is_named_here_so_removing_one_deletes_an_assertion() {
          edited in the same pull request as the code it judges (#323)"
     );
 }
+
+/// Tracked files under one repository prefix, asked of git rather than the filesystem.
+///
+/// `git ls-files` on purpose: a stray UNTRACKED file in an otherwise-empty prefix would satisfy a
+/// filesystem count while the repository still ships nothing there -- and shipping nothing is the
+/// condition under test. `freeze_enforced.rs` in this same suite already shells to git, so the
+/// dependency is not new.
+///
+/// A git that cannot answer is a PANIC, not a zero: an unanswerable population reported as empty
+/// would fail the assertions below with an accusation about the wrong thing.
+fn tracked_file_count(prefix: &str) -> usize {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("core/quality sits two levels below the repository root");
+    let output = std::process::Command::new("git")
+        .args(["ls-files", "--", prefix])
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|e| panic!("HARNESS-BROKE: git ls-files did not run: {e}"));
+    assert!(
+        output.status.success(),
+        "HARNESS-BROKE: git ls-files failed for {prefix}, so the population below is undefined \
+         rather than empty: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
+}
+
+/// Every frozen prefix matches at least one TRACKED file.
+///
+/// #282's class, pinned rather than merely fixed. `docs/gates/` sat empty in `GATE_MACHINERY`
+/// from the day the constant was written: one quarter of the frozen surface could never refuse
+/// anything, the guard above could not tell that entry from a typo, and the assertion protecting
+/// it justified the emptiness with contents that never existed. #554 made the prefix non-empty by
+/// moving the freeze charter in -- and nothing pinned it there. Rename `docs/gates/freeze.md`
+/// away and every test in this file stays green while the prefix quietly returns to the state
+/// #282 describes. (Cell shape measured by D reviewing #554: red at `6136ff2`, green at
+/// `bd5544f`, on the exact defect.)
+///
+/// One named assertion per prefix, matching the test above and for its reason: a loop would put
+/// the prefixes back into a list, and a list element is exactly what deletes without comment.
+///
+/// **DECLARED LIMIT, and it is a choice, not an omission (D's condition on closing #282).** The
+/// four prefixes below are a HAND COPY of `GATE_MACHINERY`, by necessity: the constant is
+/// unreadable outside `freeze_violation` by design -- `E0425`, no other reader is possible (see
+/// the scope argument on the test above). So an entry added to the constant must be added here by
+/// hand, and the two ways that goes wrong were MEASURED separately while closing #282, because
+/// they end differently:
+///
+/// * **replacing** a listed prefix with a misspelling (`docs/gates/` -> `docs/gatez/`) is CAUGHT
+///   -- the named assertion above fails, since the real prefix stops being frozen;
+/// * **adding** a misspelled fifth entry (`docs/gatez/` alongside the four) is SILENT -- it
+///   freezes a prefix that matches nothing, and every test in this file stays green, this cell
+///   included, because nothing outside `freeze_violation` can read the constant to learn the
+///   ghost entry exists.
+///
+/// The only reader of the truth is `freeze_violation`'s own runtime. What this cell DOES pin is
+/// the mirror half: a prefix both sides spell correctly whose contents quietly leave the
+/// repository.
+#[test]
+fn every_frozen_prefix_matches_at_least_one_tracked_file() {
+    assert!(
+        tracked_file_count("core/quality/") >= 1,
+        "core/quality/ matches no tracked file. The freeze's own rule, enforcement, and thymus \
+         harness are supposed to live here -- an empty prefix guards nothing and cannot be told \
+         from a typo (#282)"
+    );
+    assert!(
+        tracked_file_count("tools/pathogens/") >= 1,
+        "tools/pathogens/ matches no tracked file. The pathogen suite the gate certifies against \
+         is supposed to live here -- an empty prefix guards nothing and cannot be told from a \
+         typo (#282)"
+    );
+    assert!(
+        tracked_file_count("docs/gates/") >= 1,
+        "docs/gates/ matches no tracked file. The freeze charter moved here in #554 precisely so \
+         this prefix would stop being the empty third of the frozen surface (#282). Which is it: \
+         did gate documentation move without its prefix, or is docs/gates/ no longer meant to be \
+         frozen at all? The answer decides the edit, and it is not this message's to make -- it \
+         belongs in the same commit as the named assertion above, with the reason written"
+    );
+    assert!(
+        tracked_file_count("tools/source-invariants/") >= 1,
+        "tools/source-invariants/ matches no tracked file. The shared detection predicate is \
+         supposed to live here -- an empty prefix guards nothing and cannot be told from a typo \
+         (#282)"
+    );
+}

@@ -253,7 +253,35 @@ fn undeclared_breaking_changes<'a>(
                 document_version(baseline, &change.schema),
                 document_version(candidate, &change.schema),
             ) {
-                (Some(landed), Some(proposed)) => landed == proposed,
+                // MOVEMENT IS NOT MAGNITUDE (#401). #399 made any version change read as a
+                // declaration, so 1.0.0 -> 1.0.1 announced a BREAK and passed. A patch bump tells
+                // a consumer nothing it can act on: it says "nothing you depend on moved" about a
+                // change that removes something they depend on.
+                //
+                // AND THE MAGNITUDE IS EXACT, not "at least a major" (Codex, PR #567). The house
+                // already owns this rule and this guard defers to it: `expected_version` in
+                // `release.rs` maps a Major impact to `from.major + 1, 0, 0`, and its caller
+                // refuses anything else as `GHC004_SEMVER_MISMATCH` -- "version does not equal the
+                // exact required SemVer transition". Accepting any higher major HERE would make
+                // this guard laxer than the rule it stands in for, and it stands in precisely
+                // because that rule cannot fire against the mirror baseline. Two instruments
+                // answering "is this declared?" differently is the divergence #229 is about.
+                //
+                // So a break announced at the WRONG major is not correctly declared either:
+                // 1.2.3 -> 3.0.0 skips a major nobody published, and 1.2.3 -> 2.1.0 is not a
+                // transition `expected_version` will ever name. Both stay undeclared, and so does
+                // a downgrade.
+                //
+                // `checked_add`, NOT `saturating_add` (Codex P2, PR #567): `expected_version`
+                // itself uses `checked_add` and returns `None` on overflow, and its caller treats
+                // `None` as "no version satisfies this" -- an unconditional refusal. Saturating
+                // here would make an unmoved major at `u64::MAX` equal its own "expected" value
+                // and read as declared, the same laxer-than-the-rule-it-stands-in-for divergence
+                // the wrong-major case above exists to close.
+                (Some(landed), Some(proposed)) => match landed.major.checked_add(1) {
+                    Some(next_major) => proposed != Version::new(next_major, 0, 0),
+                    None => true,
+                },
                 _ => true,
             }
         })
@@ -444,5 +472,229 @@ fn an_empty_baseline_reads_as_compatible_so_the_extraction_is_checked_first() {
         report.compatible && report.class != CompatibilityClass::Breaking,
         "an empty baseline no longer reads as compatible; the count assertions guarding the \
          extraction can be re-argued, but not silently dropped"
+    );
+}
+
+/// A breaking change carrying a PATCH bump is UNDER-DECLARED, and must still be refused (#401).
+///
+/// #399 gave the branch guard a declaration escape: a break whose schema moved its own
+/// `documentVersion` reads as announced and passes. That escape is right for its purpose — it turns
+/// silent breaks into declared ones — but it tests MOVEMENT and not MAGNITUDE, so `1.0.0 -> 1.0.1`
+/// on a break announces nothing a consumer can act on and passes anyway.
+///
+/// **The magnitude check exists and cannot fire.** `release.rs:177` skips anything that is not
+/// `SemverImpact::Major`, and `release.rs:300` raises `SEMVER_MISMATCH` against `required_version` —
+/// but the gate invokes that path with `--baseline schemas/releases/1.0.0/catalog.json`, and
+/// `catalog_integrity` holds the mirror byte-identical to the live catalog, so the comparison yields
+/// no changes and the loop it lives in never executes. The check is not merely unexercised there; it
+/// is unable to fire. So this cell belongs to the BRANCH guard, which is the only comparison that
+/// can see a real divergence.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL: restoring `landed == proposed` as the declaration
+/// test, or any rule that accepts a movement without weighing it against the impact.
+#[test]
+fn a_breaking_change_with_a_patch_bump_is_under_declared_and_still_refused() {
+    let baseline = checked_in_catalog(LIVE_CATALOG);
+
+    let mut candidate = baseline.clone();
+    // A break the comparator already classifies without help: a property that was optional becomes
+    // required, so every document the baseline accepted without it is now refused.
+    let node = candidate.schemas.get_mut("node").unwrap();
+    node.as_object_mut()
+        .unwrap()
+        .entry("required")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .unwrap()
+        .push(json!("graphhelm401ProbeField"));
+    // ...and the author announces it with a PATCH bump, which is the whole subject of this cell.
+    let landed = document_version(&baseline, "node").expect("node carries a documentVersion");
+    let announced = Version::new(landed.major, landed.minor, landed.patch + 1);
+    candidate
+        .catalog
+        .schemas
+        .get_mut("node")
+        .unwrap()
+        .document_version = announced.clone();
+
+    let report = compare_catalogs(&baseline, &candidate);
+
+    // ARRANGEMENT CONTROL, before the claim: the edit must really be BREAKING, and the version must
+    // really have MOVED. Without both, this cell would pass for reasons that have nothing to do
+    // with under-declaration.
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.class == CompatibilityClass::Breaking),
+        "arrangement: the fixture must produce a breaking change, got {:?}",
+        report.class
+    );
+    assert_ne!(
+        landed, announced,
+        "arrangement: the candidate must actually announce something"
+    );
+    assert_eq!(
+        (announced.major, announced.minor),
+        (landed.major, landed.minor),
+        "arrangement: the announcement must be a PATCH bump, or this is not under-declaration"
+    );
+
+    let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report);
+
+    assert!(
+        !undeclared.is_empty(),
+        "a break announced with {landed} -> {announced} passed as declared; a patch bump tells a \
+         consumer nothing it can act on, and movement is not magnitude: {undeclared:#?}"
+    );
+}
+
+/// A break announced at the WRONG major is not declared either (#401, Codex on PR #567).
+///
+/// The first cell pins that a PATCH bump declares nothing. This one pins the other side of the same
+/// rule: "some major above" is not the test, the EXACT next major is. The house already decided
+/// that -- expected_version in release.rs maps a Major impact to from.major + 1, 0, 0 and its
+/// caller refuses anything else with GHC004_SEMVER_MISMATCH, "version does not equal the exact
+/// required SemVer transition". This guard stands in for that rule on the branch, where the mirror
+/// baseline stops it firing, so it must not be laxer than the rule it replaces.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL: relaxing the predicate to any higher major
+/// (proposed.major > landed.major), which is the shape the first version of this fix shipped with.
+#[test]
+fn a_break_announced_at_the_wrong_major_is_not_declared() {
+    let baseline = checked_in_catalog(LIVE_CATALOG);
+    let landed = document_version(&baseline, "node").expect("node carries a documentVersion");
+    let exact_next = Version::new(landed.major + 1, 0, 0);
+
+    for announced in [
+        Version::new(landed.major + 1, 1, 0), // a major, but not the transition
+        Version::new(landed.major + 2, 0, 0), // skips a major nobody published
+    ] {
+        // ARRANGEMENT CONTROL: each announcement must really be ABOVE the landed major, or this
+        // cell would be re-testing the patch case under a different name.
+        assert!(
+            announced.major > landed.major,
+            "arrangement: {announced} must be a higher major than {landed}"
+        );
+        assert_ne!(
+            announced, exact_next,
+            "arrangement: {announced} must NOT be the exact required transition"
+        );
+
+        let mut candidate = baseline.clone();
+        candidate
+            .schemas
+            .get_mut("node")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .entry("required")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(json!("graphhelm401WrongMajorProbe"));
+        candidate
+            .catalog
+            .schemas
+            .get_mut("node")
+            .unwrap()
+            .document_version = announced.clone();
+
+        let report = compare_catalogs(&baseline, &candidate);
+        assert!(
+            report
+                .changes
+                .iter()
+                .any(|change| change.class == CompatibilityClass::Breaking),
+            "arrangement: the fixture must produce a breaking change"
+        );
+
+        let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report);
+        assert!(
+            !undeclared.is_empty(),
+            "a break announced {landed} -> {announced} passed as declared; the exact required \
+             transition is {exact_next}, and a guard laxer than the release rule it stands in for \
+             is a guard that lets the release rule's own refusal through: {undeclared:#?}"
+        );
+    }
+}
+
+/// A breaking change at the maximum representable major never reads as declared, even when the
+/// candidate's major is unchanged (#401, Codex P2 on PR #567).
+///
+/// The exact-transition fix above computes `landed.major.saturating_add(1)`. At
+/// `landed.major == u64::MAX`, saturation returns `u64::MAX` again -- the SAME major, not the next
+/// one -- so a candidate that never actually bumped the major (or even moved backward within it)
+/// equals that "expected" version and reads as a correct declaration.
+///
+/// The production rule this guard stands in for does not saturate: `expected_version` in
+/// `release.rs` uses `checked_add` and returns `None` on overflow, and its caller treats `None` as
+/// "no version can satisfy this," rejecting every candidate unconditionally
+/// (`expected.as_ref() != Some(to)` is `true` whenever `expected` is `None`). A guard that
+/// saturates instead of rejecting is laxer than the rule it stands in for at exactly this edge --
+/// the same class of divergence the wrong-major cell above exists to close.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL: `saturating_add` in place of `checked_add`,
+/// which is the shape this cell was added to close.
+#[test]
+fn a_breaking_change_at_the_maximum_major_never_reads_as_declared() {
+    let mut baseline = checked_in_catalog(LIVE_CATALOG);
+    let landed = Version::new(u64::MAX, 5, 3);
+    baseline
+        .catalog
+        .schemas
+        .get_mut("node")
+        .unwrap()
+        .document_version = landed.clone();
+
+    // The candidate's major does NOT move -- only minor and patch reset, which is not a major
+    // bump by any reading. `checked_add` overflow must still refuse it.
+    let announced = Version::new(u64::MAX, 0, 0);
+
+    // ARRANGEMENT CONTROL: the major genuinely does not change, or this cell would just be
+    // re-testing the patch/minor case under a maximum-major label.
+    assert_eq!(
+        landed.major, announced.major,
+        "arrangement: the major must be UNCHANGED, not a real bump"
+    );
+    assert_ne!(
+        landed, announced,
+        "arrangement: the candidate must actually announce something"
+    );
+
+    let mut candidate = baseline.clone();
+    candidate
+        .schemas
+        .get_mut("node")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .entry("required")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .unwrap()
+        .push(json!("graphhelm401MaxMajorProbe"));
+    candidate
+        .catalog
+        .schemas
+        .get_mut("node")
+        .unwrap()
+        .document_version = announced.clone();
+
+    let report = compare_catalogs(&baseline, &candidate);
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.class == CompatibilityClass::Breaking),
+        "arrangement: the fixture must produce a breaking change"
+    );
+
+    let undeclared = undeclared_breaking_changes(&baseline, &candidate, &report);
+    assert!(
+        !undeclared.is_empty(),
+        "a break announced {landed} -> {announced} passed as declared; the landed major is \
+         already u64::MAX, so no version can ever satisfy the exact-next-major rule, and \
+         saturating instead of rejecting let an unmoved major through: {undeclared:#?}"
     );
 }

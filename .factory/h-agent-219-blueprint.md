@@ -12,7 +12,7 @@
 > | §3 manifest scope (BLOCKING) | resolved, option B, verified applied to all seven issues |
 > | §4 the four asks to #217 | all four landed at `9e93c6d` and were re-measured before use |
 > | §5 `repo_snapshot` content-derived | the arming note did NOT land upstream; issue #246 opened, and G2b/S9 carry the property alone |
-> | §8 item 4 `SourceReader` reads | DECIDED workspace-scoped: two permitted exits, not three. Recorded on the port itself |
+> | §8 item 4 `SourceReader` reads | DECIDED workspace-scoped: two permitted exits, not three. Recorded on the port itself, and — from 2026-08-31 — in §8 item 4, which is the coordinate `ports.rs` actually cites |
 > | G1/G2/G2b/G4/G5/G6 | implemented, each red observed at its own assertion, eight mutations each reddening one arm |
 > | G3, page/byte/token bounds | bounds landed; G3 written and awaiting its first red |
 > | the policy YAML | blocked on a schema outside scope, then unblocked by a second #216 amendment; both files now written |
@@ -212,9 +212,11 @@ actually done lives here (**G2b**, sabotaged by **S9**). The comment arms; only 
 They are independent values, and their relationship is the freshness verdict:
 
 - `index_generation == repo_snapshot` → coordinates are live-safe.
-- `index_generation != repo_snapshot` → coordinates are **stale**, with three permitted exits and no
+- `index_generation != repo_snapshot` → coordinates are **stale**, with ~~three permitted exits and no
   fourth: slice **snapshot-owned bytes** (read at `index_generation`, not at HEAD), **reindex**, or
-  refuse with **`INDEX_STALE`**.
+  refuse with **`INDEX_STALE`**~~ — **SUPERSEDED 2026-08-31, see §8 item 4: the set is TWO, reindex or
+  refuse `INDEX_STALE`.** The original wording is left standing rather than rewritten, because it is
+  what the implementation was planned against and the requirement below is what closed it.
 
 **Exit one is conditional on a port capability this blueprint must declare, not assume.** *(Found by D;
 a gap, not an error.)* "Read at `index_generation`, not at HEAD" requires `SourceReader` to be able to
@@ -227,7 +229,10 @@ defines itself — so it belongs here as an explicit requirement on the port:
 
 Two exits is a perfectly acceptable outcome. What is not acceptable is discovering it during
 implementation, because a blueprint offering three exits reads as three being available. **The
-decision is recorded in §8 item 5 and belongs to the implementation's first hour, not to its middle.**
+decision is recorded in §8 item ~~5~~ **4** and belongs to the implementation's first hour, not to its
+middle.** *(The item number was off by one from the day this was written: item 5 is #217's status.
+Corrected 2026-08-31 rather than left, because a pointer that lands on an unrelated item is how a
+recorded decision gets read as missing — which is exactly what happened here.)*
 
 **Stated by mechanism, so it survives a different provider:** a byte range produced under generation
 *G* may only be resolved against snapshot *G*. Any path resolving a *G*-coordinate against a different
@@ -251,7 +256,7 @@ The closed coverage lattice task-003 compiles against:
 | `Excluded` | scope deliberately not indexed (ignore rules) | same |
 | `Skipped` | provider declined this region | same |
 | `ExtractionGap` | file reached, parser produced nothing (binary, unsupported grammar) | same |
-| `Stale` | `index_generation != repo_snapshot` | `INDEX_STALE`, reindex, or snapshot-owned bytes |
+| `Stale` | `index_generation != repo_snapshot` | `INDEX_STALE` or reindex — ~~or snapshot-owned bytes~~, superseded 2026-08-31 (§8 item 4) |
 | `Unknown` | provider did not say | as `Partial`; **never** treated as `Complete` |
 | `Unresolved` | scope resolved to nothing | as `Partial` |
 
@@ -448,6 +453,32 @@ Before deleting any row above, re-run that question against the change that prom
 4. **`SourceReader` generation-scoped reads — decide in the first hour, not the middle.** Per §5: if the
    port cannot read at a historical generation, exit one drops and the permitted set is two. Record the
    answer in this file when it is known; do not let the three-exit wording stand if only two are real.
+
+   **ANSWER, recorded 2026-08-31 (L), decision taken by the Orchestrator on #219.** The port reads
+   only the current workspace, so **exit one is unimplementable and the permitted set is TWO:
+   reindex, or refuse `index_stale`.** The reasoning is already on the port itself
+   (`core/runtime/src/ports.rs:90-108`) and is repeated here rather than referenced, because
+   `ports.rs` cites *this section* as its authority and a citation that resolves to a question is
+   not an authority.
+
+   Two things this closes, and one it does not:
+
+   - The three-exit wording in §5 and in the `Stale` row of §6 is **marked superseded in place**, not
+     deleted. It is what the implementation was planned against, and a blueprint that quietly matches
+     the outcome stops being evidence of what was known beforehand.
+   - The §5 pointer to "§8 item 5" was off by one and now names item 4. That off-by-one is why the
+     decision read as unrecorded from the code's coordinate even though the header table had it all
+     along — I published that mistake on #219 and corrected it there.
+   - **Not closed here:** `docs/superpowers/plans/…:187` and `docs/superpowers/specs/…:385,690` still
+     state three exits, and #219's acceptance criterion is copied from the plan. Those are outside
+     this issue's declared file scope and outside a reviewer's pen; the child is corrected while the
+     parent still says three.
+
+   **A second-order note, because it is the reason this item existed at all.** D found the gap by
+   asking whether exit one was *conditional on a port capability the blueprint had not declared*.
+   Nothing measured it for five days. What finally surfaced it was not a measurement either — it was
+   a reader following `ports.rs`'s citation and landing on a question. **A decision recorded in a
+   summary table but not at the coordinate the code names is, operationally, an unrecorded decision.**
 5. **#217 status as of this revision (reported by J, not measured by me).** `SnapshotBinding` with both
    ids landed on `issue-217-development-contracts` @ `565aa79`, with the closed eight-state coverage
    enum, the two refusal codes allocated as `negative_claim_unverified` and `index_stale` (snake_case —

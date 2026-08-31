@@ -48,7 +48,7 @@
       "id": "https://p50.dev/schemas/execution-accounting-receipt.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/execution-accounting-receipt.schema.json",
-      "sha256": "sha256:a4764de1170007f92b94a7712a2060af57406161e9c4d320e9ea88d339f9cf71"
+      "sha256": "sha256:485bb21a85366849ccc53f7e4f94a962f891037c4d53774c5de8a5fb339d1042"
     },
     "extension": {
       "id": "https://p50.dev/schemas/extension.schema.json",

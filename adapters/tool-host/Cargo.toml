@@ -7,6 +7,10 @@ rust-version.workspace = true
 
 [dependencies]
 graphhelm-tool-broker = { path = "../../core/tool-broker" }
+# #543: the production SourceReader implements the runtime port here, in the adapter that
+# already owns disk readers; runtime does not depend back on this crate, so no cycle.
+graphhelm-runtime = { path = "../../core/runtime" }
+graphhelm-protocols = { path = "../../core/protocols" }
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -8,6 +8,7 @@ pub mod host;
 pub mod process;
 pub mod session;
 pub mod snapshot;
+pub mod source_reader;
 pub mod tools;
 pub mod verified;
 pub mod workspace;

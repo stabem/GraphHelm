@@ -97,7 +97,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), HostError> {
 /// digest of its bytes, in sorted order, hashed once. Binding the path beside the bytes is what
 /// makes two files swapping contents a DIFFERENT generation — which bytes live where is part of
 /// the identity.
-fn tree_generation(root: &Path) -> Result<String, HostError> {
+pub(crate) fn tree_generation(root: &Path) -> Result<String, HostError> {
     let mut files: Vec<PathBuf> = Vec::new();
     collect_files(root, &mut files)?;
     // L's #551 fold: the empty population's digest is the sha256 of the empty string — one

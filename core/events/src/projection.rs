@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared,
+    ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId,
+    ExecutionFormDeclared,
     ExecutionId, ExecutionMode, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome,
     NodeState, OpaqueId, PersistedGraphVersion, PersistedTimestamp, PolicyWaiver, ProjectId,
     RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
@@ -287,6 +288,37 @@ pub enum ClearanceOutcome {
     },
 }
 
+/// The digest a `MachineReplay` clearance must present to clear a claim.
+///
+/// PUBLIC ON PURPOSE. The fold refuses a clearance whose `manifest_hash` is not this value, so
+/// anything that PRODUCES such a clearance has to be able to compute it. A private derivation
+/// would make the gate unsatisfiable by construction — a check nothing can legitimately pass,
+/// which is a worse defect than the unconditional `Cleared` it replaces. Nothing outside the
+/// tests builds a machine-replay clearance today, so this function is the whole contract.
+///
+/// LENGTH-PREFIXED, not separator-joined: `kind` is a free `String`, so any separator byte can
+/// occur inside it, and two different bundles would then hash identically by moving where the
+/// separator falls. Prefixing each field with its length makes the encoding injective, which is
+/// the property a digest needs and a delimiter cannot give.
+///
+/// Order-sensitive, and that is a decision rather than an oversight: the evidence vector is
+/// journaled in order, so the order is itself a fact about what was claimed. Two bundles holding
+/// the same items in a different order are different testimony.
+pub fn claim_evidence_digest(evidence: &[ClaimEvidence]) -> WireHash {
+    fn push_field(buffer: &mut Vec<u8>, field: &[u8]) {
+        buffer.extend_from_slice(&(field.len() as u64).to_be_bytes());
+        buffer.extend_from_slice(field);
+    }
+    let mut bytes = Vec::new();
+    for item in evidence {
+        push_field(&mut bytes, item.kind.as_bytes());
+        push_field(&mut bytes, item.content_hash.as_str().as_bytes());
+        push_field(&mut bytes, &item.size.to_be_bytes());
+    }
+    WireHash::parse(crate::canonical::wire_sha256(&bytes))
+        .expect("a sha256 wire hash built here is well formed by construction")
+}
+
 /// M11 #160: a claim in quarantine — testimony recorded, clearance owed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -301,6 +333,13 @@ pub struct OpenClaim {
     pub stage_entered_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<PersistedTimestamp>,
+    /// Digest of the evidence bundle this claim journaled, carried so a later machine-replay
+    /// clearance is checked against WHAT WAS CLAIMED rather than against nothing.
+    ///
+    /// Held on the claim, not recomputed at clearance time from some current view: the bundle is
+    /// a fact about the claim's own sequence, and reading it from anywhere else would be the
+    /// last-state-answering-a-per-sequence-question mistake this fold already refuses elsewhere.
+    pub evidence_digest: WireHash,
 }
 
 /// Replay receipt for a refused durable-memory admission.
@@ -1407,6 +1446,7 @@ fn apply_projection_event(
                         completes_wait_seq: payload.completes_wait_seq,
                         stage_entered_at: event.sequence,
                         deadline: deadline.clone(),
+                        evidence_digest: claim_evidence_digest(&payload.evidence),
                     },
                 );
                 record_scan(
@@ -1448,9 +1488,28 @@ fn apply_projection_event(
             // finished projection: that is a last-state view answering a per-sequence question,
             // which is M09 #88's named cause one layer up.
             let outcome = match &payload.verifier {
-                // Machine replay carries no identity: it re-derives the evidence against the
-                // node's declared manifest, so there is no membership question to ask.
-                ClearanceVerifier::MachineReplay { .. } => ClearanceOutcome::Cleared,
+                // Machine replay carries no identity, so there is no membership question — but
+                // there IS a question, and until #161 this arm asked neither. It read
+                // `MachineReplay { .. }`, discarding `manifest_hash` outright, and cleared
+                // unconditionally, while this very comment claimed it "re-derives the evidence".
+                // The comment described a verification the code did not perform, which is the
+                // likeliest reason the gap outlived review: the arm reads as correct if you read
+                // the sentence above it.
+                //
+                // Journaled against journaled, exactly as the Countersign arm below: the digest
+                // was computed from the claim's own evidence when the claim was folded, and the
+                // clearance must present that same value. No key material, no manifest lookup,
+                // no I/O — a pure function of the log, so it replays identically forever.
+                ClearanceVerifier::MachineReplay { manifest_hash } => {
+                    if manifest_hash == &claim.evidence_digest {
+                        ClearanceOutcome::Cleared
+                    } else {
+                        ClearanceOutcome::Refused {
+                            reason_code: SafeCode::parse("hash_mismatch")
+                                .expect("a literal refusal code is a valid SafeCode"),
+                        }
+                    }
+                }
                 ClearanceVerifier::Countersign {
                     identity,
                     key_fingerprint,

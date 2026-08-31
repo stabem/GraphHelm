@@ -1649,7 +1649,9 @@ fn the_downstream_of_a_claimed_wait_is_not_ready_until_the_claim_clears() {
             execution_id: OpaqueId::parse("execution-test").unwrap(),
             claim_seq,
             verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
-                manifest_hash: WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+                // #161: the digest of the EMPTY bundle, because `claim_event` journals
+                // `evidence: vec![]`. Was an arbitrary literal while nothing read the field.
+                manifest_hash: graphhelm_events::claim_evidence_digest(&[]),
             },
         }),
     ));
@@ -1693,6 +1695,10 @@ fn a_clearance_naming_no_claim_is_corrupt_rather_than_silently_ignored() {
             // possible near-miss, derived from the arrangement rather than invented.
             claim_seq: wait_index as u64 + 1,
             verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                // #161: deliberately still arbitrary. This clearance names no claim, so the
+                // fold returns Corrupt BEFORE any verifier is inspected - the hash is
+                // unreachable on this path. Giving it a real digest would imply this test
+                // exercises the verification, which it does not.
                 manifest_hash: WireHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
             },
         }),
@@ -1736,7 +1742,9 @@ fn the_customs_timeline_records_each_stage_once_in_log_order() {
             execution_id: OpaqueId::parse("execution-test").unwrap(),
             claim_seq,
             verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
-                manifest_hash: WireHash::parse(format!("sha256:{}", "d".repeat(64))).unwrap(),
+                // #161: the digest of the EMPTY bundle, because `claim_event` journals
+                // `evidence: vec![]`. Was an arbitrary literal while nothing read the field.
+                manifest_hash: graphhelm_events::claim_evidence_digest(&[]),
             },
         }),
     ));
@@ -2161,6 +2169,207 @@ fn a_refused_clearance_leaves_a_pointer_in_the_nodes_timeline_not_a_copy() {
     );
 }
 
+/// The one evidence bundle the #161 fixtures claim, so the claim and any clearance for it cannot
+/// drift apart by being written out twice.
+fn evidence_fixture() -> Vec<graphhelm_protocols::ClaimEvidence> {
+    vec![graphhelm_protocols::ClaimEvidence {
+        kind: "transcript".to_owned(),
+        content_hash: WireHash::parse(format!("sha256:{}", "1".repeat(64))).unwrap(),
+        size: 42,
+    }]
+}
+
+/// Builds a claim carrying REAL evidence, so a bundle digest is a digest of something.
+///
+/// `claim_event` journals `evidence: vec![]`, which makes every bundle in this suite the SAME
+/// (empty) bundle. A hash guard measured only against that fixture would be measuring the digest
+/// of nothing.
+fn claim_event_with_evidence(key: &str, completes_wait_seq: u64) -> NewEvent {
+    event(
+        key.to_owned(),
+        EventKind::CompletionClaimed(graphhelm_protocols::CompletionClaimed {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            node: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
+            completes_wait_seq,
+            evidence: evidence_fixture(),
+            attestation: graphhelm_protocols::ClaimAttestation {
+                asserter: OpaqueId::parse("agent-claimer").unwrap(),
+                mode: graphhelm_protocols::ClaimAttestationMode::MachineVerified,
+            },
+        }),
+    )
+}
+
+/// #161 R1's CO-REQUIRED pair: a machine replay presenting the RIGHT digest still clears.
+///
+/// Without this, R1 alone is satisfied by a fold that refuses every machine replay — the opposite
+/// defect, wearing the same colour. One member says a wrong hash is rejected; this one says a
+/// right hash is not.
+///
+/// Both sides use `claim_evidence_digest`, and that is deliberate: this measures the FOLD's
+/// decision, not the derivation. The derivation has its own guards below, which do not use it on
+/// both sides of an equality.
+#[test]
+fn a_machine_replay_clearance_with_the_matching_bundle_hash_clears() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event_with_evidence("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+    batch.push(event(
+        "clear-1",
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            claim_seq: claim_index as u64 + 1,
+            verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                manifest_hash: graphhelm_events::claim_evidence_digest(&evidence_fixture()),
+            },
+        }),
+    ));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect("a legal log replays");
+
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Cleared),
+        "the presented digest IS the claim's evidence digest, so the verification passes"
+    );
+    assert_eq!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::Succeeded),
+        "and a cleared machine replay releases downstream exactly as before #161"
+    );
+}
+
+/// The derivation is INJECTIVE across ITEM boundaries, which is what the length prefixes buy.
+///
+/// My first fixture here was `["ab"]` against `["a"]` and it could not fail: `content_hash` and
+/// `size` are fixed-width, so those two bundles differ in total length under ANY encoding. A
+/// sabotage that removed the length prefixes left it green - the guard was decoration, and only
+/// running that sabotage said so.
+///
+/// A real collision needs one bundle's `kind` to SWALLOW a whole item of the other. `size: 0`
+/// makes the fixed-width size field eight NUL bytes, which are valid UTF-8 and so can live inside
+/// a `String`. Without length prefixes both bundles encode to exactly the same bytes, and a
+/// clearance for one would clear the other.
+#[test]
+fn evidence_digests_separate_a_bundle_from_one_whose_kind_swallows_an_item() {
+    let first = WireHash::parse(format!("sha256:{}", "1".repeat(64))).unwrap();
+    let second = WireHash::parse(format!("sha256:{}", "2".repeat(64))).unwrap();
+
+    let split = vec![
+        graphhelm_protocols::ClaimEvidence {
+            kind: "a".to_owned(),
+            content_hash: first.clone(),
+            size: 0,
+        },
+        graphhelm_protocols::ClaimEvidence {
+            kind: "b".to_owned(),
+            content_hash: second.clone(),
+            size: 0,
+        },
+    ];
+    // `kind` here is exactly the bytes the unprefixed encoding would emit for the first item plus
+    // the second item's kind: "a" + <hash> + eight NULs + "b".
+    let swallowed = vec![graphhelm_protocols::ClaimEvidence {
+        kind: format!("a{}{}b", first.as_str(), "\0".repeat(8)),
+        content_hash: second,
+        size: 0,
+    }];
+
+    assert_ne!(
+        graphhelm_events::claim_evidence_digest(&split),
+        graphhelm_events::claim_evidence_digest(&swallowed),
+        "two bundles that concatenate to the same bytes must not share a digest: without length prefixes these collide, and a clearance for one would clear the other"
+    );
+}
+
+/// Evidence ORDER is part of what was claimed, so reordering changes the digest.
+///
+/// Recorded as a decision rather than left to be discovered: the journal preserves order, so the
+/// order is a fact about the testimony. If a later lane wants bundles to be order-insensitive,
+/// that is a deliberate change with this guard as its landmark.
+#[test]
+fn evidence_digests_depend_on_the_order_the_bundle_was_journaled_in() {
+    let first = graphhelm_protocols::ClaimEvidence {
+        kind: "transcript".to_owned(),
+        content_hash: WireHash::parse(format!("sha256:{}", "1".repeat(64))).unwrap(),
+        size: 1,
+    };
+    let second = graphhelm_protocols::ClaimEvidence {
+        kind: "diff".to_owned(),
+        content_hash: WireHash::parse(format!("sha256:{}", "2".repeat(64))).unwrap(),
+        size: 2,
+    };
+    let forward = vec![first.clone(), second.clone()];
+    let reversed = vec![second, first];
+
+    assert_ne!(
+        graphhelm_events::claim_evidence_digest(&forward),
+        graphhelm_events::claim_evidence_digest(&reversed),
+        "the same items in a different order are different testimony"
+    );
+}
+
+/// #161 R1, the sealed cell: a machine replay presenting a hash the evidence does NOT produce
+/// must be REFUSED, not cleared.
+///
+/// The arm it guards read `MachineReplay { .. }` and cleared unconditionally — the `..` discarded
+/// `manifest_hash` outright — while the comment directly above it said the arm "re-derives the
+/// evidence against the node's declared manifest". The comment described a verification the code
+/// did not perform, which is the likeliest reason the gap survived review: the arm reads as
+/// correct if you read the sentence above it.
+///
+/// The presented hash here is arbitrary AND the claim carries real evidence, so the two cannot
+/// coincide. Its companion `..._with_the_matching_digest_clears` is CO-REQUIRED: this test alone
+/// is satisfied by a fold that refuses every machine replay, which is a different defect with the
+/// same colour.
+#[test]
+fn a_machine_replay_clearance_with_a_mismatched_bundle_hash_is_refused() {
+    let mut batch = parked_batch();
+    let wait_index = batch.len() - 1;
+    batch.push(claim_event_with_evidence("claim-1", wait_index as u64 + 1));
+    let claim_index = batch.len() - 1;
+    batch.push(event(
+        "clear-1",
+        EventKind::CompletionCleared(graphhelm_protocols::CompletionCleared {
+            execution_id: OpaqueId::parse("execution-test").unwrap(),
+            claim_seq: claim_index as u64 + 1,
+            verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
+                manifest_hash: WireHash::parse(format!("sha256:{}", "e".repeat(64))).unwrap(),
+            },
+        }),
+    ));
+
+    let appended = append(batch);
+    let claim_seq = sequence_of(&appended, claim_index);
+    let projection = replay(&scope(), STREAM, &appended).expect(
+        "a clearance naming a real claim is INTERPRETABLE even when refused - only a clearance naming a non-claim is Corrupt",
+    );
+
+    // Landmark, per this issue's second amendment: assert the precondition rather than assume it.
+    // Without this the test also passes when the clearance never reached the decision at all.
+    assert!(
+        projection.clearances.contains_key(&claim_seq),
+        "precondition: the clearance must have been DECIDED and recorded against the claim, or the verdict below measures an absence: {:?}",
+        projection.clearances
+    );
+
+    assert_eq!(
+        projection.clearances.get(&claim_seq),
+        Some(&ClearanceOutcome::Refused {
+            reason_code: graphhelm_protocols::SafeCode::parse("hash_mismatch").unwrap(),
+        }),
+        "a machine replay whose manifest hash is not the evidence bundle's digest must refuse with hash_mismatch - the registry's own words for this code are \"presented evidence does not hash to what it claims\""
+    );
+    assert_ne!(
+        projection.node_states.get(CUSTOMS_NODE),
+        Some(&NodeState::Succeeded),
+        "a refused clearance releases NOTHING: the claim is spent and the node stays parked"
+    );
+}
+
 /// The `MachineReplay` arm, which NOTHING exercised until this guard existed.
 ///
 /// Found by sabotage, not by reading: inverting that arm from `Cleared` to `Refused` changed the
@@ -2188,7 +2397,12 @@ fn a_machine_replay_clearance_needs_no_registered_identity() {
             execution_id: OpaqueId::parse("execution-test").unwrap(),
             claim_seq: claim_index as u64 + 1,
             verifier: graphhelm_protocols::ClearanceVerifier::MachineReplay {
-                manifest_hash: WireHash::parse(format!("sha256:{}", "e".repeat(64))).unwrap(),
+                // #161: this hash used to be arbitrary (`sha256:eee...`) and legal, because
+                // NOTHING read the field. It is now load-bearing, so it must be the digest of
+                // the bundle `claim_event` journals - which is the EMPTY bundle. The assertion
+                // below is untouched: this fixture supplies a correct hash so the test can go on
+                // measuring the thing it was written for, which is that MEMBERSHIP is not asked.
+                manifest_hash: graphhelm_events::claim_evidence_digest(&[]),
             },
         }),
     ));

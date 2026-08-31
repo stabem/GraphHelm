@@ -42,9 +42,13 @@ pub fn run(
         diagnostics.extend(report.warnings);
         return Outcome::domain(COMMAND, diagnostics);
     }
+    // #192: a warning-only lint pass reaches every exit past this point, not only the success
+    // one — a caller whose publish then failed already knew about the lint warnings, and the
+    // reply must not look like it withheld something it already computed.
+    let warnings = report.warnings;
     let version = match publish_loaded(&loaded, owner("owner-local")) {
         Ok(version) => version,
-        Err(error) => return Outcome::internal(COMMAND, error),
+        Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
     };
     finish(
         COMMAND,
@@ -59,6 +63,7 @@ pub fn run(
         ),
         |value| value,
     )
+    .with_warnings(warnings)
 }
 
 /// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as

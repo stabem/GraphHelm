@@ -18,11 +18,16 @@ pub fn run(base_file: &Path, draft_file: &Path, _actor_id: &str, events: &Path) 
         diagnostics.extend(report.warnings);
         return Outcome::domain("graph.draft.apply", diagnostics);
     }
+    // #192: a warning-only lint pass reaches every exit past this point — this command is
+    // fail-closed by design (ADR-022) and never reaches a real success today, but the lint
+    // warnings were still genuinely computed and must not read as withheld just because the
+    // eventual failure is for an unrelated (key-provider) reason.
+    let warnings = report.warnings;
     if let Err(diagnostic) = load_draft(draft_file) {
-        return Outcome::domain("graph.draft.apply", vec![diagnostic]);
+        return Outcome::domain("graph.draft.apply", vec![diagnostic]).with_warnings(warnings);
     }
     if let Err(error) = LocalEventRepository::inspect_format(events) {
-        return repository_error("graph.draft.apply", &error);
+        return repository_error("graph.draft.apply", &error).with_warnings(warnings);
     }
 
     Outcome::application(
@@ -34,6 +39,7 @@ pub fn run(base_file: &Path, draft_file: &Path, _actor_id: &str, events: &Path) 
             "operator-configuration",
         ),
     )
+    .with_warnings(warnings)
 }
 
 fn load_draft(

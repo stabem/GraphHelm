@@ -208,6 +208,20 @@ fn start_drives_a_two_node_graph_to_completion_and_status_reports_it_independent
         start_value["data"]["untriagedInterruptions"],
         serde_json::json!([])
     );
+    // #192: manual-override-deploy.yaml lints clean (zero errors) but with warnings (GHG101 on
+    // both nodes' missing timeoutSeconds) — those warnings were silently dropped on this exact
+    // success path before the fix, since `diagnostics.extend(report.warnings)` lived only inside
+    // the `!errors.is_empty()` branch this run never takes.
+    let start_diagnostics = start_value["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(
+        start_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "GHG101_DEFAULT_TIMEOUT"),
+        "a clean-but-warned lint pass must still reach the caller on a successful start: \
+         {start_value}"
+    );
 
     let status = command()
         .args([
@@ -885,6 +899,94 @@ fn approve_is_not_a_dead_end_once_the_condition_is_fixed() {
         "the approved node must run for real and succeed: {resume_data}"
     );
     assert_eq!(resume_data["status"], "completed");
+}
+
+/// #192, `resume`'s own cell -- G's review of #575 measured this site had zero coverage: the fix
+/// there is structurally identical to `start`'s (both share `run`'s lint-check-then-publish
+/// shape), but "identical shape" is a claim about the diff, not a claim this suite had verified
+/// for `resume` specifically until now.
+///
+/// Reuses the exact start -> approve -> pause -> resume story
+/// `approve_is_not_a_dead_end_once_the_condition_is_fixed` already drives (same fixture,
+/// `manual-override-deploy.yaml`, `implementation`/`deploy` both lack `timeoutSeconds`), captured
+/// here through the raw envelope rather than the `resume()` helper -- that helper only returns
+/// `["data"]`, discarding the `diagnostics` field this test exists to check.
+#[test]
+fn a_warning_only_lint_pass_reaches_the_caller_on_a_successful_resume() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let failing = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure"}),
+    );
+    start(&events, &failing, "supervised", "exec_resume_warnings");
+
+    let approve = command()
+        .args([
+            "execution",
+            "approve",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_resume_warnings",
+            "--node",
+            "implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(approve.status.success(), "{}", json(&approve.stdout));
+
+    let pause = command()
+        .args([
+            "execution",
+            "pause",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_resume_warnings",
+        ])
+        .output()
+        .unwrap();
+    assert!(pause.status.success(), "{}", json(&pause.stdout));
+
+    let fixed = write_json(
+        directory.path(),
+        "resume-fixed.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "success", "deploy": "success"}}),
+    );
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let resume = command()
+        .args([
+            "execution",
+            "resume",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixed.to_str().unwrap(),
+            "--execution",
+            "exec_resume_warnings",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        resume.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resume.stdout)
+    );
+    let resume_value = json(&resume.stdout);
+    assert_eq!(resume_value["data"]["status"], "completed");
+    let resume_diagnostics = resume_value["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(
+        resume_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "GHG101_DEFAULT_TIMEOUT"),
+        "a clean-but-warned lint pass must still reach the caller on a successful resume: \
+         {resume_value}"
+    );
 }
 
 /// Approving anything that is not `Ghost` or `Blocked` is refused, naming the actual state.

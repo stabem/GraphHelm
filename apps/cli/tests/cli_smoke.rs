@@ -200,6 +200,52 @@ fn simulate_then_fresh_process_replay_reconstructs_terminal_state() {
     assert!(projection["data"]["currentGraph"].is_null());
 }
 
+/// #192: a warning-only lint pass (no errors) was computed and then silently dropped on the
+/// success path — `diagnostics.extend(report.warnings)` lived only inside the `!errors.is_empty()`
+/// branch, so a graph that lints clean except for warnings reached `ok: true` with an empty
+/// `diagnostics` array, even though the lint pass had genuinely found something.
+///
+/// `manual-override-deploy.yaml` is the fixture, not one invented for this test: `deploy` and
+/// `implementation` both lack `timeoutSeconds` (GHG101) and declare no customs budget while able
+/// to park (GHG102) — `graph lint` against it reports zero errors and four warnings, confirmed by
+/// running it directly before writing this assertion.
+#[test]
+fn a_warning_only_lint_pass_reaches_the_caller_on_a_successful_simulate() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events.jsonl");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let simulated = command()
+        .args([
+            "graph",
+            "simulate",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        simulated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&simulated.stderr)
+    );
+    let reply = json(&simulated.stdout);
+    assert_eq!(reply["data"]["status"], "completed");
+    let diagnostics = reply["diagnostics"].as_array().expect("diagnostics array");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "GHG101_DEFAULT_TIMEOUT"),
+        "a clean-but-warned lint pass must still reach the caller on success: {reply}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["severity"] == "warning"),
+        "no error exists in this fixture's lint pass, so nothing here should be one: {reply}"
+    );
+}
+
 #[test]
 fn replay_requires_explicit_scope_and_stream_when_repository_has_multiple_streams() {
     let directory = tempfile::tempdir().unwrap();
@@ -288,9 +334,20 @@ fn draft_apply_fails_closed_without_external_key_provider_and_does_not_mutate() 
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(3));
-    assert_eq!(
-        json(&output.stdout)["diagnostics"][0]["code"],
-        "GHK001_KEY_UNAVAILABLE"
+    let diagnostics = json(&output.stdout)["diagnostics"]
+        .as_array()
+        .expect("diagnostics array")
+        .clone();
+    assert_eq!(diagnostics[0]["code"], "GHK001_KEY_UNAVAILABLE");
+    // #192: software-feature.yaml lints clean (zero errors) but with warnings (GHG101/GHG102 on
+    // several nodes) — this command is fail-closed by design and never reaches a real success,
+    // but those warnings were genuinely computed and must still reach the caller, appended after
+    // the key-unavailable diagnostic rather than lost because the eventual failure is unrelated.
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "GHG101_DEFAULT_TIMEOUT"),
+        "the lint warnings this fixture produces must still reach the caller: {diagnostics:?}"
     );
     assert!(!repository.exists());
 }

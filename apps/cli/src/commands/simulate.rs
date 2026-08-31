@@ -20,17 +20,23 @@ pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
         diagnostics.extend(report.warnings);
         return Outcome::domain("graph.simulate", diagnostics);
     }
+    // #192: a warning-only lint pass reaches every exit past this point, not only the success
+    // one — a caller whose publish or store lookup then failed already knew about the lint
+    // warnings, and the reply must not look like it withheld something it already computed.
+    let warnings = report.warnings;
     let version = match publish_loaded(&loaded, owner("owner-local")) {
         Ok(version) => version,
-        Err(error) => return Outcome::internal("graph.simulate", error),
+        Err(error) => return Outcome::internal("graph.simulate", error).with_warnings(warnings),
     };
     let store = match event_store(events) {
         Ok(store) => store,
-        Err(error) => return repository_error("graph.simulate", &error),
+        Err(error) => return repository_error("graph.simulate", &error).with_warnings(warnings),
     };
     let fixtures = match fixtures.map(load_fixtures).transpose() {
         Ok(value) => value.unwrap_or_default(),
-        Err(error) => return Outcome::domain("graph.simulate", vec![error]),
+        Err(error) => {
+            return Outcome::domain("graph.simulate", vec![error]).with_warnings(warnings);
+        }
     };
     let services = SimulationServices {
         event_repository: &store,
@@ -62,9 +68,10 @@ pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
                 "diagnostics": result.diagnostics,
                 "events": result.events,
             }),
-        ),
+        )
+        .with_warnings(warnings),
         Err(graphhelm_simulation::SimulationError::Repository(error)) => {
-            repository_error("graph.simulate", &error)
+            repository_error("graph.simulate", &error).with_warnings(warnings)
         }
     }
 }

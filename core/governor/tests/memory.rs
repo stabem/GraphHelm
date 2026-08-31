@@ -5,13 +5,32 @@
 //! is itself an event, so "nothing has been persisted yet" describes the instant BEFORE the
 //! refusal, never the refusal.
 
-use graphhelm_governor::{
-    CaptureOptIn, CaptureTouch, MemoryCandidate, MemoryField, MemoryOrigin, MemoryRecord,
-    MemoryRefusalCode, MemoryState, MemoryTransition, PublicationStep, admit_memory_candidate,
-    apply_transition, bind_evidence, capture_memory, check_dependency_freshness, publication_steps,
-    republish, validate_candidate,
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
-use graphhelm_protocols::{DevelopmentScope, ProjectId, WorkspaceId};
+
+use chrono::TimeZone;
+use graphhelm_events::{
+    ActiveVersion, EventPage, EventRepository, EventRepositoryError, LocalEventRepository,
+    PreparedAppend,
+};
+use graphhelm_governor::{
+    CaptureOptIn, CaptureTouch, MemoryAdmissionRefusalRequest, MemoryCandidate, MemoryField,
+    MemoryOrigin, MemoryRecord, MemoryRefusalCode, MemoryState, MemoryTransition, PublicationStep,
+    admit_memory_candidate, apply_transition, bind_evidence, capture_memory,
+    check_dependency_freshness, publication_steps, record_memory_admission_refusal, republish,
+    validate_candidate,
+};
+use graphhelm_protocols::{
+    ActorId, ArtifactId, Clock, DevelopmentScope, EventEnvelope, EventKind, EvidenceId,
+    IdGenerator, MemoryAdmissionLocal,
+    MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, OpaqueId, PersistedActor,
+    PersistedActorType, ProjectId, RepositoryScope, WorkspaceId,
+};
 
 /// A value that exists in the INPUT by construction, which is what makes an empty search
 /// meaningful: the string is known to be present upstream, so its absence downstream is either a
@@ -114,6 +133,225 @@ fn capture_touches_nothing_when_the_project_has_not_opted_in() {
         Vec::new(),
         "a disabled project touched a boundary before the opt-in check"
     );
+}
+
+#[derive(Default)]
+struct TouchCountingRepository(AtomicUsize);
+
+impl TouchCountingRepository {
+    fn touched(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn reject<T>(&self) -> Result<T, EventRepositoryError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(EventRepositoryError::Invalid)
+    }
+}
+
+impl EventRepository for TouchCountingRepository {
+    fn append_atomic(
+        &self,
+        _request: &PreparedAppend,
+    ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn read_stream(
+        &self,
+        _scope: &RepositoryScope,
+        _stream_id: &str,
+        _limit: usize,
+        _cursor: Option<&str>,
+    ) -> Result<EventPage, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn read_replay_stream(
+        &self,
+        _scope: &RepositoryScope,
+        _stream_id: &str,
+    ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn next_sequence(
+        &self,
+        _scope: &RepositoryScope,
+        _stream_id: &str,
+    ) -> Result<u64, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn evidence_exists(
+        &self,
+        _scope: &RepositoryScope,
+        _evidence_id: &EvidenceId,
+    ) -> Result<bool, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn artifact_exists(
+        &self,
+        _scope: &RepositoryScope,
+        _artifact_id: &ArtifactId,
+    ) -> Result<bool, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn active_version(
+        &self,
+        _scope: &RepositoryScope,
+        _stream_id: &str,
+    ) -> Result<Option<ActiveVersion>, EventRepositoryError> {
+        self.reject()
+    }
+
+    fn committed_events_for_idempotency(
+        &self,
+        _scope: &RepositoryScope,
+        _stream_id: &str,
+        _idempotency_key: &OpaqueId,
+    ) -> Result<Option<Vec<EventEnvelope>>, EventRepositoryError> {
+        self.reject()
+    }
+}
+
+fn refusal_request<'a>(content: &'a str) -> MemoryAdmissionRefusalRequest<'a> {
+    MemoryAdmissionRefusalRequest::new(
+        RepositoryScope::new(
+            WorkspaceId::parse("workspace-g9").unwrap(),
+            ProjectId::parse("project-g9").unwrap(),
+            None,
+        ),
+        OpaqueId::parse("memory-admission").unwrap(),
+        1,
+        OpaqueId::parse("refusal-opt-in-absent").unwrap(),
+        PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("governor-memory").unwrap(),
+        ),
+        content,
+    )
+}
+
+#[test]
+fn an_absent_opt_in_never_calls_the_repository() {
+    let content = format!("please remember {SENTINEL}");
+    let mut touches = Vec::new();
+    let refusal = capture_memory(CaptureOptIn::Disabled, &scope(), &content, &mut touches)
+        .expect_err("a disabled project produced a candidate");
+    let repository = TouchCountingRepository::default();
+
+    let recorded = record_memory_admission_refusal(
+        CaptureOptIn::Disabled,
+        &repository,
+        refusal_request(&content),
+        &refusal,
+    )
+    .expect("disabled capture should return before repository work");
+
+    assert!(recorded.is_none());
+    assert!(touches.is_empty());
+    assert_eq!(repository.touched(), 0);
+    assert!(!format!("{refusal:?} {refusal}").contains(SENTINEL));
+}
+
+#[test]
+fn an_opt_in_absent_refusal_cannot_be_relabelled_as_enabled() {
+    let content = "a note worth keeping";
+    let mut touches = Vec::new();
+    let refusal = capture_memory(CaptureOptIn::Disabled, &scope(), content, &mut touches)
+        .expect_err("a disabled project produced a candidate");
+    let repository = TouchCountingRepository::default();
+
+    let error = record_memory_admission_refusal(
+        CaptureOptIn::Enabled,
+        &repository,
+        refusal_request(content),
+        &refusal,
+    )
+    .expect_err("an opt-in refusal was appended under an enabled label");
+
+    assert_eq!(error.code(), "GHE004_INVALID_EVENT");
+    assert_eq!(repository.touched(), 0);
+    assert!(touches.is_empty());
+}
+
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap()
+    }
+}
+
+#[derive(Default)]
+struct Ids(AtomicU64);
+
+impl IdGenerator for Ids {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "graphhelm-memory-refusal-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn an_enabled_secret_refusal_persists_only_code_local_and_bytes() {
+    let content = format!("please remember {SENTINEL}");
+    let mut touches = Vec::new();
+    let refusal = capture_memory(CaptureOptIn::Enabled, &scope(), &content, &mut touches)
+        .expect_err("secret-bearing capture was accepted");
+    assert!(touches.is_empty());
+
+    let directory = TestDirectory::new();
+    let repository =
+        LocalEventRepository::open(&directory.0, Arc::new(FixedClock), Arc::new(Ids::default()))
+            .unwrap();
+    let events = record_memory_admission_refusal(
+        CaptureOptIn::Enabled,
+        &repository,
+        refusal_request(&content),
+        &refusal,
+    )
+    .unwrap()
+    .expect("enabled refusal did not append");
+
+    assert_eq!(events.len(), 1);
+    let EventKind::MemoryAdmissionRefused(payload) = &events[0].kind else {
+        panic!("the Governor appended the wrong event kind");
+    };
+    assert_eq!(
+        payload.code,
+        PersistedMemoryAdmissionRefusalCode::SecretDetected
+    );
+    assert_eq!(payload.local, MemoryAdmissionLocal::Content);
+    assert_eq!(payload.bytes, content.len() as u64);
+
+    let journal = std::fs::read_to_string(directory.0.join("journal.jsonl")).unwrap();
+    assert!(!journal.contains(SENTINEL));
+    assert!(!journal.contains("digest"));
+    assert!(!format!("{refusal:?} {refusal}").contains(SENTINEL));
 }
 
 /// The vocabularies, written out BY HAND from the enum declarations.

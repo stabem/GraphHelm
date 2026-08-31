@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
     ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId, ExecutionFormDeclared,
-    ExecutionId, ExecutionMode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
-    PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus,
-    WireHash, WorkspaceId,
+    ExecutionId, ExecutionMode, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome,
+    NodeState, OpaqueId, PersistedGraphVersion, PersistedTimestamp, PolicyWaiver, ProjectId,
+    RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -303,6 +303,22 @@ pub struct OpenClaim {
     pub deadline: Option<PersistedTimestamp>,
 }
 
+/// Replay receipt for a refused durable-memory admission.
+///
+/// Like the source event, this projection never carries rejected content or a digest of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryAdmissionRefusalReceipt {
+    pub sequence: u64,
+    pub code: MemoryAdmissionRefusalCode,
+    pub local: MemoryAdmissionLocal,
+    pub bytes: u64,
+}
+
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 /// Pure replay result rebuilt only from the safe journal projection.
 ///
 /// `Option<T>` tolerates an absent key on its own; serde only special-cases `Option`. A collection
@@ -334,6 +350,10 @@ pub struct ExecutionProjection {
     /// a single map: see the fold arm.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub form_amendments: Vec<(u64, graphhelm_protocols::ExecutionFormAmended)>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub memory_admission_refusal_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_memory_admission_refusal: Option<MemoryAdmissionRefusalReceipt>,
     pub proposed_drafts: Vec<String>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
@@ -1162,6 +1182,18 @@ fn apply_projection_event(
         .stream_id
         .get_or_insert_with(|| event.stream_id.to_string());
     match &event.kind {
+        EventKind::MemoryAdmissionRefused(payload) => {
+            projection.memory_admission_refusal_count = projection
+                .memory_admission_refusal_count
+                .checked_add(1)
+                .ok_or(ReplayError::LimitExceeded)?;
+            projection.last_memory_admission_refusal = Some(MemoryAdmissionRefusalReceipt {
+                sequence: event.sequence,
+                code: payload.code,
+                local: payload.local,
+                bytes: payload.bytes,
+            });
+        }
         EventKind::ExecutionFormDeclared(payload) => {
             // A second declaration on one stream would give the shape two owners, which is the
             // trap this event was designed around: a deadline the execution can legally change
@@ -2106,7 +2138,7 @@ mod execution_fields_tests {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use chrono::{TimeZone, Utc};
     use graphhelm_protocols::{
@@ -2117,6 +2149,54 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn refusal_projection_remains_bounded_after_ten_thousand_events() {
+        let mut projection = ExecutionProjection::default();
+        let mut holds = BTreeSet::new();
+        for sequence in 1..=10_001 {
+            let event = EventEnvelope::new(
+                OpaqueId::parse(format!("event-{sequence}")).unwrap(),
+                RepositoryScope::new(
+                    WorkspaceId::parse("workspace-memory").unwrap(),
+                    ProjectId::parse("project-memory").unwrap(),
+                    None,
+                ),
+                OpaqueId::parse("memory-admission").unwrap(),
+                sequence,
+                PersistedTimestamp::parse("2026-08-28T12:00:00Z").unwrap(),
+                graphhelm_protocols::NewEvent::new(
+                    OpaqueId::parse(format!("refusal-{sequence}")).unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::System,
+                        ActorId::parse("governor-memory").unwrap(),
+                    ),
+                    graphhelm_protocols::Sensitivity::Internal,
+                    EventKind::MemoryAdmissionRefused(
+                        graphhelm_protocols::MemoryAdmissionRefused {
+                            code: MemoryAdmissionRefusalCode::SecretDetected,
+                            local: MemoryAdmissionLocal::Content,
+                            bytes: sequence,
+                        },
+                    ),
+                    vec![],
+                    vec![],
+                ),
+                EventHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
+                EventHash::parse(format!("sha256:{}", "1".repeat(64))).unwrap(),
+            );
+            apply_projection_event(&mut projection, &mut holds, &event).unwrap();
+        }
+
+        assert_eq!(projection.memory_admission_refusal_count, 10_001);
+        assert_eq!(
+            projection
+                .last_memory_admission_refusal
+                .as_ref()
+                .map(|receipt| (receipt.sequence, receipt.bytes)),
+            Some((10_001, 10_001))
+        );
+    }
 
     #[test]
     fn scoped_evidence_keys_keep_identical_ids_in_distinct_executions_separate() {

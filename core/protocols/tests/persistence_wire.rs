@@ -5,8 +5,8 @@ use graphhelm_protocols::{
     ActorId, ArtifactId, ArtifactLocator, ArtifactReference, ContentFieldKind, ContentOwnerKind,
     ContentSlot, DiagnosticComponent, DiagnosticDomainPath, EdgeType, EventEnvelope, EventHash,
     EventKind, EvidenceId, EvidenceReference, ExecutionId, GraphVersionPublished,
-    GraphVersionRecord, MediaType, NodeType, OpaqueId, Optionality, PersistedBudgets,
-    PersistedControl, PersistedDiagnostic, PersistedEdge, PersistedGraphVersion,
+    GraphVersionRecord, MediaType, MemoryAdmissionRefused, NodeType, OpaqueId, Optionality,
+    PersistedBudgets, PersistedControl, PersistedDiagnostic, PersistedEdge, PersistedGraphVersion,
     PersistedGraphVersionRef, PersistedNode, PersistedTopology, PolicyWaiver, ProjectId, RawSha256,
     RepositoryScope, SafeKey, SafeValue, SemanticVersion, Sensitivity, Severity, WaiverScope,
     WireHash, WorkspaceId,
@@ -124,6 +124,10 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
         (
             json!({"type":"graph_validation_failed","data":{"diagnostics":[diagnostic.clone()]}}),
             false,
+        ),
+        (
+            json!({"type":"memory_admission_refused","data":{"code":"secret_detected","local":"content","bytes":42}}),
+            true,
         ),
         (
             json!({"type":"graph_version_published","data":{"version":persisted_fixture()}}),
@@ -330,6 +334,19 @@ fn every_listed_safe_event_variant_strictly_round_trips_against_schema() {
     assert!(serde_json::from_value::<EventEnvelope>(unknown.take()).is_err());
     assert_not_impl_any!(GraphVersionRecord: Into<EventKind>);
     assert_not_impl_any!(graphhelm_protocols::Diagnostic: Into<EventKind>);
+}
+
+#[test]
+fn memory_admission_refusal_code_and_local_are_closed_vocabularies() {
+    for invalid in [
+        json!({"code":"made_up","local":"content","bytes":1}),
+        json!({"code":"secret_detected","local":"made_up","bytes":1}),
+    ] {
+        assert!(
+            serde_json::from_value::<MemoryAdmissionRefused>(invalid).is_err(),
+            "an unknown refusal code or local crossed the typed wire"
+        );
+    }
 }
 
 #[test]

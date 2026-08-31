@@ -194,6 +194,7 @@ impl EventEnvelope {
 pub enum EventKind {
     GraphImported(GraphImported),
     GraphValidationFailed(GraphValidationFailed),
+    MemoryAdmissionRefused(MemoryAdmissionRefused),
     GraphVersionPublished(Box<GraphVersionPublished>),
     DraftProposed(DraftProposed),
     DraftRejected(DraftRejected),
@@ -404,6 +405,7 @@ macro_rules! wire_names {
 wire_names! {
     GraphImported => "graph_imported",
     GraphValidationFailed => "graph_validation_failed",
+    MemoryAdmissionRefused => "memory_admission_refused",
     GraphVersionPublished => "graph_version_published",
     DraftProposed => "draft_proposed",
     DraftRejected => "draft_rejected",
@@ -453,6 +455,7 @@ impl EventKind {
         matches!(
             self,
             Self::IntegrityCheckpointCreated(_)
+                | Self::MemoryAdmissionRefused(_)
                 | Self::EvidenceErasureRequested(_)
                 | Self::EvidenceErasureCompleted(_)
                 | Self::EvidenceCiphertextDeleted(_)
@@ -479,6 +482,36 @@ pub struct GraphImported {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphValidationFailed {
     pub diagnostics: Vec<PersistedDiagnostic>,
+}
+
+/// A refused durable-memory admission.
+///
+/// Deliberately carries only bounded metadata. Rejected content and any digest of that content
+/// are forbidden because this event is immutable once appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryAdmissionRefusalCode {
+    ScopeMismatch,
+    RecaptureLoop,
+    SecretDetected,
+    SelfValidated,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryAdmissionLocal {
+    Content,
+    Scope,
+    Validators,
+    Origin,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryAdmissionRefused {
+    pub code: MemoryAdmissionRefusalCode,
+    pub local: MemoryAdmissionLocal,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

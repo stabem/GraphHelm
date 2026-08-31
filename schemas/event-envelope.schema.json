@@ -178,6 +178,16 @@
       "properties": {"diagnostics": {"$ref": "#/$defs/diagnostics"}},
       "additionalProperties": false
     },
+    "memoryAdmissionRefused": {
+      "type": "object",
+      "required": ["code", "local", "bytes"],
+      "properties": {
+        "code": {"enum": ["scope_mismatch", "recapture_loop", "secret_detected", "self_validated"]},
+        "local": {"enum": ["content", "scope", "validators", "origin"]},
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "additionalProperties": false
+    },
     "versionPublished": {
       "type": "object",
       "required": ["version"],
@@ -869,6 +879,15 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "memory_admission_refused"},
+            "data": {"$ref": "#/$defs/memoryAdmissionRefused"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "graph_version_published"},
             "data": {"$ref": "#/$defs/versionPublished"}
           },
@@ -1240,6 +1259,7 @@
   "oneOf": [
     {"properties": {"kind": {"properties": {"type": {"const": "graph_imported"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_validation_failed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_admission_refused"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},

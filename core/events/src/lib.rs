@@ -34,12 +34,12 @@ pub use key::{
 pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, journal_line_roundtrips,
 };
-pub use memory::{append_memory_refusal, memory_journal_is_clean};
+pub use memory::{MemoryAdmissionRefusalAppend, prepare_memory_admission_refusal};
 pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
-    MAX_PROJECTION_NODES, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
-    ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
-    ReplayError, overdue_at, project_customs_stage, replay,
+    MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt, OpenClaim, OpenWait, OverdueStage,
+    ProjectionGeneration, ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository,
+    ProjectionWatermark, ReplayError, overdue_at, project_customs_stage, replay,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

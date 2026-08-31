@@ -5,7 +5,15 @@
 //! that persists it. A refusal is an event; "nothing has been persisted yet" is true of the instant
 //! before it and false of the refusal itself.
 
-use graphhelm_protocols::DevelopmentScope;
+use graphhelm_events::{
+    EventRepository, EventRepositoryError, MemoryAdmissionRefusalAppend,
+    prepare_memory_admission_refusal,
+};
+use graphhelm_protocols::{
+    DevelopmentScope, EventEnvelope, MemoryAdmissionLocal,
+    MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, OpaqueId, PersistedActor,
+    RepositoryScope,
+};
 use std::fmt;
 
 /// One list generates the enum, its `every()` AND its wire spelling, so the three cannot disagree.
@@ -56,23 +64,24 @@ macro_rules! closed_vocabulary {
     };
 }
 
-/// Where in a candidate a refusal was raised.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemoryField {
-    /// The candidate's free content.
-    Content,
-    /// The record's lifecycle state.
-    State,
-    /// The scope the candidate was captured under.
-    Scope,
-    /// The set of parties validating the candidate.
-    Validators,
-    /// Where the content came from.
-    Origin,
-    /// The record's sealed evidence.
-    Evidence,
-    /// A dependency the record was built against.
-    Dependency,
+closed_vocabulary! {
+    /// Where in a candidate a refusal was raised.
+    MemoryField {
+        /// The candidate's free content.
+        Content => "content",
+        /// The record's lifecycle state.
+        State => "state",
+        /// The scope the candidate was captured under.
+        Scope => "scope",
+        /// The set of parties validating the candidate.
+        Validators => "validators",
+        /// Where the content came from.
+        Origin => "origin",
+        /// The record's sealed evidence.
+        Evidence => "evidence",
+        /// A dependency the record was built against.
+        Dependency => "dependency",
+    }
 }
 
 closed_vocabulary! {
@@ -373,6 +382,90 @@ pub fn capture_memory(
     touches.push(CaptureTouch::EventAppended);
     touches.push(CaptureTouch::PersistentBoundaryTouched);
     Ok(candidate)
+}
+
+/// Bounded context needed to append one admission refusal.
+///
+/// Rejected content is borrowed only long enough to count its bytes. It is never copied into the
+/// append request, diagnostics, or the event projection.
+pub struct MemoryAdmissionRefusalRequest<'a> {
+    scope: RepositoryScope,
+    stream_id: OpaqueId,
+    expected_next_sequence: u64,
+    idempotency_key: OpaqueId,
+    actor: PersistedActor,
+    rejected_content: &'a str,
+}
+
+impl<'a> MemoryAdmissionRefusalRequest<'a> {
+    #[must_use]
+    pub fn new(
+        scope: RepositoryScope,
+        stream_id: OpaqueId,
+        expected_next_sequence: u64,
+        idempotency_key: OpaqueId,
+        actor: PersistedActor,
+        rejected_content: &'a str,
+    ) -> Self {
+        Self {
+            scope,
+            stream_id,
+            expected_next_sequence,
+            idempotency_key,
+            actor,
+            rejected_content,
+        }
+    }
+}
+
+/// Records a refusal only for projects that explicitly enabled durable memory capture.
+///
+/// The disabled arm returns before invoking any repository method. The enabled arm delegates the
+/// single event to the repository's atomic, idempotent append boundary.
+pub fn record_memory_admission_refusal(
+    opt_in: CaptureOptIn,
+    repository: &dyn EventRepository,
+    request: MemoryAdmissionRefusalRequest<'_>,
+    refusal: &MemoryRefusal,
+) -> Result<Option<Vec<EventEnvelope>>, EventRepositoryError> {
+    match opt_in {
+        CaptureOptIn::Disabled => return Ok(None),
+        CaptureOptIn::Enabled => {}
+    }
+    let (code, local) = match (refusal.code, refusal.field) {
+        (MemoryRefusalCode::ScopeMismatch, MemoryField::Scope) => (
+            PersistedMemoryAdmissionRefusalCode::ScopeMismatch,
+            MemoryAdmissionLocal::Scope,
+        ),
+        (MemoryRefusalCode::RecaptureLoop, MemoryField::Origin) => (
+            PersistedMemoryAdmissionRefusalCode::RecaptureLoop,
+            MemoryAdmissionLocal::Origin,
+        ),
+        (MemoryRefusalCode::SecretDetected, MemoryField::Content) => (
+            PersistedMemoryAdmissionRefusalCode::SecretDetected,
+            MemoryAdmissionLocal::Content,
+        ),
+        (MemoryRefusalCode::SelfValidated, MemoryField::Validators) => (
+            PersistedMemoryAdmissionRefusalCode::SelfValidated,
+            MemoryAdmissionLocal::Validators,
+        ),
+        _ => return Err(EventRepositoryError::Invalid),
+    };
+
+    let bytes = u64::try_from(request.rejected_content.len())
+        .map_err(|_| EventRepositoryError::LimitExceeded)?;
+    let prepared = prepare_memory_admission_refusal(MemoryAdmissionRefusalAppend::new(
+        request.scope,
+        request.stream_id,
+        request.expected_next_sequence,
+        request.idempotency_key,
+        request.actor,
+        code,
+        local,
+        bytes,
+    ))?;
+
+    repository.append_atomic(&prepared).map(Some)
 }
 
 closed_vocabulary! {

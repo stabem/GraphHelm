@@ -1,105 +1,178 @@
-//! The journal half of #220's G9.
-//!
-//! The governor decides that a candidate is refused. This side decides what the refusal LEAVES
-//! BEHIND. A refusal is an append to an append-only journal, so "nothing has been persisted" is
-//! true of the instant before it and false of the refusal itself, and the journal cannot be
-//! rewritten afterwards to take the secret back out.
+//! Durable memory-admission refusal events (#220 safe slice).
 
-use graphhelm_events::{append_memory_refusal, memory_journal_is_clean};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
-/// Present in the INPUT by construction. That is what makes the scan below meaningful: the string
-/// is known to exist upstream, so an empty result downstream is either a clean journal or a broken
-/// scan, and the input tells the two apart.
+use chrono::{TimeZone, Utc};
+use graphhelm_events::{
+    LocalEventRepository, MemoryAdmissionRefusalAppend, prepare_memory_admission_refusal, replay,
+};
+use graphhelm_protocols::{
+    ActorId, Clock, IdGenerator, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, OpaqueId,
+    PersistedActor, PersistedActorType, ProjectId, RepositoryScope, WorkspaceId,
+};
+
 const SENTINEL: &str = "ghp_G9SENTINELSECRETdoNotPersistMe0000000";
+const STREAM: &str = "memory-admission";
+
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap()
+    }
+}
+
+#[derive(Default)]
+struct Ids(AtomicU64);
+
+impl IdGenerator for Ids {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
+fn scope() -> RepositoryScope {
+    RepositoryScope::new(
+        WorkspaceId::parse("workspace-memory").unwrap(),
+        ProjectId::parse("project-memory").unwrap(),
+        None,
+    )
+}
+
+fn actor() -> PersistedActor {
+    PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse("governor-memory").unwrap(),
+    )
+}
+
+fn refusal(content: &str) -> MemoryAdmissionRefusalAppend {
+    MemoryAdmissionRefusalAppend::new(
+        scope(),
+        OpaqueId::parse(STREAM).unwrap(),
+        1,
+        OpaqueId::parse("refusal-secret-detected").unwrap(),
+        actor(),
+        MemoryAdmissionRefusalCode::SecretDetected,
+        MemoryAdmissionLocal::Content,
+        u64::try_from(content.len()).unwrap(),
+    )
+}
 
 #[test]
-fn a_refusal_append_leaves_no_trace_of_the_value_that_caused_it() {
+fn a_refusal_reopens_and_replays_with_only_code_local_and_bytes() {
+    let directory = tempfile::tempdir().unwrap();
     let content = format!("please remember my token {SENTINEL} for later");
+    let prepared = prepare_memory_admission_refusal(refusal(&content)).unwrap();
 
-    let mut journal = Vec::new();
-    append_memory_refusal(&mut journal, "secret_detected", "content", &content);
+    {
+        let repository = LocalEventRepository::open(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(Ids::default()),
+        )
+        .unwrap();
+        repository.append_atomic(&prepared).unwrap();
+    }
 
-    let text = String::from_utf8(journal.clone()).expect("the journal is utf-8");
+    let journal = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
+    let journal_text = String::from_utf8(journal).unwrap();
+    assert!(journal_text.contains("memory_admission_refused"));
+    assert!(journal_text.contains("secret_detected"));
+    assert!(journal_text.contains("content"));
+    assert!(journal_text.contains(&format!("\"bytes\":{}", content.len())));
+    assert!(!journal_text.contains(SENTINEL));
+    assert!(!journal_text.contains("digest"));
 
-    // Landmark. A scan over an empty journal finds nothing and proves nothing, so the entry must
-    // first be shown to exist and to carry what a refusal is FOR.
-    assert!(
-        text.contains("secret_detected"),
-        "HARNESS-BROKE: no refusal was appended, so the scan below would pass over an empty journal"
-    );
-    assert!(
-        text.contains("content"),
-        "HARNESS-BROKE: the appended refusal does not name the location"
-    );
+    let reopened = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let events = reopened.read_replay_stream(&scope(), STREAM).unwrap();
+    assert_eq!(events.len(), 1);
+    let projection = replay(&scope(), STREAM, &events).unwrap();
+    assert_eq!(projection.memory_admission_refusal_count, 1);
+    let receipt = projection
+        .last_memory_admission_refusal
+        .as_ref()
+        .expect("replay lost the refusal receipt");
+    assert_eq!(receipt.sequence, 1);
+    assert_eq!(receipt.code, MemoryAdmissionRefusalCode::SecretDetected);
+    assert_eq!(receipt.local, MemoryAdmissionLocal::Content);
+    assert_eq!(receipt.bytes, content.len() as u64);
 
-    // The SIZE is one of the three things the record claims to carry, and until this assertion it
-    // was written by the code and checked by nothing: deleting the field left every test green.
-    let entry: serde_json::Value =
-        serde_json::from_str(text.trim_end()).expect("the appended line is JSON");
-    assert_eq!(
-        entry["contentBytes"].as_u64(),
-        Some(content.len() as u64),
-        "the refusal must record the size of what it refused"
-    );
-    assert_eq!(entry["code"].as_str(), Some("secret_detected"));
-    assert_eq!(entry["field"].as_str(), Some("content"));
-
-    // The whole journal is scanned, not the entry the test happens to know about. A second entry
-    // added later by another path is covered by this the day it is written.
-    assert!(
-        memory_journal_is_clean(&journal, SENTINEL),
-        "the refusal carried the offending value into an append-only journal: {text}"
-    );
+    let projected = serde_json::to_string(&projection).unwrap();
+    assert!(!projected.contains(SENTINEL));
+    assert!(!projected.contains("digest"));
 }
 
-/// A public function must not panic on an input a caller can reach.
-///
-/// `memory_journal_is_clean` scanned with `windows(value.len())`, and `windows(0)` panics. An empty
-/// needle is not exotic: it is what a caller passes when the value it meant to search for was
-/// itself empty -- a config miss, a stripped env var, a field that was never set.
-///
-/// The answer is FALSE rather than true on purpose. This function is consumed as
-/// `assert!(memory_journal_is_clean(..))`, so answering "clean" for a needle that cannot be
-/// searched would turn a broken caller into a passing guard.
 #[test]
-fn an_empty_value_is_answered_rather_than_panicked_on() {
-    let mut journal = Vec::new();
-    append_memory_refusal(&mut journal, "secret_detected", "content", "anything");
+fn an_exact_retry_does_not_append_a_second_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let content = format!("token {SENTINEL}");
+    let prepared = prepare_memory_admission_refusal(refusal(&content)).unwrap();
 
-    assert!(
-        !memory_journal_is_clean(&journal, ""),
-        "an empty needle must not be reported as clean: the caller cannot have meant it, and \
-         'clean' is the answer that makes their assertion pass"
-    );
+    let first = {
+        let repository = LocalEventRepository::open(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(Ids::default()),
+        )
+        .unwrap();
+        repository.append_atomic(&prepared).unwrap()
+    };
+    let first_bytes = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
+
+    let reopened = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let retry = reopened.append_atomic(&prepared).unwrap();
+    let retry_bytes = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
+
+    assert_eq!(retry, first);
+    assert_eq!(retry_bytes, first_bytes);
+    assert_eq!(retry_bytes.iter().filter(|byte| **byte == b'\n').count(), 1);
+    assert!(!String::from_utf8(retry_bytes).unwrap().contains(SENTINEL));
 }
 
-/// `code` and `field` are `&str`, so a caller can hand them a quote. Interpolated, that closes the
-/// string early and the record becomes two records or none.
-///
-/// The production change this catches: building the line with `format!` instead of serialising a
-/// value. It is the discipline already applied to `content`, applied to the fields beside it.
 #[test]
-fn a_refusal_survives_a_code_that_contains_json_punctuation() {
-    let mut journal = Vec::new();
-    append_memory_refusal(
-        &mut journal,
-        r#"secret","field":"injected","x":"#,
-        "content",
-        "some content",
-    );
+fn conflicting_idempotency_reuse_leaves_the_original_refusal_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = prepare_memory_admission_refusal(refusal("secret")).unwrap();
+    let conflicting = prepare_memory_admission_refusal(MemoryAdmissionRefusalAppend::new(
+        scope(),
+        OpaqueId::parse(STREAM).unwrap(),
+        1,
+        OpaqueId::parse("refusal-secret-detected").unwrap(),
+        actor(),
+        MemoryAdmissionRefusalCode::ScopeMismatch,
+        MemoryAdmissionLocal::Scope,
+        99,
+    ))
+    .unwrap();
+    let repository = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    repository.append_atomic(&original).unwrap();
+    let before = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
 
-    let text = String::from_utf8(journal).expect("the journal is utf-8");
-    let entry: serde_json::Value =
-        serde_json::from_str(text.trim_end()).expect("a hostile code must not break the record");
+    let error = repository
+        .append_atomic(&conflicting)
+        .expect_err("divergent input reused a committed idempotency key");
+    let after = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
 
-    assert_eq!(
-        entry["field"].as_str(),
-        Some("content"),
-        "the injected field overwrote the real one: {text}"
-    );
-    assert_eq!(
-        entry.as_object().map(serde_json::Map::len),
-        Some(4),
-        "the record grew or shrank under a hostile code: {text}"
-    );
+    assert_eq!(error.code(), "GHE003_IDEMPOTENCY_CONFLICT");
+    assert_eq!(after, before);
+    assert_eq!(after.iter().filter(|byte| **byte == b'\n').count(), 1);
 }

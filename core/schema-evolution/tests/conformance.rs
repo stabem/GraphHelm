@@ -1578,6 +1578,11 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             false,
         ),
         (
+            "memory_admission_refused",
+            json!({"code": "secret_detected", "local": "content", "bytes": 42}),
+            true,
+        ),
+        (
             "graph_version_published",
             json!({"version": persisted_graph_version()}),
             false,

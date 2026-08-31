@@ -11,6 +11,13 @@ extensions/builtin/graphhelm-jpd/**/*.md text eol=lf
 extensions/builtin/graphhelm-development-contracts/*.json text eol=lf
 extensions/builtin/graphhelm-development-contracts/**/*.json text eol=lf
 extensions/builtin/graphhelm-development-contracts/**/*.md text eol=lf
+# The benchmark corpus binds RAW bytes the same way (frozen_files_digest over oracle/
+# objective/retrieval files), and the rule travels WITH the corpus: #594 moved it out of the
+# package to tools/development-benchmark/corpus/ and the eol rule stayed behind on the old
+# path, so the next Windows checkout rewrote every corpus file to CRLF and the oracle freeze
+# broke on main. A digest over raw bytes needs its eol rule pinned to WHERE THE BYTES LIVE.
+tools/development-benchmark/corpus/**/*.json text eol=lf
+tools/development-benchmark/corpus/**/*.md text eol=lf
 # schemas/*.json is DELIBERATELY ABSENT from this file, and the absence is load-bearing.
 #
 # Those documents are pinned by a CANONICAL digest, not a raw one: schema_digest() in

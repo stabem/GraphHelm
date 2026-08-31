@@ -13,8 +13,7 @@ use graphhelm_development_benchmark::{
 };
 
 fn benchmark_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../extensions/builtin/graphhelm-development-contracts/fixtures/benchmark")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/development-benchmark/corpus")
 }
 
 fn shipped_manifest() -> graphhelm_development_benchmark::Manifest {
@@ -106,12 +105,9 @@ fn the_shipped_frozen_file_digests_match_the_shipped_bytes() {
 #[test]
 fn the_objectives_are_readable_and_the_oracle_is_not() {
     let arm = ArmInputs {
-        paths: vec![
-            "extensions/builtin/graphhelm-development-contracts/fixtures/benchmark/objectives"
-                .to_owned(),
-        ],
+        paths: vec!["tools/development-benchmark/corpus/objectives".to_owned()],
     };
-    let oracle = "extensions/builtin/graphhelm-development-contracts/fixtures/benchmark/oracle";
+    let oracle = "tools/development-benchmark/corpus/oracle";
     check_oracle_isolation(oracle, &arm, "baseline")
         .expect("an arm reading only objectives does not reach the oracle");
 

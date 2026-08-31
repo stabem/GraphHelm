@@ -15,9 +15,7 @@ fn runner() -> Command {
 }
 
 fn shipped_manifest() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-        "../../extensions/builtin/graphhelm-development-contracts/fixtures/benchmark/manifest.json",
-    )
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("corpus/manifest.json")
 }
 
 /// No arguments is a usage error, not a refusal: nothing was asked, so nothing was refused.

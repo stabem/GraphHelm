@@ -830,3 +830,56 @@ fn the_base_a_delta_was_actually_computed_against_verifies() {
          satisfied by a verifier that refuses everything"
     );
 }
+
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL, named before the test was written: **counting
+/// `String::chars().count()` instead of `String::len()`** in `fit_within_budget`. Any change of
+/// unit fells the `required_budget` assertion below, which is why that assertion names the NUMBER
+/// rather than only the refusal.
+///
+/// **What this pins, and what it deliberately does NOT claim.** `fit_within_budget` measures
+/// BYTES. Nothing in #222's contract declares the unit, the suite never varied the axis -- every
+/// existing budget fixture uses single-byte ASCII, where bytes, characters and any plausible token
+/// count are the same number -- and `BudgetOutcome`'s own doc comment calls it "a token budget".
+/// So the unit was simultaneously unstated, untested, and described as something it is not.
+///
+/// This test states it. It is a characterization, NOT an endorsement: it does not say bytes is the
+/// right unit, only that bytes is the unit, so that a future change to tokens is a deliberate act
+/// that turns this red rather than a silent redefinition of what a budget means.
+///
+/// **Why it matters beyond tidiness (#222 `compiled_input_tokens`).** That counter is an
+/// `unavailableField` today and the honest source for it does not exist: no dependency in the
+/// workspace tokenizes, and the only production caller of `compile_capsule` compiles the
+/// degenerate empty capsule by a sealed decision. The nearest number that LOOKS like a candidate
+/// is this byte total. Filling a token counter from it would publish bytes wearing the name of
+/// tokens -- an instrument speaking about a quantity it never measured.
+#[test]
+fn the_budget_is_measured_in_bytes_not_characters() {
+    // Five characters, ten bytes: the smallest fixture where the two units disagree. Written as
+    // escapes so the assertion cannot be broken by a tool that re-encodes this file.
+    let multi_byte = "\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}".to_owned();
+    assert_eq!(
+        (multi_byte.chars().count(), multi_byte.len()),
+        (5, 10),
+        "HARNESS-BROKE: the fixture must be one where characters and bytes disagree, or this test \
+         cannot tell the two units apart"
+    );
+
+    let required = vec![multi_byte];
+    let budget = 5; // fits the CHARACTER count exactly; half of the BYTE count
+
+    match fit_within_budget(&required, &[], budget) {
+        BudgetOutcome::Refused { code, expansion } => {
+            assert_eq!(
+                expansion.required_budget, 10,
+                "the budget is spent in BYTES: the refusal must report the byte total, not the \
+                 character count a token-shaped reading would produce"
+            );
+            assert_eq!(code, DevelopmentRefusalCode::ContextBudgetInsufficient);
+        }
+        BudgetOutcome::Fits { .. } => panic!(
+            "a required item of 10 bytes fitted a budget of 5, so the budget is NOT counting \
+             bytes. If this unit changed on purpose, `compiled_input_tokens` and \
+             `BudgetOutcome`'s doc comment both depend on the answer -- change them together."
+        ),
+    }
+}

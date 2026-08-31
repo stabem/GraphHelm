@@ -171,7 +171,18 @@ pub fn compile_capsule(
     out.into_bytes()
 }
 
-/// What happened when context was fitted to a token budget.
+/// What happened when context was fitted to a budget.
+///
+/// **The budget is spent in BYTES** -- `fit_within_budget` sums `String::len()`. This said
+/// "a token budget", which it has never been: nothing tokenizes anywhere in the workspace,
+/// and no dependency does either. The wording mattered because #222's
+/// `compiled_input_tokens` counter is still an `unavailableField` looking for an honest
+/// producer, and this byte total is the nearest number that LOOKS like one -- a counter
+/// filled from here would publish bytes under the name of tokens.
+///
+/// Naming the unit is not a claim that bytes is the RIGHT unit for a context budget. It is
+/// pinned by `the_budget_is_measured_in_bytes_not_characters`, so changing it is a
+/// deliberate act with a red test attached rather than a silent redefinition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BudgetOutcome {
     /// Everything required fits. `dropped_optional` counts what was left out, never silently.

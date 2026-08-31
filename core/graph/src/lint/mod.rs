@@ -117,25 +117,64 @@ pub fn lint(graph: &ExecutionGraph, source: &str) -> LintReport {
             | NodeType::Classifier
             | NodeType::Evaluator
             | NodeType::Tool => true,
-            // Kept deliberately, and the reason is forward-looking rather than current: the executor
-            // refuses these today, so they cannot be Running and cannot park yet. Warning about a node
-            // that cannot park costs an author one line; staying silent about one that can costs a
-            // parked execution nobody is watching. `HumanDecision` is the clearest case -- a node whose
-            // entire purpose is to wait for a person is the one most able to wait forever.
+            // Not dispatched by this milestone, and warned anyway because their WORK is the kind
+            // that waits: a human, a deployment, a rollback, a transform of something someone else
+            // produces. `work_kind` refuses them today, so they cannot park yet -- but warning about
+            // a node that cannot park costs an author one line, and silence about one that can costs
+            // a parked execution nobody is watching. `HumanDecision` is the clearest case: a node
+            // whose entire purpose is to wait for a person is the one most able to wait forever.
             NodeType::HumanDecision
             | NodeType::Deploy
             | NodeType::Rollback
             | NodeType::ArtifactTransform => true,
-            // Structural or terminal: never dispatched as work, so never Running, so never parked.
-            // `DeadLetter` is where work STOPS -- a graveyard that could go overdue would be a queue.
-            NodeType::Gate
-            | NodeType::Fork
+            // DISPATCHED, and still cannot park -- the one member here whose exclusion is a measured
+            // capability rather than a judgement (#549). `work_kind` returns `GateCheck`
+            // (`core/runtime/src/classify.rs:34`) and the driver runs it, so "never dispatched" was
+            // FALSE of this variant and shipped in #547 as part of a sentence covering eight. What is
+            // true: `gate_check_outcome` (`core/runtime/src/executor.rs:461-489`) produces exactly two
+            // outcomes -- `Succeeded` when the findings are empty, `TerminalFailure` when they are not
+            // -- and `WaitingInput` is only reachable via `NeedsInput`, which is not in that set. A
+            // gate decides; it does not wait for anyone.
+            //
+            // NOT GUARDED, and said so rather than implied: nothing fails if that outcome set gains a
+            // third member. This reason is a citation across a crate boundary `core/graph` does not
+            // depend on, exactly like the population question above it.
+            NodeType::Gate => false,
+            // Control flow, and the reason is their SHAPE rather than the current dispatch table:
+            // a fork, a join, a subgraph boundary or a materialisation is a structural step that
+            // completes or fails, with nobody to wait for. `Timer` is the one that reads like a
+            // counter-example and is not: it waits on its OWN clock, which is the mechanism customs
+            // budgets exist to bound elsewhere, not an input another party supplies.
+            //
+            // These sit apart from the four above on a stated principle, because the two groups are
+            // both "refused by `work_kind` today" and a reader is owed the difference: the four are
+            // work whose NATURE is waiting, these are steps whose nature is completing. If one of
+            // them ever gains a driver that can report `NeedsInput`, it belongs above, and this
+            // comment is where that argument starts.
+            //
+            // `Trigger` IS NOT COVERED BY THE SENTENCE ABOVE, and saying so is the point (#549, found
+            // by D). Its nature is UNESTABLISHED in this repository: measured at `origin/main`, the
+            // variant carries no doc comment on the enum, no graph or fixture authors `type: trigger`
+            // (0 files, against 7 for `type: agent` as the control that the sweep sees things), and
+            // its only three appearances are membership lists -- this arm, `work_kind`'s Unsupported
+            // arm, and `driver_contract`'s. Three lists, zero definitions.
+            //
+            // It sits here by CAPABILITY DEFAULT -- `work_kind` refuses it, so it cannot be Running
+            // and cannot park today -- and NOT by a classified reason, because there is nothing to
+            // classify it from. Its name is the one here that most suggests waiting, which is exactly
+            // why the default must be written rather than absorbed. Landing a justification that
+            // silently covered a member it could not describe would repeat, inside the fix, the
+            // defect the fix exists for.
+            NodeType::Fork
             | NodeType::Join
             | NodeType::Timer
             | NodeType::Trigger
             | NodeType::Subgraph
-            | NodeType::Materializer
-            | NodeType::DeadLetter => false,
+            | NodeType::Materializer => false,
+            // Terminal, and the strongest exclusion here: a dead-lettered node is where work STOPS.
+            // `work_kind` refuses it PERMANENTLY rather than pending a driver (#288), so a graveyard
+            // that could go overdue would be a queue.
+            NodeType::DeadLetter => false,
         }
     }
 

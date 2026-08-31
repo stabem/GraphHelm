@@ -158,6 +158,17 @@ fn allowed_sites() -> BTreeMap<&'static str, usize> {
         // The refusal arm. That is a MATCH PATTERN, not a construction: the variant is named there
         // in order to be refused, which is the opposite of emitting it.
         ("core/runtime/src/classify.rs", 1),
+        // GHG102's parkability classification (#547). A match arm again, in the not-parkable set,
+        // and the same category as the refusal above: naming a variant in order to decide about it
+        // is the opposite of producing one.
+        //
+        // THIS ROW IS THE GUARD WORKING, and it is worth saying because the row looks like an
+        // exemption. #547 added an exhaustive match over `NodeType` in another crate; the sweep
+        // went red on `main` and the arm had to be classified here before it could be green again.
+        // Every exhaustive classification over this enum will do the same, and that is the design:
+        // a new site naming the variant is a decision somebody makes on purpose rather than a line
+        // that arrives unread.
+        ("core/graph/src/lint/mod.rs", 1),
         // The whole-table pin: the variant import, and its row.
         ("core/runtime/tests/gate_nodes.rs", 2),
         // This file. It scans itself deliberately, exactly as
@@ -223,10 +234,17 @@ fn no_rust_outside_the_declared_sites_names_the_dead_letter_variant() {
     assert_eq!(
         found, expected,
         "the workspace names NodeType::DeadLetter somewhere this file does not allow, or has \
-         stopped naming it where it must. Adding a producer is a decision about the 1.0.0 node \
-         schema: a document carrying dead_letter is refused by every consumer holding the older \
-         1.0.0, and the release gate cannot see it because #412 moved the mirror and the live \
-         catalog together. Widen this table in the same change that bumps documentVersion."
+         stopped naming it where it must.\n\nANSWER THIS BEFORE EDITING EITHER SIDE: at the site \
+         above, is the variant being CONSTRUCTED, or CLASSIFIED?\n\nCLASSIFIED -- a match arm, an \
+         exhaustive table, a list that decides ABOUT the variant -- is the common case and is \
+         fine. Add the row with its reason; that is what happened for classify.rs and for \
+         lint/mod.rs.\n\nCONSTRUCTED -- something now EMITS a dead-letter node -- is a decision \
+         about the 1.0.0 node schema and not an implementation detail: a document carrying \
+         dead_letter is refused by every consumer holding the older 1.0.0, and the release gate \
+         cannot see it because #412 moved the mirror and the live catalog together. Widen this \
+         table in the same change that bumps documentVersion.\n\nThe question is asked rather \
+         than the two edits offered, because an offered pair gets chosen by distance and the \
+         cheaper one is not always the true one."
     );
 }
 

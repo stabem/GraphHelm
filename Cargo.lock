@@ -935,6 +935,9 @@ dependencies = [
 name = "graphhelm-development-benchmark"
 version = "0.1.0"
 dependencies = [
+ "graphhelm-events",
+ "graphhelm-gateway",
+ "graphhelm-model-gateway",
  "graphhelm-protocols",
  "graphhelm-runtime",
  "hex",
@@ -943,6 +946,8 @@ dependencies = [
  "serde_yaml_ng",
  "sha2 0.11.0",
  "tempfile",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

@@ -1,0 +1,34 @@
+{
+  "caseId": "cli-gate-workspace",
+  "query": "Which stage of the authoritative local gate runs the entire workspace test suite, and with which cargo flags?",
+  "repoSnapshot": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "indexGeneration": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "hits": [
+    {
+      "path": "apps/cli/tests/gate_http.rs",
+      "lines": "693-729"
+    },
+    {
+      "path": "apps/cli/tests/development_sabotage.rs",
+      "lines": "257-273"
+    },
+    {
+      "path": "apps/cli/tests/development_sabotage.rs",
+      "lines": "385-394"
+    },
+    {
+      "path": "apps/cli/tests/gate_http.rs",
+      "lines": "513-568"
+    },
+    {
+      "path": "apps/cli/tests/gate_http.rs",
+      "lines": "494-510"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 50,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

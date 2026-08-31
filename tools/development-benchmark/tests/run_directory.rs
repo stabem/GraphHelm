@@ -245,3 +245,46 @@ fn an_unavailable_input_count_refuses_naming_the_arm() {
         other => panic!("provenance did not decide this: {other:?}"),
     }
 }
+
+/// Codex r2 P1, and it is Bar 2 arriving: a run whose receipts record a missed required-evidence
+/// case REFUSES the comparison instead of publishing a ratio about a blind arm. The count settles
+/// before any number exists -- the same order evaluate_run already enforces for quality.
+#[test]
+fn a_case_that_missed_its_evidence_refuses_the_whole_report() {
+    let directory = tempfile::tempdir().unwrap();
+    write_arms(directory.path(), &arm("same"), &arm("same"));
+    write_case(
+        directory.path(),
+        "alpha",
+        CostField::measured(1000, "provider"),
+        CostField::measured(100, "provider"),
+    );
+    write_case(
+        directory.path(),
+        "beta",
+        CostField::measured(1000, "provider"),
+        CostField::measured(100, "provider"),
+    );
+    write_case(
+        directory.path(),
+        "gamma",
+        CostField::measured(1000, "provider"),
+        CostField::measured(100, "provider"),
+    );
+    // Rewrite beta with a recorded miss on the compiled arm.
+    let path = directory.path().join("cases/beta.json");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    value["compiled"]["requiredEvidenceFound"] = serde_json::Value::Bool(false);
+    std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+    let refusal = read_run_directory(directory.path(), &cases())
+        .expect_err("a blind case was averaged into a published ratio");
+
+    match refusal {
+        BenchmarkRefusal::RequiredEvidenceMissing { cases } => {
+            assert_eq!(cases, vec!["beta".to_owned()], "the refusal names the case");
+        }
+        other => panic!("recall did not decide this: {other:?}"),
+    }
+}

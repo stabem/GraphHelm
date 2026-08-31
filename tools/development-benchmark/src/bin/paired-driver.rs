@@ -13,8 +13,8 @@
 //! Exit codes: 0 a run directory was produced; 2 a typed refusal; 64 usage error.
 
 use graphhelm_development_benchmark::{
-    BenchmarkRefusal, Manifest, RetrievalArtifact, capsule_for_case, load_manifest, naive_context,
-    oracle_evidence_paths, verify_frozen_files,
+    BenchmarkRefusal, Manifest, RetrievalArtifact, capsule_for_case, live_arm_cost, load_manifest,
+    naive_context, oracle_evidence_paths, transmitted_settings, verify_frozen_files,
 };
 
 struct Arguments {
@@ -26,6 +26,36 @@ struct Arguments {
     clock: String,
     binary_digest: String,
     environment: String,
+    /// Live-provider coordinates: gateway route manifest, route id, broker/keyring dirs, key id.
+    /// All five required together when `--provider live`; the passphrase rides
+    /// `GRAPHHELM_GATEWAY_KEY` exactly as `graphhelm gateway probe` reads it, and this binary
+    /// never prints or stores any of it.
+    gateway_manifest: Option<String>,
+    route: Option<String>,
+    broker: Option<String>,
+    keyring: Option<String>,
+    key_id: Option<String>,
+}
+
+/// What one arm's cost measurement runs through: the fake rule, or a live adapter.
+enum Provider<'route> {
+    Fake,
+    Live {
+        adapter: graphhelm_model_gateway::byok::ByokAdapter<'route>,
+        key: graphhelm_events::SecretBytes,
+        route_id: String,
+        /// The provider KIND ("anthropic" | "openai"), read from the route: the settings label
+        /// derives from it, because what a call transmits differs per provider.
+        provider: String,
+    },
+}
+
+/// Which provider the settings label is derived for.
+fn provider_kind<'a>(provider: &'a Provider<'_>) -> &'a str {
+    match provider {
+        Provider::Fake => "fake",
+        Provider::Live { provider, .. } => provider.as_str(),
+    }
 }
 
 fn main() {
@@ -49,6 +79,11 @@ fn parse() -> Result<Arguments, i32> {
     let mut clock = None;
     let mut binary_digest = None;
     let mut environment = None;
+    let mut gateway_manifest = None;
+    let mut route = None;
+    let mut broker = None;
+    let mut keyring = None;
+    let mut key_id = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let slot = match argument.as_str() {
@@ -60,6 +95,11 @@ fn parse() -> Result<Arguments, i32> {
             "--clock" => &mut clock,
             "--binary-digest" => &mut binary_digest,
             "--environment" => &mut environment,
+            "--gateway-manifest" => &mut gateway_manifest,
+            "--route" => &mut route,
+            "--broker" => &mut broker,
+            "--keyring" => &mut keyring,
+            "--key-id" => &mut key_id,
             other => {
                 eprintln!("unknown argument `{other}`");
                 return Err(usage());
@@ -95,6 +135,11 @@ fn parse() -> Result<Arguments, i32> {
             clock,
             binary_digest,
             environment,
+            gateway_manifest,
+            route,
+            broker,
+            keyring,
+            key_id,
         }),
         _ => Err(usage()),
     }
@@ -105,15 +150,138 @@ fn run() -> i32 {
         Ok(arguments) => arguments,
         Err(code) => return code,
     };
-    if arguments.provider != "fake" {
+    match arguments.provider.as_str() {
+        "fake" => match drive(&arguments, &Provider::Fake) {
+            Ok(()) => 0,
+            Err(refusal) => {
+                println!("{refusal:?}");
+                2
+            }
+        },
+        "live" => run_live(&arguments),
+        other => {
+            eprintln!("provider `{other}` is unknown; `fake` or `live`");
+            64
+        }
+    }
+}
+
+/// The live wiring, kept to coordinates-and-lease: everything measured happens in the same
+/// `drive` the dry run exercises, with a `Provider::Live` in place of the fake rule. Neither the
+/// passphrase nor the leased key is ever printed or written.
+fn run_live(arguments: &Arguments) -> i32 {
+    let (Some(gateway_manifest), Some(route_id), Some(broker), Some(keyring), Some(key_id)) = (
+        arguments.gateway_manifest.as_ref(),
+        arguments.route.as_ref(),
+        arguments.broker.as_ref(),
+        arguments.keyring.as_ref(),
+        arguments.key_id.as_ref(),
+    ) else {
         eprintln!(
-            "provider `{}` is not wired yet; `fake` is the only dry-run provider",
-            arguments.provider
+            "--provider live requires --gateway-manifest --route --broker --keyring --key-id"
         );
         return 64;
+    };
+    // The 256 KiB bound holds AT the boundary: refused by name before the allocation, so an
+    // oversized operator file is a named refusal instead of an allocator event (K on #531).
+    const MANIFEST_BOUND: u64 = 256 * 1024;
+    match std::fs::metadata(gateway_manifest) {
+        Ok(metadata) if metadata.len() > MANIFEST_BOUND => {
+            eprintln!(
+                "{gateway_manifest}: {} bytes exceeds the {MANIFEST_BOUND}-byte route-manifest                  bound; refused before reading",
+                metadata.len()
+            );
+            return 2;
+        }
+        Err(error) => {
+            eprintln!("{gateway_manifest}: {error}");
+            return 2;
+        }
+        Ok(_) => {}
     }
+    let manifest_text = match std::fs::read_to_string(gateway_manifest) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("{gateway_manifest}: {error}");
+            return 2;
+        }
+    };
+    let manifest = match graphhelm_gateway::manifest::RouteManifest::from_json(&manifest_text) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            eprintln!("{gateway_manifest}: {error}");
+            return 2;
+        }
+    };
+    let Some(route) = manifest
+        .routes()
+        .iter()
+        .find(|route| route.id() == route_id.as_str())
+    else {
+        eprintln!("route `{route_id}` is not in {gateway_manifest}");
+        return 2;
+    };
 
-    match drive(&arguments) {
+    // The operator's kill switch, honoured BEFORE the key is read and BEFORE the broker opens:
+    // this driver is the manifest consumer that spends money, and it was the only one ignoring
+    // `enabled` (K's hold on #531). Probe refuses it, eligibility filters it, so does this.
+    if !route.enabled() {
+        eprintln!("route `{route_id}` is disabled; the kill switch stops this spend");
+        return 2;
+    }
+    let passphrase = match read_gateway_key() {
+        Ok(passphrase) => passphrase,
+        Err(message) => {
+            eprintln!("{message}");
+            return 2;
+        }
+    };
+    let Some(credential_ref) = route.credential_ref().map(str::to_owned) else {
+        eprintln!("route `{route_id}` carries no credentialRef");
+        return 2;
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("tokio runtime: {error}");
+            return 2;
+        }
+    };
+    let broker_dir = std::path::PathBuf::from(broker);
+    let keyring_dir = std::path::PathBuf::from(keyring);
+    let lease = runtime.block_on(async {
+        let opened = graphhelm_model_gateway::broker::CredentialBroker::open(
+            &broker_dir,
+            &keyring_dir,
+            key_id,
+            passphrase,
+        )
+        .await
+        .map_err(|error| format!("broker: {error}"))?;
+        opened
+            .lease(&credential_ref, route_id)
+            .await
+            .map_err(|error| format!("lease: {error}"))
+    });
+    let key = match lease {
+        Ok(key) => key,
+        Err(message) => {
+            eprintln!("{message}");
+            return 2;
+        }
+    };
+    let transport: std::sync::Arc<dyn graphhelm_model_gateway::transport::HttpTransport> =
+        std::sync::Arc::new(graphhelm_model_gateway::transport::UreqTransport::new());
+    let provider = Provider::Live {
+        adapter: graphhelm_model_gateway::byok::ByokAdapter::new(route, transport),
+        key,
+        route_id: route_id.clone(),
+        provider: route.provider().to_owned(),
+    };
+    match drive(arguments, &provider) {
         Ok(()) => 0,
         Err(refusal) => {
             println!("{refusal:?}");
@@ -122,12 +290,35 @@ fn run() -> i32 {
     }
 }
 
+/// GRAPHHELM_GATEWAY_KEY: 64 lowercase hex characters decoded to 32 bytes -- the same contract
+/// `graphhelm gateway probe` enforces. The encoded form is zeroized after decoding.
+fn read_gateway_key() -> Result<graphhelm_events::SecretBytes, String> {
+    const MALFORMED: &str = "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hex characters";
+    let encoded = std::env::var("GRAPHHELM_GATEWAY_KEY").map_err(|_| MALFORMED.to_owned())?;
+    let encoded = zeroize::Zeroizing::new(encoded.into_bytes());
+    if encoded.len() != 64 {
+        return Err(MALFORMED.to_owned());
+    }
+    let value = |byte: u8| match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        _ => Err(MALFORMED.to_owned()),
+    };
+    let mut bytes = zeroize::Zeroizing::new(Vec::<u8>::with_capacity(32));
+    for pair in encoded.chunks_exact(2) {
+        bytes.push((value(pair[0])? << 4) | value(pair[1])?);
+    }
+    Ok(graphhelm_events::SecretBytes::new(std::mem::take(
+        &mut *bytes,
+    )))
+}
+
 /// The fake provider's whole contract: input tokens = ceil(bytes / 4), labelled as fake.
 fn fake_input_tokens(context: &[u8]) -> u64 {
     (context.len() as u64).div_ceil(4)
 }
 
-fn drive(arguments: &Arguments) -> Result<(), BenchmarkRefusal> {
+fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefusal> {
     let text = std::fs::read_to_string(&arguments.manifest).map_err(|error| {
         BenchmarkRefusal::Unreadable {
             detail: format!("{}: {error}", arguments.manifest),
@@ -146,16 +337,26 @@ fn drive(arguments: &Arguments) -> Result<(), BenchmarkRefusal> {
     let retrieval_root = std::path::Path::new(&arguments.retrieval);
     let out_root = std::path::Path::new(&arguments.out);
 
-    // Everything is BUILT before anything is WRITTEN: a run directory must not come into
-    // existence carrying half a run -- the reader treats missing cases as a partial corpus,
-    // and it is right to.
-    struct DrivenCase {
-        id: String,
-        naive_tokens: u64,
-        compiled_tokens: u64,
-        compiled_recall: bool,
-    }
-    let mut driven: Vec<DrivenCase> = Vec::with_capacity(manifest.cases.len());
+    // COMPLETED WORK PERSISTS AS IT COMPLETES (Codex #531 P1): a live drive that fails part way
+    // must not discard the paid calls that already happened -- each case's receipt is written the
+    // moment its pair of calls finishes. The run stays INELIGIBLE for comparison until the very
+    // end, because `arms.json` is written last and the reader requires it: eligibility is marked
+    // by the one file whose absence the reader already refuses, not by a cleanup step.
+    std::fs::create_dir_all(out_root.join("cases")).map_err(|error| {
+        BenchmarkRefusal::Unreadable {
+            detail: format!("{}: {error}", out_root.display()),
+        }
+    })?;
+    let write = |path: &std::path::Path, value: &serde_json::Value| {
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(value).expect("run records encode"),
+        )
+        .map_err(|error| BenchmarkRefusal::Unreadable {
+            detail: format!("{}: {error}", path.display()),
+        })
+    };
+    let mut driven = 0usize;
     let mut index_generation: Option<String> = None;
     let mut repo_snapshot: Option<String> = None;
     for case in &manifest.cases {
@@ -237,22 +438,67 @@ fn drive(arguments: &Arguments) -> Result<(), BenchmarkRefusal> {
             .iter()
             .all(|path| compiled.evidence_paths.contains(path));
 
-        driven.push(DrivenCase {
-            id: case.id.clone(),
-            naive_tokens: fake_input_tokens(naive.as_bytes()),
-            compiled_tokens: fake_input_tokens(&compiled.capsule),
-            compiled_recall,
-        });
+        // Naive first, compiled second, per case -- the per-case arm order is part of the
+        // protocol and it is fixed rather than recorded because it never varies.
+        let capsule_prompt = String::from_utf8(compiled.capsule.clone()).map_err(|_| {
+            BenchmarkRefusal::Unreadable {
+                detail: format!("case {}: capsule is not UTF-8", case.id),
+            }
+        })?;
+        let (naive_cost, compiled_cost) = match provider {
+            Provider::Fake => (
+                graphhelm_runtime::context_accounting::CostField::measured(
+                    fake_input_tokens(naive.as_bytes()),
+                    "fake-provider",
+                ),
+                graphhelm_runtime::context_accounting::CostField::measured(
+                    fake_input_tokens(&compiled.capsule),
+                    "fake-provider",
+                ),
+            ),
+            Provider::Live {
+                adapter,
+                key,
+                route_id,
+                ..
+            } => (
+                live_arm_cost(adapter, key, &naive, 512, route_id)?,
+                live_arm_cost(adapter, key, &capsule_prompt, 512, route_id)?,
+            ),
+        };
+        write(
+            &out_root.join("cases").join(format!("{}.json", case.id)),
+            &serde_json::json!({
+                "caseId": case.id,
+                "baseline": {
+                    "provider_reported_input_tokens": naive_cost,
+                    "requiredEvidenceFound": true,
+                },
+                "compiled": {
+                    "provider_reported_input_tokens": compiled_cost,
+                    "requiredEvidenceFound": compiled_recall,
+                },
+            }),
+        )?;
+        driven += 1;
     }
 
+    let route_label = match provider {
+        Provider::Fake => "fake".to_owned(),
+        Provider::Live { route_id, .. } => route_id.clone(),
+    };
+    // Derived from what the calls TRANSMIT, per provider -- an asserted literal on a held-equal
+    // axis is a check that cannot fail (K on #531): both arms would copy one constant and
+    // compare_arms would compare the constant to itself.
+    let settings_label = transmitted_settings(provider_kind(provider), 512);
     let order: Vec<String> = manifest.cases.iter().map(|case| case.id.clone()).collect();
     let arm = serde_json::json!({
         "snapshot": repo_snapshot.clone().unwrap_or_else(|| "none".to_owned()),
         "indexSnapshot": index_generation.clone().unwrap_or_else(|| "none".to_owned()),
         "objective": "the frozen corpus, in manifest order",
         "permissions": ["read"],
-        "modelRoute": "fake",
-        "modelSettings": "temperature=0",
+        "modelRoute": route_label.clone(),
+        "modelSettings": settings_label,
         "cleanState": true,
         "order": order,
         "seed": 7,
@@ -264,53 +510,14 @@ fn drive(arguments: &Arguments) -> Result<(), BenchmarkRefusal> {
         "cacheDiscipline": "cold",
     });
 
-    std::fs::create_dir_all(out_root.join("cases")).map_err(|error| {
-        BenchmarkRefusal::Unreadable {
-            detail: format!("{}: {error}", out_root.display()),
-        }
-    })?;
-    let write = |path: &std::path::Path, value: &serde_json::Value| {
-        std::fs::write(
-            path,
-            serde_json::to_vec_pretty(value).expect("run records encode"),
-        )
-        .map_err(|error| BenchmarkRefusal::Unreadable {
-            detail: format!("{}: {error}", path.display()),
-        })
-    };
+    // Last write: the eligibility marker. Everything before this is a partial run the reader
+    // refuses by the absence of this file.
     write(
         &out_root.join("arms.json"),
         &serde_json::json!({ "baseline": arm, "compiled": arm }),
     )?;
-    for case in &driven {
-        write(
-            &out_root.join("cases").join(format!("{}.json", case.id)),
-            &serde_json::json!({
-                "caseId": case.id,
-                "baseline": {
-                    "provider_reported_input_tokens": {
-                        "value": case.naive_tokens,
-                        "provenance": "measured",
-                        "producer": "fake-provider",
-                        "note": "",
-                    },
-                    "requiredEvidenceFound": true,
-                },
-                "compiled": {
-                    "provider_reported_input_tokens": {
-                        "value": case.compiled_tokens,
-                        "provenance": "measured",
-                        "producer": "fake-provider",
-                        "note": "",
-                    },
-                    "requiredEvidenceFound": case.compiled_recall,
-                },
-            }),
-        )?;
-    }
     eprintln!(
-        "run written: {} cases, provider fake, out {}",
-        driven.len(),
+        "run written: {driven} cases, route {route_label}, out {}",
         out_root.display()
     );
     Ok(())

@@ -1,0 +1,34 @@
+{
+  "caseId": "protocols-canonical-order",
+  "query": "Is the benchmark corpus digest sensitive to the ORDER of cases, and why is that deliberate? Name the two functions whose composition answers this.",
+  "repoSnapshot": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "indexGeneration": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "hits": [
+    {
+      "path": "apps/cli/tests/development_sabotage.rs",
+      "lines": "411-421"
+    },
+    {
+      "path": "core/tool-broker/tests/record_contract.rs",
+      "lines": "4-10"
+    },
+    {
+      "path": "core/runtime/tests/prompt_assembly.rs",
+      "lines": "84-97"
+    },
+    {
+      "path": "core/execution/src/ready.rs",
+      "lines": "341-356"
+    },
+    {
+      "path": "apps/cli/tests/development_contract_schemas.rs",
+      "lines": "567-579"
+    }
+  ],
+  "coverage": "excluded",
+  "pages": 1,
+  "maxResults": 50,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

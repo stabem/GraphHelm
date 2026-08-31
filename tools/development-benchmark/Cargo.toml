@@ -14,6 +14,13 @@ serde.workspace = true
 serde_json.workspace = true
 graphhelm-protocols = { path = "../../core/protocols" }
 graphhelm-runtime = { path = "../../core/runtime" }
+graphhelm-gateway = { path = "../../core/gateway" }
+graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
+graphhelm-events = { path = "../../core/events" }
+# rt only: the broker's open/lease are async and the driver bridges with a current-thread
+# block_on exactly as apps/cli/src/commands/gateway/probe.rs does.
+tokio = { workspace = true, features = ["rt"] }
+zeroize.workspace = true
 serde_yaml_ng.workspace = true
 
 [dev-dependencies]

@@ -57,8 +57,9 @@ fn arrange(root: &Path) -> PathBuf {
             .unwrap(),
         )
         .unwrap();
-        // The compiled arm's selection: only the small file -- so compiled input is genuinely
-        // smaller than naive, and the fake ratio lands well under 1.
+        // The compiled arm selects BOTH required files (recall true -- Bar 2 gates now) but at
+        // function grain: one line of each, so compiled input stays genuinely smaller than the
+        // naive arm's full files and the fake ratio lands well under 1.
         std::fs::write(
             bench.join("retrieval").join(format!("{id}.json")),
             serde_json::to_vec_pretty(&serde_json::json!({
@@ -66,7 +67,8 @@ fn arrange(root: &Path) -> PathBuf {
                 "query": objective,
                 "repoSnapshot": "sha256-g1",
                 "indexGeneration": "sha256-g1",
-                "hits": ["src/lib.rs"],
+                "hits": [{"path": "src/lib.rs", "lines": "1-1"},
+                         {"path": "src/big.rs", "lines": "1-1"}],
                 "coverage": "complete",
                 "pages": 1,
                 "maxResults": 50,
@@ -248,4 +250,168 @@ fn walk(root: PathBuf) -> Vec<PathBuf> {
         }
     }
     files
+}
+
+/// Codex r2 P1 (persist-before-later-calls): a drive that fails PART WAY leaves the receipts of
+/// every completed case on disk -- paid live evidence survives -- while the run stays INELIGIBLE
+/// for comparison because `arms.json` is written only at the end and the reader requires it.
+#[test]
+fn a_partial_drive_persists_completed_cases_but_stays_unreadable_as_a_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let bench = arrange(directory.path());
+    // Break the SECOND case's artifact (stale binding); alpha must complete first in manifest
+    // order, so its receipt exists by the time beta refuses.
+    let stale = bench.join("retrieval/beta.json");
+    let text = std::fs::read_to_string(&stale).unwrap();
+    std::fs::write(&stale, text.replace("\"sha256-g1\",", "\"sha256-g0\",")).unwrap();
+    let rewritten = std::fs::read_to_string(&stale).unwrap();
+    assert!(
+        rewritten.contains("sha256-g0") && rewritten.contains("sha256-g1"),
+        "arrangement: beta's binding halves must differ"
+    );
+
+    let drove = drive(&bench, directory.path());
+    assert_eq!(drove.status.code(), Some(2), "the drive refuses on beta");
+
+    let out = directory.path().join("out");
+    assert!(
+        out.join("cases/alpha.json").is_file(),
+        "alpha's completed receipt must SURVIVE the later failure -- paid evidence is not discarded"
+    );
+    assert!(
+        !out.join("arms.json").exists(),
+        "arms.json marks a COMPLETE run and must be absent from a partial one"
+    );
+
+    let ran = runner()
+        .arg("--manifest")
+        .arg(bench.join("manifest.json"))
+        .arg("--receipts")
+        .arg(&out)
+        .output()
+        .expect("the runner binary exists");
+    assert_eq!(ran.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        stdout.contains("Unreadable") && stdout.contains("arms.json"),
+        "an incomplete run is ineligible for comparison, got: {stdout}"
+    );
+}
+
+/// K's #531 hold (Codex P1 confirmed): a DISABLED route is the operator's kill switch, and this
+/// driver was the only manifest consumer that ignored it -- the one that spends money. The
+/// refusal lands BEFORE the key is read and BEFORE the broker opens, so the cell needs no
+/// credential at all.
+#[test]
+fn a_disabled_route_refuses_before_key_or_broker() {
+    let directory = tempfile::tempdir().unwrap();
+    let bench = arrange(directory.path());
+    let manifest = serde_json::json!({
+        "manifestVersion": 1,
+        "routes": [{
+            "id": "anthropic_prod",
+            "provider": "anthropic",
+            "transport": "direct_api",
+            "authentication": "api_key",
+            "billingMode": "per_token",
+            "baseUrl": "http://127.0.0.1:9",
+            "model": "test-model",
+            "credentialRef": "secret_test",
+            "profiles": ["balanced_reasoning"],
+            "enabled": false
+        }]
+    });
+    let gateway = directory.path().join("routes.json");
+    std::fs::write(&gateway, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+
+    let output = driver()
+        .arg("--manifest")
+        .arg(bench.join("manifest.json"))
+        .arg("--retrieval")
+        .arg(bench.join("retrieval"))
+        .arg("--repo-root")
+        .arg(directory.path().join("repo"))
+        .arg("--out")
+        .arg(directory.path().join("out"))
+        .arg("--provider")
+        .arg("live")
+        .arg("--clock")
+        .arg("2026-08-31T07:00:00Z")
+        .arg("--binary-digest")
+        .arg("sha256-x")
+        .arg("--environment")
+        .arg("env-x")
+        .arg("--gateway-manifest")
+        .arg(&gateway)
+        .arg("--route")
+        .arg("anthropic_prod")
+        .arg("--broker")
+        .arg(directory.path().join("nonexistent-broker"))
+        .arg("--keyring")
+        .arg(directory.path().join("nonexistent-keyring"))
+        .arg("--key-id")
+        .arg("k1")
+        .output()
+        .expect("the driver binary exists");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("disabled"),
+        "the refusal must name the kill switch, not stumble into a missing key: {stderr}"
+    );
+    assert!(
+        !stderr.contains("GRAPHHELM_GATEWAY_KEY"),
+        "the key must never have been consulted: {stderr}"
+    );
+}
+
+/// Codex P2, K-confirmed ordering: the 256 KiB manifest bound must hold AT the boundary -- a
+/// refusal by name before the allocation, not an allocator failure after it.
+#[test]
+fn an_oversized_gateway_manifest_refuses_before_it_is_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let bench = arrange(directory.path());
+    let gateway = directory.path().join("routes.json");
+    std::fs::write(&gateway, vec![b'x'; 300 * 1024]).unwrap();
+
+    let output = driver()
+        .arg("--manifest")
+        .arg(bench.join("manifest.json"))
+        .arg("--retrieval")
+        .arg(bench.join("retrieval"))
+        .arg("--repo-root")
+        .arg(directory.path().join("repo"))
+        .arg("--out")
+        .arg(directory.path().join("out"))
+        .arg("--provider")
+        .arg("live")
+        .arg("--clock")
+        .arg("2026-08-31T07:00:00Z")
+        .arg("--binary-digest")
+        .arg("sha256-x")
+        .arg("--environment")
+        .arg("env-x")
+        .arg("--gateway-manifest")
+        .arg(&gateway)
+        .arg("--route")
+        .arg("anthropic_prod")
+        .arg("--broker")
+        .arg(directory.path().join("b"))
+        .arg("--keyring")
+        .arg(directory.path().join("k"))
+        .arg("--key-id")
+        .arg("k1")
+        .output()
+        .expect("the driver binary exists");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The parser downstream ALSO names its 256 KiB limit, so a message test alone cannot see
+    // the ordering K's confirmation is about. The pre-read check is the only producer of this
+    // exact phrase, which makes the phrase the observable for "refused before the allocation".
+    assert!(
+        stderr.contains("refused before reading"),
+        "the refusal must come from the pre-read bound, not from the parser after the          allocation: {stderr}"
+    );
 }

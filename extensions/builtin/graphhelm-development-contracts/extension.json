@@ -916,7 +916,7 @@
           "id": "fixture/benchmark-manifest",
           "kind": "fixture",
           "path": "fixtures/benchmark/manifest.json",
-          "sha256": "sha256:e91c2659b40abf1877c1d35118c282eec4da411199f9047a39307aad44737188",
+          "sha256": "sha256:df81c3888d886c8836d7dfe9eae653de20095b625d4268eaa2c82d14244c8ab5",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1124,7 +1124,7 @@
           "id": "fixture/benchmark-oracle-protocols-canonical-order",
           "kind": "fixture",
           "path": "fixtures/benchmark/oracle/protocols-canonical-order.json",
-          "sha256": "sha256:8f9c298423f51114d6359565a32f8b37243b6b77f720e2e187e05a36028b31aa",
+          "sha256": "sha256:81b98a3205716d3e1f615e9cc8d53c47b0cb67dc53f092de324690152a3f54d6",
           "effects": [],
           "permissions": [],
           "requires": {

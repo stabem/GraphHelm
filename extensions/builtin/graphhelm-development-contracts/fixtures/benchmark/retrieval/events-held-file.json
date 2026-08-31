@@ -1,0 +1,34 @@
+{
+  "caseId": "events-held-file",
+  "query": "During reconciliation a child file cannot be opened because another process holds it against sharing. Does the repository treat this as corruption? Cite the decision site and the windows error involved.",
+  "repoSnapshot": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "indexGeneration": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "hits": [
+    {
+      "path": "core/events/tests/local_atomicity.rs",
+      "lines": "38-43"
+    },
+    {
+      "path": "core/events/src/store.rs",
+      "lines": "109-119"
+    },
+    {
+      "path": "core/runtime/tests/context_accounting.rs",
+      "lines": "793-815"
+    },
+    {
+      "path": "adapters/model-gateway/tests/runtime_adapters.rs",
+      "lines": "202-222"
+    },
+    {
+      "path": "apps/cli/src/commands/mcp/url.rs",
+      "lines": "228-244"
+    }
+  ],
+  "coverage": "complete",
+  "pages": 1,
+  "maxResults": 50,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

@@ -302,11 +302,9 @@ struct RunCaseFile {
 struct RunCaseArm {
     /// Snake on the wire ON PURPOSE: this key is the receipt vocabulary, verbatim.
     provider_reported_input_tokens: graphhelm_runtime::context_accounting::CostField,
+    /// Whether this arm's inputs contained every oracle-required path. Bar 2 consumes it: a
+    /// recorded miss refuses the whole comparison before any number exists.
     #[serde(rename = "requiredEvidenceFound")]
-    /// Whether this arm's inputs contained every oracle-required path. Modelled NOW so the
-    /// format cannot fork (deny_unknown_fields would refuse a writer that records it); Bar 2
-    /// starts CONSUMING it when the recall gate joins the report.
-    #[allow(dead_code)]
     required_evidence_found: bool,
 }
 
@@ -354,6 +352,11 @@ pub fn read_run_directory(
     let mut compiled_values: Vec<u64> = Vec::new();
     let mut worst_case_ratio: f64 = 0.0;
     let mut exceeded = 0usize;
+    // Bar 2 lands HERE, before any number exists to be settled against (the same order
+    // evaluate_run enforces for quality): a recorded miss on either arm refuses the whole
+    // comparison. Without this, a paid live run could publish a ratio about a blind arm --
+    // Codex's #531 P1, and precisely the promotion the recall bar exists to refuse.
+    let mut blind_cases: Vec<String> = Vec::new();
     for case in cases {
         let path = root.join("cases").join(format!("{}.json", case.id));
         let text = std::fs::read_to_string(&path).map_err(|error| {
@@ -392,6 +395,10 @@ pub fn read_run_directory(
             .map_err(|_| BenchmarkRefusal::Unreadable {
                 detail: format!("cases/{}.json: unbuildable compiled receipt", case.id),
             })?;
+        if !record.baseline.required_evidence_found || !record.compiled.required_evidence_found {
+            blind_cases.push(case.id.clone());
+            continue;
+        }
         let comparison = compare_cost(PROVIDER_INPUT_FIELD, &baseline_receipt, &compiled_receipt)?;
         if comparison.ratio > worst_case_ratio {
             worst_case_ratio = comparison.ratio;
@@ -401,6 +408,9 @@ pub fn read_run_directory(
         }
         baseline_values.push(comparison.baseline);
         compiled_values.push(comparison.compiled);
+    }
+    if !blind_cases.is_empty() {
+        return Err(BenchmarkRefusal::RequiredEvidenceMissing { cases: blind_cases });
     }
     if baseline_values.is_empty() {
         return Err(BenchmarkRefusal::EmptyRun);
@@ -443,13 +453,25 @@ pub struct RetrievalArtifact {
     pub query: String,
     pub repo_snapshot: String,
     pub index_generation: String,
-    pub hits: Vec<String>,
+    pub hits: Vec<RetrievalHit>,
     pub coverage: String,
     pub pages: u32,
     pub max_results: u32,
     pub max_pages: u32,
     pub max_bytes: u64,
     pub max_tokens: u32,
+}
+
+/// One hit as the index returned it: a path, and optionally the 1-based line range of the
+/// construct. The range is the index's own grain -- rows are FUNCTIONS -- and the real-corpus dry
+/// run measured what aggregating to whole files does: ratio 3.9 against naive, recall 0/12.
+/// `lines: None` reads the whole file, kept for hits that genuinely are whole-file.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalHit {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<String>,
 }
 
 /// A compiled arm's context, plus the paths that went into it (recall is judged against these).
@@ -485,9 +507,9 @@ pub fn capsule_for_case(
     .map_err(|error| BenchmarkRefusal::Unreadable {
         detail: format!("artifact {}: coverage: {error}", artifact.case_id),
     })?;
-    let response =
-        graphhelm_runtime::retrieval::IndexResponse::new(artifact.hits.clone(), coverage)
-            .after_pages(artifact.pages);
+    let hit_paths: Vec<String> = artifact.hits.iter().map(|hit| hit.path.clone()).collect();
+    let response = graphhelm_runtime::retrieval::IndexResponse::new(hit_paths, coverage)
+        .after_pages(artifact.pages);
     let limits = graphhelm_protocols::DeclaredLimits {
         max_results: artifact.max_results,
         max_pages: artifact.max_pages,
@@ -512,14 +534,75 @@ pub fn capsule_for_case(
         }
     };
 
-    let mut items: Vec<String> = Vec::with_capacity(hits.len());
-    for hit in &hits {
-        let content = std::fs::read_to_string(repo_root.join(hit)).map_err(|error| {
-            BenchmarkRefusal::Unreadable {
-                detail: format!("artifact {}: {hit}: {error}", artifact.case_id),
+    // The PLAN gates (stale, escape, bounds) over the canonicalised path SET; the ITEMS are then
+    // built from the artifact's own declarations, one per hit -- a by-path lookup here was Codex's
+    // #531 P1: five ranges of one file collapsed into the first range five times, biasing the
+    // fn-grain dry run downward on every case with duplicate paths. `hits` (the gated set) decides
+    // WHICH paths may be read; `artifact.hits` decides WHAT of each is read.
+    let gated: std::collections::BTreeSet<&str> = hits.iter().map(String::as_str).collect();
+    let mut items: Vec<String> = Vec::with_capacity(artifact.hits.len());
+    let mut contents: std::collections::BTreeMap<&str, String> = std::collections::BTreeMap::new();
+    for declared in &artifact.hits {
+        if !gated.contains(declared.path.as_str()) {
+            // A declared hit the plan did not admit (canonicalisation collapsed it, or the plan
+            // refused earlier and we never get here) -- skipping silently would under-measure.
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!(
+                    "artifact {}: {}: declared hit not admitted by the plan",
+                    artifact.case_id, declared.path
+                ),
+            });
+        }
+        if !contents.contains_key(declared.path.as_str()) {
+            let content =
+                std::fs::read_to_string(repo_root.join(&declared.path)).map_err(|error| {
+                    BenchmarkRefusal::Unreadable {
+                        detail: format!(
+                            "artifact {}: {}: {error}",
+                            artifact.case_id, declared.path
+                        ),
+                    }
+                })?;
+            contents.insert(declared.path.as_str(), content);
+        }
+        let content = &contents[declared.path.as_str()];
+        let item = match &declared.lines {
+            None => format!("{}\n{content}", declared.path),
+            Some(range) => {
+                let (start, end) = range
+                    .split_once('-')
+                    .and_then(|(start, end)| {
+                        Some((start.parse::<usize>().ok()?, end.parse::<usize>().ok()?))
+                    })
+                    .filter(|(start, end)| *start >= 1 && start <= end)
+                    .ok_or_else(|| BenchmarkRefusal::Unreadable {
+                        detail: format!(
+                            "artifact {}: {}: unparseable line range `{range}`",
+                            artifact.case_id, declared.path
+                        ),
+                    })?;
+                // A range past the end of the file is a lying artifact: refused by name, never a
+                // silent short slice (Codex #531 P2 -- and the bound also forecloses the
+                // arithmetic edge the checked parse alone would leave).
+                let line_count = content.lines().count();
+                if end > line_count {
+                    return Err(BenchmarkRefusal::Unreadable {
+                        detail: format!(
+                            "artifact {}: {}: range `{range}` ends past the file's {line_count} \
+                             lines",
+                            artifact.case_id, declared.path
+                        ),
+                    });
+                }
+                let slice: Vec<&str> = content
+                    .lines()
+                    .skip(start - 1)
+                    .take(end - start + 1)
+                    .collect();
+                format!("{}:{range}\n{}", declared.path, slice.join("\n"))
             }
-        })?;
-        items.push(format!("{hit}\n{content}"));
+        };
+        items.push(item);
     }
     // The section decision, made explicitly: this is the half the #404 seal reserved for the
     // item's owner, and here the owner is the benchmark caller.
@@ -591,6 +674,69 @@ pub fn oracle_evidence_paths(
         parsed.required_evidence.join("\n")
     );
     Ok((parsed.required_evidence, stripped))
+}
+
+/// Map a provider's reported input usage into a cost field, faithfully.
+///
+/// Present becomes MEASURED with the ROUTE as producer -- the label separating a live number from
+/// a fake one. Absent becomes unavailable: never zero, never an estimate (#222's rule at the arm).
+#[must_use]
+pub fn usage_to_cost(
+    input_tokens: Option<u64>,
+    route: &str,
+) -> graphhelm_runtime::context_accounting::CostField {
+    match input_tokens {
+        Some(value) => graphhelm_runtime::context_accounting::CostField::measured(value, route),
+        None => graphhelm_runtime::context_accounting::CostField::unavailable(
+            "the provider reported no input usage for this call",
+        ),
+    }
+}
+
+/// One live arm call: prompt in, the provider's input count out, through the byok adapter.
+///
+/// A gateway error is a typed refusal naming the route -- the run does not limp on without the
+/// case, because a partial run is a different corpus.
+pub fn live_arm_cost(
+    adapter: &graphhelm_model_gateway::byok::ByokAdapter<'_>,
+    key: &graphhelm_events::SecretBytes,
+    prompt: &str,
+    max_tokens: u32,
+    route: &str,
+) -> Result<graphhelm_runtime::context_accounting::CostField, BenchmarkRefusal> {
+    let call = graphhelm_gateway::call::ModelCall {
+        prompt: prompt.to_owned(),
+        max_tokens,
+    };
+    match adapter.call(key, &call) {
+        Ok(reply) => Ok(usage_to_cost(reply.usage.input_tokens, route)),
+        // The taxonomy's own Display is the diagnosis; the route name is the address. Nothing
+        // here reads the provider's prose, and no credential is in scope to leak.
+        Err(error) => Err(BenchmarkRefusal::Unreadable {
+            detail: format!("route {route}: {error}"),
+        }),
+    }
+}
+
+/// The settings string a receipt records, DERIVED from what the call transmits per provider.
+///
+/// K's #531 hold: an asserted literal on a held-equal axis is a check that cannot fail -- both
+/// arms copy the same constant and `compare_arms` compares the constant to itself. This function
+/// is the single producer of the label, and its cells pin the per-provider truth: anthropic
+/// binds `max_tokens` as a required top-level field; the openai adapter deliberately does not
+/// forward it (`byok.rs`); nothing transmits a temperature anywhere, so the label says
+/// `provider-default` instead of asserting a zero nobody sent.
+#[must_use]
+pub fn transmitted_settings(provider: &str, max_tokens: u32) -> String {
+    match provider {
+        // Anthropic: `max_tokens` is a required top-level field, so the cap genuinely binds.
+        "anthropic" => format!("max_tokens={max_tokens};temperature=provider-default"),
+        // The openai adapter deliberately does not forward the cap (byok.rs documents it), so
+        // recording it as bound would claim a control that was not executed.
+        "openai" => "max_tokens=not-transmitted;temperature=provider-default".to_owned(),
+        "fake" => "input=ceil(bytes/4)".to_owned(),
+        other => format!("provider={other};controls=unknown"),
+    }
 }
 
 /// The digest that freezes a corpus.

@@ -26,7 +26,13 @@ fn artifact(fresh: bool, hits: &[&str]) -> RetrievalArtifact {
         } else {
             "sha256-snap-old".to_owned()
         },
-        hits: hits.iter().map(|hit| (*hit).to_owned()).collect(),
+        hits: hits
+            .iter()
+            .map(|hit| graphhelm_development_benchmark::RetrievalHit {
+                path: (*hit).to_owned(),
+                lines: None,
+            })
+            .collect(),
         coverage: "complete".to_owned(),
         pages: 1,
         max_results: 50,
@@ -160,4 +166,116 @@ fn the_oracle_reader_is_blind_to_the_answer_field() {
         "whatever the reader returns beside the paths must not carry the answer: the driver \
          builds contexts only from this function's output"
     );
+}
+
+/// The function grain (#506 selector, revised by measurement): a hit carrying a line range lands
+/// ONLY those lines in the capsule. File-grain was the harness's own inflation -- the index
+/// returns functions -- and the real-corpus dry run measured it at ratio 3.9, recall 0/12.
+#[test]
+fn a_ranged_hit_lands_only_its_lines_in_the_capsule() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("src")).unwrap();
+    std::fs::write(
+        directory.path().join("src/lib.rs"),
+        b"line one
+pub fn decide() -> u8 {
+    42
+}
+line five is noise
+",
+    )
+    .unwrap();
+
+    let mut ranged = artifact(true, &[]);
+    ranged.hits = vec![graphhelm_development_benchmark::RetrievalHit {
+        path: "src/lib.rs".to_owned(),
+        lines: Some("2-4".to_owned()),
+    }];
+
+    let compiled = capsule_for_case(
+        "which function decides the verdict?",
+        &ranged,
+        directory.path(),
+    )
+    .expect("a fresh ranged artifact compiles");
+
+    let text = String::from_utf8_lossy(&compiled.capsule);
+    assert!(
+        text.contains("pub fn decide()"),
+        "the range's content lands"
+    );
+    assert!(
+        !text.contains("line five is noise"),
+        "content OUTSIDE the range must not ride in: the range is the whole point of the grain"
+    );
+    assert_eq!(compiled.evidence_paths, vec!["src/lib.rs".to_owned()]);
+}
+
+/// Codex r2 P1, K-confirmed shape: two hits from the SAME file with different ranges must land
+/// BOTH slices -- the by-path lookup repeated the first range and silently dropped the rest,
+/// which biased the fn-grain dry run downward on every case with duplicate paths.
+#[test]
+fn duplicate_path_hits_land_each_declared_range() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("src")).unwrap();
+    std::fs::write(
+        directory.path().join("src/lib.rs"),
+        b"alpha-first\nalpha-second\nbeta-first\nbeta-second\n",
+    )
+    .unwrap();
+
+    let mut ranged = artifact(true, &[]);
+    ranged.hits = vec![
+        graphhelm_development_benchmark::RetrievalHit {
+            path: "src/lib.rs".to_owned(),
+            lines: Some("1-2".to_owned()),
+        },
+        graphhelm_development_benchmark::RetrievalHit {
+            path: "src/lib.rs".to_owned(),
+            lines: Some("3-4".to_owned()),
+        },
+    ];
+
+    let compiled = capsule_for_case("objective", &ranged, directory.path())
+        .expect("two ranges of one file compile");
+
+    let text = String::from_utf8_lossy(&compiled.capsule);
+    assert!(text.contains("alpha-first"), "first range lands");
+    assert!(
+        text.contains("beta-first"),
+        "the SECOND range must land too, not a repeat of the first"
+    );
+    assert_eq!(
+        text.matches("alpha-first").count(),
+        1,
+        "the first range must not be duplicated in the second's place"
+    );
+}
+
+/// Codex r2 P2: a range beyond the file is a lying artifact, refused by name -- never a silent
+/// short slice and never an arithmetic panic.
+#[test]
+fn a_range_beyond_the_file_refuses_naming_it() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("src")).unwrap();
+    std::fs::write(directory.path().join("src/lib.rs"), b"one\ntwo\n").unwrap();
+
+    let mut ranged = artifact(true, &[]);
+    ranged.hits = vec![graphhelm_development_benchmark::RetrievalHit {
+        path: "src/lib.rs".to_owned(),
+        lines: Some("1-999999".to_owned()),
+    }];
+
+    let refusal = capsule_for_case("objective", &ranged, directory.path())
+        .expect_err("a range past the end of the file was sliced anyway");
+
+    match refusal {
+        BenchmarkRefusal::Unreadable { detail } => {
+            assert!(
+                detail.contains("999999") && detail.contains("src/lib.rs"),
+                "the refusal names the range and the file, got: {detail}"
+            );
+        }
+        other => panic!("readability did not decide this: {other:?}"),
+    }
 }

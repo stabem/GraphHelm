@@ -28,91 +28,25 @@
 //! So there are two sweeps below, and they fail differently on purpose.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 
 // ------------------------------------------------------------------------------------------
-// Population. Derived, never listed.
+// Population. Derived, never listed -- and SHARED, because the exclusion set is an ORACLE.
+//
+// The walk lived inline here until #541 needed a second workspace-scoped sweep. Two copies that
+// must agree on what they SKIP is a duplicated oracle rather than a duplicated mechanism: add a
+// directory to one exclusion list and not the other, and both stay green while reporting clean
+// results about different workspaces. This repository already sets that bar at two copies --
+// "The mapping lives HERE and nowhere else: a second spelling of it would drift" (install.rs).
+//
+// `workspace_root` also stopped being CARGO_MANIFEST_DIR plus two fixed parents in the move: that
+// form is correct only for an includer at one particular depth, which is the assumption an
+// extraction exists to remove.
 // ------------------------------------------------------------------------------------------
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("the workspace root is two levels above core/protocols")
-        .to_path_buf()
-}
-
-/// The crate directories, read from `Cargo.toml` at RUN time.
-///
-/// A guard has two hand-chosen parameters -- its POPULATION and its FORM -- and measuring one
-/// leaves the other a guess. This removes the population from the guessing: a crate added to the
-/// workspace is swept the day it is added, with nobody remembering to widen a list here.
-fn workspace_members() -> Vec<PathBuf> {
-    let root = workspace_root();
-    let text = std::fs::read_to_string(root.join("Cargo.toml")).expect("workspace Cargo.toml");
-    let mut inside = false;
-    let mut members = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("members") {
-            inside = true;
-            continue;
-        }
-        if inside {
-            if trimmed.starts_with(']') {
-                break;
-            }
-            if let Some(name) = trimmed.split('"').nth(1) {
-                members.push(root.join(name));
-            }
-        }
-    }
-    members
-}
-
-const MAX_ENTRIES: usize = 8_192;
-
-/// Every file under `start` with one of `extensions`, skipping build and VCS trees.
-///
-/// `.claude` is skipped for a reason worth writing down: in the primary checkout it holds
-/// `worktrees/`, which contains COMPLETE copies of this repository belonging to other sessions.
-/// A walk that descended into it would sweep other people's uncommitted work and report findings
-/// about files that are not in this change set at all.
-fn walk(start: &Path, extensions: &[&str], out: &mut Vec<PathBuf>) {
-    assert!(
-        out.len() <= MAX_ENTRIES,
-        "HARNESS-BROKE: the walk passed {MAX_ENTRIES} entries; it is not measuring what it claims"
-    );
-    let Ok(entries) = std::fs::read_dir(start) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if path.is_dir() {
-            if matches!(
-                name.as_ref(),
-                "target" | ".git" | ".claude" | "node_modules"
-            ) {
-                continue;
-            }
-            walk(&path, extensions, out);
-        } else if extensions
-            .iter()
-            .any(|extension| path.extension().is_some_and(|found| found == *extension))
-        {
-            out.push(path);
-        }
-    }
-}
-
-fn relative(path: &Path) -> String {
-    path.strip_prefix(workspace_root())
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tools/workspace-walk/walk.rs"
+));
 
 // ------------------------------------------------------------------------------------------
 // HALF A -- the Rust sweep.

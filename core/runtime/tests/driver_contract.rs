@@ -73,6 +73,8 @@ impl ToolPort for FakeToolPort {
                 .reuse
                 .as_ref()
                 .is_some_and(|summary| summary.decision == graphhelm_protocols::ReuseOutcome::Hit),
+            verified_executable: None,
+            contained_session: None,
         };
         let reuse = self.reuse.clone();
         Box::pin(async move {
@@ -1422,6 +1424,8 @@ impl ToolPort for ProcessFixtureToolPort {
             stderr_bytes: 0,
             truncated: false,
             reused: false,
+            verified_executable: None,
+            contained_session: None,
         };
         Box::pin(async move {
             ToolPortResult {
@@ -1463,6 +1467,8 @@ impl ToolPort for DeterministicTimeoutToolPort {
                     stderr_bytes: 0,
                     truncated: false,
                     reused: false,
+                    verified_executable: None,
+                    contained_session: None,
                 },
                 streams: ToolStreams {
                     stdout: Vec::new(),

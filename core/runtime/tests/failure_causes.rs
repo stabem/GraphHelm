@@ -77,6 +77,8 @@ impl ToolPort for FakeToolPort {
             stderr_bytes: 0,
             truncated: false,
             reused: false,
+            verified_executable: None,
+            contained_session: None,
         };
         Box::pin(async move {
             ToolPortResult {

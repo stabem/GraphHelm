@@ -595,6 +595,55 @@ fn a_successor_cannot_supersede_twice() {
     );
 }
 
+/// ADR-032 decision 3, proven directly rather than only as a side effect of one cell of
+/// `every_publication_transition_tuple_either_applies_or_leaves_the_predecessor_untouched` above.
+/// That matrix test always withdraws a record whose semantic axis is `Candidate` -- the fixture's
+/// own default -- so a defect that reset the semantic axis specifically ON WITHDRAWAL, but only
+/// when the record started somewhere OTHER than `Candidate`, would pass every cell of that matrix
+/// without this test existing. Every non-default semantic value is exercised here for that reason.
+///
+/// Proven in both directions in the same cell, so neither assertion is vacuous on its own: the
+/// publication axis really DOES move (a call that changed nothing at all would make the semantic
+/// assertion below true for the wrong reason), and the semantic axis does NOT -- withdrawal closes
+/// USE, never belief in the content.
+///
+/// The production change this catches: `apply_publication_transition` resetting or otherwise
+/// touching `record.semantic` on any transition, most plausibly on `Withdraw` specifically (the
+/// transition whose name reads, in isolation, like it might mean "this content is no longer
+/// good" rather than "this content is no longer shown").
+#[test]
+fn withdrawing_a_record_moves_only_the_publication_axis_never_the_semantic_one() {
+    for semantic in [
+        MemorySemanticState::Validated,
+        MemorySemanticState::Contradicted,
+        MemorySemanticState::Deprecated,
+        MemorySemanticState::Expired,
+    ] {
+        let mut record = MemoryRecord::at(
+            record_id("rec-withdraw-axis-independence"),
+            semantic,
+            MemoryPublicationState::Published,
+        );
+
+        apply_publication_transition(&mut record, MemoryPublicationTransition::Withdraw)
+            .expect("HARNESS-BROKE: Published -> Withdraw is an allowed publication transition");
+
+        // Arrangement check first: the publication axis really did move.
+        assert_eq!(
+            record.publication(),
+            MemoryPublicationState::Withdrawn,
+            "HARNESS-BROKE: withdraw did not move the publication axis at all, so the semantic \
+             assertion below would be vacuously true of a call that changed nothing"
+        );
+        assert_eq!(
+            record.semantic(),
+            semantic,
+            "withdrawing a record starting at {semantic:?} changed its semantic axis -- \
+             withdrawal must close USE, never touch belief in the content"
+        );
+    }
+}
+
 /// G4 of the blueprint, and the one place where the choice of instrument IS the guard.
 ///
 /// A canonical digest is blind to object key order BY DESIGN, so "the digest matches" and "the

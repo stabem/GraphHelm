@@ -5,7 +5,7 @@ mod discovery;
 mod staging;
 
 pub use activation::{
-    ActivationClaim, ActivationRecord, ActivationStep, ClaimRefusal, activation_steps,
+    ActivationClaim, ActivationRecord, ActivationStep, ClaimRefusal, ClaimStatus, activation_steps,
 };
 pub use discovery::{DiscoveryRefusal, resolve_executable};
 pub use staging::{StagingRefusal, VerifiedStaging, activate_staged, verify_staged};

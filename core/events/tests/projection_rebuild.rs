@@ -696,6 +696,47 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             serde_json::json!({"type":"evidence_legal_hold_changed","data":{"evidenceScope":{"workspaceId":"workspace-1","projectId":"project-1","executionId":"execution-1"},"holdId":"hold-1","evidenceId":"evidence-1","authority":"authority-1","reasonCode":"investigation","state":"placed","changedAt":"2026-08-09T00:03:00Z"}}),
             true,
         ),
+        // #569 SLICE A — the seven variants whose fold arm reads no prior projection state, so a
+        // fixture is one event and nothing else. Three of them (`gate_verdict`, `reuse_decision`,
+        // `sweep_performed`) are literal no-ops in the fold, and covering a no-op is not busywork:
+        // this test asserts the generation handler is SAFE, and "safe" is exactly the claim a
+        // no-op makes. The remaining classes (a positioned event, and one needing a predecessor
+        // arranged) are deliberately NOT here — their fixtures cost an arrangement, and mixing the
+        // two costs in one change is how a cheap slice grows a hard half nobody reviewed.
+        (
+            serde_json::json!({"type":"gate_verdict","data":{"executionId":"execution-1","nodeId":"node-1","gateId":"gate-1","passed":true,"findings":[]}}),
+            false,
+        ),
+        (
+            serde_json::json!({"type":"gate_certified","data":{"executionId":"execution-1","gateId":"gate-1","suiteDigest":hash,"specimens":1}}),
+            false,
+        ),
+        (
+            serde_json::json!({"type":"reuse_decision","data":{"executionId":"execution-1","plane":"tool_broker","decision":"miss","keyComponents":["tool_version","canonical_input"],"keyDigest":hash,"provenanceErased":false}}),
+            false,
+        ),
+        (
+            serde_json::json!({"type":"sweep_performed","data":{"executionId":"execution-1","asOf":"2026-08-09T00:04:00Z","caller":"tick"}}),
+            false,
+        ),
+        (
+            serde_json::json!({"type":"wake_lease","data":{"executionId":"execution-1","sessionId":"session-1","cursor":1,"rendezvousId":"rendezvous-1"}}),
+            false,
+        ),
+        (
+            serde_json::json!({"type":"execution_form_amended","data":{"executionId":"execution-1","computedAtSequence":1,"nodeTimeoutSeconds":{},"observedSilenceSeconds":{}}}),
+            false,
+        ),
+        (
+            // PROJECT-LEVEL, and the payload says so: this is the only one of the seven whose
+            // data carries no `executionId`. Filed under an execution-scoped generation it fails
+            // `Corrupt` before the fold arm is ever reached -- the arm itself cannot produce that
+            // error, it only counts and records (`projection.rs:1224-1235`, LimitExceeded is its
+            // only failure). Measured, after guessing wrong: the scope level is part of the
+            // fixture, and the payload is what declares it.
+            serde_json::json!({"type":"memory_admission_refused","data":{"code":"scope_mismatch","local":"content","bytes":1}}),
+            true,
+        ),
     ];
     // No length literal (#190): the old `assert_eq!(variants.len() + 1, 16)` compared this
     // vec's own length to a hand-written number, so it could never fail regardless of how many
@@ -707,9 +748,133 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
     // would claim to close. Instead: the gap is PINNED, by name, same shape as #478's tripwire.
     // A new EventKind variant, or the accidental loss of an existing fixture, changes this
     // test's own comparison and turns it red — nothing can silently drift again.
+
+    // #569 C1 — FIXTURES THAT NEED A PRELUDE, and the reason is one line in the fold.
+    //
+    // 18 of the 28 pinned variants open their arm with
+    // `projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) => Corrupt`, and
+    // `projection.execution_id` is set by exactly ONE event: `ExecutionStarted`
+    // (`core/events/src/projection.rs:1321-1325`). A fresh generation holds `None`, so every one of
+    // those 18 refuses as a single event no matter how correct its payload is.
+    //
+    // That is NOT what my own classification on #569 said. It grouped by "does the arm read prior
+    // projection state", which put `execution_paused` (no read) far from `completion_cleared`
+    // (deep read) — while the property that actually decides whether a fixture is one event or
+    // several is the execution-id guard, which both of them have. The axis was wrong, and slice A
+    // passed only because none of its seven carry that guard.
+    //
+    // A page, not an event, is therefore the unit here. `apply_page` already takes a slice; what
+    // was missing was a fixture shape that uses it.
+    let pages: Vec<Vec<serde_json::Value>> = vec![
+        // The clearance registry: register then revoke, both against a known execution.
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"clearance_identity_registered","data":{"executionId":"execution-1","identity":"auditor-a","keyFingerprint":hash}}),
+            serde_json::json!({"type":"clearance_identity_revoked","data":{"executionId":"execution-1","identity":"auditor-a"}}),
+        ],
+        // The customs chain, cleared. Each step exists because the next one refuses without it:
+        // the wait is opened by a `waiting_input` outcome (`projection.rs:1382`), the claim only
+        // enters `open_claims` when it ANSWERS that open wait, and the clearance refuses `Corrupt`
+        // unless it finds that claim. Sequence numbers are the page positions, which is what
+        // `completesWaitSeq` and `claimSeq` name.
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"node_outcome_recorded","data":{"executionId":"execution-1","nodeId":"implementation","outcome":"needs_input","nextState":"waiting_input"}}),
+            serde_json::json!({"type":"completion_claimed","data":{"executionId":"execution-1","node":"implementation","completesWaitSeq":2,"evidence":[{"kind":"patch","contentHash":hash,"size":2048}],"attestation":{"asserter":"agent-claimer","mode":"operator_attested"}}}),
+            serde_json::json!({"type":"completion_cleared","data":{"executionId":"execution-1","claimSeq":3,"verifier":{"type":"machineReplay","manifestHash":hash}}}),
+        ],
+        // The same chain, rejected instead of cleared: one arm, one fixture, and the claim is spent
+        // either way.
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"node_outcome_recorded","data":{"executionId":"execution-1","nodeId":"implementation","outcome":"needs_input","nextState":"waiting_input"}}),
+            serde_json::json!({"type":"completion_claimed","data":{"executionId":"execution-1","node":"implementation","completesWaitSeq":2,"evidence":[{"kind":"patch","contentHash":hash,"size":2048}],"attestation":{"asserter":"agent-claimer","mode":"operator_attested"}}}),
+            serde_json::json!({"type":"completion_rejected","data":{"executionId":"execution-1","claimSeq":3,"verifier":{"type":"countersign","identity":"reviewer-1","keyFingerprint":hash},"reasonCode":"evidence_did_not_replay"}}),
+        ],
+        // The remaining pinned variants, re-sliced BY THE GUARD rather than by my first map's
+        // classes. Each of these carries the execution-id guard and, as far as the fold is
+        // concerned, needs nothing beyond the execution it names.
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"completion_refused","data":{"executionId":"execution-1","node":"implementation","claimedWaitSeq":4,"reasonCode":"wait_superseded"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"dlq_routed","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"reason":"stalled"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"dlq_redrive","data":{"executionId":"execution-1","nodeId":"implementation","dlqEpisodeSequence":5}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"dlq_returned","data":{"executionId":"execution-1","nodeId":"implementation","dlqEpisodeSequence":5,"waitWithinSeconds":600}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"execution_completed","data":{"executionId":"execution-1","status":"completed"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{"start":900}}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            // `previousMode` is "supervised", not null: the arm refuses unless it EQUALS the mode
+            // the projection already holds, and the prelude started this execution supervised. The
+            // house's own wire example carries null because it was written for a stream with no
+            // prior mode -- a payload correct in one arrangement and Corrupt in this one.
+            serde_json::json!({"type":"execution_mode_changed","data":{"executionId":"execution-1","previousMode":"supervised","mode":"manual"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"execution_paused","data":{"executionId":"execution-1"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            // Resumed needs something PAUSED to resume: the arm refuses unless
+            // `simulation_status` is already `Paused`. Two preludes, because two different
+            // requirements stack.
+            serde_json::json!({"type":"execution_paused","data":{"executionId":"execution-1"}}),
+            serde_json::json!({"type":"execution_resumed","data":{"executionId":"execution-1"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"ghost_node_proposed","data":{"executionId":"execution-1","nodeId":"ghost-a","draftId":"draft-1"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            // `mode` must EQUAL the projection's, not merely be a legal mode: the arm compares
+            // them. The prelude starts supervised, so this says supervised. The house's wire
+            // example says autopilot, which is correct there and Corrupt here -- the same trap as
+            // `previousMode` above, and the reason a payload cannot be lifted between arrangements.
+            serde_json::json!({"type":"mutation_accepted","data":{"executionId":"execution-1","draftId":"draft-1","mode":"supervised","graphVersion":4}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"overdue_exception","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"stage":"claimed","deadline":"2026-08-09T00:00:00Z"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"signal_recorded","data":{"executionId":"execution-1","signalId":"signal-1","sourceKind":"node","sourceId":"node-a","kind":"unexpected_dependency","severity":"high","envelopeSha256":raw}}),
+        ],
+        // `wake_lease_consumed` carries NO execution-id guard, so it needs no `execution_started`
+        // -- it needs the LEASE it consumes. Different prelude, same rule: the page is whatever the
+        // arm requires of the world before it.
+        vec![
+            serde_json::json!({"type":"wake_lease","data":{"executionId":"execution-1","sessionId":"session-1","cursor":1,"rendezvousId":"rendezvous-1"}}),
+            serde_json::json!({"type":"wake_lease_consumed","data":{"executionId":"execution-1","sessionId":"session-1","reason":"rung","capturedArming":1}}),
+        ],
+    ];
     let covered: std::collections::BTreeSet<&str> = variants
         .iter()
         .map(|(json, _)| json["type"].as_str().expect("fixture carries a type tag"))
+        .chain(
+            pages
+                .iter()
+                .flatten()
+                .map(|json| json["type"].as_str().expect("fixture carries a type tag")),
+        )
         .collect();
     let non_publication: std::collections::BTreeSet<&str> = EventKind::EVERY_WIRE_NAME
         .iter()
@@ -724,52 +889,19 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
         covered_but_unreal.is_empty(),
         "fixture(s) above name a type tag EventKind does not currently produce: {covered_but_unreal:?}"
     );
-    // (2) TECH DEBT, PINNED (tracking issue #569): these 28
-    // non-publication variants have zero generation-handler coverage today. This is the exact
-    // gap #190 found hidden behind the old vacuous length check. Landing this fix does not close
-    // that gap — it makes it visible and load-bearing. A fixture added for any of these MUST
-    // remove that name from this list in the SAME commit; leaving it here after coverage exists
-    // is a false debt entry, which is its own kind of lie.
+    // (2) THE DEBT IS PAID, AND THE TRIPWIRE STAYS. #569 pinned 28 non-publication variants with
+    // zero generation-handler coverage; all 28 now have a fixture, so the list is EMPTY rather
+    // than deleted.
     //
-    // 6 of these (dlq_redrive/dlq_returned/dlq_routed/overdue_exception/sweep_performed/
-    // memory_admission_refused) were NOT present when #190 was first measured (2026-08-20;
-    // non-publication count was 31 then, 43 now). Precisely: 5 of the 6 landed 2026-08-24, a
-    // week before this fix started; only memory_admission_refused (2026-08-30) landed during
-    // this work. What is true either way, and what this test actually demonstrates: it failed
-    // on its own, by name, against a fresh checkout of its own PR base (84aa4e37) — a census
-    // taken 11 days before the tree it finally ran against, catching the gap by name rather
-    // than silently. That is the mechanism working; the "caught live" framing overstated when,
-    // not whether. (D, review on #571.)
-    const UNCOVERED_PIN: &[&str] = &[
-        "clearance_identity_registered",
-        "clearance_identity_revoked",
-        "completion_claimed",
-        "completion_cleared",
-        "completion_refused",
-        "completion_rejected",
-        "dlq_redrive",
-        "dlq_returned",
-        "dlq_routed",
-        "execution_completed",
-        "execution_form_amended",
-        "execution_form_declared",
-        "execution_mode_changed",
-        "execution_paused",
-        "execution_resumed",
-        "execution_started",
-        "gate_certified",
-        "gate_verdict",
-        "ghost_node_proposed",
-        "memory_admission_refused",
-        "mutation_accepted",
-        "node_outcome_recorded",
-        "overdue_exception",
-        "reuse_decision",
-        "signal_recorded",
-        "sweep_performed",
-        "wake_lease",
-        "wake_lease_consumed",
-    ];
+    // Empty is not the same as gone, and that is the point. The two assertions below still run:
+    // a NEW EventKind variant arriving with no fixture fails the first, and a name added here
+    // without need fails the second. Deleting the const would remove the first check with it and
+    // let the next variant land uncovered and silent -- which is exactly the drift #190 found
+    // hiding behind a vacuous length literal.
+    //
+    // If a variant ever needs to be pinned again, add it here WITH the reason. Declared debt is a
+    // legitimate state; undeclared debt is what this test exists to make impossible.
+    const UNCOVERED_PIN: &[&str] = &[];
     let pinned: std::collections::BTreeSet<&str> = UNCOVERED_PIN.iter().copied().collect();
     let actually_uncovered: std::collections::BTreeSet<&str> =
         non_publication.difference(&covered).copied().collect();
@@ -793,6 +925,14 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
          comment above) or the variant no longer exists at all: {stale_pin_entries:?}"
     );
     for (kind, project_level) in variants {
+        // The tag, kept for the failure message below. Measured need, not decoration: a fixture of
+        // mine failed here as a bare `Corrupt` with nothing naming WHICH of the fixtures produced
+        // it, and finding out cost a throwaway probe run. A loop over N fixtures that reports only
+        // the error is a true statement about the wrong grain.
+        let failing_kind = kind["type"]
+            .as_str()
+            .expect("fixture carries a type tag")
+            .to_owned();
         let event_scope = if project_level {
             RepositoryScope::new(
                 WorkspaceId::parse("workspace-1").unwrap(),
@@ -820,7 +960,53 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
         let mut generation =
             ProjectionGeneration::new(event_scope, "stream-1".into(), "execution".into(), 1, 1)
                 .unwrap();
-        generation.apply_page(&[envelope]).unwrap();
+        generation
+            .apply_page(&[envelope])
+            .unwrap_or_else(|error| panic!("{failing_kind} is not safe to apply: {error:?}"));
+    }
+
+    // The page loop. One generation per page, envelopes chained: sequence is the position, and
+    // each `previousHash` is the hash of the one before, because the fold recomputes and compares
+    // them. A page is applied whole, so the prelude and the variant it exists for are the same
+    // replay -- which is the only way the guard above can be satisfied.
+    for page in &pages {
+        let event_scope = RepositoryScope::new(
+            WorkspaceId::parse("workspace-1").unwrap(),
+            ProjectId::parse("project-1").unwrap(),
+            Some(ExecutionId::parse("execution-1").unwrap()),
+        );
+        let mut previous =
+            "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3".to_owned();
+        let mut envelopes = Vec::new();
+        for (index, kind) in page.iter().enumerate() {
+            let sequence = index as u64 + 1;
+            let mut envelope: graphhelm_protocols::EventEnvelope = serde_json::from_value(serde_json::json!({
+                "schemaVersion":"1.0.0","eventId":format!("event-{sequence}"),"scope":event_scope,"streamId":"stream-1","sequence":sequence,
+                "occurredAt":"2026-08-09T00:00:00Z","idempotencyKey":format!("request-{sequence}"),"actor":{"type":"system","id":"system-1"},
+                "sensitivity":"internal","kind":kind,"evidenceRefs":[],"artifactRefs":[],
+                "previousHash":previous,
+                "eventHash":format!("sha256:{}", "0".repeat(64))
+            })).unwrap();
+            envelope.event_hash = graphhelm_protocols::EventHash::parse(
+                compute_event_hash(&envelope, envelope.previous_hash.as_str()).unwrap(),
+            )
+            .unwrap();
+            previous = envelope.event_hash.as_str().to_owned();
+            envelopes.push(envelope);
+        }
+        // The page's LAST tag names it: that is the variant the page exists to cover, and the one
+        // a reader looks for when this fails.
+        let covers = page
+            .last()
+            .and_then(|json| json["type"].as_str())
+            .expect("a page carries at least one tagged event")
+            .to_owned();
+        let mut generation =
+            ProjectionGeneration::new(event_scope, "stream-1".into(), "execution".into(), 1, 1)
+                .unwrap();
+        generation.apply_page(&envelopes).unwrap_or_else(|error| {
+            panic!("the page for {covers} is not safe to apply: {error:?}")
+        });
     }
 }
 

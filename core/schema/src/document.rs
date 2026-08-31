@@ -56,9 +56,33 @@ pub(crate) fn parse_yaml_value(bytes: &[u8]) -> Result<serde_json::Value, YamlVa
     Ok(value)
 }
 
+/// #592: `source` reaches every diagnostic this call produces, and diagnostics reach the caller
+/// verbatim — CLI stdout, and over HTTP via `serve`. An absolute local filesystem path here
+/// discloses the machine's disk layout to whoever reads that output. Relative to the current
+/// directory when the path is under it (the common case: a path the caller already typed
+/// relative, or one under the repo/working tree); otherwise just the file name, never the full
+/// path to somewhere else on disk. A path already given as relative is left untouched — it
+/// discloses nothing the caller didn't already type. A path with no basename to fall back on
+/// (a filesystem root, or one ending in `..`) gets a fixed placeholder instead of the absolute
+/// path itself — the fallback exists to avoid disclosure, so it must never re-disclose.
+fn diagnostic_source(path: &Path) -> String {
+    if !path.is_absolute() {
+        return path.to_string_lossy().into_owned();
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(relative) = path.strip_prefix(&cwd)
+    {
+        return relative.to_string_lossy().into_owned();
+    }
+    match path.file_name() {
+        Some(name) => name.to_string_lossy().into_owned(),
+        None => "<external>".to_owned(),
+    }
+}
+
 /// Loads one bounded JSON extension manifest and validates it offline.
 pub fn load_extension(path: &Path) -> Result<LoadedExtension, Vec<Diagnostic>> {
-    let source = path.to_string_lossy().into_owned();
+    let source = diagnostic_source(path);
     if path.extension().and_then(|value| value.to_str()) != Some("json") {
         return Err(vec![parse_diagnostic(
             &source,
@@ -115,7 +139,7 @@ pub fn load_extension(path: &Path) -> Result<LoadedExtension, Vec<Diagnostic>> {
 
 /// Loads YAML or JSON from a bounded local file and validates it offline.
 pub fn load_graph(path: &Path) -> Result<LoadedGraph, Vec<Diagnostic>> {
-    let source = path.to_string_lossy().into_owned();
+    let source = diagnostic_source(path);
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -318,5 +342,85 @@ mod tests {
             .join("../../extensions/builtin/graphhelm-jpd/extension.json");
         let extension = load_extension(&manifest).unwrap();
         assert_eq!(extension.raw["metadata"]["id"], "graphhelm-jpd");
+    }
+
+    #[test]
+    fn diagnostic_source_leaves_an_already_relative_path_untouched() {
+        let path = Path::new("examples/graphs/software-feature.yaml");
+        assert_eq!(
+            diagnostic_source(path),
+            "examples/graphs/software-feature.yaml"
+        );
+    }
+
+    #[test]
+    fn diagnostic_source_strips_the_absolute_prefix_for_a_path_under_the_working_directory() {
+        let cwd = std::env::current_dir().unwrap();
+        let path = cwd
+            .join("examples")
+            .join("graphs")
+            .join("software-feature.yaml");
+
+        let redacted = diagnostic_source(&path);
+
+        assert!(
+            !redacted.contains(&cwd.to_string_lossy().into_owned()),
+            "redacted source must not carry the working-directory prefix: {redacted}"
+        );
+        assert_eq!(
+            redacted,
+            Path::new("examples")
+                .join("graphs")
+                .join("software-feature.yaml")
+                .to_string_lossy()
+                .into_owned()
+        );
+    }
+
+    #[test]
+    fn diagnostic_source_falls_back_to_the_file_name_outside_the_working_directory() {
+        let outside = std::env::temp_dir()
+            .join("graphhelm-592-unrelated")
+            .join("secret-project")
+            .join("graph.yaml");
+
+        let redacted = diagnostic_source(&outside);
+
+        assert_eq!(redacted, "graph.yaml");
+        assert!(!redacted.contains(std::path::MAIN_SEPARATOR));
+    }
+
+    #[test]
+    fn diagnostic_source_does_not_restore_the_absolute_path_when_no_basename_exists() {
+        let outside = std::env::temp_dir().join("graphhelm-592-noname").join("..");
+        assert!(
+            outside.file_name().is_none(),
+            "arrangement check: a path ending in `..` must have no basename"
+        );
+
+        let redacted = diagnostic_source(&outside);
+
+        assert!(
+            !redacted.contains(&outside.to_string_lossy().into_owned()),
+            "redacted source must not fall back to the absolute path when there is no basename: {redacted}"
+        );
+    }
+
+    #[test]
+    fn load_graph_error_diagnostics_do_not_carry_the_working_directory_prefix() {
+        let cwd = std::env::current_dir().unwrap();
+        let missing = cwd.join("does-not-exist-592.yaml");
+
+        let diagnostics = load_graph(&missing).expect_err("a nonexistent path must fail to load");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            !diagnostics[0]
+                .source
+                .contains(&cwd.to_string_lossy().into_owned()),
+            "error diagnostic source must not carry the working-directory prefix: {}",
+            diagnostics[0].source
+        );
+        assert_eq!(diagnostics[0].source, "does-not-exist-592.yaml");
     }
 }

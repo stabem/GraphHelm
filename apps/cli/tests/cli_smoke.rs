@@ -68,6 +68,11 @@ fn lint_failure_is_json_and_exit_two() {
     assert_eq!(output.status.code(), Some(2));
     let value = json(&output.stdout);
     assert_eq!(value["diagnostics"][0]["code"], "GHG001_ENTRYPOINT_UNKNOWN");
+    let source = value["diagnostics"][0]["source"].as_str().unwrap();
+    assert!(
+        !source.contains(root().to_string_lossy().as_ref()),
+        "#592: error-path diagnostic must not carry the local repo prefix: {source}"
+    );
 }
 
 #[test]
@@ -243,6 +248,16 @@ fn a_warning_only_lint_pass_reaches_the_caller_on_a_successful_simulate() {
             .iter()
             .all(|diagnostic| diagnostic["severity"] == "warning"),
         "no error exists in this fixture's lint pass, so nothing here should be one: {reply}"
+    );
+    let root_prefix = root().to_string_lossy().into_owned();
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            !diagnostic["source"]
+                .as_str()
+                .unwrap()
+                .contains(&root_prefix)
+        }),
+        "#592: a warning that now reaches the caller (per #575) must not carry the local repo prefix: {reply}"
     );
 }
 

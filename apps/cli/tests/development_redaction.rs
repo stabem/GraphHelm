@@ -48,7 +48,20 @@ fn run(subcommand: &str) -> Value {
 fn expected_top_level_keys(subcommand: &str) -> &'static [&'static str] {
     match subcommand {
         "resolve-contract" => &["record", "requirements"],
-        "memory-status" => &["allowed", "policyVersion", "states", "transitions"],
+        // Updated by #220/ADR-032's two-axis memory lifecycle (#548, `68d8890`): the shipped
+        // `memory-transition.yaml` this command echoes verbatim replaced its one-axis shape
+        // (`states`/`transitions`/`allowed`) with two independent axes plus the supersession
+        // relationship's own reason set. The new set is correct, not merely different --
+        // `development_cli.rs`'s own equality-against-the-shipped-policy check already proves
+        // the CLI's answer matches the YAML byte-for-byte; this freeze just fell behind it.
+        "memory-status" => &[
+            "allowedPublicationTransitions",
+            "policyVersion",
+            "publicationStates",
+            "publicationTransitions",
+            "semanticStates",
+            "supersessionReasons",
+        ],
         "present" => &["text"],
         "compile-context" => &["digest"],
         "memory-propose" => &["admitted"],

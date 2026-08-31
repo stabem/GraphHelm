@@ -310,7 +310,7 @@
           "id": "policy/memory-admission",
           "kind": "policy",
           "path": "policies/memory-admission.yaml",
-          "sha256": "sha256:c9854c942761c55d13f56ed9e44ffcf96697cc71bb9c70c4614afe870f096696",
+          "sha256": "sha256:0572a6054c8c991e1cc20c825eed92494825f158a46e9e2cb67aaa72d522c493",
           "schema": "schemas/memory-admission.schema.json",
           "effects": [],
           "permissions": [],
@@ -338,7 +338,7 @@
           "id": "schema/memory-admission",
           "kind": "schema",
           "path": "schemas/memory-admission.schema.json",
-          "sha256": "sha256:0c1d76e5767eb0bd91bd82bde54587ab99fdf049ebd70aa1a9637aa130e3162b",
+          "sha256": "sha256:48061117e623bc644c21184c8903789c6f1fc5664fef9eb275585eae0f954f68",
           "effects": [],
           "permissions": [],
           "requires": {

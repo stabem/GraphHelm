@@ -23,8 +23,8 @@ use graphhelm_governor::{
     MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition, MemoryRecord,
     MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
     admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
-    check_dependency_freshness, publication_steps, record_memory_admission_refusal, republish,
-    supersede, validate_candidate,
+    check_dependency_freshness, handoff_into_scope, publication_steps,
+    record_memory_admission_refusal, republish, supersede, validate_candidate,
 };
 use graphhelm_protocols::{
     ActorId, ArtifactId, Clock, DevelopmentScope, EventEnvelope, EventKind, EvidenceId,
@@ -277,6 +277,27 @@ fn an_opt_in_absent_refusal_cannot_be_relabelled_as_enabled() {
     assert_eq!(error.code(), "GHE004_INVALID_EVENT");
     assert_eq!(repository.touched(), 0);
     assert!(touches.is_empty());
+}
+
+/// ADR-032 decision 5: a handoff into a scope without capture opt-in is refused BY NAME, never
+/// folded into `OptInAbsent`. The two refusals name different sides of the same check -- one
+/// project's own capture is disabled, versus a handoff's RECEIVING scope has not opted in -- and an
+/// operator reading the persisted code must be able to tell which one it was without cross-
+/// referencing which call site raised it.
+#[test]
+fn a_handoff_into_an_unopted_scope_is_refused_by_its_own_code() {
+    let refusal = handoff_into_scope(CaptureOptIn::Disabled)
+        .expect_err("a handoff into an unopted scope produced no refusal");
+
+    assert_eq!(refusal.code(), MemoryRefusalCode::HandoffTargetNotOptedIn);
+    assert_eq!(refusal.field(), MemoryField::Scope);
+}
+
+/// Arrangement check for the test above: proven first so a function that refuses every input,
+/// regardless of opt-in, cannot make the refusal test pass vacuously.
+#[test]
+fn a_handoff_into_an_opted_in_scope_is_not_refused() {
+    assert!(handoff_into_scope(CaptureOptIn::Enabled).is_ok());
 }
 
 struct FixedClock;
@@ -1007,7 +1028,7 @@ const PACKAGE: &str = "../../extensions/builtin/graphhelm-development-contracts"
 /// The refusal vocabulary written out BY HAND, for the same reason as `SEMANTIC_STATE_NAMES`: it
 /// is the only witness that can contradict the generated one. Deliberately not derived. See the
 /// note on `SEMANTIC_STATE_NAMES` before deleting it as redundant.
-const REFUSAL_CODE_NAMES: [&str; 8] = [
+const REFUSAL_CODE_NAMES: [&str; 9] = [
     "opt_in_absent",
     "scope_mismatch",
     "recapture_loop",
@@ -1016,6 +1037,7 @@ const REFUSAL_CODE_NAMES: [&str; 8] = [
     "transition_not_allowed",
     "reseal_failed",
     "dependency_stale",
+    "handoff_target_not_opted_in",
 ];
 
 fn package_json(relative: &str) -> serde_json::Value {

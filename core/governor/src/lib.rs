@@ -26,8 +26,8 @@ pub use memory::{
     MemoryField, MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition, MemoryRecord,
     MemoryRefusal, MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
     admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
-    check_dependency_freshness, publication_steps, record_memory_admission_refusal, republish,
-    supersede, validate_candidate,
+    check_dependency_freshness, handoff_into_scope, publication_steps,
+    record_memory_admission_refusal, republish, supersede, validate_candidate,
 };
 pub use publish::{
     PublicationPreparationObserver, PublicationPreparationServices, PublicationStage,

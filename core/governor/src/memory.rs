@@ -114,6 +114,8 @@ closed_vocabulary! {
         ResealFailed => "reseal_failed",
         /// A dependency the record was built against has moved.
         DependencyStale => "dependency_stale",
+        /// A handoff targeted a scope that has not opted in to durable memory capture.
+        HandoffTargetNotOptedIn => "handoff_target_not_opted_in",
     }
 }
 
@@ -382,6 +384,26 @@ pub fn capture_memory(
     touches.push(CaptureTouch::EventAppended);
     touches.push(CaptureTouch::PersistentBoundaryTouched);
     Ok(candidate)
+}
+
+/// Refuse a handoff into a project scope that has not opted in to durable memory capture.
+///
+/// ADR-032 decision 5: named separately from [`MemoryRefusalCode::OptInAbsent`] on purpose.
+/// `OptInAbsent` refuses a project's OWN capture; this refuses a handoff's RECEIVING scope. Folding
+/// the two into one code would make a persisted refusal ambiguous about which side of the handoff an
+/// operator must act on -- the capturing project, or the one the handoff targets.
+///
+/// # Errors
+///
+/// Returns [`MemoryRefusal`] when `target_opt_in` is [`CaptureOptIn::Disabled`].
+pub fn handoff_into_scope(target_opt_in: CaptureOptIn) -> Result<(), MemoryRefusal> {
+    match target_opt_in {
+        CaptureOptIn::Disabled => Err(MemoryRefusal {
+            code: MemoryRefusalCode::HandoffTargetNotOptedIn,
+            field: MemoryField::Scope,
+        }),
+        CaptureOptIn::Enabled => Ok(()),
+    }
 }
 
 /// Bounded context needed to append one admission refusal.

@@ -890,3 +890,140 @@ fn report_uses_the_most_severe_change() {
 }
 
 fn _assert_public_change_type(_: &CompatibilityChange) {}
+
+/// #517 R1 — THE CELL THE TICKET EXISTS FOR, and it is red before the arm lands.
+///
+/// `description` is in the annotation keyword set and `Annotation => Patch`, but only for a
+/// position the checker DESCENDS INTO. `prefixItems` has no arm in the keyword `match`, so the
+/// whole keyword falls to the default and any change under it — including a sentence of prose —
+/// is priced `GHC003_BREAKING_CHANGE`. Measured on #515: the same description in `$defs` needs no
+/// bump; inside `prefixItems` it demands a major one.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL once the arm exists: removing the `prefixItems`
+/// arm, or making it compare the arrays as opaque values instead of position by position.
+#[test]
+fn an_annotation_inside_prefix_items_is_an_annotation() {
+    let baseline = json!({
+        "type": "array",
+        "prefixItems": [{"type": "string"}, {"type": "integer"}]
+    });
+    let candidate = json!({
+        "type": "array",
+        "prefixItems": [
+            {"type": "string", "description": "what this position carries"},
+            {"type": "integer"}
+        ]
+    });
+
+    let report = compare(baseline, candidate);
+
+    assert_eq!(
+        report.class,
+        CompatibilityClass::Annotation,
+        "a sentence added to a tuple position is prose, not a contract change; got {:?}",
+        report.changes
+    );
+    assert_eq!(report.impact, SemverImpact::Patch);
+    assert_eq!(report.changes.len(), 1);
+    assert_eq!(report.changes[0].code, "GHC101_ANNOTATION_CHANGED");
+    assert_eq!(
+        report.changes[0].pointer, "/prefixItems/0/description",
+        "the pointer must name the POSITION, or a reader cannot tell which tuple slot moved"
+    );
+}
+
+/// #517 R2 — the other direction, red today for the same reason.
+///
+/// Dropping a trailing `prefixItems` entry leaves that position unconstrained, which is the
+/// loosening `compare_items` already classifies as `Compatible` when `items` disappears. Today it
+/// prices as breaking, like everything else under this keyword.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL: treating any length difference as breaking, which
+/// is the cheapest arm that satisfies R1 alone.
+#[test]
+fn dropping_a_prefix_items_position_is_compatible() {
+    let baseline = json!({
+        "type": "array",
+        "prefixItems": [{"type": "string"}, {"type": "integer"}]
+    });
+    let candidate = json!({"type": "array", "prefixItems": [{"type": "string"}]});
+
+    let report = compare(baseline, candidate);
+
+    assert_eq!(
+        report.class,
+        CompatibilityClass::Compatible,
+        "a position that stops being constrained accepts everything it used to accept; got {:?}",
+        report.changes
+    );
+    assert_eq!(report.impact, SemverImpact::Minor);
+}
+
+/// #517 R3 — GREEN BEFORE THE FIX, AND SAID SO RATHER THAN COUNTED AS A RED.
+///
+/// Adding a tuple position constrains input that used to be free, so it must stay breaking. Today
+/// it passes because EVERYTHING under `prefixItems` is breaking — it passes for the wrong reason,
+/// and a green here proves nothing until the arm exists. It is here because R1 and R2 both push
+/// toward leniency, and the arm that satisfies them most cheaply is one that never reports
+/// breaking at all. Its worth is measured by sabotage after the arm lands, not by this run.
+#[test]
+fn adding_a_prefix_items_position_stays_breaking() {
+    let baseline = json!({"type": "array", "prefixItems": [{"type": "string"}]});
+    let candidate = json!({
+        "type": "array",
+        "prefixItems": [{"type": "string"}, {"type": "integer"}]
+    });
+
+    let report = compare(baseline, candidate);
+
+    assert_eq!(
+        report.class,
+        CompatibilityClass::Breaking,
+        "a newly constrained position rejects documents the baseline accepted; got {:?}",
+        report.changes
+    );
+    assert_eq!(report.impact, SemverImpact::Major);
+}
+
+/// #517 R4 — the cell that says POSITIONAL rather than merely "descends".
+///
+/// R1-R3 are all satisfied by an arm that treats `prefixItems` as a SET, the way
+/// `compare_composition` treats `allOf`/`anyOf`/`oneOf`. This one is not: swapping two positions
+/// leaves the set identical while changing the contract completely — index 0 stops accepting the
+/// strings it accepted and starts demanding integers. A set comparison reports "unchanged" here,
+/// which is a breaking change rendered as no change at all.
+///
+/// The comparator's doc comment makes exactly this claim about why it is not a copy of
+/// `compare_composition`. This is that claim written as a test rather than left as prose.
+///
+/// THE PRODUCTION CHANGE THAT MAKES THIS FAIL: sorting or set-comparing the two arrays before
+/// walking them.
+#[test]
+fn swapping_two_prefix_items_positions_is_breaking() {
+    let baseline = json!({
+        "type": "array",
+        "prefixItems": [{"type": "string"}, {"type": "integer"}]
+    });
+    let candidate = json!({
+        "type": "array",
+        "prefixItems": [{"type": "integer"}, {"type": "string"}]
+    });
+
+    let report = compare(baseline, candidate);
+
+    assert_eq!(
+        report.class,
+        CompatibilityClass::Breaking,
+        "the SET of tuple positions is unchanged here and the CONTRACT is not; a comparison that \
+         cannot tell those apart reports a breaking change as no change; got {:?}",
+        report.changes
+    );
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.pointer.starts_with("/prefixItems/0")),
+        "the first position is the one that changed and the report must name it: {:?}",
+        report.changes
+    );
+}

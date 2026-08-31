@@ -275,6 +275,9 @@ impl Comparison<'_> {
                 self.compare_tail_schema(schema, owner, baseline, candidate, pointer, depth)
             }
             "items" => self.compare_items(schema, owner, baseline, candidate, pointer, depth),
+            "prefixItems" => {
+                self.compare_prefix_items(schema, owner, baseline, candidate, pointer, depth)
+            }
             "allOf" | "anyOf" | "oneOf" => {
                 self.compare_composition(schema, owner, keyword, baseline, candidate, pointer)
             }
@@ -759,6 +762,86 @@ impl Comparison<'_> {
                 self.compare_value(schema, owner, left, right, pointer, depth)
             }
             (None, None) => {}
+        }
+    }
+
+    /// Tuple positions, compared BY POSITION -- #517.
+    ///
+    /// The keyword had no arm at all and fell to the default, so every change under it, down to a
+    /// sentence of prose, priced as `GHC003_BREAKING_CHANGE`. That is not a strict reading of the
+    /// keyword; it is the absence of one. The other half of this module already knew the keyword:
+    /// `normalized_schema_value` walks `prefixItems` when it normalises. Only the comparator did
+    /// not.
+    ///
+    /// WHY NOT `compare_composition`, which handles `allOf`/`anyOf`/`oneOf` and is the obvious
+    /// copy: those are SETS -- reordering their branches changes nothing, and it compares them as
+    /// a set. `prefixItems` is a LIST, where index 0 constrains the first element and nothing
+    /// else. A set comparison would call a swap of two positions "unchanged", which is a real
+    /// breaking change reported as none.
+    ///
+    /// Each position is then the same three-way question `compare_items` already answers for the
+    /// tail, applied one index at a time: newly constrained is breaking, no longer constrained is
+    /// compatible, and constrained on both sides recurses.
+    fn compare_prefix_items(
+        &mut self,
+        schema: &str,
+        owner: &str,
+        baseline: Option<&Value>,
+        candidate: Option<&Value>,
+        pointer: &str,
+        depth: usize,
+    ) {
+        let (left, right) = match (baseline, candidate) {
+            (None, Some(_)) => {
+                return self.breaking(
+                    schema,
+                    pointer,
+                    "tuple positions unconstrained",
+                    "tuple positions constrained",
+                );
+            }
+            (Some(_), None) => {
+                return self.compatible(
+                    schema,
+                    pointer,
+                    "tuple positions constrained",
+                    "tuple positions unconstrained",
+                );
+            }
+            (Some(left), Some(right)) => (left, right),
+            (None, None) => return,
+        };
+        // A non-array `prefixItems` is not a tuple declaration this checker can read. It keeps the
+        // old conservative answer rather than silently comparing nothing: an unreadable shape must
+        // not become the quietest possible verdict.
+        let (Some(left), Some(right)) = (left.as_array(), right.as_array()) else {
+            return self.breaking(
+                schema,
+                pointer,
+                "tuple positions listed",
+                "tuple positions not a list",
+            );
+        };
+        for index in 0..left.len().max(right.len()) {
+            let position = join_pointer(pointer, &index.to_string());
+            match (left.get(index), right.get(index)) {
+                (Some(from), Some(to)) => {
+                    self.compare_value(schema, owner, from, to, &position, depth)
+                }
+                (Some(_), None) => self.compatible(
+                    schema,
+                    &position,
+                    "position constrained",
+                    "position unconstrained",
+                ),
+                (None, Some(_)) => self.breaking(
+                    schema,
+                    &position,
+                    "position unconstrained",
+                    "position constrained",
+                ),
+                (None, None) => {}
+            }
         }
     }
 

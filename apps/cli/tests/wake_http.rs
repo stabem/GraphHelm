@@ -581,6 +581,158 @@ fn sleeper_arm_isolates_concurrent_fixtures_and_reuses_a_logical_rearm() {
     assert_eq!(rearmed.wait().0, b"c");
 }
 
+/// Windows `ERROR_PIPE_BUSY`. Named because the #413 report identifies the failure by this
+/// number, and a bare 231 in an assertion cannot be matched against that report by a reader.
+#[cfg(windows)]
+const ERROR_PIPE_BUSY: i32 = 231;
+
+/// A client handle held open across the sleeper's own release. Dropping it closes the client
+/// FIRST and the runtime second, which is the order the kernel needs to see.
+#[cfg(windows)]
+struct HeldClient {
+    // Never read: both fields exist only to be dropped, and dropping is the whole point. Order
+    // is load-bearing -- fields drop in declaration order, so the client closes before the
+    // runtime that drives it.
+    _client: tokio::net::windows::named_pipe::NamedPipeClient,
+    _runtime: tokio::runtime::Runtime,
+}
+
+/// Rings the rendezvous and KEEPS the client handle open. `ring_pipe` drops its client before
+/// returning, which is exactly the synchronisation the real sidecar does not offer: there the
+/// client belongs to the `serve` child process and closes on that process's schedule.
+#[cfg(windows)]
+fn ring_pipe_and_hold(rendezvous_id: &str, payload: &[u8]) -> HeldClient {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
+    let payload = payload.to_vec();
+    let client = runtime.block_on(async move {
+        use tokio::io::AsyncWriteExt;
+        let mut client = tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(&name)
+            .expect("the held client opens the rendezvous");
+        client.write_all(&payload).await.unwrap();
+        client.flush().await.unwrap();
+        client
+    });
+    HeldClient {
+        _client: client,
+        _runtime: runtime,
+    }
+}
+
+/// The MEASUREMENT behind #413(A), and it REFUTES the mechanism it was written to check.
+///
+/// The ticket credits, as INFERRED, that "a named-pipe instance only disappears when ALL handles
+/// close", so a re-arm races the `serve` child's client handle. This puts the system in exactly
+/// that state -- server handle dropped, client handle still open -- and finds the opposite: the
+/// name is already delisted and a fresh create on it succeeds.
+///
+/// **Read the direction carefully. This test is GREEN when the rendezvous does NOT survive.** Its
+/// name says so, because a test named for the hypothesis while asserting the refutation is a
+/// vacuous green wearing the word "proof" -- the mirror of the vacuous red, and just as blind.
+/// A failure here means the inference was right after all and the symmetric wait #413(A) asks for
+/// is the correct cure; the assertion messages carry that reading rather than leaving it to me.
+#[cfg(windows)]
+#[test]
+fn the_rendezvous_does_not_outlive_the_sleeper_even_while_a_client_holds_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-rearm-mechanism");
+    let sleeper = Sleeper::arm("rvz-rearm-mechanism", &events);
+    let rendezvous_id = sleeper.rendezvous_id().to_owned();
+
+    let held = ring_pipe_and_hold(&rendezvous_id, b"x");
+    assert_eq!(
+        sleeper.wait().0,
+        b"x",
+        "the sleeper read the byte, so its own server handle is now dropped"
+    );
+
+    // DISCRIMINATOR (#413(A)): two instruments asked the same question at the same instant.
+    // Enumeration answers "is the NAME listed"; create answers "is the INSTANCE there". If they
+    // disagree, a wait built on enumeration cannot see the condition it is supposed to wait out.
+    let listed = pipe_is_present(&rendezvous_id);
+    let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
+    let created = {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            tokio::net::windows::named_pipe::ServerOptions::new()
+                .first_pipe_instance(true)
+                .max_instances(1)
+                .create(&name)
+                .map(|_| ())
+                .map_err(|error| (error.raw_os_error(), error.to_string()))
+        })
+    };
+    assert!(
+        !listed,
+        "the rendezvous {rendezvous_id} is still listed after its server handle closed, so the \
+         instance really can outlive the sleeper and #413(A)'s inferred mechanism is live after all"
+    );
+    assert!(
+        created.is_ok(),
+        "creating {name} while a client still holds the old instance failed with {created:?}. \
+         #413(A) infers exactly this, so if it ever fires the inference is CORRECT and the \
+         symmetric wait it asks for is the right cure -- this test is the thing that would \
+         have told us, and it must be read before the acceptance item is retired"
+    );
+
+    // The client is released only here, AFTER both readings, so neither of them can be
+    // explained by the client having quietly gone away first.
+    drop(held);
+}
+
+/// The other half of the discriminator, and the one that names the real precondition.
+///
+/// The test above shows a lingering CLIENT does not block a create. This one shows what does: a
+/// live SERVER on the same name. `ERROR_PIPE_BUSY` is therefore evidence of two servers sharing a
+/// name at the same instant -- two runners, two fixtures, or two concurrent arms -- and never of
+/// a handle that has not finished closing. That is why the cure is identity separation (the
+/// per-runner, per-fixture id) and not a wait for an instance to drain.
+#[cfg(windows)]
+#[test]
+fn a_second_server_on_a_live_name_is_what_reports_pipe_busy() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-rearm-busy");
+    let sleeper = Sleeper::arm("rvz-rearm-busy", &events);
+    let rendezvous_id = sleeper.rendezvous_id().to_owned();
+
+    // Positive control first: while that sleeper is ALIVE, a second server on its exact name is
+    // refused, and refused with the specific code the #413 report carried.
+    let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
+    let refusal = {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            tokio::net::windows::named_pipe::ServerOptions::new()
+                .first_pipe_instance(true)
+                .max_instances(1)
+                .create(&name)
+                .map(|_| ())
+                .map_err(|error| error.raw_os_error())
+        })
+    };
+    assert_eq!(
+        refusal,
+        Err(Some(ERROR_PIPE_BUSY)),
+        "a second server on the live name {name} was not refused with ERROR_PIPE_BUSY, so this \
+         test no longer reproduces the condition #413 reported and cannot speak for its cause"
+    );
+
+    // Release the subject the honest way, so the fixture leaves nothing behind.
+    ring_pipe(&rendezvous_id, b"z").unwrap();
+    assert_eq!(sleeper.wait().0, b"z");
+}
+
 #[cfg(windows)]
 #[test]
 fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
@@ -2249,17 +2401,30 @@ const PIPE_STARTUP_HANG_CATCHER_SECONDS: u64 = 30;
 const RACING_WAKE_LEASE_SECONDS: u64 = 60;
 
 #[cfg(windows)]
-fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
-    let deadline = Instant::now() + Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS);
+/// Is this rendezvous currently an instance in the machine's pipe namespace?
+///
+/// ONE definition, deliberately: `wait_for_pipe` waits for this to become true and
+/// `wait_for_pipe_to_vanish` waits for it to become false. Two spellings of the same question
+/// could disagree about case, prefix, or enumeration failure, and then the two waits would be
+/// waiting on different things while reading as symmetric.
+#[cfg(windows)]
+fn pipe_is_present(rendezvous_id: &str) -> bool {
     let expected = format!("graphhelm-wake-{rendezvous_id}");
-    while !std::fs::read_dir("//./pipe").is_ok_and(|entries| {
+    std::fs::read_dir("//./pipe").is_ok_and(|entries| {
         entries.filter_map(Result::ok).any(|entry| {
             entry
                 .file_name()
                 .to_str()
                 .is_some_and(|name| name.eq_ignore_ascii_case(&expected))
         })
-    }) {
+    })
+}
+
+#[cfg(windows)]
+fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS);
+    let expected = format!("graphhelm-wake-{rendezvous_id}");
+    while !pipe_is_present(rendezvous_id) {
         // The child is asked BEFORE the deadline is judged, because a dead sidecar and a slow one
         // are different failures and only this call can tell them apart. Without it both spend the
         // full hang-catcher window and report the same sentence -- true of the pipe, useless about the

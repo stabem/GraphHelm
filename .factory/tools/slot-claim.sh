@@ -1,39 +1,51 @@
 #!/usr/bin/env bash
-# Claim the GraphHelm slot as a CONDITIONAL write (ED-22 conditional-write amendment).
+# Claim the GraphHelm slot with a CREATE-OR-FAIL write (ED-24, commit a2619715, PR #620).
 #
-# The `if` is the mechanism; the read is only its input. This exists because the author read the
-# lock, saw "HELD by A Agent" printed on his own screen, and overwrote it anyway -- the read and
-# the write were in one command with nothing between them.
+# usage: slot-claim.sh <agent> <lane> <status-line...>
 #
-# usage: claim.sh <agent> <lane> <status-line...>
+# WHAT CHANGED, AND WHY THE OLD SHAPE WAS BOTH STUCK AND UNSAFE.
 #
-# WHAT IS DEMONSTRATED, and what is not:
-#   ARM 1   lock HELD by another   -> REFUSES, file byte-identical after, no log line.   exit 1
-#   ARM 2   lock FREE              -> CLAIMS, prev-seen carries what was READ.           exit 0
-#   ARM 2b  lock FREE with a BOM   -> CLAIMS. This arm is why the strip below exists.
-#           (2 and 2b are positive controls: a gate that always refuses is not a gate)
-#   ARM 3   write does not land    -> UNEXERCISED. Not passing -- untested.
+# ED-24 makes ABSENCE the only spelling of free. Against that rule the previous version of this
+# script had two defects pulling in opposite directions, and only one of them announces itself:
 #
-# THE BOM ARM IS NOT HYPOTHETICAL AND IT NEARLY SHIPPED BROKEN. The live SLOT.lock begins with a
-# UTF-8 BOM, because PowerShell writes one by default -- and every agent has just been told to
-# prefer the PowerShell channel, so a BOM'd lock is the NORMAL case now. Without the strip,
-# `FREE*` can never match and this script refuses a free lock FOREVER.
+#   DEADLOCK, loud.  An absent lock read as `MISSING`, and the gate accepted only `FREE*`, so the
+#                    helper refused the one state that now means free. Anyone running it after a
+#                    correct release would be told the slot is taken, forever.
 #
-# It was caught by luck. The first production use refused correctly -- A did hold the slot -- and
-# the holder line printed with a visible BOM. The refusal was right and the gate could not have
-# said anything else. A guard that always refuses looks identical, from the outside, to a guard
-# that is working, on every single invocation. That is why arm 2 is a control and not a formality.
+#   BYPASS, silent.  The claim was `{...} > tmp; mv -f tmp "$LOCK"` -- a read, then a write, with a
+#                    window between them. Two lanes that both read a claimable lock both passed the
+#                    gate and both wrote; the last one won and BOTH believed they held it. That is
+#                    literally the lane ED-24 says the primitive cannot refuse, written by the
+#                    helper the lanes are told to run.
 #
-# Arm 3 resisted two attempts. chmod 444 does not stop it, because `mv -f` replaces the DIRECTORY
-# ENTRY and never opens the old file. Pointing LOCK at a directory does not reach it either: the
-# read fails first and arm 1 refuses, which is correct behaviour and the wrong arm. So the
-# read-back branch below is a HYPOTHESIS, written because that failure was measured for real -- a
-# lock correction that died behind a background job and never landed -- not because this script has
-# been seen to catch it.
+# The read-back below does NOT cover that race and never did. It fires when a write fails to land,
+# which is a different failure: each racer reads back its own line successfully, and the loser only
+# discovers the truth later, by acting on a lock that now names someone else. The atomic claim sees
+# overwrites; the read-back sees lost writes. Neither substitutes for the other, so both are here.
 #
-# Measuring those exit codes needed a second try of its own: the first read $? after a pipe and got
-# TAIL's status, printing 0 for a refusal that had correctly returned 1.
+# THE PRIMITIVE, MEASURED RATHER THAN ASSUMED. `( set -o noclobber; printf ... > "$LOCK" )` is
+# create-or-fail on this machine's bash: 40 concurrent racers on ONE path yield exactly 1 winner, over 3 rounds.
+# The positive control is the half that makes that number mean something -- the same 40 racers on
+# DISTINCT paths yield 40 winners, so "1" is exclusion and not a broken harness. Measured twice,
+# independently, by M and by K.
+#
+# WHAT IS DEMONSTRATED HERE:
+#   ARM 1  lock PRESENT (any content)  -> REFUSES, file untouched, no log line.        exit 1
+#   ARM 2  lock ABSENT                 -> CLAIMS.                                       exit 0
+#   ARM 3  write does not land         -> read-back refuses.  UNEXERCISED -- see above.
+#
+# `FREE` is no longer accepted, and that is not an oversight: under ED-24 a file that exists is a
+# held slot whatever it says inside. A leftover `FREE` from the old convention blocks, which is the
+# safe direction of the transition, and it is cleared by DELETING the file, never by writing to it.
 set -u
+
+# EVERY line this script prints names the convention it enforces, so a refusal is DATABLE. A lane
+# running a stale claimer fails in a way that reads as PRUDENCE -- "refused because the lock does
+# not exist" is a true sentence about what it saw, and cannot tell a reader that the checker is
+# the stale party. Nobody investigates a process that appears to be protecting them (A, on #635).
+# When ED-25 arrives this script becomes the stale one, and the string below is what lets the next
+# reader notice in seconds instead of hours.
+PROTOCOL="ED-24 (a2619715): absence is free, claim is create-or-fail, release is delete"
 
 LOCK="${SLOT_LOCK:-D:/graphhelm-slot/SLOT.lock}"  # overridable so the REFUSAL can be tested off the real file
 LOG="${SLOT_LOG:-D:/graphhelm-slot/check-activity.log}"
@@ -45,61 +57,79 @@ STATUS="$*"
 BOM=$'\xef\xbb\xbf'
 CR=$'\r'
 
-CURRENT="$(head -1 "$LOCK" 2>/dev/null || echo 'MISSING')"
-CURRENT="${CURRENT#$BOM}"
-CURRENT="${CURRENT%$CR}"
-[ -n "$CURRENT" ] || CURRENT="MISSING"
+# EVERYTHING THE CLAIM SAYS IS BUILT BEFORE THE CLAIM IS MADE. Creating an empty file and filling
+# it afterwards leaves a window in which the lock exists and names NOBODY: a claimant killed in
+# between -- while `tasklist` runs, say -- leaves a zero-byte file that blocks every later claim and
+# carries neither owner nor timestamp to identify it as stale. That is the worst possible leftover,
+# because stale-lock recovery is undefined by design (#619) and an unattributable lock gives whoever
+# finds it nothing to act on (Codex on #635).
+STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+PROCS="$(tasklist 2>/dev/null | grep -ci 'cargo.exe\|rustc.exe\|link.exe')"
+CLAIM="HELD by $AGENT | $STAMP | $LANE | STATUS: $STATUS
+Claimed through create-or-fail: the kernel refused every other claimant, and this write is
+read back below rather than assumed.
+cargo/rustc alive at claim: $PROCS"
 
-# THE GATE. Everything below only runs if this branch is taken.
-case "$CURRENT" in
-  FREE*) ;;
-  *)
-    echo "REFUSING TO CLAIM -- the lock is not FREE."
-    echo "  holder line: $CURRENT"
-    echo "Nothing was written. This is the branch that did not exist when K overwrote A's claim."
-    exit 1
-    ;;
-esac
+# THE GATE IS THE CLAIM. There is no read before it, because a read before a write is the window
+# this script exists to close. The kernel decides, once, and tells us which way it went -- and the
+# file it creates already identifies its owner.
+if ! ( set -o noclobber; printf '%s
+' "$CLAIM" > "$LOCK" ) 2>/dev/null; then
+  # A FAILED CREATE IS NOT NECESSARILY AN OCCUPIED SLOT. `noclobber` refuses when the file exists,
+  # and the same redirection also fails when the parent directory is missing or unwritable -- a
+  # configuration fault with a completely different remedy. Reporting both as contention sends an
+  # operator to stale-lock handling for a broken path, and stale-lock handling is undefined by
+  # design (#619), so that is the worst possible place to send them (Codex on #635).
+  if [ ! -e "$LOCK" ]; then
+    echo "REFUSING TO CLAIM -- the create failed and NO lock file exists."
+    echo "  enforcing: $PROTOCOL"
+    echo "  lock path: $LOCK"
+    echo "  parent dir exists: $( [ -d "$(dirname "$LOCK")" ] && echo yes || echo NO )"
+    echo "  parent dir writable: $( [ -w "$(dirname "$LOCK")" ] && echo yes || echo NO )"
+    echo "This is a PATH or PERMISSION fault, not contention. Nobody holds the slot. Fix the path"
+    echo "or the permissions -- do not go looking for a stale lock, there is nothing to recover."
+    exit 3
+  fi
+  HOLDER="$(head -1 "$LOCK" 2>/dev/null || echo '<unreadable>')"
+  HOLDER="${HOLDER#$BOM}"
+  HOLDER="${HOLDER%$CR}"
+  echo "REFUSING TO CLAIM -- the slot file exists, so the slot is held."
+  echo "  enforcing: $PROTOCOL"
+  echo "  holder line: $HOLDER"
+  echo "Nothing was written."
+  echo "If that line says FREE it is a leftover of the old convention: it must be DELETED by whoever"
+  echo "released, not overwritten. Deleting someone else's lock is stale-lock recovery (#619),"
+  echo "which is undefined by design -- do not do it here."
+  exit 1
+fi
 
-# ADVISORY, NEVER A BLOCK: who else has an open wait. The list only works if the CLAIMER reads it,
-# and nothing made them -- five claims in a row on 2026-08-25 went to whoever polled at the right
-# second, each over an older declared wait, with no rule broken. Printing it here puts the
-# information in front of the one person whose next action depends on it.
-#
-# It does not gate, and that is deliberate rather than lazy: a wait that could refuse a claim would
-# let one dead agent wedge the machine for everybody. Compare with the FREE check above, which DOES
-# gate -- these two lines look alike and only one of them is allowed to say no.
-if [ -x "$(dirname "$0")/slot-waits.sh" ] || [ -f "$(dirname "$0")/slot-waits.sh" ]; then
+# From here the slot is OURS: the file exists and we are the process that created it.
+
+# ADVISORY, NEVER A BLOCK: who else has an open wait. It does not gate, and that is deliberate
+# rather than lazy -- a wait that could refuse a claim would let one dead agent wedge the machine
+# for everybody. Compare with the create-or-fail above, which DOES gate: these two look alike and
+# only one of them is allowed to say no.
+if [ -f "$(dirname "$0")/slot-waits.sh" ] && [ -f "$LOG" ]; then
   echo "open waits (advisory, oldest first):"
   SLOT_LOG="$LOG" bash "$(dirname "$0")/slot-waits.sh" | sed 's/^/  /'
 fi
 
-STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-PROCS="$(tasklist 2>/dev/null | grep -ci 'cargo.exe\|rustc.exe\|link.exe')"
-TMP="$LOCK.claim.$$"
-
-{
-  echo "HELD by $AGENT | $STAMP | $LANE | STATUS: $STATUS"
-  echo "prev-seen: $CURRENT @ read $STAMP"
-  echo "Claimed through the conditional-write path: the read above GATED this write, and the write"
-  echo "is read back below rather than assumed."
-  echo "cargo/rustc alive at claim: $PROCS"
-} > "$TMP"
-mv -f "$TMP" "$LOCK"
-
-# READ BACK. A write that never landed is invisible to whoever believes it did.
-BACK="$(head -1 "$LOCK")"
+# READ BACK. A write that never landed is invisible to whoever believes it did -- and possession is
+# a property of the last READ, not of the last write.
+BACK="$(head -1 "$LOCK" 2>/dev/null || echo '<unreadable>')"
 BACK="${BACK#$BOM}"
 BACK="${BACK%$CR}"
 case "$BACK" in
   "HELD by $AGENT | $STAMP"*)
-    printf '%s | %s | START | %s | claimed via conditional write; prev-seen: %s\n' \
-      "$STAMP" "$AGENT" "$STATUS" "$CURRENT" >> "$LOG"
+    printf '%s | %s | START | %s | claimed via create-or-fail under %s\n' \
+      "$STAMP" "$AGENT" "$STATUS" "$PROTOCOL" >> "$LOG"
     echo "CLAIMED and verified: $BACK"
+    echo "  enforcing: $PROTOCOL"
     ;;
   *)
     echo "WRITE DID NOT LAND. The lock now reads: $BACK"
-    echo "Do NOT proceed -- another agent may hold it, or the write failed silently."
+    echo "Do NOT proceed -- the slot file exists but does not carry your claim."
+    echo "  enforcing: $PROTOCOL"
     exit 2
     ;;
 esac

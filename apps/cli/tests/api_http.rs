@@ -4,7 +4,7 @@
 //! dependencies (TLS stacks, in reqwest's case) this workspace does not want.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -282,6 +282,26 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
 /// C's full gate, not at #141's own review — the suite-level evidence that landed it never ran
 /// `--ignored`). The env var is the one signal that distinguishes "the guard invoked me on
 /// purpose" from "some blanket `--ignored` sweep swept me up."
+/// The retry loops are only real if the helper they call leaves them room to run more than once.
+///
+/// This is the property the previous revision's comment CLAIMED while the code did the opposite:
+/// the helper's budget was 5s and its callers' deadline was 5s, so the first inner attempt spent
+/// the entire outer budget and every loop around it got exactly one pass. Asserting the ordering
+/// is what makes a future edit to either number fail here instead of silently making the loops
+/// decorative again -- an equal pair passes the eye and fails the purpose.
+#[test]
+fn budget_leaves_room_for_the_retry_loop_to_actually_loop() {
+    assert!(
+        CONNECT_BUDGET < RETRY_LOOP_DEADLINE,
+        "a connect budget of {CONNECT_BUDGET:?} against a loop deadline of {RETRY_LOOP_DEADLINE:?}          leaves the outer loop a single pass, which is the defect this pairing exists to prevent"
+    );
+    let passes = RETRY_LOOP_DEADLINE.as_millis() / CONNECT_BUDGET.as_millis();
+    assert!(
+        passes >= 3,
+        "the outer loop gets only {passes} passes; that is a deadline pair, not a retry loop"
+    );
+}
+
 #[test]
 fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     let this_binary = std::env::current_exe().unwrap();
@@ -383,7 +403,7 @@ fn read_token(path: &Path) -> String {
 }
 
 fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + RETRY_LOOP_DEADLINE;
     loop {
         if let Ok(response) = raw_request(&format!("{base}/health"), None)
             && response.status == 200
@@ -405,9 +425,58 @@ struct RawResponse {
 /// A minimal HTTP/1.1 GET: connects, writes a request with `Connection: close` (so the server
 /// closing its write side after the response is the client's own signal that the body is
 /// complete — no `Content-Length`/chunked-transfer parsing needed), and reads to EOF.
+/// How long a retry loop around a request helper will keep trying.
+///
+/// Named so the relationship with [`CONNECT_BUDGET`] is a thing the compiler and a test can see,
+/// rather than two `Duration::from_secs(5)` literals in different functions that happened to
+/// match. `budget_leaves_room_for_the_retry_loop_to_actually_loop` asserts the ordering, because
+/// the first version of this code satisfied the comment and not the property.
+const RETRY_LOOP_DEADLINE: Duration = Duration::from_secs(5);
+
+/// The budget one call may spend getting connected, across all of its attempts.
+///
+/// This MUST stay strictly below the smallest deadline of any loop that calls into here -- 5s, in
+/// `wait_for_health` and its siblings. An earlier version of this helper spent 5s, exactly the
+/// caller's whole budget, which left those loops with room for one iteration and no more. They
+/// were not made real by that change, only redundant, and the comment claimed the opposite. At 1s
+/// a 5s caller gets roughly five genuine passes, and the retry lives in both places on purpose.
+const CONNECT_BUDGET: Duration = Duration::from_secs(1);
+
+/// Connects with a bounded attempt, retried until [`CONNECT_BUDGET`] is spent.
+///
+/// Both halves are load-bearing and neither works alone. **Bounding without retrying** turns the
+/// 21s stall into a fast failure -- the flake gets quicker, not rarer -- because the only retry a
+/// storm worker has is `retry_once_on_409`, which is handed a `u16` and therefore cannot see a
+/// connection error at all. **Retrying without bounding** is what the code did before: one
+/// unbounded attempt overruns the caller's whole deadline, so the loop around it never runs twice.
+fn connect_with_retry(address: &std::net::SocketAddr) -> std::io::Result<TcpStream> {
+    let deadline = Instant::now() + CONNECT_BUDGET;
+    loop {
+        match TcpStream::connect_timeout(address, Duration::from_millis(500)) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => {
+                if Instant::now() >= deadline {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
+
 fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
     let (host, port, path) = split_url(url);
-    let mut stream = TcpStream::connect((host.as_str(), port))?;
+    // A connect with no timeout cannot be retried. When the listener's accept backlog is full --
+    // which is the normal state under the eight-agent storm -- the OS does not refuse the
+    // connection, it retransmits SYNs until its own timeout (WSAETIMEDOUT, `os error 10060`, about
+    // 21s on Windows). Every caller here sits inside a retry loop with a 5s deadline that is only
+    // consulted AFTER this function returns, so one blocking attempt overruns the whole deadline
+    // and the loop never gets its second try. Bounding the attempt is what makes those loops real.
+    let address = (host.as_str(), port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::other(format!("no address for {host}:{port}")))?;
+    let mut stream = connect_with_retry(&address)?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
@@ -739,7 +808,22 @@ fn post_request(
     body: &Value,
 ) -> RawResponse {
     let (host, port, path) = split_url(url);
-    let mut stream = TcpStream::connect((host.as_str(), port)).unwrap();
+    // The second connect site, and the one the storm actually leans on: three of its four
+    // operations are POSTs. It was unbounded AND it panics, so under a full accept backlog it
+    // stalled ~21s and then killed the worker outright, where the GET path at least returned a
+    // Result. It stays a panic -- `post_json` hands `(u16, Value)` to 59 call sites and threading
+    // a Result through all of them is scope this fix has no business taking -- but the panic now
+    // names the mechanism instead of printing a bare `Err` value.
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap_or_else(|| panic!("no address resolved for {host}:{port}"));
+    let mut stream = connect_with_retry(&address).unwrap_or_else(|error| {
+        panic!(
+            "could not connect to {host}:{port} within {CONNECT_BUDGET:?} ({error}); under a full              accept backlog the OS retransmits SYNs rather than refusing, so this is the server              being saturated, not absent"
+        )
+    });
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();

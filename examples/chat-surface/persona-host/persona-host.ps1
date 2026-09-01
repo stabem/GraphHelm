@@ -54,6 +54,17 @@ function Short-Key([string] $seed) {
     return (($bytes | ForEach-Object { $_.ToString("x2") }) -join "").Substring(0, 12)
 }
 
+function UrlId([string] $id) {
+    # Opaque ids (`is_opaque_id`, core/protocols/src/persistence.rs) permit `?`, `#`, `&`, `=` -
+    # every byte 0x21-0x2e, 0x30-0x39, 0x3b-0x5b, 0x5d-0x7e is legal. A valid id carrying one of
+    # those changes the request PATH or QUERY the moment it is interpolated raw (PR #467 review):
+    # an execution id of `abc?x=1` turns `/v1/executions/abc?x=1/signal` into a request for a
+    # different path with an extra query parameter, not a 404 on the id the caller meant.
+    # EscapeDataString is safe for BOTH a path segment and a query value, so one helper covers
+    # every interpolation site below rather than two call conventions someone has to choose between.
+    [System.Uri]::EscapeDataString($id)
+}
+
 function Read-Api([string] $path) {
     (Invoke-RestMethod -Uri "$RuntimeUrl$path" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20).data
 }
@@ -67,7 +78,7 @@ function Post-Signal([string] $execution, [string] $actor, [hashtable] $signal, 
     }
     $body = @{ signal = $signal } | ConvertTo-Json -Depth 6
     try {
-        $null = Invoke-RestMethod -Uri "$RuntimeUrl/v1/executions/$execution/signal" -Method POST `
+        $null = Invoke-RestMethod -Uri "$RuntimeUrl/v1/executions/$(UrlId $execution)/signal" -Method POST `
             -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 30
         Write-Host "[host] posted as ${actor}: $key"
         return $true
@@ -90,7 +101,7 @@ function Open-Envelope([string] $execution, [string] $evidenceId) {
     $cacheKey = "$execution/$evidenceId"
     if ($script:evidenceCache.ContainsKey($cacheKey)) { return $script:evidenceCache[$cacheKey] }
     try {
-        $content = (Read-Api "/v1/executions/$execution/evidence/$evidenceId").content
+        $content = (Read-Api "/v1/executions/$(UrlId $execution)/evidence/$(UrlId $evidenceId)").content
         $envelope = $content | ConvertFrom-Json
         $script:evidenceCache[$cacheKey] = $envelope
         return $envelope
@@ -163,19 +174,35 @@ function Read-AllEvents([string] $execution) {
         $script:eventTail[$execution] = [pscustomobject]@{ cursor = 0; events = (New-Object System.Collections.ArrayList) }
     }
     $held = $script:eventTail[$execution]
+    $exhausted = $false
     for ($i = 0; $i -lt 50; $i++) {
-        $page = Read-Api "/v1/executions/$execution/events?after=$($held.cursor)&limit=200"
+        $page = Read-Api "/v1/executions/$(UrlId $execution)/events?after=$($held.cursor)&limit=200"
         foreach ($event in $page.events) {
             $null = $held.events.Add($event)
             $held.cursor = $event.sequence
         }
-        if (@($page.events).Count -lt 200) { break }
+        if (@($page.events).Count -lt 200) { $exhausted = $true; break }
     }
-    return @($held.events)
+    # An incomplete projection SAYS SO, same convention as Read-AllExecutions below (#650, PR #467
+    # review): the 50-page cap (10,000 events) bounds a runaway catch-up on a huge backlog, but a
+    # paging run that stopped mid-history must never be acted on as if it were current - an
+    # oldest-first PREFIX can be missing the very message Step-Execution would answer, or hide
+    # that the reply budget is already exhausted. The caller refuses to process on `exhausted =
+    # $false` rather than silently reasoning from a stale prefix; the NEXT cycle resumes paging
+    # from the same cursor and eventually catches up.
+    if (-not $exhausted) {
+        Write-Host "[host] WARNING: event paging for $execution stopped at the 50-page cap with more remaining - this cycle will not act on a partial tail"
+    }
+    return [pscustomobject]@{ events = @($held.events); exhausted = $exhausted }
 }
 
 function Step-Execution([string] $execution) {
-    $events = Read-AllEvents $execution
+    $tail = Read-AllEvents $execution
+    # Refuse to act on a partial prefix (#650): the WARNING already fired inside Read-AllEvents,
+    # so this is silent on the common path and only ever skips a cycle when paging is genuinely
+    # behind. The next cycle resumes from the same cursor.
+    if (-not $tail.exhausted) { return }
+    $events = $tail.events
     $page = [pscustomobject]@{ events = $events }
     $signals = @($page.events | Where-Object { $_.kind.type -eq "signal_recorded" })
     if ($signals.Count -eq 0) { return }
@@ -222,9 +249,18 @@ function Step-Execution([string] $execution) {
     if ($agentSinceOwner -ge $ReplyBudget) {
         # Visible, once per exhaustion window: the deterministic key makes the second attempt a
         # dedup refusal instead of a second note.
-        $note = New-Envelope $execution "budget-$execution-$lastOwnerSeq" "operator_note" "persona-host" `
+        #
+        # SHORT-KEYED (#652): the raw form was "budget-$execution-$lastOwnerSeq", and an execution
+        # id can run up to 128 bytes (is_opaque_id) - past the serve API's 64-char Idempotency-Key
+        # limit, every budget notice for a long-id execution was refused before it could post, and
+        # the host silently lost the one message that tells a person the personas went quiet.
+        # Short-Key's own hash-and-truncate is exactly the tool already used for `replyKey` below;
+        # a distinct prefix ("budget-", 12 hex) keeps this key deterministic and out of collision
+        # with the reply keys' own "re-" namespace.
+        $budgetKey = "budget-$(Short-Key "$execution|$lastOwnerSeq")"
+        $note = New-Envelope $execution $budgetKey "operator_note" "persona-host" `
             "As personas chegaram ao limite de $ReplyBudget respostas sem mensagem humana. Escreve algo para retomarem." "" ""
-        $null = Post-Signal $execution "persona-host" $note "budget-$execution-$lastOwnerSeq"
+        $null = Post-Signal $execution "persona-host" $note $budgetKey
         return
     }
 

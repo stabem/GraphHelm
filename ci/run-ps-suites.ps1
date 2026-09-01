@@ -25,6 +25,7 @@ $ErrorActionPreference = 'Continue'
 $PinnedSuites = @(
     'classify-run.tests.ps1',
     'gate-postgres-evidence.tests.ps1',
+    'gate-run-overlap.tests.ps1',
     'gate-script-paths.tests.ps1',
     'gate-stage-reddens.tests.ps1',
     'gate-target-dir.tests.ps1',

@@ -670,6 +670,11 @@ try {
         cargo $toolchain metadata --locked --no-deps --format-version 1 | Out-Null
     } | Out-Null
     Invoke-Stage 'whitespace' { git diff --check } | Out-Null
+    # #643: every versioned ci/*.tests.ps1, discovered from the tree. See the script for why the
+    # inventory is a pinned SET of names and not a count, and why exit 2 is not folded into 1.
+    Invoke-Stage 'ci powershell suites' {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
+    } | Out-Null
 
     if ($SkipPostgres) {
         Write-Host ''

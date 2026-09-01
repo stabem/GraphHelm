@@ -1735,7 +1735,8 @@ fn doc_half_leading_count(text: &str, marker: &str) -> BTreeSet<String> {
     assert_eq!(
         labels.len(),
         stated,
-        "`{marker}` says {stated} but names {} entries: {labels:?}. A prose count and its own list          are two producers of one number, and this is the pair drifting",
+        "`{marker}` says {stated} but names {} entries: {labels:?}. A prose count and its own \
+         list are two producers of one number, and this is the pair drifting",
         labels.len()
     );
     labels

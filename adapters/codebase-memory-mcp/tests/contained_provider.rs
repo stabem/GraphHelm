@@ -265,6 +265,10 @@ fn the_cache_dir_the_provider_reads_serves_the_pinned_bytes() {
             &["echo-cache".to_owned()],
             Some(stdin.as_bytes()),
             &process_limits(),
+            // #180: the same declared limit as the shipped provider call site. This session is
+            // opened here, not by a ToolHost, so there is no host-scoped signal to share -- its
+            // bound stays the deadline.
+            None,
         )
         .expect("the echo-cache call completes");
 

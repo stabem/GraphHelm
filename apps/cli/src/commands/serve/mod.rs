@@ -249,7 +249,8 @@ fn build_wiring(
     // the question, it does not hand over an answer.
     if executor_all && args.allow_program.is_empty() {
         return Err(serve_invalid(
-            "the real-executor flags require --allow-program: the set of programs an execution              may spawn is declared per run, never defaulted",
+            "the real-executor flags require --allow-program: the set of programs an execution \
+             may spawn is declared per run, never defaulted",
             "/arguments",
         ));
     }

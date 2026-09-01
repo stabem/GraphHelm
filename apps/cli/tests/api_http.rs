@@ -293,7 +293,9 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
 fn budget_leaves_room_for_the_retry_loop_to_actually_loop() {
     assert!(
         CONNECT_BUDGET < RETRY_LOOP_DEADLINE,
-        "a connect budget of {CONNECT_BUDGET:?} against a loop deadline of {RETRY_LOOP_DEADLINE:?}          leaves the outer loop a single pass, which is the defect this pairing exists to prevent"
+        "a connect budget of {CONNECT_BUDGET:?} against a loop deadline of \
+         {RETRY_LOOP_DEADLINE:?} leaves the outer loop a single pass, which is the defect this \
+         pairing exists to prevent"
     );
     let passes = RETRY_LOOP_DEADLINE.as_millis() / CONNECT_BUDGET.as_millis();
     assert!(
@@ -624,7 +626,7 @@ fn the_executor_refuses_to_run_without_a_declared_program_allowlist() {
     // over the answer.
     assert!(
         !message.contains("git") && !message.contains("cargo"),
-        "the refusal must not prescribe which programs to allow, or the declaration is theatre:          {message}"
+        "the refusal must not prescribe which programs to allow, or the declaration is theatre: {message}"
     );
 }
 
@@ -821,7 +823,9 @@ fn post_request(
         .unwrap_or_else(|| panic!("no address resolved for {host}:{port}"));
     let mut stream = connect_with_retry(&address).unwrap_or_else(|error| {
         panic!(
-            "could not connect to {host}:{port} within {CONNECT_BUDGET:?} ({error}); under a full              accept backlog the OS retransmits SYNs rather than refusing, so this is the server              being saturated, not absent"
+            "could not connect to {host}:{port} within {CONNECT_BUDGET:?} ({error}); under a \
+             full accept backlog the OS retransmits SYNs rather than refusing, so this is the \
+             server being saturated, not absent"
         )
     });
     stream

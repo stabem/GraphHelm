@@ -230,6 +230,10 @@ fn run() -> Result<(), String> {
                 timeout: Duration::from_secs(300),
                 max_output_bytes: 32 * 1024 * 1024,
             },
+            // #180: the same declared limit as the shipped provider call site. This generator
+            // opens the session itself, so there is no host-scoped signal to share -- the
+            // 300 s timeout above stays the bound.
+            None,
         )
         .map_err(|error| format!("session call: {error}"))?;
     // A truncated stdout is NOT a short answer: `CapturedProcess` keeps the retained prefix and

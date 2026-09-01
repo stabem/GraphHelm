@@ -431,6 +431,52 @@ fn the_coverage_vocabulary_is_one_set_on_both_sides() {
     );
 }
 
+/// The SECOND copy of that vocabulary is pinned to the same third thing (#630).
+///
+/// The eight tokens exist twice: `development-envelope.schema.json` `$defs/coverageState`, pinned by
+/// the cell above, and `retrieval-coverage-receipt.schema.json` `$defs/coverage`, which is the one
+/// actually `$ref`-ed and required on the wire. Only the first was pinned, and two copies of one
+/// closed set that are pinned differently drift in exactly one direction: the live copy moves and
+/// nothing says so.
+///
+/// **The proposal this replaces was to delete the envelope's copy as dead.** It has zero `$ref`s --
+/// measured, with `#/$defs/opaqueId` at 241 as the control that proves the instrument reads -- but
+/// **a `$ref` count is not a consumer count**: the cell above consumes it from Rust, and deleting it
+/// would have removed the only schema-to-type pin while keeping the copy that had none. Pinning both
+/// to `CoverageState::every()` collapses the drift risk without deleting a guard, and needs no
+/// cross-file `$ref` fighting the envelope's deliberately opaque `spec`.
+#[test]
+fn the_receipt_copy_of_the_coverage_vocabulary_is_pinned_to_the_same_type() {
+    let path = extension_dir().join("schemas/retrieval-coverage-receipt.schema.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("receipt schema unreadable at {}: {error}", path.display()));
+    let receipt: serde_json::Value =
+        serde_json::from_str(&text).expect("the receipt schema is JSON");
+
+    let from_receipt = schema_enum(&receipt, "coverage");
+    let from_type: BTreeSet<String> = CoverageState::every()
+        .iter()
+        .map(|state| state.wire_name().to_owned())
+        .collect();
+    assert_eq!(
+        from_receipt, from_type,
+        "the receipt schema's coverage vocabulary diverged from `CoverageState`. This is the copy \
+         the wire actually uses, so a drift here is a live wire contract that no longer matches the \
+         type it was written from"
+    );
+
+    // The envelope's copy is pinned to the same set one cell above. Asserting the two schema copies
+    // agree WITH EACH OTHER here would be a third comparison that adds nothing: both are already
+    // pinned to `CoverageState::every()`, and two things equal to a third are equal. What this adds
+    // is the second edge, so neither copy can move alone.
+    assert_eq!(
+        from_receipt,
+        schema_enum(&envelope_schema(), "coverageState"),
+        "the two schema copies disagree, which cannot happen while both match the type -- suspect \
+         this harness before the schemas"
+    );
+}
+
 /// A snapshot binding carries TWO identities, and neither may be omitted.
 ///
 /// This is the cell that a single opaque `snapshot` field would make inexpressible. The freshness

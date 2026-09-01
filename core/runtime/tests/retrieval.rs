@@ -1925,3 +1925,109 @@ fn a_plan_may_not_claim_complete_over_a_producer_that_searched_nothing() {
         "the plan claimed complete coverage while the producer reported that nothing was searched"
     );
 }
+
+/// The COMMITTED sabotage corpus, driven through the fix that closes it (#630).
+///
+/// The guards above prove the property with inputs built here. The corpus at
+/// `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s2-false-structural-absence/`
+/// is what the harness doc calls "the S2 attack", and measured while writing this cell, **nothing in
+/// this suite read it**: the fixture the record names as the attack was not the thing proving the
+/// cure. A corpus that never meets its guard is a corpus whose entries can rot into nonsense while
+/// every test stays green.
+///
+/// **What is read from the fixtures, stated exactly, because the honest scope is narrower than
+/// "the corpus is driven through the compiler".** The claimed `spec.coverage` token is taken from
+/// each attack fixture and the producer's `coverage` from the record; the surrounding request,
+/// binding and response are SYNTHESISED here from `receipt_request()`. So this proves the corpus's
+/// ATTACK VALUE reaches the compiler, not that the fixture documents round-trip whole. The
+/// assertions below also pin the parts that are not read, so a fixture that stops being this attack
+/// fails the arrangement rather than passing on a token that happens to match. (Narrowed by G
+/// reviewing #630; the wider claim was a proxy.)
+///
+/// This cell lives here and not beside the schema half in `apps/cli/tests/development_sabotage.rs`,
+/// deliberately: driving a plan through the compiler needs a `StructuralCodeIndex`, and the fake
+/// that satisfies it is measured HERE. Building a second fake next to the schema test would be a
+/// fake more generous than the real one certifying its own attack -- the failure this repository has
+/// already paid for once.
+#[test]
+fn the_committed_s2_corpus_is_refused_by_the_retrieval_plan_compiler() {
+    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s2-false-structural-absence",
+    );
+    let read = |name: &str| -> serde_json::Value {
+        let path = corpus.join(name);
+        let bytes = std::fs::read(&path).unwrap_or_else(|error| {
+            panic!("HARNESS-BROKE: {} unreadable: {error}", path.display())
+        });
+        serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+            panic!("HARNESS-BROKE: {} is not JSON: {error}", path.display())
+        })
+    };
+    let claimed = |document: &serde_json::Value, name: &str| -> String {
+        document["spec"]["coverage"]
+            .as_str()
+            .unwrap_or_else(|| panic!("HARNESS-BROKE: {name} carries no spec.coverage"))
+            .to_owned()
+    };
+
+    let claims_complete = read("evidence-claims-complete.json");
+    let unknown_token = read("evidence-unknown-token.json");
+    let producer = read("producer-record.json");
+
+    // The fixtures must still say what this cell claims they say. Reading a corpus entry that has
+    // silently changed shape and asserting a refusal about it would be a green about nothing.
+    assert_eq!(claimed(&claims_complete, "claims-complete"), "complete");
+    assert_eq!(claimed(&unknown_token, "unknown-token"), "totally_fine");
+    assert_eq!(
+        producer["coverage"].as_str(),
+        Some("extraction_gap"),
+        "HARNESS-BROKE: the producer record no longer reports the gap the attack contradicts"
+    );
+    assert!(
+        claims_complete["spec"]["hits"]
+            .as_array()
+            .is_some_and(|hits| hits.is_empty()),
+        "HARNESS-BROKE: the attack is a COMPLETE claim over a ZERO; a non-empty hit list is a \
+         different fixture"
+    );
+
+    // POSITIVE CONTROL FIRST. The same arrangement with an honest claim must pass, or a refusal
+    // below could be the digest, the binding, or the arrangement rather than the attack.
+    let mut honest = receipt_request();
+    honest.plan.spec = serde_json::json!({"coverage": "complete"});
+    bind_plan_digest(&mut honest.plan, &mut honest.plan_binding);
+    let honest_index = FakeStructuralCodeIndex::new(complete_response(&honest));
+    assert!(
+        retrieve_coverage(&honest_index, &honest).is_ok(),
+        "arrangement: an honest complete claim over a complete response must pass, else the \
+         refusals below say nothing about the corpus"
+    );
+
+    // The unknown token, taken from the fixture.
+    let mut unknown = receipt_request();
+    unknown.plan.spec = serde_json::json!({"coverage": claimed(&unknown_token, "unknown-token")});
+    bind_plan_digest(&mut unknown.plan, &mut unknown.plan_binding);
+    let unknown_index = FakeStructuralCodeIndex::new(complete_response(&unknown));
+    assert!(
+        retrieve_coverage(&unknown_index, &unknown).is_err(),
+        "the corpus entry carrying a token from no vocabulary was accepted"
+    );
+
+    // The complete claim over the producer's gap, both taken from the fixtures.
+    let mut promoted = receipt_request();
+    promoted.plan.spec =
+        serde_json::json!({"coverage": claimed(&claims_complete, "claims-complete")});
+    bind_plan_digest(&mut promoted.plan, &mut promoted.plan_binding);
+    let mut gapped = complete_response(&promoted);
+    gapped.coverage = CoverageState::ExtractionGap;
+    for entry in &mut gapped.entries {
+        entry.coverage = CoverageState::ExtractionGap;
+    }
+    let promoted_index = FakeStructuralCodeIndex::new(gapped);
+    assert_eq!(
+        retrieve_coverage(&promoted_index, &promoted).err(),
+        Some(RetrievalReceiptError::CoveragePromotion),
+        "the corpus entry claiming COMPLETE over the producer's extraction_gap was accepted, or \
+         refused for a different reason than the promotion the fixture attacks"
+    );
+}

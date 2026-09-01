@@ -15,7 +15,7 @@
 //! refused" if the result is only tested for emptiness. That is a broken harness wearing a
 //! verdict's clothes, and `judge` below separates the two rather than trusting the count.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -332,12 +332,26 @@ fn council_direction_fixtures_are_schema_valid() {
     }
 }
 
-/// S2 — RED WINDOW. Evidence claiming a conclusive zero is accepted, and so is an unknown coverage
-/// token, because nothing on the wire references the closed vocabulary that would constrain it.
+/// S2 — MARKED. The schema accepts both fixtures because no `RetrievalPlan` per-kind schema exists
+/// to carry the check; the retrieval-plan compiler (#616) then refuses the claims-complete attack
+/// and accepts the independent control.
 ///
-/// When this fails, the coverage cross-check has landed. Move S2 to MARKED and invert this guard.
+/// **The schema-accepts assertion STAYS, and that is the point of this rewrite (#630).** This test
+/// used to say *"when this fails, the fix has landed — move S2 to MARKED"*, and its subject was the
+/// schema validator. #616 landed the coverage cross-check in the RUNTIME, so the schema never
+/// changed and this test would have stayed green forever: a tripwire whose own doc-comment promised
+/// a signal it could not emit. The signal is gone, but the observation is still true and worth
+/// asserting — the wire really does lose the vocabulary at schema grain, and a reader who finds this
+/// green should learn that from a live assertion rather than infer it from a deleted test.
+///
+/// The half that moved: `core/runtime/tests/retrieval.rs`,
+/// `the_committed_s2_corpus_is_refused_by_the_retrieval_plan_compiler`, which drives THESE fixtures
+/// through the compiler. It lives there because the compiler needs a `StructuralCodeIndex` and the
+/// measured fake is there; a second fake built beside this test would be a fake more generous than
+/// the real one certifying its own attack. Same structure as S1b: schema half documented-permissive,
+/// runtime half carrying the assertion.
 #[test]
-fn s2_false_structural_absence_is_still_accepted() {
+fn s2_schema_grain_still_accepts_both_fixtures_and_the_runtime_is_what_refuses() {
     let directory = development_schemas();
     let set = schema_set(&directory);
     let id = schema_id(&directory, "development-envelope.schema.json");
@@ -349,7 +363,12 @@ fn s2_false_structural_absence_is_still_accepted() {
         let document = load_json(&corpus().join(fixture));
         match judge(&set, &id, &document, fixture) {
             Verdict::Accepted => {}
-            other => panic!("{fixture}: expected the red-window state (accepted), got {other:?}"),
+            other => panic!(
+                "{fixture}: the schema now REFUSES this fixture. That is not a failure -- it means \
+                 a `RetrievalPlan` per-kind schema (or an envelope tightening) has landed and the \
+                 check moved to schema grain after all. Re-read the S2 write-up in the harness doc, \
+                 which records the opposite, and decide which half owns the refusal now: {other:?}"
+            ),
         }
     }
 }
@@ -966,16 +985,42 @@ fn every_corpus_entry_carries_its_reasoning() {
         text.contains("Appendix B"),
         "the MARKED entries are gone from the doc: the corpus would imply the closed boundaries were never considered"
     );
-    let red_window = [
-        "s2-false-structural-absence",
-        "s4-unsafe-compression",
-        "s5a-secret-capture",
-    ];
+    // THE DOC MUST AGREE WITH ITSELF, and until #630 nothing checked that it did.
+    //
+    // What stood here was a local array of three names asserted to have length three: a literal
+    // compared with itself, which cannot fail and never read the document. It was a false guarantee
+    // before this branch and would have been a green-but-wrong one after it, in a change whose
+    // whole subject is whether the record matches reality. (Found by G reviewing #630.)
+    //
+    // The document states the red-window/marked split in TWO places, in different words: section 3
+    // names the members and their counts, and the Denominator restates both. Two producers of one
+    // fact drift, and the copy is the side nothing checks -- the same shape as the freeze charter
+    // that restated `GATE_MACHINERY` and went stale, and the same cure: read BOTH and make the
+    // numbers reconcile.
+    let summary = doc_split(&text);
+    let denominator = doc_split_denominator(&text);
     assert_eq!(
-        red_window.len(),
-        3,
-        "the red-window denominator changed without this guard being updated"
+        summary, denominator,
+        "the harness doc contradicts ITSELF about which entries are red-window and which are \
+         marked. Section 3 and the Denominator are two producers of one fact; whichever was edited \
+         alone is the one to fix, and both must name the same sets"
     );
+    assert!(
+        !summary.0.is_empty() && !summary.1.is_empty(),
+        "HARNESS-BROKE: one side of the split parsed as empty, so the equality above compared \
+         nothing against nothing"
+    );
+    assert!(
+        summary.0.is_disjoint(&summary.1),
+        "an entry is listed as BOTH red-window and marked: {:?}",
+        summary.0.intersection(&summary.1).collect::<Vec<_>>()
+    );
+    for entry in summary.0.iter().chain(summary.1.iter()) {
+        assert!(
+            text.contains(&format!("## S{entry} ")) || text.contains(&format!("### S{entry} ")),
+            "the doc counts S{entry} in its split but carries no write-up section for it"
+        );
+    }
 
     // The package must not carry prose again: it would pass review and fail the inventory guard.
     let stray = walk_markdown(&corpus());
@@ -983,6 +1028,137 @@ fn every_corpus_entry_carries_its_reasoning() {
         stray.is_empty(),
         "markdown is back inside the package and the manifest cannot declare it: {stray:?}"
     );
+}
+
+/// The (red-window, marked) split as ONE place in the doc states it.
+///
+/// Both call sites hand in the phrases that introduce each half, so the two producers are read the
+/// same way and any difference between them is the document's, never the parser's. The count the
+/// doc writes in parentheses is asserted against the members that follow it: a prose count that
+/// disagrees with its own list is the first thing to rot.
+fn doc_split(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+    (
+        doc_half(text, "**Red window ("),
+        doc_half(text, "**Marked ("),
+    )
+}
+
+/// The same split as the Denominator section states it, in its own different words.
+fn doc_split_denominator(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+    (
+        doc_half_leading_count(text, "red-window entries** ("),
+        doc_half_leading_count(text, "MARKED entries** ("),
+    )
+}
+
+/// One half of the split, from a place that writes the count INSIDE the parentheses.
+///
+/// Section 3's shape: `**Red window (2):** ... `S4` ... `S5a` ...`
+fn doc_half(text: &str, marker: &str) -> BTreeSet<String> {
+    let start = text
+        .find(marker)
+        .unwrap_or_else(|| panic!("HARNESS-BROKE: the doc no longer contains `{marker}`"));
+    let rest = &text[start + marker.len()..];
+    let (count_text, after) = rest
+        .split_once(')')
+        .unwrap_or_else(|| panic!("HARNESS-BROKE: `{marker}` is not followed by a closing paren"));
+    let stated: usize = count_text
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("HARNESS-BROKE: `{marker}` states no number: {count_text:?}"));
+    labels_in(after, marker, stated)
+}
+
+/// The `` `S…` `` labels inside one window, with the count the prose stated asserted against them.
+fn labels_in(after: &str, marker: &str, stated: usize) -> BTreeSet<String> {
+    // The members run to the paragraph break. Reading past it swallows the NEXT half's labels
+    // and makes the two sides agree BY CONSTRUCTION -- a comparison that cannot fail.
+    //
+    // CR is stripped first, and that is not cosmetic: this document is CRLF in a Windows
+    // checkout, so a paragraph break carries CR and splitting on two bare newlines matched
+    // NOTHING. The window ran to the end of the file and collected twelve labels, one of them
+    // SnapshotBinding. The parser read a different amount of text on Windows than it would on
+    // Linux -- the eol class again, in a place I did not expect it.
+    let window = after.replace('\r', "");
+    let paragraph_break = "\n\n";
+    let window = window
+        .split(paragraph_break)
+        .next()
+        .unwrap_or(&window)
+        .to_owned();
+
+    // A label is S, digits, then at most one lowercase letter: S2, S5a, S1b. Accepting any
+    // alphanumeric tail turned SnapshotBinding into a label called napshotBinding.
+    let mut labels = BTreeSet::new();
+    for piece in window.split('`').skip(1).step_by(2) {
+        let Some(rest) = piece.trim().strip_prefix('S') else {
+            continue;
+        };
+        let digits = rest.trim_end_matches(|c: char| c.is_ascii_lowercase());
+        if !digits.is_empty()
+            && digits.chars().all(|c| c.is_ascii_digit())
+            && rest.len() - digits.len() <= 1
+        {
+            labels.insert(rest.to_owned());
+        }
+    }
+    assert_eq!(
+        labels.len(),
+        stated,
+        "`{marker}` says {stated} but names {} entries: {labels:?}. A prose count and its own \
+         list are two producers of one number, and this is the pair drifting",
+        labels.len()
+    );
+    labels
+}
+
+/// One half from a place that writes the count BEFORE the phrase and the members after it.
+///
+/// The Denominator's shape: `**3 red-window entries** (S2, S4, S5a)`. The two producers do not
+/// even agree on where the number goes, which is part of why they drifted: nobody editing one
+/// recognised the other as the same claim.
+fn doc_half_leading_count(text: &str, marker: &str) -> BTreeSet<String> {
+    let start = text
+        .find(marker)
+        .unwrap_or_else(|| panic!("HARNESS-BROKE: the doc no longer contains `{marker}`"));
+    let before = &text[..start];
+    let digits: String = before
+        .chars()
+        .rev()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let stated: usize = digits
+        .chars()
+        .rev()
+        .collect::<String>()
+        .parse()
+        .unwrap_or_else(|_| panic!("HARNESS-BROKE: no count precedes `{marker}`"));
+    let after = &text[start + marker.len()..];
+    let members = after
+        .split_once(')')
+        .map(|(inside, _)| inside)
+        .unwrap_or(after);
+    // The Denominator writes bare labels, not backticked ones, so they are read as words.
+    let mut labels = BTreeSet::new();
+    for word in members.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if let Some(rest) = word.strip_prefix('S') {
+            let digits = rest.trim_end_matches(|c: char| c.is_ascii_lowercase());
+            if !digits.is_empty()
+                && digits.chars().all(|c| c.is_ascii_digit())
+                && rest.len() - digits.len() <= 1
+            {
+                labels.insert(rest.to_owned());
+            }
+        }
+    }
+    assert_eq!(
+        labels.len(),
+        stated,
+        "`{marker}` says {stated} but names {} entries: {labels:?}. A prose count and its own list          are two producers of one number, and this is the pair drifting",
+        labels.len()
+    );
+    labels
 }
 
 /// Every `.md` under a directory, so the guard above can say WHICH file returned.

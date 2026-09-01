@@ -24,7 +24,7 @@ the cell could ever have been red.
 |---|---|
 | `extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.yaml` | the journey: the development contracts exercised against themselves |
 | `extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.fixtures.json` | six cases — two honest, four refusals — binding the journey to the corpus |
-| `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s{1b,2,4,5a}-*/` | the original red-window entries; S1b is now marked by its executed gate |
+| `extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s{1b,2,4,5a}-*/` | the original red-window entries; S1b and S2 are now marked by their executed gates |
 | Appendix B of this document | the five entries whose protections predated the corpus; S1b's later transition remains beside its original red-window record |
 | `apps/cli/tests/development_journey.rs` | holds the graph and its fixtures against each other |
 | `apps/cli/tests/development_sabotage.rs` | holds the corpus against the schemas it attacks |
@@ -43,12 +43,13 @@ declares, and both must name the same property or the sabotage has nothing to bi
 
 ## 3. Two columns, and why the labels matter
 
-**Red window (3):** the protection has not been written, so the sabotage can be genuinely red today.
-`S2` false structural absence · `S4` unsafe compression · `S5a` secret capture, open half.
+**Red window (2):** the protection has not been written, so the sabotage can be genuinely red today.
+`S4` unsafe compression · `S5a` secret capture, open half.
 
-**Marked (6):** five protections shipped before their entries were written; S1b is the sixth and
-carries a measured red-to-green transition. Each entry names its trigger and refusal site.
-`S1b` · `S3` · `S5b` · `S6` · `S7` · `S8`.
+**Marked (7):** five protections shipped before their entries were written; S1b is the sixth and
+S2 the seventh. Each entry names its trigger and refusal site. **Two categories of evidence sit here and they are not interchangeable:** S1b and S2's schema tripwire carry an OBSERVED transition -- each existed while its subject was still red and went green when the protection landed. S2's runtime cell does not: it was written after #616 merged, so it never saw a pre-fix red, and its red is proved BY SABOTAGE only. Both are evidence; only the first is history. Each entry names its trigger and
+refusal site.
+`S1b` · `S2` · `S3` · `S5b` · `S6` · `S7` · `S8`.
 
 Nine entries from eight named sabotages — `S5` splits into an open and a closed half.
 
@@ -69,7 +70,7 @@ detect the defect is absent, optional, or unlinked.
 
 | entry | artifact | the record is... | measurement |
 |---|---|---|---|
-| S2 | development envelope | **absent** | `#/$defs/coverageState` has **0** `$ref`s under BOTH populations: all 57 schema files (1211 refs, control `#/$defs/opaqueId` = 206) and the 42 live ones excluding `schemas/releases/` pinned copies (890 refs, control = 108). The envelope root does not set `additionalProperties: false`, so a `coverage` field is carried and never checked against the closed vocabulary that exists to constrain it. |
+| S2 | development envelope | **absent** | `#/$defs/coverageState` has **0** `$ref`s, re-measured at the commit this line landed in: 60 schema files, control `#/$defs/opaqueId` = **241**. (The earlier figures here were 57 files and control 206; a count like this decays every time someone adds a schema, so it is re-taken rather than carried forward. **A `$ref` count is not a consumer count** -- the definition has one live Rust consumer, `apps/cli/tests/development_contract_schemas.rs`, which pins it to `CoverageState::every()`, and #630 pinned the receipt's copy to the same type rather than deleting either.) The envelope root does not set `additionalProperties: false`, so a `coverage` field is carried and never checked against the closed vocabulary that exists to constrain it. |
 | S4 | context capsule | **optional** | `sections` is required with six keys, none carrying `minItems`; `excluded` is not required and is unconstrained. A capsule may empty every section, omit `excluded`, and validate. |
 
 **S1b was a third-site finding, not a missing check.** The discipline *"independence is compared by
@@ -189,8 +190,7 @@ protection has landed. Then, and only then:
 The pair is the certification. A lone green is not: it cannot distinguish a protection that works
 from a cell that was never able to fail.
 
-**Partially delivered by #211.** S1b now executes through a generic typed-evidence gate. S2 remains
-blocked on #219 and S4 on #222. The public quality command/API/MCP contract that accepts typed JPD
+**Partially delivered by #211.** S1b now executes through a generic typed-evidence gate. S2 was blocked on #219 and is now MARKED: the protection landed in #616 as the retrieval-plan compiler, not as the typed-evidence gate this paragraph anticipated. S4 remains blocked on #222. The public quality command/API/MCP contract that accepts typed JPD
 evidence and returns structured diagnostics also remains open under #211.
 
 ## 8. Provenance
@@ -402,6 +402,19 @@ as a fixture-local convention, not as a claim about the wire rule.
 Full expectation record, sealed before these files existed:
 `.factory/n-agent-226-sabotage-expectations.md` (S2, ADDENDUM-2, ADDENDUM-3).
 
+**Transition to MARKED — protection landed in #616.** The measurement above is kept as written: it
+is still a true record of what was red and when. The protection is the retrieval-plan compiler
+(`core/runtime/src/retrieval.rs`), not a schema change, so the schema-grain observation above STILL
+HOLDS after the fix -- the wire really does lose the vocabulary at schema grain, by the design
+decision recorded in #630 (the envelope's `spec` stays opaque on purpose, and a `RetrievalPlan`
+per-kind schema is deliberately not written here). The runtime now refuses the attack before
+certification would see it.
+
+The tripwire that was supposed to announce this could not: its subject was the schema validator, so
+it would have stayed green forever while its own doc-comment promised the signal (#630). It is
+rewritten in S1b's shape -- the schema-accepts assertion stays, documenting why, and the assertion
+that carries the weight moved to where the fix is.
+
 ---
 
 ## S4 - unsafe compression
@@ -602,6 +615,41 @@ Every site below is **measured at `origin/main`**, with the ref inside the comma
 
 ---
 
+### S2 — false structural absence · owner #616, MARKED
+
+**Protection.** The retrieval-plan compiler refuses a plan whose claimed coverage is outside the
+closed vocabulary, and refuses a COMPLETE claim the producer's own record contradicts:
+
+```
+core/runtime/src/retrieval.rs:550   fn plan_coverage_is_a_closed_token
+core/runtime/src/retrieval.rs:371   return Err(RetrievalReceiptError::CoveragePromotion)
+core/runtime/tests/retrieval.rs:1873
+       a_plan_coverage_token_outside_the_closed_vocabulary_is_refused
+core/runtime/tests/retrieval.rs:1953
+       the_committed_s2_corpus_is_refused_by_the_retrieval_plan_compiler
+```
+
+**Trigger it would catch.** Make `plan_coverage_is_a_closed_token` return `true` unconditionally, or
+drop the promotion check — wrong but legal, and both were run.
+
+**What is different about this entry.** The last cell above is the only one in the corpus that
+carries the committed fixtures' ATTACK VALUE into the protection -- the claimed coverage token
+and the producer's, read from the files, while the request and response around them are
+synthesised. Measured while writing it: nothing in the
+runtime suite read `fixtures/sabotage/s2-false-structural-absence/` at all — the guards proved the
+property with inputs built beside them, so the fixture this document calls "the attack" was not the
+thing proving the cure. A corpus that never meets its guard can rot into nonsense while every test
+stays green, which is why that cell also asserts the fixtures still say what it claims they say.
+
+**Why the schema half is not part of the protection.** There is no `RetrievalPlan` per-kind schema,
+and the envelope's `spec` is opaque by a recorded decision. Removing the envelope's unreferenced
+`$defs/coverageState` was proposed and REJECTED on measurement: it has zero `$ref`s but one live
+Rust consumer pinning it to `CoverageState::every()`, while the receipt's copy — the one the wire
+uses — had no such pin. Deleting the pinned copy and keeping the unpinned one inverts the safety.
+Both copies are now pinned to the same type (#630), so neither can move alone.
+
+---
+
 ### S3 — stale snapshots · owner #217 (task-001), CLOSED
 
 **Protection.** `SnapshotBinding` carries TWO identities, and freshness is the RELATION between
@@ -609,9 +657,9 @@ them:
 
 ```
 core/protocols/src/development.rs      is_fresh() -> repo_snapshot == index_generation
-apps/cli/tests/development_contract_schemas.rs:567
+apps/cli/tests/development_contract_schemas.rs:613
        freshness_is_the_relation_between_the_two_snapshot_identities
-apps/cli/tests/development_contract_schemas.rs:574-576
+apps/cli/tests/development_contract_schemas.rs:620-622
        stale.snapshots.index_generation = OpaqueId::parse("snapshot-h")
        assert!(!stale.snapshots.is_fresh(), "an index built from another snapshot is stale ...")
 ```
@@ -619,7 +667,7 @@ apps/cli/tests/development_contract_schemas.rs:574-576
 **Trigger it would catch.** Invert the identity comparison in `is_fresh()` — different reading as
 fresh.
 
-**Would fall at.** `development_contract_schemas.rs:576`.
+**Would fall at.** `development_contract_schemas.rs:622`.
 
 **Why it cannot be red-first.** The protection AND its guard shipped with task-001. Recorded in the
 blueprint as a correction: the plan names "stale snapshots" only under task-010, so the term's
@@ -681,7 +729,7 @@ The required capability is not mistaken for an identity.
 
 ```
 core/governor/src/memory.rs:230-232   if scope != admitting_into { ... ScopeMismatch ... }
-apps/cli/tests/development_contract_schemas.rs:511
+apps/cli/tests/development_contract_schemas.rs:557
        a_scope_mismatch_is_refused_under_its_own_code
 ```
 
@@ -719,7 +767,7 @@ evidential weight and should not be read as if they did.
 
 ### Denominator
 
-**6 MARKED entries** (S1b, S3, S5b, S6, S7, S8) against **3 red-window entries** (S2, S4, S5a).
+**7 MARKED entries** (S1b, S2, S3, S5b, S6, S7, S8) against **2 red-window entries** (S4, S5a).
 Total **9** entries from **8** named sabotages — S5 splits into S5a (open) and S5b (closed).
 
 S1a (`requires.observers` never emitted in the extension manifest) is retained separately in the

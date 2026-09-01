@@ -1853,3 +1853,75 @@ fn a_stale_attempt_keeps_its_own_refusal_instead_of_pooling_with_the_unverified(
          merely needs rebuilding that their search can never be completed"
     );
 }
+
+/// #226 S2a — THE CLOSED VOCABULARY GAINS ITS CONSUMER, at the layer that knows the kind.
+///
+/// `CoverageState` is declared closed in `core/protocols/src/development.rs` ("each state has a
+/// DIFFERENT correct response to a zero result"), and the extension package's envelope schema
+/// carries the same eight tokens under `$defs/coverageState`. That definition is referenced by
+/// NOTHING -- a closed vocabulary with no consumer -- so a plan may carry any string at all.
+///
+/// The guard is NOT put in the schema on purpose. The envelope's own `spec` description records
+/// the decision: "per-kind payload ... IS NOT GUARDED HERE". That separation is declared, its
+/// reason holds (the schema stays kind-agnostic), and this cell honours it by placing the check
+/// where the kind is already known.
+///
+/// ARRANGEMENT, asserted rather than assumed: the digest is REBOUND after the spec is written. A
+/// plan whose spec changed without rebinding fails `plan_digest_matches` first, and the refusal
+/// would be about the digest -- true, and about the wrong thing.
+#[test]
+fn a_plan_coverage_token_outside_the_closed_vocabulary_is_refused() {
+    // POSITIVE CONTROL FIRST: the same construction with a LEGAL token must pass. Without it, a
+    // refusal below could be the rebound digest rather than the vocabulary -- true, and about the
+    // wrong thing.
+    let mut legal = receipt_request();
+    legal.plan.spec = serde_json::json!({"coverage": "complete"});
+    bind_plan_digest(&mut legal.plan, &mut legal.plan_binding);
+    let legal_index = FakeStructuralCodeIndex::new(complete_response(&legal));
+    assert!(
+        retrieve_coverage(&legal_index, &legal).is_ok(),
+        "arrangement: a legal token must pass, else this cell cannot tell vocabulary from digest"
+    );
+
+    let mut request = receipt_request();
+    request.plan.spec = serde_json::json!({"coverage": "totally_fine"});
+    bind_plan_digest(&mut request.plan, &mut request.plan_binding);
+    let index = FakeStructuralCodeIndex::new(complete_response(&request));
+
+    assert!(
+        retrieve_coverage(&index, &request).is_err(),
+        "a plan carrying a coverage token from no vocabulary was accepted; the closed set in \
+         `CoverageState` has no consumer at this layer"
+    );
+}
+
+/// #226 S2b — THE LIE NO SCHEMA CAN CATCH.
+///
+/// `"complete"` is a legal token. What makes this evidence false is the record BESIDE it: the
+/// producer says it searched nothing (`extraction_gap`, "parser failed on 3 of 3 candidate files").
+/// A claim of complete coverage resting on an instrument that never ran is an absence asserted
+/// from a broken instrument -- and no schema can see it, because the two artifacts are only false
+/// TOGETHER.
+///
+/// This is the sibling of `best_effort_can_never_be_promoted_to_complete_coverage`, one artifact
+/// over: that one refuses a RECEIPT whose confidence cannot support its state, this one refuses a
+/// PLAN whose claim the producer's own coverage cannot support. Same error, same reason.
+#[test]
+fn a_plan_may_not_claim_complete_over_a_producer_that_searched_nothing() {
+    let mut request = receipt_request();
+    request.plan.spec = serde_json::json!({"coverage": "complete"});
+    bind_plan_digest(&mut request.plan, &mut request.plan_binding);
+
+    let mut response = complete_response(&request);
+    response.coverage = CoverageState::ExtractionGap;
+    for entry in &mut response.entries {
+        entry.coverage = CoverageState::ExtractionGap;
+    }
+    let index = FakeStructuralCodeIndex::new(response);
+
+    assert_eq!(
+        retrieve_coverage(&index, &request).err(),
+        Some(RetrievalReceiptError::CoveragePromotion),
+        "the plan claimed complete coverage while the producer reported that nothing was searched"
+    );
+}

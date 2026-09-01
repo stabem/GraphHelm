@@ -370,6 +370,25 @@ fn validate_response(
     {
         return Err(RetrievalReceiptError::CoveragePromotion);
     }
+    // #226 S2: the plan may not claim MORE than the producer covered. `"complete"` is a legal
+    // token, so nothing about the plan alone is wrong -- the lie only exists next to a producer
+    // record that says it searched nothing (`extraction_gap`: "parser failed on 3 of 3 candidate
+    // files"). No schema can see that: the two artifacts are false only TOGETHER, which is why
+    // this check lives at the one site that holds both.
+    //
+    // Same error as the confidence check above and for the same reason, one artifact over: there a
+    // RECEIPT's confidence cannot support its state, here a PLAN's claim cannot be supported by the
+    // coverage that was actually achieved.
+    if request
+        .plan
+        .spec
+        .get("coverage")
+        .and_then(serde_json::Value::as_str)
+        == Some(CoverageState::Complete.wire_name())
+        && response.coverage != CoverageState::Complete
+    {
+        return Err(RetrievalReceiptError::CoveragePromotion);
+    }
 
     let received_limits = validate_pages_and_limits(request, &response)?;
     let broker_binding = broker_binding(
@@ -457,6 +476,7 @@ fn validate_request_targets(request: &StructuralIndexRequest) -> Result<(), Retr
     }
     if request.plan_binding.schema_id != DEVELOPMENT_ENVELOPE_SCHEMA_ID
         || !plan_matches_binding(request)
+        || !plan_coverage_is_a_closed_token(request)
         || !has_supported_retrieval_plan_major(&request.plan_binding.document_version)
         || !has_supported_retrieval_plan_major(&request.plan_binding.schema_version)
         || request.provider.tool.is_empty()
@@ -489,6 +509,53 @@ fn validate_request_targets(request: &StructuralIndexRequest) -> Result<(), Retr
         }
     }
     Ok(())
+}
+
+/// The plan's claimed coverage must be a token from the CLOSED set -- #226 S2.
+///
+/// `CoverageState` is declared closed where it is defined ("each state has a DIFFERENT correct
+/// response to a zero result"), and the extension package's envelope schema repeats the eight
+/// tokens under `$defs/coverageState`. That definition was referenced by nothing: a closed
+/// vocabulary with no consumer, so a plan could claim any string.
+///
+/// The consumer is here rather than in the schema, and the honest reason is narrower than the one
+/// this comment first gave. It cited the envelope's `spec` description as deciding that per-kind
+/// payload is not guarded at the schema -- a MISREADING, spliced across two clauses: that sentence
+/// says THE ORDER (validate-before-deserialize) is the consumer's obligation and is not guarded
+/// there. It decides nothing about coverage.
+///
+/// What the same description DOES say is the opposite of an exemption: "The nine per-kind schemas
+/// need this decision taken consciously; they do not inherit it." There is no `RetrievalPlan`
+/// per-kind schema at `origin/main` -- eight schemas exist and that kind is not among them -- so
+/// there is today no schema to carry this check, and the runtime is where the two artifacts meet.
+/// That is a reason to guard here NOW, not a ruling that the schema must never guard it.
+///
+/// WHAT THIS COSTS, AND THE CONDITION THAT REOPENS IT. `spec` is untyped so a compatible minor's
+/// unknown fields round-trip, and AGENTS.md requires those fields be PRESERVED. They are: `spec` is
+/// held whole, the digest covers it, and an older reader still round-trips it byte-identically --
+/// this predicate refuses a REQUEST, it never drops or rewrites a field. What it does cost is
+/// interpretation: a future minor that puts something other than one of the eight tokens at
+/// `spec.coverage` is refused rather than carried.
+///
+/// Accepted deliberately, because the population is narrow and the meaning is not invented here.
+/// The gate this joins has already established `kind == RetrievalPlan`, so `coverage` is not an
+/// unknown field in an unknown document -- it is the field the committed sabotage corpus produces
+/// with exactly this meaning (`fixtures/sabotage/s2-false-structural-absence/`), and refusing an
+/// unrecognised member of a closed set is what this codebase does elsewhere: "an unknown kind is
+/// refused, never ignored".
+///
+/// REOPEN THIS if a normative `RetrievalPlan` per-kind schema gives `spec.coverage` a shape other
+/// than one of the eight tokens. This predicate is the site to change, and the corpus above is the
+/// population to re-measure first.
+fn plan_coverage_is_a_closed_token(request: &StructuralIndexRequest) -> bool {
+    let Some(claimed) = request.plan.spec.get("coverage") else {
+        return true;
+    };
+    claimed.as_str().is_some_and(|token| {
+        CoverageState::every()
+            .iter()
+            .any(|state| state.wire_name() == token)
+    })
 }
 
 fn plan_matches_binding(request: &StructuralIndexRequest) -> bool {

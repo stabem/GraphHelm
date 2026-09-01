@@ -152,7 +152,8 @@ fn read_catalog_file(root: &Path, relative: &str) -> Vec<u8> {
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(
         bytes.len() <= MAX_FILE_BYTES,
-        "{} exceeds MAX_FILE_BYTES; the catalog stage would have refused it, but this test runs          first and would have read it",
+        "{} exceeds MAX_FILE_BYTES; the catalog stage would have refused it, but this test runs \
+         first and would have read it",
         path.display()
     );
     bytes
@@ -203,7 +204,8 @@ fn union_sites() -> Vec<(String, String, bool)> {
     // stage that does, so it applies them itself (Codex on #634).
     assert!(
         catalog.schemas.len() <= MAX_SCHEMAS,
-        "catalog names {} schemas, beyond MAX_SCHEMAS ({MAX_SCHEMAS}); the catalog stage would          refuse it, and this scan runs first",
+        "catalog names {} schemas, beyond MAX_SCHEMAS ({MAX_SCHEMAS}); the catalog stage would \
+         refuse it, and this scan runs first",
         catalog.schemas.len()
     );
     let mut budget = MAX_RESOURCE_BYTES;
@@ -213,7 +215,8 @@ fn union_sites() -> Vec<(String, String, bool)> {
         let bytes = read_catalog_file(&root, &entry.path);
         budget = budget.checked_sub(bytes.len()).unwrap_or_else(|| {
             panic!(
-                "{} pushes the catalog's files past MAX_RESOURCE_BYTES                  ({MAX_RESOURCE_BYTES}); the per-file bound does not bound the sweep",
+                "{} pushes the catalog's files past MAX_RESOURCE_BYTES ({MAX_RESOURCE_BYTES}); the \
+                 per-file bound does not bound the sweep",
                 entry.path
             )
         });
@@ -244,7 +247,8 @@ fn walk(
 ) {
     assert!(
         depth <= MAX_DEPTH,
-        "{schema}{pointer} nests deeper than {MAX_DEPTH}; the walk recurses and nothing else          bounds the stack"
+        "{schema}{pointer} nests deeper than {MAX_DEPTH}; the walk recurses and nothing else \
+         bounds the stack"
     );
     match node {
         Value::Object(map) => {
@@ -267,7 +271,8 @@ fn walk(
                 const MAX_BRANCHES: usize = 512;
                 assert!(
                     branches.len() <= MAX_BRANCHES,
-                    "{schema}{pointer}/oneOf has {} branches, beyond {MAX_BRANCHES}; the prover is                      quadratic in this number and the file-size bound does not see it",
+                    "{schema}{pointer}/oneOf has {} branches, beyond {MAX_BRANCHES}; the prover is \
+                     quadratic in this number and the file-size bound does not see it",
                     branches.len()
                 );
                 // AND BOUND THE SWEEP, because a per-union cap leaves the total unbounded: 512
@@ -321,7 +326,9 @@ fn walk(
                 }
                 assert!(
                     *work <= MAX_WORK,
-                    "the sweep has charged {work} units of prover work, beyond {MAX_WORK}; this is                      the one bound whose completeness does not depend on someone having listed the                      prover's inputs"
+                    "the sweep has charged {work} units of prover work, beyond {MAX_WORK}; this is \
+                     the one bound whose completeness does not depend on someone having listed the \
+                     prover's inputs"
                 );
                 sites.push((
                     schema.to_owned(),

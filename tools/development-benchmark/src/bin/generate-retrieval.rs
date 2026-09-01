@@ -242,8 +242,11 @@ fn run() -> Result<(), String> {
     // (Codex P2). Checked BEFORE the replies are parsed, because a parse that succeeds on a
     // prefix is the failure mode.
     if captured.truncated {
-        return Err("the provider's output was truncated at the capture bound; a prefix that                     parses is not a complete answer and must not be frozen"
-            .to_owned());
+        return Err(
+            "the provider's output was truncated at the capture bound; a prefix that parses \
+         is not a complete answer and must not be frozen"
+                .to_owned(),
+        );
     }
     if captured.exit_code != Some(0) {
         return Err(format!(
@@ -312,7 +315,8 @@ fn run() -> Result<(), String> {
         .ok_or("the index status carries no head_sha, so the store cannot be bound")?;
     if reported != arguments.store_head_sha {
         return Err(format!(
-            "the store reports head_sha {reported}, not the declared {}: an index built from              another revision would supply hits read against a repository it never saw",
+            "the store reports head_sha {reported}, not the declared {}: an index built from \
+             another revision would supply hits read against a repository it never saw",
             arguments.store_head_sha
         ));
     }

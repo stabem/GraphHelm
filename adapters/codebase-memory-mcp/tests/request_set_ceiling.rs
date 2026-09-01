@@ -33,9 +33,16 @@ fn request_lines_source() -> String {
         .expect("the subject function exists; if it was renamed, this guard must follow it");
     let rest = &source[start..];
     // The function ends at the first line that closes it at the impl's indentation level.
-    let end = rest
-        .find("\n    }\n")
-        .expect("the subject function has a body");
+    //
+    // The run of spaces in this needle is the POINT, not a defect: four is that indentation level
+    // and it is the value being searched for, never a message anyone reads. It is BUILT here
+    // rather than written as a literal, which is the method the sweep's own exemption list
+    // names. Exempting the file would also silence the sweep, and this crate has no per-crate
+    // source guard, so that exemption would leave this file scanned by NOTHING; constructing the
+    // run keeps every other authored string here under the sweep.
+    let impl_indent = " ".repeat(4);
+    let needle = format!("\n{impl_indent}}}\n");
+    let end = rest.find(&needle).expect("the subject function has a body");
     rest[..end].to_owned()
 }
 

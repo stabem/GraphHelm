@@ -696,7 +696,8 @@ pub fn has_more_of(
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| BenchmarkRefusal::Unreadable {
             detail: format!(
-                "case {case_id}: the provider page does not state has_more as a boolean, and a                  page read as exhausted would freeze that overclaim into the corpus"
+                "case {case_id}: the provider page does not state has_more as a boolean, and a \
+                 page read as exhausted would freeze that overclaim into the corpus"
             ),
         })
 }
@@ -1097,7 +1098,8 @@ pub fn load_manifest(text: &str) -> Result<Manifest, BenchmarkRefusal> {
     if manifest.manifest_version != MANIFEST_VERSION {
         return Err(BenchmarkRefusal::Unreadable {
             detail: format!(
-                "manifest version {} is not {MANIFEST_VERSION}; the fourth freeze made                  retrievalDigest required, so the older schema cannot be read as this one",
+                "manifest version {} is not {MANIFEST_VERSION}; the fourth freeze made \
+                 retrievalDigest required, so the older schema cannot be read as this one",
                 manifest.manifest_version
             ),
         });

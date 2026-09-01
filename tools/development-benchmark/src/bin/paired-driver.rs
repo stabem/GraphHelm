@@ -354,7 +354,8 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .ok_or_else(|| BenchmarkRefusal::Unreadable {
             detail: format!(
-                "the repo root {} is not a git checkout, so its identity cannot be bound to the                  artifacts' coordinates",
+                "the repo root {} is not a git checkout, so its identity cannot be bound to the \
+                 artifacts' coordinates",
                 repo_root.display()
             ),
         })?;
@@ -448,7 +449,8 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
     if !colliding.is_empty() {
         return Err(BenchmarkRefusal::Unreadable {
             detail: format!(
-                "the repo root holds uncommitted bytes at {} path(s) the corpus reads (first:                  {}); the tree id names the COMMITTED bytes while the arms would read these",
+                "the repo root holds uncommitted bytes at {} path(s) the corpus reads (first: {}); \
+                 the tree id names the COMMITTED bytes while the arms would read these",
                 colliding.len(),
                 colliding[0]
             ),
@@ -477,7 +479,8 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
     if !same_directory {
         return Err(BenchmarkRefusal::Unreadable {
             detail: format!(
-                "the retrieval directory given ({}) is not the one the freeze verified ({}): the                  artifacts that would be read are not the artifacts that were checked",
+                "the retrieval directory given ({}) is not the one the freeze verified ({}): the \
+                 artifacts that would be read are not the artifacts that were checked",
                 retrieval_root.display(),
                 verified_retrieval.display()
             ),
@@ -567,7 +570,9 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
                 if artifact.repo_snapshot != observed_tree {
                     return Err(BenchmarkRefusal::Unreadable {
                         detail: format!(
-                            "the artifacts were produced against tree {} and the repo root is at                              {observed_tree}: coordinates from one source tree would slice another",
+                            "the artifacts were produced against tree {} and the repo root is at \
+                             {observed_tree}: coordinates from one source tree would slice \
+                             another",
                             artifact.repo_snapshot
                         ),
                     });

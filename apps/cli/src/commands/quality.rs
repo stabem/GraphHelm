@@ -57,6 +57,22 @@ fn certify_retry_lineage() -> Result<pathogens::Certification, pathogens::Certif
     )
 }
 
+/// #211's journey-contract gate, reachable from the command for the first time here.
+///
+/// The gate and its suite already existed and already certified inside the pathogens crate; what
+/// did not exist was a way for an operator to run it. Registering it is the whole of that step.
+///
+/// The CLI-facing id is `gate-journey-contract`, NOT the gate's own `id()`
+/// (`gate/jpd-journey-contract`): that `/` is refused by `GateCertified.gate_id`, typed as
+/// `opaqueId`. Same constraint the retry-lineage entry above records, inherited rather than
+/// rediscovered at runtime.
+fn certify_journey_contract() -> Result<pathogens::Certification, pathogens::CertificationRefusal> {
+    pathogens::certify(
+        &pathogens::jpd::JourneyContractGate,
+        &pathogens::jpd::journey_contract_suite(),
+    )
+}
+
 /// **This array is why the registry cannot disagree with itself, and the history is worth keeping.**
 ///
 /// #313 split the refusal below into two, because two states existed: an operator mistyping an id,
@@ -80,9 +96,10 @@ fn certify_retry_lineage() -> Result<pathogens::Certification, pathogens::Certif
 ///
 /// **If id and certifier are ever separated again, the split must come back.** L's finding holds
 /// for that shape; the shape is what changed, not the finding.
-const REGISTRY: [(&str, Certifier); 2] = [
+const REGISTRY: [(&str, Certifier); 3] = [
     ("gate-geometry", certify_geometry),
     ("gate-retry-lineage", certify_retry_lineage),
+    ("gate-journey-contract", certify_journey_contract),
 ];
 
 /// The registered ids, in registry order.

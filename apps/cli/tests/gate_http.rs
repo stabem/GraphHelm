@@ -236,9 +236,9 @@ fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, 
 
 /// A single-gate graph whose contract carries a coherent delivered surface — the same
 /// passing subject shape the Task 7 dogfood ran.
-fn gate_graph(directory: &Path, execution: &str) -> PathBuf {
+fn gate_graph(directory: &Path, execution: &str, gate_id: &str) -> PathBuf {
     let gate_block = serde_json::json!({"check": {
-        "gateId": "gate-geometry",
+        "gateId": gate_id,
         "delivered": {
             "claims": [{"feature": "node table", "elementId": "nodes-table", "artifact": "monitor-snapshot.html"}],
             "html": "<a href=\"#nodes-table\">nodes</a><section id=\"nodes-table\">node table<table><tr><th>a</th></tr><tr><td>1</td></tr></table></section>",
@@ -295,6 +295,10 @@ struct GateServe {
 }
 
 fn gate_serve(directory: &Path, execution: &str) -> GateServe {
+    gate_serve_for(directory, execution, "gate-geometry")
+}
+
+fn gate_serve_for(directory: &Path, execution: &str, gate_id: &str) -> GateServe {
     let events = directory.join("events");
     let broker = directory.join("broker");
     let keyring = directory.join("keyring");
@@ -351,7 +355,7 @@ fn gate_serve(directory: &Path, execution: &str) -> GateServe {
         ],
     };
     let (guard, base, token) = serve_with(&events, &extra);
-    let graph = gate_graph(directory, execution);
+    let graph = gate_graph(directory, execution, gate_id);
     GateServe {
         _guard: guard,
         base,
@@ -790,4 +794,172 @@ fn every_advertised_gate_actually_certifies() {
              promises a gate the dispatch has no arm for"
         );
     }
+}
+
+/// #211 C1: the JPD journey-contract gate must be reachable from the operator command.
+///
+/// Measured before this was written: the gate already certifies INSIDE the pathogens crate --
+/// `jpd_gates.rs`'s `journey_contract_gate_rejects_every_specimen_in_its_suite` runs
+/// `certify(&JourneyContractGate, &journey_contract_suite())` and is green. So the gap this cell
+/// closes is not the gate's discipline; it is that nothing an operator can run reaches it. A gate
+/// that cannot be invoked certifies nobody.
+///
+/// The CLI-facing id is deliberately NOT the gate's own `id()`. `JourneyContractGate::id()` is
+/// `gate/jpd-journey-contract`, and that `/` is refused by `GateCertified.gate_id`, typed as
+/// `opaqueId`. The registry's doc records the same constraint for the retry-lineage entry; this
+/// entry inherits it rather than rediscovering it at runtime.
+#[test]
+fn the_journey_contract_gate_certifies_through_the_operator_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution = "exec-journey-contract-registered";
+    let serve = gate_serve(directory.path(), execution);
+    let (status, _) = start(&serve, execution, "journey-contract-registered-start");
+    assert_eq!(status, 200);
+
+    let output = certify(&serve, "gate-journey-contract");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "gate-journey-contract must certify through the command: {stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_str(&stdout).expect("certify emits json");
+    assert_eq!(body["data"]["gateId"], "gate-journey-contract");
+    assert!(
+        body["data"]["specimens"]
+            .as_u64()
+            .is_some_and(|count| count > 0),
+        "a registered gate must carry a NON-EMPTY suite -- certify refuses an empty one, so a \
+         zero here would mean the dispatch handed over the wrong suite entirely: {body}"
+    );
+
+    // The entry must run THIS gate's OWN suite, and that is an identity claim -- so it is checked
+    // against the same certification computed in-process, not against a hand-copied constant.
+    //
+    // The first version of this assertion compared the digest to the two NEIGHBOURS' digests, on
+    // the theory that a copied entry stays wired to a sibling's suite. Sabotage refuted it: wiring
+    // this entry to `jpd_suite()` -- a THIRD suite -- left the whole harness green at 9/9, because
+    // a third digest differs from both neighbours exactly as a correct one does. "Unlike the
+    // siblings" is not the property; "its own" is, and only this form says so.
+    let expected = pathogens::certify(
+        &pathogens::jpd::JourneyContractGate,
+        &pathogens::jpd::journey_contract_suite(),
+    )
+    .expect("the gate certifies against its own suite");
+    assert_eq!(
+        body["data"]["suiteDigest"], expected.suite_digest,
+        "the registry entry is wired to a suite that is not this gate's own"
+    );
+    assert_eq!(
+        body["data"]["specimens"],
+        serde_json::json!(expected.specimens),
+        "the command reports a different specimen count than this gate's own suite holds"
+    );
+}
+
+/// The whole choreography for one gate id: certify, pause, resume, read the verdict back.
+///
+/// Returns the resume reply so a cell can say what actually happened rather than only whether it
+/// happened. Mirrors `certify_then_resume_runs_the_gate_and_the_verdict_reads_back_over_http`,
+/// which pins this path for gate-geometry.
+fn certify_then_resume_for(
+    gate_id: &str,
+    execution: &str,
+) -> (tempfile::TempDir, GateServe, serde_json::Value) {
+    let directory = tempfile::tempdir().unwrap();
+    let serve = gate_serve_for(directory.path(), execution, gate_id);
+    let (status, reply) = start(&serve, execution, &format!("{gate_id}-start"));
+    assert_eq!(status, 200, "{reply}");
+
+    let output = certify(&serve, gate_id);
+    assert!(
+        output.status.success(),
+        "ARRANGEMENT: {gate_id} must certify before the run path can be measured: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let (pause_status, pause_reply) = post_json(
+        &format!("{}/v1/executions/{execution}/pause", serve.base),
+        &serve.token,
+        &format!("{gate_id}-pause"),
+        "owner",
+        &serde_json::json!({}),
+    );
+    assert_eq!(pause_status, 200, "{pause_reply}");
+    let (resume_status, resume_reply) = post_json(
+        &format!("{}/v1/executions/{execution}/resume", serve.base),
+        &serve.token,
+        &format!("{gate_id}-resume"),
+        "owner",
+        // The graph body resume needs. Omitting it fails EVERY gate identically, which is how the
+        // first version of this helper produced three consistent failures that meant nothing.
+        &serde_json::json!({
+            "file": serve.graph.to_str().unwrap(),
+            "project": root().to_str().unwrap(),
+        }),
+    );
+    assert_eq!(resume_status, 200, "{resume_reply}");
+    (directory, serve, resume_reply)
+}
+
+/// PINNED DEFECT, not an aspiration -- this cell goes RED when the consumer path is fixed.
+///
+/// A node using the newly registered gate does NOT run to a verdict today: serve supplies one
+/// suite digest (geometry's), the driver compares every gate's receipt against it, and the
+/// executor evaluates every dispatched gate as geometry. Measured end to end, with the geometry
+/// control below proving the harness itself is sound. The same failure holds for
+/// gate-retry-lineage, registered long before this branch -- the gap is the consumer path's, is
+/// pre-existing, and its fix is deliberately deferred (owed ticket: per-gate digest/evaluator
+/// dispatch across all three registry entries).
+///
+/// Asserting the CURRENT behaviour keeps the authoritative gate green about the tree as it is,
+/// and turns this cell into the trap that forces whoever wires per-gate dispatch to flip it to
+/// "completed" -- the flip is the fix's receipt.
+/// The trap observes the DISPATCH boundary, not the outcome. First version asserted
+/// `status != completed`, and Codex caught the hole: once per-gate dispatch lands, this gate RUNS
+/// against the geometry-shaped fixture, legitimately refuses it, and the execution still ends
+/// not-completed -- the trap would stay green through the very fix it exists to catch. "The gate
+/// never runs" is observable as the ABSENCE of any gate_verdict event; a verdict of either
+/// polarity means dispatch happened.
+#[test]
+fn a_node_using_the_journey_contract_gate_does_not_yet_run() {
+    let (_keep, serve, reply) = certify_then_resume_for("gate-journey-contract", "exec-jc-e2e");
+    let kinds = event_kinds(&serve, "exec-jc-e2e");
+    assert!(
+        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
+        "a gate_verdict exists, so per-gate dispatch now RUNS this gate -- the pinned defect is \
+         FIXED: rewrite this cell to assert the verdict (positive evidence or expected refusal) \
+         and close the consumer-path debt: kinds={kinds:?} reply={reply}"
+    );
+}
+
+/// The same pinned defect on the SECOND registry entry, and it is the provenance control: this
+/// gate was registered on main long before this branch, and it fails identically -- which is what
+/// proves the gap pre-existing rather than introduced here. Flips together with its sibling when
+/// per-gate dispatch lands.
+#[test]
+fn a_node_using_the_retry_lineage_gate_does_not_yet_run() {
+    let (_keep, serve, reply) = certify_then_resume_for("gate-retry-lineage", "exec-rl-e2e");
+    let kinds = event_kinds(&serve, "exec-rl-e2e");
+    assert!(
+        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
+        "a gate_verdict exists on the pre-existing second entry -- per-gate dispatch landed: \
+         rewrite this cell to assert the verdict: kinds={kinds:?} reply={reply}"
+    );
+}
+
+/// CONTROL ON THE HARNESS, not on the registry.
+///
+/// Two gates failed through `certify_then_resume_for`. That observation is equally consistent with
+/// the Codex mechanism and with this helper being broken. gate-geometry completes through the
+/// file's original choreography, so running it through THIS helper separates the two causes: it
+/// passing here means the helper is sound and the difference lies in the gate.
+#[test]
+fn the_geometry_gate_runs_to_a_verdict_through_the_same_helper() {
+    let (_keep, _serve, reply) = certify_then_resume_for("gate-geometry", "exec-geo-e2e");
+    assert_eq!(
+        reply["data"]["status"], "completed",
+        "CONTROL: the helper itself is broken, so the other two failures say nothing: {reply}"
+    );
 }

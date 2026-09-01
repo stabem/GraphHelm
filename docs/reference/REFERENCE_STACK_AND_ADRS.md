@@ -908,3 +908,176 @@ journals are all still on the cheap side of the change.
 not-implementable-as-written and deferred to #529; consumes #161's custody decision unchanged;
 constrains #159's surface lane and #541's trap-reach lane. Pairs with D-047. It does not modify
 ADR-032 or any earlier ADR.
+
+## 39. ADR-034 — The contained producer's framing: the revisit trigger governs layer GROWTH, and the layer did not grow
+
+**Status:** proposed.
+
+**Context:** D-042 and ADR-028 require live provider retrieval to run over a **maintained MCP SDK
+session**; ADR-028's rejected alternatives include *"expanding GraphHelm's hand-rolled MCP server
+into a client/session implementation"*. #576 shipped the contained producer without an SDK, and the
+clause passed every reviewer including me — I reviewed and approved that PR, and the framing is not
+something I raised. Codex found it. This ADR exists because a standing decision was violated in fact
+before anyone noticed it applied, which is itself the strongest argument for restating it in terms a
+reader can check.
+
+**What actually ships, measured at `origin/main` rather than described:**
+
+```
+adapters/codebase-memory-mcp/src/provider.rs
+  messages written to the child                     3, in a fixed array:
+                                                      initialize | notifications/initialized | tools/call
+  capabilities ADVERTISED by the client             "capabilities": {}  -- empty
+  capabilities advertised by the SERVER             NEVER READ. `retrieve` consults only the
+                                                      reply bearing id 2; the initialize result is
+                                                      not parsed, so no server capability can enter
+                                                      this client's behaviour
+  process lifetime                                  one call, one process, stdin closed
+  the reply                                         decoded by decode_search_graph, which REQUIRES
+                                                      structuredContent (lib.rs:651,
+                                                      DecodeError::StructuredContentMissing)
+  a reply that does not decode                      StructuralCodeIndexError::Unavailable
+```
+
+**One thing this table deliberately does NOT claim, because an earlier draft claimed it and K was
+right to strike it.** That draft opened with *"imports from the hand-rolled MCP server: NONE"* as
+evidence of restraint. It is not evidence of anything: `apps/cli` declares `[[bin]]` and no `[lib]`,
+so **no crate in this workspace can depend on it** — the count is zero by topology, and would read
+zero for a producer that would gladly have reused the server if the manifest allowed it. A number
+that cannot come out otherwise measures nothing. The shape clause of ADR-028 is answered below by
+what the framing *is*, not by an import count that was never free to differ.
+
+**The governing text is not the one the case opened on.** ADR-028's rejected line names a shape —
+*expanding the server into a client/session*. Measured above, that shape did not occur: no server
+code is reused and nothing persists between calls. But answering the shape clause is not answering
+the decision, because the operative rule is ADR-026's revisit trigger:
+
+> *"the first milestone that needs MCP resources, push notifications, `structuredContent` tool
+> results (hosts are moving toward schema-validated structured results — the reviewer-named second
+> candidate), or a non-stdio transport adopts the SDK instead of growing this layer. **Growing
+> hand-rolled code toward any of those four** is the wrong side of the ADR-024/025 'keeping in step
+> with a maintained crate' tradeoff; five methods over stdio is the right side of it."*
+
+**One of the four named capabilities is in the live path, and is mandatory there.** So a defence
+resting on "a one-shot exchange is not a session" fails: the trigger fires on capability, not on
+session shape, and ADR-028 records this exact capability as the thing that fired it.
+
+**Decisions:**
+
+1. **The trigger governs GROWTH OF THE LAYER, not consumption of a payload, and that distinction is
+   the whole decision.** Its own words are *"growing hand-rolled code toward any of those four"*, and
+   the reason ADR-024/025 give is that a hand-rolled protocol layer rots as it accretes cases. This
+   framing accreted nothing: three fixed messages, no capability advertised and none read, no server-initiated
+   traffic, no state between calls. `structuredContent` arrives in the **reply body** and is read by
+   the strict bounded decoder ADR-028 explicitly permits — the half of #480 that ADR-028 blessed.
+   The layer stayed at its minimum while the payload got richer, and the trigger is about the layer.
+
+2. **That reading is only honest if the layer is BOUND, so this decision ships with a mechanism
+   rather than an intention.** A guard pins the request set at exactly those three methods with empty
+   capabilities. A fourth message, a capability advertised or consulted, a second tool, a resources or
+   notifications method, or a non-stdio transport breaks the build and reopens this ADR. Without the
+   guard, decision 1 is a promise about future restraint — which is the thing ADR-026's trigger
+   exists because we cannot keep.
+
+3. **The SDK requirement in D-042 and ADR-028 is AMENDED, not waived**, and only along this axis:
+   live retrieval may use hand-rolled framing **while that framing is bounded by decision 2**. Every
+   other D-042 clause stands unchanged — the broker-owned session, the pinned snapshot, the verified
+   executable, the confined cache. Those four were proven adversarially end to end and nothing here
+   touches them.
+
+4. **A deviation refuses rather than degrades.** Any reply the bounded decoder cannot read becomes
+   `Unavailable`, a typed refusal, never a partial belief. This is what makes rot in the layer
+   *visible* instead of silent, and it is the property that would be lost first if the framing grew.
+
+**Scope — which speakers this ceiling binds, and the split is measured, not asserted.** The
+ceiling above was written with one artifact in view, and a second hand-rolled MCP client exists. An
+unnamed subject is the same defect as an unenforced ceiling, so the census is recorded here:
+
+```
+adapters/codebase-memory-mcp/src/provider.rs      ships; the operator's live retrieval path
+  messages 3 (fixed)  tools 1  methods 3  capabilities {}  transport stdio
+
+tools/development-benchmark/src/bin/generate-retrieval.rs   dev-dependency of apps/cli; run by hand
+  messages 2 + one per corpus case -- UNBOUNDED BY CONSTRUCTION
+  tools 2 (index_status, search_graph)   methods 3   capabilities {}   transport stdio
+```
+
+**The clauses split, and they do not all split the same way:**
+
+1. **Layer-wide — binding on every hand-rolled MCP client in this repository:** the three methods
+   `initialize` / `notifications/initialized` / `tools/call`, **no capability advertised and none
+   read**, and
+   **stdio only**. These are the ADR-026 trigger's own named capabilities, and nothing about shipping
+   or not shipping changes whether growing toward them is the wrong side of the ADR-024/025 tradeoff.
+   Both speakers satisfy all three today, measured — so this clause records a fact and installs a
+   guard against its changing, rather than promising future restraint.
+
+2. **Path-specific — binding only on what ships on the operator's retrieval path:** **exactly three
+   messages** and **exactly one tool**. The bench speaker meets neither, and both divergences are
+   legitimate rather than tolerated: its message count scales with the corpus by design, and
+   `index_status` is a provenance control that exists *because* its output freezes as committed
+   evidence — a store built from another revision must not silently supply rows read against this
+   one. The shipped path has no such need, and a refusal there is cheaper than a check.
+
+**Why this is not the convenient answer.** The reading that exempts the bench speaker entirely is the
+one that leaves this ADR's decision 1 unfalsified, and it should be distrusted for that reason. It
+also fails on the merits: ADR-024/025's stated reason for the trigger is that hand-rolled protocol
+code **rots as it accretes cases**, and the bench speaker is precisely the artifact that accretes
+cases — one message per corpus entry, growing whenever the corpus grows. The rot mechanism applies to
+it more than to the producer, not less. What does not apply is the *count*, because a count is the
+wrong unit for a loop. So the bench speaker is bound by form and not by volume, and that is a
+different claim from being unbound.
+
+**The guard must derive its population, not name it.** The guard implementing decision 2 reads a
+single hard-coded path. That measures the form exactly and leaves the population a hand-chosen guess:
+a third speaker appears unguarded, and nothing turns red. A guard has two chosen parameters and this
+one has measured only the first. Before this ADR is accepted, the layer-wide clauses in (1) must be
+enforced over an **enumerated** population — every hand-rolled MCP client in the workspace, derived
+from the tree — so that a speaker nobody remembered to add fails by name.
+
+**Rejected alternative — adopt a maintained MCP SDK now, costed:** (a) a new dependency under the
+M06 freeze, which is a decision with its own owner and its own review rather than a side effect of
+this one; (b) an audit of the SDK's stdio and process handling against the Tier 1 containment the
+four D-042 clauses establish — the SDK would run inside that sandbox and inherit its guarantees, so
+its behaviour must be re-verified rather than assumed; (c) re-verification of the whole D-042 chain,
+proven adversarially end to end across #544, #551, #553 and #576 — replacing the framing invalidates
+the composition cell that ties program, session, snapshot and receipt together, and that cell is the
+strongest artifact the containment work produced; and (d) it buys protocol surface this producer does
+not use, today: three fixed messages against a provider whose reply is already strictly decoded. The
+cost is present and the benefit is future-shaped, which is exactly why decision 2 exists — so the
+benefit can be bought on the day it is needed rather than argued about now.
+
+**Rejected alternative — amend on the grounds that a one-shot exchange is not a session
+implementation:** the argument this case opened on, and it does not survive the trigger. It answers
+ADR-028's shape clause and leaves ADR-026's capability clause untouched, and the capability clause is
+the one with the reason attached. Recorded as rejected rather than omitted, because it is the reading
+a future reader reaches for first.
+
+**Consequences:** the guard in decision 2 lands before this ADR is accepted, red-first, with the
+current three messages as its subject and with the layer-wide clauses enforced over a population
+derived from the tree rather than a hard-coded path. `provider.rs`'s framing comment stops describing the exchange
+and starts naming the bound. D-042's SDK clause gains a pointer here, so a reader of the decision
+register meets the amendment where the requirement is. If the guard ever fires, the correct response
+is to adopt the SDK, not to widen the guard — and that sentence belongs in the guard's own failure
+message, where the person holding the failing build will read it.
+
+**What this ADR does not establish** — and this list is meant to be complete, because an entry
+missing from it is the failure mode this project has now recorded five times:
+
+- **which SDK**, its licence, its maintenance posture or its transport support — the adopt-now option
+  remains live and unspecified, and choosing it is a separate decision under the M06 freeze;
+- **the guard's exact form** — whether it pins serialized bytes, method names or the message count is
+  the implementing lane's call, provided a fourth message cannot pass and provided the layer-wide
+  clauses resolve their population by enumeration;
+- **anything about GraphHelm's own hand-rolled MCP SERVER**, a different artifact under ADR-026 and
+  untouched here;
+- **pagination, a second tool, or a second provider** — each is growth under decision 2, and each
+  reopens this ADR by construction rather than by anyone remembering to;
+- **whether `structuredContent` decoding should move behind an SDK later** — decision 1 says the
+  decoder is not the layer, not that the decoder is permanent;
+- **the review that let the clause pass unnoticed through #576** — a real gap, mine among others, and
+  a process question rather than an architectural one.
+
+**Relationship:** amends D-042 and ADR-028 along one axis; consumes ADR-026's revisit trigger and
+narrows its reading to layer growth, with a mechanism attached; relies on ADR-024/025's tradeoff and
+does not modify it. Pairs with D-048.

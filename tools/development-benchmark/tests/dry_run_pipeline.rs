@@ -487,7 +487,8 @@ fn an_oversized_gateway_manifest_refuses_before_it_is_read() {
     // exact phrase, which makes the phrase the observable for "refused before the allocation".
     assert!(
         stderr.contains("refused before reading"),
-        "the refusal must come from the pre-read bound, not from the parser after the          allocation: {stderr}"
+        "the refusal must come from the pre-read bound, not from the parser after the \
+         allocation: {stderr}"
     );
 }
 

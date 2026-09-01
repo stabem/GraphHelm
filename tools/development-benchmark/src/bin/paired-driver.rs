@@ -188,7 +188,8 @@ fn run_live(arguments: &Arguments) -> i32 {
     match std::fs::metadata(gateway_manifest) {
         Ok(metadata) if metadata.len() > MANIFEST_BOUND => {
             eprintln!(
-                "{gateway_manifest}: {} bytes exceeds the {MANIFEST_BOUND}-byte route-manifest                  bound; refused before reading",
+                "{gateway_manifest}: {} bytes exceeds the {MANIFEST_BOUND}-byte route-manifest \
+                 bound; refused before reading",
                 metadata.len()
             );
             return 2;

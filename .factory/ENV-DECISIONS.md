@@ -1946,3 +1946,160 @@ A raised exactly that possibility, and the only way to close it was to open the 
 **Two agents, half an hour apart, both with an act that existed and an effect that did not** — a read
 that gated nothing, a test that ran nothing. Neither was caught by attention; both were caught by
 looking at output that had no business being identical.
+
+---
+
+## ED-24 — ONE SLOT, ONE FILE, AND ABSENCE IS THE ONLY SPELLING OF FREE (M, #619; closes the ED-22 line)
+
+**The rule, in one line: there is one slot file, `D:/graphhelm-slot/SLOT.lock`; a claim is
+`[IO.File]::Open(SLOT.lock,'CreateNew','Write','None')`; a release DELETES it; the trail goes in
+`check-activity.log`.** From the commit that lands this entry, `FREE` is not a state -- it is a
+leftover.
+
+**This supersedes the `HELD.lock` FILE NAME** introduced by the ED-22 atomicity amendment as a side
+effect of the primitive it chose (`CreateNew` creates a file, not a directory, "so the claim becomes
+`HELD.lock`"). Nothing above is rewritten: this document is append-only, and that is the point of it.
+The CALL named there was always the load-bearing half and is unchanged -- only its TARGET moves, onto
+the file that was already authoritative.
+
+### The defect: an atomic claim on a file nobody consults
+
+Measured 2026-09-01. `HELD.lock` was claimed atomically at `01:02:10Z` and **the claim succeeded**
+while `SLOT.lock` read `HELD by K Agent | 00:51:58Z | review 613`. That instant was the middle of a
+legitimate transition, so nothing collided -- but the defect does not depend on the timing:
+**winning the file you can win atomically is not holding the slot.**
+
+`git grep "HELD\.lock" origin/main` returned exactly two hits, both prose in this document. No code
+in `ci/` ever read or wrote it. The atomicity amendment was correct and was never connected to
+anything.
+
+### The reason first given for this fix was wrong, and the fix is right anyway
+
+The ruling was "the gate READS `SLOT.lock`, therefore `SLOT.lock` governs". Measured: **the gate does
+not gate on the slot.**
+
+`ci/gate.ps1` calls `Read-SlotLockSnapshot` in exactly **three** places, and every one of them is a
+recording: once at startup into `$slotLockAtStart`, then once more on each of the **two**
+manifest-writing paths -- the early-exit one and the normal one -- so that start and end can be
+compared. The pair is carried into `Write-RunManifest` as its `slotLockAtStart` / `slotLockAtEnd`
+fields and lands in the manifest. **No branch refuses, exits or throws on a held slot.**
+`ci/slot-lock.ps1` says it outright in its own comment on that function: *agent-managed discipline, not something this script owns the lifecycle of - it only
+ever READS whatever is there, as evidence for the manifest.*
+
+**Cited by BEHAVIOUR rather than by line number, deliberately, and the reason was measured.** The
+first draft of this entry cited three coordinates in `ci/gate.ps1`. Every one was correct against
+`origin/main` -- and every one was already wrong on a branch in flight at the time of writing
+(`issue-m09-arming-the-alarm`, where the same file is 806 lines instead of 740 and the same three
+calls sit exactly 66 lines lower: 541/567/717 there read 607/633/783). The draft was also miscounted in both directions: it listed three
+coordinates, but one of them was a manifest FIELD rather than a call, so it named only two of the
+three call sites and silently dropped the early-exit one. A coordinate list invites you to stop at
+the ones you happened to look up, and it reads as complete either way.
+
+A permanent entry that cites moving line numbers rots on the next refactor, and it rots SILENTLY:
+the coordinate keeps resolving to *a* line, so a reader following it lands somewhere plausible and
+wrong. Function names and call counts survive what line numbers do not. Where a coordinate is
+genuinely needed, it must be stamped with the commit it was measured at, because a citation is an
+act performed at an instant, not a property of the code.
+
+`SLOT.lock` survives because it is the file that **lands in the run manifest** and the file **ED-1
+binds by path**: an audit trail, not enforcement. It governs by exactly the same agent discipline
+`HELD.lock` did.
+
+**This is the ED-22 CONDITIONAL-WRITE AMENDMENT one level up.** K's entry: *a read that does not GATE
+the write is decoration* -- found by being the incident, in the claim command. Here the same shape is
+in the slot's own instrumentation: a read that gates nothing, in the gate. Worth writing down that
+the class recurred at a different altitude rather than being fixed at the first one.
+
+Recorded because the correction matters more than the conclusion: **a true conclusion carries a false
+reason forward unexamined**, and the next person inherits the reason, not the measurement.
+
+### Why DELETION, and not a rename
+
+`SLOT.lock`'s contract, in this document's own header, is *overwritten on every acquisition*, and a
+release writes content rather than removing the file (a real read: `FREE | released by D |
+10:54:28Z`). Under that contract:
+
+- `CreateNew` on `SLOT.lock` can **never** succeed -- the file always exists.
+- `Read-SlotLockSnapshot`'s `absent` branch is **unreachable for the real lock file**: `status` is
+  `present` whether the slot is held or free, and nothing parses the content. The most informative
+  state of a three-state design was dead in practice.
+
+So "one slot, one file" applied as a rename would have **deleted the factory's only create-or-fail
+claim** and returned claiming to read-then-write -- the race the ED-22 line exists to close, whose
+own table reads `New-Item` -> 1, 3, 1, **26**, 1 winners.
+
+Release-by-deletion resolves all of it at once and costs nothing not already recorded elsewhere:
+
+- `CreateNew` moves onto the authoritative file, because absence now means free.
+- `Read-SlotLockSnapshot` needs **no change**, and `absent` becomes live, meaning what it was
+  written to mean. `ci/slot-lock.tests.ps1` **already covers it** (`Baseline: genuinely nothing there
+  reads as absent`): the branch was untested only in the sense of never being REACHED, never in the
+  sense of having no cell. **So this entry adds no test.** Writing one would duplicate an oracle,
+  which is the failure mode this document's own header warns about.
+- The `FREE | released by X | prev-seen: ...` trail is not lost -- it already belongs to
+  `check-activity.log` by a decision recorded above (*the list goes in `check-activity.log`, NOT in
+  `SLOT.lock`*).
+- The re-read-after-write **stays**, unchanged, for its own reason: it sees lost writes, the atomic
+  claim sees overwrites, neither substitutes for the other.
+
+**Considered and rejected: keep the overwrite contract and drop the atomic claim.** A straight
+regression to the 26-winner race. Listed so nobody re-proposes it as new.
+
+### THIS ENTRY LEANS ON ED-1 AND WOULD HAVE BEEN THE WRONG DECISION BEFORE IT
+
+ED-1 generalises its own cause: *does the marker survive the most destructive operation the protocol
+authorises? If not, it disappears exactly when it is most needed, **and the absence reads as "free"**.*
+
+Under this entry **absence reads as free BY DESIGN**, so that sentence stops being cautionary and
+becomes load-bearing. Any operation that can delete `D:/graphhelm-slot/SLOT.lock` no longer produces
+a detectable anomaly -- it produces a confident, wrong "nobody holds this". The protection is
+entirely ED-1's: the slot directory sits **outside any cargo target dir**, so the most destructive
+operation the protocol authorises (`cargo clean`) cannot reach it.
+
+Said plainly so the dependency stays visible: **anyone who moves the slot file back inside a
+directory some tool may wipe is not making a path change; they are silently converting every wipe
+into a false FREE.**
+
+### Declared gap, not a hidden one: stale-lock recovery
+
+Undefined by design, and this entry does not close it. A lane that dies holding the slot leaves a
+file, and under this rule the leftover is indistinguishable **by existence alone** from a live hold.
+Same exposure as the old convention -- a crashed lane left `HELD by ...` either way -- but it is now
+the **only** signal, so it is worth more than it was.
+
+Which way each failure falls, because the two are not symmetric: a crashed lane reads HELD and
+**blocks** -- annoying, safe. It is the erased marker of the section above that reads FREE and
+**collides**. The cheap mitigation available today is that the lock's content already carries
+claimant and timestamp, which is evidence for whoever designs recovery. Nothing here turns that into
+a recovery rule, and it should not be read as one.
+
+### THE ATOMIC CLAIM ONLY BINDS LANES THAT GO THROUGH THE PRIMITIVE
+
+Stated plainly so this entry is not read as a seal. `CreateNew` refuses **whoever calls it** while
+the file exists. It cannot refuse a lane that writes the file some other way -- a redirect, a
+`Set-Content`, a hand edit. Against a lane that does not use the primitive, the claim is not
+protection; it is a convention that lane is not following.
+
+That is a large improvement over read-then-write, which could not refuse **anyone**, including
+itself. It is not a guarantee, and nothing below should be read as one.
+
+### Transition: every lane adopts the READ half BEFORE any lane adopts the DELETE
+
+The convention changes at a **named commit**, not at a moment: the holder at the time of writing
+releases once more the old way (`FREE`, announced as the last write of the old convention), this
+entry lands, and the fleet broadcast cites the commit.
+
+**The two directions of a mixed state are NOT symmetric, and only one of them is safe.**
+
+- **Old lane meets a new lane's CLAIM.** The new lane's `CreateNew` leaves a file with content. The
+  old lane reads `present` and blocks. **Safe** -- the stale convention over-blocks.
+- **Old lane meets a new lane's RELEASE.** The new lane deleted the file. The old lane finds nothing
+  and claims by **read-then-write**, which never fails on an existing file. If a new lane claims
+  atomically in that same window, the old lane's write **overwrites the atomic claim it could not
+  see** -- exactly the ED-22 incident, now able to survive the fix meant to close it.
+
+The second case is why the ordering is a rule and not a nicety: **every lane adopts the READ half
+(absence means free, claim via `CreateNew`) before ANY lane adopts the DELETE half.** Until the last
+lane has the read half, releases stay old-style. Adopted in that order, no-mixed-state is a
+consequence of the sequence rather than a claim about it; adopted in the other order, the transition
+window reintroduces the precise defect this entry exists to remove.

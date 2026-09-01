@@ -667,7 +667,7 @@ apps/cli/tests/development_contract_schemas.rs:620-622
 **Trigger it would catch.** Invert the identity comparison in `is_fresh()` — different reading as
 fresh.
 
-**Would fall at.** `development_contract_schemas.rs:622`.
+**Would fall at.** `apps/cli/tests/development_contract_schemas.rs:622`.
 
 **Why it cannot be red-first.** The protection AND its guard shipped with task-001. Recorded in the
 blueprint as a correction: the plan names "stale snapshots" only under task-010, so the term's
@@ -703,7 +703,7 @@ carry it into the journal through the one path this design argued was safe."*
 **Protection.**
 
 ```
-core/governor/src/memory.rs:744-768
+core/governor/src/memory.rs:766-790
     let producer = candidate.produced_by.as_deref();
     let independent = validators.iter().any(|v| Some(*v) != producer);
     if !independent { ... MemoryRefusalCode::SelfValidated ... }

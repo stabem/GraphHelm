@@ -424,6 +424,56 @@ fn s4_unsafe_compression_is_still_accepted() {
 /// after. It cannot prevent the edit; it makes the edit announce itself. A guard that fires for the
 /// right reason with the wrong name costs a debugging session, so the message names the decision
 /// rather than the mismatch.
+/// The released capsule schema's bytes, pinned by digest rather than by comparison.
+///
+/// Measured on `origin/main` at `1a0a6ff7`. Updating this constant is the visible act that editing
+/// a frozen release is supposed to be.
+const RELEASED_CAPSULE_SCHEMA_DIGEST: &str =
+    "06c64a2576f9688cc9072df151957686886a64c46e1b76650566437cac046768";
+
+/// Content with `\r\n` folded to `\n`, so a digest names the FILE and not the checkout.
+///
+/// The first version of this pin hashed the working tree and was measured on Windows.
+/// `git ls-files --eol` answers in one command why that was wrong:
+///
+/// ```text
+/// i/lf    w/crlf  attr/    schemas/releases/1.0.0/context-capsule.schema.json
+/// ```
+///
+/// Index LF, working tree CRLF, and **no attribute** -- so the bytes on disk are decided by the
+/// platform, and the pin would have failed on every LF checkout while passing on mine. A freeze is
+/// a property of a fresh checkout, never of the author's tree: #600's class, one day old, aimed
+/// straight back at me. Normalising first makes the digest equal the committed blob's, measured --
+/// `git show HEAD:...` piped to sha256sum agrees with this constant. (Codex P1 on #610.)
+///
+/// **A blanket `filter(!= '\r')` was the wrong tool, caught one round later (Codex P2 on this
+/// commit).** It strips every CR, not only the ones pairing with a following LF -- so a standalone
+/// CR byte inserted as CONTENT into both copies at once would vanish from both hashes and the
+/// digest would stay blind to it, the exact both-sides-move failure this pin exists to catch. Only
+/// a CR immediately followed by LF is checkout noise; any other CR is authored bytes and must
+/// survive into the hash. (Measured: today's released file has zero standalone CR, so this does
+/// not move the pinned constant -- it only makes the computation match what the constant claims.)
+fn without_cr(bytes: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            index += 1;
+            continue;
+        }
+        normalized.push(bytes[index]);
+        index += 1;
+    }
+    normalized
+}
+
+/// SHA-256 of the given bytes, rendered as lowercase hex.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[test]
 fn closing_s4_would_move_the_released_capsule_schema() {
     let working = root_schemas().join("context-capsule.schema.json");
@@ -441,6 +491,23 @@ fn closing_s4_would_move_the_released_capsule_schema() {
     assert!(
         !working_bytes.is_empty() && !released_bytes.is_empty(),
         "HARNESS-BROKE: an empty schema file makes the comparison below meaningless"
+    );
+
+    // THE INDEPENDENT PIN, and the equality below cannot replace it. When S4 is closed by editing
+    // BOTH the live schema and its 1.0.0 mirror -- the pattern this repository already documents at
+    // `core/protocols/tests/dead_letter_is_declared_only.rs`, where #412 moved both and
+    // `compare_catalogs` saw no change -- an equality check stays green while the frozen authored
+    // artifact has moved. That is precisely the case D-046 forbids: authored content in a frozen
+    // release never changes. A digest of the released bytes is the only assertion the both-sides
+    // edit cannot satisfy. (Codex P2 on #606.)
+    assert_eq!(
+        sha256_hex(&without_cr(&released_bytes)),
+        RELEASED_CAPSULE_SCHEMA_DIGEST,
+        "`schemas/releases/1.0.0/context-capsule.schema.json` has MOVED. D-046: authored content in \
+         a frozen release never changes. If this is the S4 tightening applied to both copies at \
+         once, the tightening is a release decision that has quietly edited the baseline; if it is \
+         a derived-metadata re-derivation, D-046 allows it only with a control in the same diff \
+         proving no authored file was touched, and this digest is updated in that same commit"
     );
 
     assert_eq!(
@@ -589,7 +656,9 @@ fn the_observer_requirement_is_mandatory_which_is_why_s1b_bites() {
 #[derive(Debug)]
 struct Citation {
     path: String,
-    line: usize,
+    /// First line of the cited region; equal to `last` for a single-line citation.
+    first: usize,
+    last: usize,
     token: String,
 }
 
@@ -602,58 +671,502 @@ struct Citation {
 /// The token is the first identifier-shaped word after the citation -- on the same line where the
 /// doc writes `memory.rs:240   if content_is_secret_shaped(...)`, or on the next non-empty line
 /// where it writes the path and indents the symbol beneath it. Both spellings appear in section 7.
-fn doc_citations(text: &str) -> Vec<Citation> {
+/// One citation site the token heuristic could not reach: a real, resolvable path and line, but
+/// no word nearby satisfying `identifier_in`. `context` is the exact text that was searched, so a
+/// pin naming this site is checking the same thing the scan checked -- not a paraphrase of it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct UnreachedCitation {
+    path: String,
+    first_line: usize,
+    /// The region's END, equal to `first_line` for a single coordinate.
+    ///
+    /// Without it a pinned RANGE watched only its start: `retrieval.rs:12-26` stored `12`, and
+    /// moving `26` alone left the pin equal and green while a cited coordinate drifted unwatched.
+    /// One-of-N again, this time inside a single region rather than across a comma list -- the
+    /// comma fix did not reach it because a range is ONE region, not three. (Codex P2 on #610.)
+    last_line: usize,
+    context: String,
+}
+
+fn doc_citations(text: &str) -> (Vec<Citation>, Vec<UnreachedCitation>, usize) {
     let lines = text.lines().collect::<Vec<_>>();
     let mut found = Vec::new();
+    let mut unreached = Vec::new();
+    // COORDINATES, matched to what `count_coordinates_in_line` spells: a range contributes TWO (its
+    // endpoints), a comma list one per member, a single line one. The control compares this against
+    // raw syntax, so a suffix the extractor consumes only in PART -- `574 - 576` yielding one where
+    // the text spells two -- fails a count instead of passing as an accepted prefix.
+    let mut coordinates = 0;
     for (index, line) in lines.iter().enumerate() {
-        for word in line.split_whitespace() {
-            // The doc writes most citations inside backticks, and some end in a comma or a full
-            // stop. Trimming the wrapper is not cosmetic: an untrimmed "`core/..." fails the
-            // is_file check below and the citation is skipped SILENTLY, which is a guard that reads
-            // half its population while its name claims all of it. Measured, that half was 6 of 13.
-            let raw = word.trim_matches(|c: char| !(c.is_alphanumeric() || c == '_' || c == '/'));
-            let Some((path, rest)) = raw.split_once(".rs:") else {
+        for site in citation_sites(line) {
+            let Some(path) = resolved_path(line, site.path_end) else {
                 continue;
             };
-            let path = format!("{path}.rs");
-            // A range (`:364-368`) names a region rather than one line; the guard below asks about
-            // an exact line, so a range is out of its reach and is skipped rather than guessed at.
-            let Ok(number) = rest.parse::<usize>() else {
-                continue;
-            };
-            if !repository_root().join(&path).is_file() {
-                continue;
-            }
-            let tail = line
-                .split_once(word)
-                .map(|(_, after)| after.to_owned())
-                .unwrap_or_default();
+            let tail = line[site.tail_start..].to_owned();
             // The next line answers for this citation ONLY when the citation stands alone on its
             // own -- the code-fence spelling where the path sits on one line and the symbol is
             // indented beneath it. Letting prose fall through to the next line makes a citation
             // borrow the FOLLOWING citation's symbol and then accuse its own file of not containing
             // it: measured, `memory.rs:512` was reported missing a token belonging to
             // `jpd_plugin.rs`. A guard that invents a failure is worse than one that misses.
-            let token = if tail.trim().is_empty() {
-                lines
+            let (token, context) = if tail.trim().is_empty() {
+                let next = lines
                     .iter()
                     .skip(index + 1)
                     .find(|candidate| !candidate.trim().is_empty())
-                    .filter(|candidate| !candidate.contains(".rs:"))
-                    .and_then(|candidate| identifier_in(candidate))
+                    .filter(|candidate| !candidate.contains(".rs:"));
+                let token = next.and_then(|candidate| identifier_in(candidate));
+                let context = next
+                    .map(|candidate| candidate.trim().to_owned())
+                    .unwrap_or_else(|| "<no usable next line>".to_owned());
+                (token, context)
             } else {
-                identifier_in(&tail)
+                (identifier_in(&tail), tail.trim().to_owned())
             };
-            if let Some(token) = token {
-                found.push(Citation {
-                    path,
-                    line: number,
-                    token,
-                });
+            match token {
+                Some(token) => {
+                    coordinates += site
+                        .regions
+                        .iter()
+                        .map(|(first, last)| if first == last { 1 } else { 2 })
+                        .sum::<usize>();
+                    for (first, last) in site.regions {
+                        found.push(Citation {
+                            path: path.clone(),
+                            first,
+                            last,
+                            token: token.clone(),
+                        });
+                    }
+                }
+                // ONE ENTRY PER COORDINATE, not one per site. `site.regions[0].0` recorded the
+                // first and dropped the rest, so an unreachable comma list like
+                // `tests/memory.rs:63, 858, 887` pinned `63` and let 858 and 887 leave EVERY
+                // population: unread by the rot check because the site has no token, and unnamed
+                // by the pin because only the head survived. Two coordinates gone with nothing
+                // going red -- this cell's own subject, aimed at this cell. (Codex P2 on #610.)
+                None => {
+                    coordinates += site
+                        .regions
+                        .iter()
+                        .map(|(first, last)| if first == last { 1 } else { 2 })
+                        .sum::<usize>();
+                    unreached.extend(site.regions.iter().map(|(first, last)| UnreachedCitation {
+                        path: path.clone(),
+                        first_line: *first,
+                        last_line: *last,
+                        context: context.clone(),
+                    }));
+                }
             }
         }
     }
-    found
+    (found, unreached, coordinates)
+}
+
+/// `doc_citations`, combined across MULTIPLE independent sources without letting one source's
+/// lookahead see into another's text.
+///
+/// Concatenating every source into one buffer before a single `doc_citations` call let a
+/// trailing citation whose own source has no next line "see" whatever the next source happened
+/// to start with. `s2-false-structural-absence/producer-record.json`'s trailing
+/// `retrieval.rs:12-26` citation is unreachable in ITS OWN file, but once every fixture's
+/// provenance strings were joined into one blob, which fixture `read_dir` placed immediately
+/// after it decided whether that citation stayed pinned or silently borrowed a neighbour's
+/// token -- a test outcome that depended on filesystem traversal order, not on content. (Codex
+/// P2 on this commit.)
+fn doc_citations_across_sources(
+    sources: &[String],
+) -> (Vec<Citation>, Vec<UnreachedCitation>, usize, usize) {
+    let mut citations = Vec::new();
+    let mut unreached = Vec::new();
+    let mut consumed = 0;
+    let mut present = 0;
+    for source in sources {
+        let (mut source_citations, mut source_unreached, source_consumed) = doc_citations(source);
+        present += count_citation_sites(source);
+        consumed += source_consumed;
+        citations.append(&mut source_citations);
+        unreached.append(&mut source_unreached);
+    }
+    (citations, unreached, consumed, present)
+}
+
+/// A citation's lookahead stays inside its own source and never borrows a neighbour's token.
+///
+/// `source_a` ends with a citation to a real file (`core/runtime/src/retrieval.rs`) whose OWN
+/// text has no line after it -- it must be pinned unreachable. `source_b` starts with a line
+/// that reads as an identifier. Concatenating the two before extraction (the defect this
+/// function replaces) would let the citation borrow `source_b`'s token and silently stop being
+/// unreachable; processing them as independent sources must not.
+#[test]
+fn citation_lookahead_does_not_cross_a_source_boundary() {
+    let source_a = "core/runtime/src/retrieval.rs:12-26\n".to_owned();
+    let source_b = "Synthetic borrowed_token from an unrelated fixture\n".to_owned();
+    let (_, unreached, _, _) = doc_citations_across_sources(&[source_a, source_b]);
+    assert_eq!(
+        unreached.len(),
+        1,
+        "the trailing citation in source_a has no next line WITHIN its own source and must stay \
+         pinned unreachable, not borrow source_b's token"
+    );
+}
+
+/// One `path.rs:COORDINATES` occurrence, located in the raw line.
+struct CitationSite {
+    /// Byte index just past `.rs`, where the path ends.
+    path_end: usize,
+    /// Byte index where the text after the coordinates begins.
+    tail_start: usize,
+    regions: Vec<(usize, usize)>,
+}
+
+/// Every `.rs:` occurrence in one line, with its coordinates consumed from the RAW text.
+///
+/// **Scanning the raw line rather than whitespace-separated words is the structural fix, and it
+/// arrived only after three formats had been chased one at a time.** Splitting on whitespace first
+/// let the READER's shape decide the CITATION's shape: `memory.rs:63, 858, 887` becomes the three
+/// words `memory.rs:63,` / `858,` / `887`, only the first carries `.rs:`, and two coordinates
+/// vanish with nothing to notice. Backtick wrappers and provenance keys nested one level down were
+/// the same defect wearing other clothes. A citation is a pattern in text, so text is what gets
+/// scanned. (Codex P2 on #610.)
+/// The byte length of a RANGE separator starting at `line[pos..]`, or `None`.
+///
+/// Recognising `-`, `..`, an en dash (`–`), or an em dash (`—`) is a SHARED PRIMITIVE, not a
+/// shared FILTER -- the same class of sharing both instruments already do by calling
+/// `is_ascii_digit()`. What must stay independent is judgment about CONTENT: whether a path
+/// resolves, whether a token exists. A shared filter on content is where the `:L249` defect hid
+/// from both sides at once. Agreeing on what a separator character looks like is not that; it is
+/// widening what a digit run may be followed by, identically, in both places that ask.
+///
+/// Fresh evidence after the partial-suffix fix (Codex P2 on this commit): `574..576` and a
+/// typographic en dash both parsed as one coordinate in both instruments, because both recognised
+/// only `,` and ASCII `-`. Two instruments sharing an unrecognised shape agree in silence exactly
+/// like two instruments sharing a filter do.
+fn separator_len(line: &str, pos: usize) -> Option<usize> {
+    let rest = line.get(pos..)?;
+    if rest.starts_with("..") {
+        Some(2)
+    } else if rest.starts_with('-') {
+        Some(1)
+    } else {
+        ['\u{2013}', '\u{2014}']
+            .into_iter()
+            .find(|dash| rest.starts_with(*dash))
+            .map(|dash| dash.len_utf8())
+    }
+}
+
+/// A range spelled with `..` or a typographic dash is recognised as a two-endpoint range by
+/// BOTH instruments, not just accepted as a one-coordinate prefix by neither.
+///
+/// Fresh evidence (Codex P2 on this commit): before `separator_len`, `574..576` and a range
+/// joined by an en dash both stopped at the first digit run in `citation_sites` AND in
+/// `count_coordinates_in_line` -- two instruments recognising the same narrow set of separators
+/// agree in silence exactly like two instruments sharing a filter do.
+#[test]
+fn a_range_written_with_dots_or_a_typographic_dash_is_recognised_by_both_instruments() {
+    for (line, dash_name) in [
+        (
+            "core/protocols/src/development.rs:574..576 OpaqueId",
+            "double-dot",
+        ),
+        (
+            "core/protocols/src/development.rs:574\u{2013}576 OpaqueId",
+            "en dash",
+        ),
+        (
+            "core/protocols/src/development.rs:574\u{2014}576 OpaqueId",
+            "em dash",
+        ),
+    ] {
+        let sites = citation_sites(line);
+        assert_eq!(sites.len(), 1, "{dash_name}: {line}");
+        assert_eq!(sites[0].regions, vec![(574, 576)], "{dash_name}: {line}");
+        assert_eq!(
+            count_coordinates_in_line(line),
+            2,
+            "{dash_name}: two endpoints, one range: {line}"
+        );
+    }
+}
+
+fn citation_sites(line: &str) -> Vec<CitationSite> {
+    let bytes = line.as_bytes();
+    let mut sites = Vec::new();
+    for (marker, _) in line.match_indices(".rs:") {
+        let mut cursor = marker + ".rs:".len();
+        let mut regions = Vec::new();
+        loop {
+            let digits_start = cursor;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+                cursor += 1;
+            }
+            if cursor == digits_start {
+                break;
+            }
+            let first: usize = line[digits_start..cursor].parse().expect("ascii digits");
+            let mut last = first;
+            if let Some(sep_len) = separator_len(line, cursor) {
+                let range_start = cursor + sep_len;
+                let mut range_end = range_start;
+                while range_end < bytes.len() && bytes[range_end].is_ascii_digit() {
+                    range_end += 1;
+                }
+                if range_end > range_start {
+                    let end: usize = line[range_start..range_end].parse().expect("ascii digits");
+                    if end >= first {
+                        last = end;
+                        cursor = range_end;
+                    }
+                }
+            }
+            regions.push((first, last));
+            // A comma continues the list only when a NUMBER follows it. `:42, and the rest` is
+            // prose, and consuming that would invent a coordinate out of a sentence.
+            let mut lookahead = cursor;
+            if lookahead < bytes.len() && bytes[lookahead] == b',' {
+                lookahead += 1;
+                while lookahead < bytes.len() && bytes[lookahead] == b' ' {
+                    lookahead += 1;
+                }
+                if lookahead < bytes.len() && bytes[lookahead].is_ascii_digit() {
+                    cursor = lookahead;
+                    continue;
+                }
+            }
+            break;
+        }
+        if !regions.is_empty() {
+            sites.push(CitationSite {
+                path_end: marker + ".rs".len(),
+                tail_start: cursor,
+                regions,
+            });
+        }
+    }
+    sites
+}
+
+/// The repository-relative path ending at `path_end`, if it names a real file.
+///
+/// Walks back over path characters only, so a backtick, a parenthesis or a table pipe ends the path
+/// instead of being swallowed into it -- the trimming defect, now structural rather than patched.
+fn resolved_path(line: &str, path_end: usize) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut start = path_end;
+    while start > 0 {
+        let candidate = bytes[start - 1];
+        let ok = candidate.is_ascii_alphanumeric()
+            || candidate == b'_'
+            || candidate == b'/'
+            || candidate == b'.'
+            || candidate == b'-';
+        if !ok {
+            break;
+        }
+        start -= 1;
+    }
+    let path = &line[start..path_end];
+    repository_root()
+        .join(path)
+        .is_file()
+        .then(|| path.to_owned())
+}
+
+/// How many citation sites the text contains, counted independently of the extractor.
+///
+/// The completeness control that format-chasing lacked: every `.rs:` whose path resolves to a real
+/// file is a site the extractor MUST have produced. A coordinate shape it cannot read fails a count
+/// instead of disappearing.
+///
+/// **This deliberately does NOT require a digit after the colon**, and the first version did. That
+/// version was tested by inventing a fifth format -- `memory.rs:L249` -- and it stayed GREEN,
+/// because a counter that skips what it does not recognise agrees with an extractor that skips the
+/// same thing. Two instruments sharing one blind spot report consensus. Measured before widening:
+/// every `.rs:` in the harness doc is followed by a digit today, so nothing legitimate is caught by
+/// the wider rule, and a citation this repository cannot parse SHOULD fail rather than pass.
+fn count_citation_sites(text: &str) -> usize {
+    text.lines().map(count_coordinates_in_line).sum()
+}
+
+/// Coordinates a line SPELLS, read from raw syntax and nothing else.
+///
+/// **Two corrections in one, and they are the same correction.**
+///
+/// It used to call `resolved_path`, which is the extractor's own existence filter. Two instruments
+/// that share a filter share its blind spot, and a citation whose path does not resolve was dropped
+/// by BOTH and reported as agreement. That is the `:L249` defect from #610 one layer up: I widened
+/// the counter past "digit after the colon" and left it leaning on the same path check. So this
+/// resolves nothing. A citation nobody can follow is a defect, and it now shows up as a count that
+/// will not reconcile rather than as silence. (Codex P2 on #610.)
+///
+/// And it counts COORDINATES, not sites. `file.rs:574 - 576` parses as `574` and drops ` - 576`
+/// without a word -- the fifth format, accepted as a prefix instead of refused as a partial suffix.
+/// At site grain both instruments say "one site" and agree while half the citation is gone; at
+/// coordinate grain syntax says two and the extractor says one, and the count names the citation
+/// the parser did not understand whole.
+///
+/// **This is what ends the series.** Formats one through four were each fixed after somebody
+/// pointed at them. A sixth format cannot hide here: whatever shape it takes, the digits it spells
+/// are counted, and any shape the extractor cannot consume whole diverges.
+fn count_coordinates_in_line(line: &str) -> usize {
+    let bytes = line.as_bytes();
+    let mut total = 0;
+    for (marker, _) in line.match_indices(".rs:") {
+        let mut cursor = marker + ".rs:".len();
+        let mut first_in_site = true;
+        loop {
+            let start = cursor;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+                cursor += 1;
+            }
+            if cursor == start {
+                // An occurrence whose suffix does not parse still COUNTS. Breaking without
+                // incrementing was the `:L249` defect surviving inside its own cure: this function's
+                // doc-comment claims the control detects unsupported spellings, and `file.rs:L249`
+                // incremented nothing here while `citation_sites` emitted nothing there -- both
+                // blind, both silent, agreement reported. A comment claiming a property the code
+                // does not have is worse than no comment. (Codex P2 on #610.)
+                if first_in_site {
+                    total += 1;
+                }
+                break;
+            }
+            first_in_site = false;
+            total += 1;
+            // A separator continues the coordinate expression only when a NUMBER follows it.
+            // Spaces are tolerated around it ON PURPOSE: `574 - 576` is the partial-suffix shape,
+            // and tolerating it HERE is what makes the extractor's refusal of it visible.
+            //
+            // `separator_len` widens what counts as a separator beyond `-` to `..` and the two
+            // typographic dashes, the SAME primitive `citation_sites` uses to form a range -- not
+            // a second copy of the recognition, which is exactly the split that let `574..576`
+            // parse as one coordinate in both places and agree in silence. (Codex P2 on this
+            // commit.)
+            let mut lookahead = cursor;
+            while lookahead < bytes.len() && bytes[lookahead] == b' ' {
+                lookahead += 1;
+            }
+            let advance = if lookahead < bytes.len() && bytes[lookahead] == b',' {
+                Some(1)
+            } else {
+                separator_len(line, lookahead)
+            };
+            if let Some(advance) = advance {
+                lookahead += advance;
+                while lookahead < bytes.len() && bytes[lookahead] == b' ' {
+                    lookahead += 1;
+                }
+                if lookahead < bytes.len() && bytes[lookahead].is_ascii_digit() {
+                    cursor = lookahead;
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+    total
+}
+
+/// The citations `identifier_in`'s heuristic cannot reach today, pinned by coordinate and exact
+/// context -- neither side of this list may drift silently (the PINNED-GAP pattern, #571's `a'`;
+/// staleness rule from #593). A NEW unreachable citation is a hole growing unwatched: not in this
+/// list, and the assertion below fires. An entry here that BECOMES reachable is a stale pin
+/// claiming a gap that already closed: also fires, because a debt nobody re-measures is a false
+/// one. Both directions assert, on purpose.
+///
+/// Each is a real, resolvable citation with no word nearby satisfying `identifier_in` (>=5 chars,
+/// starts alpha/underscore, contains underscore or uppercase) -- not rot, prose that doesn't
+/// happen to contain a code-shaped word next to the coordinate it names. Measured against
+/// `doc_citations`'s real output, not paraphrased (Codex P2 on 888d07e9, and the finding this pin
+/// exists to answer without either a false alarm or a silent gap).
+///
+/// **Widening `identifier_in` to close these for real is deliberate follow-up work, not a quick
+/// patch here.** It risks reopening the exact failure this file already fought to close: a token
+/// search that reaches too far borrows the WRONG citation's symbol and accuses the right file of
+/// missing it (`memory.rs:512` borrowing `jpd_plugin.rs`'s token, Codex P2 on #606). Tracked as
+/// #625, citing this pin as its starting population.
+fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
+    vec![
+        UnreachedCitation {
+            path: "core/governor/src/memory.rs".to_owned(),
+            first_line: 764,
+            last_line: 764,
+            context: "` (a validator roster may not be the producer) and".to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/governor/src/memory.rs".to_owned(),
+            first_line: 296,
+            last_line: 296,
+            context: "` screens with".to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/graph/src/persistence.rs".to_owned(),
+            first_line: 736,
+            last_line: 736,
+            context: "` requires a prefix **and** a tail of".to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/governor/src/memory.rs".to_owned(),
+            first_line: 296,
+            last_line: 296,
+            context: "` | `content.contains(\"ghp_\")` — one prefix, no tail requirement |"
+                .to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/graph/src/persistence.rs".to_owned(),
+            first_line: 736,
+            last_line: 736,
+            context: "` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, \
+                      authorization, environment-URI and reference-name forms |"
+                .to_owned(),
+        },
+        // Section 7's "Would fall at" line. It was written with a BARE filename
+        // (`development_contract_schemas.rs:622`), which resolved to nothing, so both the extractor
+        // and the old counter dropped it in silence -- a citation nobody could follow and nothing
+        // could check. The path is now written in full, which makes it resolvable and lands it
+        // here: the tail after it is `.`, so no symbol is reachable and this is a real gap, named
+        // rather than hidden. (Codex P2 on #610.)
+        //
+        // The line number moved from `576` to `622` while merging origin/main into this branch:
+        // the merge conflict carried two different numbers on its two sides (a stale one from this
+        // branch's own history, a stale one from main's), and `622` is the one that matches
+        // `freshness_is_the_relation_between_the_two_snapshot_identities`'s actual assertion today.
+        UnreachedCitation {
+            path: "apps/cli/tests/development_contract_schemas.rs".to_owned(),
+            first_line: 622,
+            last_line: 622,
+            context: "`.".to_owned(),
+        },
+        // THREE entries for one citation, because `tests/memory.rs:63, 858, 887` names three lines.
+        // Each is pinned separately: a comma list that loses its tail loses it in silence otherwise,
+        // and this list is the only place those coordinates are written down at all.
+        UnreachedCitation {
+            path: "core/governor/tests/memory.rs".to_owned(),
+            first_line: 63,
+            last_line: 63,
+            context: "```".to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/governor/tests/memory.rs".to_owned(),
+            first_line: 858,
+            last_line: 858,
+            context: "```".to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/governor/tests/memory.rs".to_owned(),
+            first_line: 887,
+            last_line: 887,
+            context: "```".to_owned(),
+        },
+        UnreachedCitation {
+            path: "core/runtime/src/retrieval.rs".to_owned(),
+            first_line: 12,
+            last_line: 26,
+            context: "<no usable next line>".to_owned(),
+        },
+    ]
 }
 
 /// The first word long enough to be a symbol rather than prose punctuation.
@@ -764,7 +1277,7 @@ fn collect_every_string(value: &Value, out: &mut String) {
 #[test]
 fn every_cited_line_in_the_harness_doc_still_holds_its_symbol() {
     let doc = repository_root().join("docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md");
-    let text = fs::read_to_string(&doc)
+    let doc_text = fs::read_to_string(&doc)
         .unwrap_or_else(|error| panic!("HARNESS-BROKE: the harness doc is unreadable: {error}"));
     // The corpus fixtures cite the same protections the doc does, and the rot was in BOTH: the doc
     // said `memory.rs:285` and so did `markers.json`. A guard whose population is only the document
@@ -776,11 +1289,45 @@ fn every_cited_line_in_the_harness_doc_still_holds_its_symbol() {
     // claims about this repository, and flagging them would be a guard fabricating failures out of
     // test data. The corpus reserves `_safety`, `_measured_at`, `_detectors`, `_shape`, `_note` for
     // provenance, so provenance is what this reads.
-    let mut text = text;
+    let mut sources = vec![doc_text];
     for path in corpus_provenance_files() {
-        collect_underscore_strings(&load_json(&path), &mut text);
+        let mut buffer = String::new();
+        collect_underscore_strings(&load_json(&path), &mut buffer);
+        sources.push(buffer);
     }
-    let citations = doc_citations(&text);
+    let (citations, mut unreached, consumed, present) = doc_citations_across_sources(&sources);
+
+    // COMPLETENESS CONTROL, and it is what the fixed floor below could never be. Three coordinate
+    // formats were read by this collector only after somebody pointed at each one. This asserts
+    // that the number of citation sites present in the text equals the number the extractor could
+    // even PARSE into a site (consumed-with-a-token plus pinned-unreachable), so a FOURTH format
+    // fails a count rather than vanishing -- the series ends here instead of growing one patch at
+    // a time. (Codex P2 on #610.)
+    let parseable = consumed;
+    assert_eq!(
+        parseable, present,
+        "the extractor consumed {parseable} coordinates where the text SPELLS {present}. The \
+         difference is a citation the parser did not understand whole: either a path it cannot \
+         resolve, which is a citation nobody can follow, or a suffix it read only the head of \
+         (`:574 - 576` yields one coordinate where two are written). Both used to pass in \
+         silence, because the counter shared the extractor's own filters"
+    );
+
+    // PINNED-GAP CONTROL. Of the sites the extractor CAN parse, some still find no token nearby --
+    // real citations, not rot, that `identifier_in`'s heuristic cannot reach. Both directions of
+    // drift assert: a citation that stops being pinned (a NEW unreachable one) is a hole growing
+    // silently, and a pinned citation that becomes reachable is a stale debt (#593). See
+    // `pinned_unreachable_citations` for the reasoning and the follow-up this pin exists to scope.
+    unreached.sort();
+    let mut expected_unreached = pinned_unreachable_citations();
+    expected_unreached.sort();
+    assert_eq!(
+        unreached, expected_unreached,
+        "the unreachable-citation pin no longer matches reality. If this list GREW, a citation \
+         the heuristic cannot reach rotted unwatched -- add it here with its context, or widen \
+         `identifier_in` to reach it for real. If this list SHRANK, a pinned entry became \
+         reachable -- remove it, the debt it named is paid"
+    );
 
     // POPULATION CONTROL. An extractor that matched nothing would satisfy the loop below while
     // reading no citation at all, and the doc's whole point is that it cites.
@@ -795,16 +1342,25 @@ fn every_cited_line_in_the_harness_doc_still_holds_its_symbol() {
     for citation in &citations {
         let source = fs::read_to_string(repository_root().join(&citation.path))
             .unwrap_or_else(|error| panic!("HARNESS-BROKE: {} unreadable: {error}", citation.path));
-        let cited = source.lines().nth(citation.line - 1).unwrap_or("");
-        if !cited.contains(&citation.token) {
+        let cited = source
+            .lines()
+            .skip(citation.first - 1)
+            .take(citation.last + 1 - citation.first)
+            .any(|line| line.contains(&citation.token));
+        if !cited {
             let moved = source
                 .lines()
                 .position(|line| line.contains(&citation.token))
                 .map(|index| format!("now at :{}", index + 1))
                 .unwrap_or_else(|| "not found in the file at all".to_owned());
+            let where_ = if citation.first == citation.last {
+                format!("{}", citation.first)
+            } else {
+                format!("{}-{}", citation.first, citation.last)
+            };
             rotted.push(format!(
-                "{}:{} promises `{}` -- {moved}",
-                citation.path, citation.line, citation.token
+                "{}:{where_} promises `{}` -- {moved}",
+                citation.path, citation.token
             ));
         }
     }
@@ -917,6 +1473,30 @@ fn every_s5a_marker_behaves_as_the_corpus_says_against_both_shipped_detectors() 
                      content -- the corpus claim is about secret detection"
                 ),
             };
+
+        // The class is a THIRD claim, and the booleans alone cannot keep it honest: relabel a
+        // DECLARED_GAP entry as AGREED and every check above still passes, while
+        // `the_marker_corpus_labels_every_class` only asks that each class appears somewhere. The
+        // contract is the harness doc's own class table. (Codex P2 on #606.)
+        let class = marker["class"]
+            .as_str()
+            .expect("every marker declares a class");
+        let expected = match class {
+            "AGREED" => (true, true),
+            "DIVERGENT" => (true, false),
+            "DECLARED_GAP" => (false, true),
+            other => panic!(
+                "marker {id} declares class `{other}`, which the harness doc's class table does \
+                 not define -- a class nobody can check is a label, not a claim"
+            ),
+        };
+        assert_eq!(
+            (memory_refuses, durable_refuses),
+            expected,
+            "marker {id} is labelled {class}: the harness doc defines that as (memory, durable) = \
+             {expected:?}, and the shipped detectors answered otherwise. The label and the \
+             measurement must not disagree"
+        );
 
         for (detector, measured, declared) in [
             ("memory", memory_refuses, marker["memory_refuses"].as_bool()),

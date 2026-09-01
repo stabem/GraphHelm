@@ -11,6 +11,11 @@
 //!   directory, exit 0
 //! - `cwd`: print the current directory, exit 0
 //! - `sleep`: sleep 3600 s (the host must kill it)
+//! - `append-forever <path>`: append a line to <path> every 5 ms, forever. The mirror of
+//!   `sleep` for CANCELLATION (#180): `sleep` proves a child was killed by observing that the
+//!   CALL returned, which a caller can fake by abandoning the handle. This one leaves a trace
+//!   OUTSIDE the process, so "the child is gone" is measured by the file no longer growing
+//!   rather than by the parent claiming it stopped waiting.
 //! - `big-output`: write 8 MiB of `x` to stdout, exit 0
 //! - `marked-output`: write a HEAD sentinel, 8 MiB of filler, then a TAIL sentinel, exit 0.
 //!   `big-output` cannot test which END of an overflowing stream survives -- it writes 8 MiB of
@@ -46,6 +51,26 @@ fn main() {
                 "{}",
                 std::env::current_dir().expect("current dir").display()
             );
+        }
+        "append-forever" => {
+            let path = arguments.next().expect("append-forever needs a path");
+            let mut tick: u64 = 0;
+            loop {
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .expect("append-forever opens its file");
+                writeln!(file, "tick {tick}").expect("append");
+                tick += 1;
+                // FIVE milliseconds, an order under the host's 50 ms poll, and the interval is
+                // the whole instrument. At 50 ms the child wrote at the same rate the loop
+                // polls, so "still alive for one more poll" produced either one extra line or
+                // none -- a coin flip, and the cancel-returns-after-the-reap cell came out GREEN
+                // against a `cancel` that only signalled. A fixture whose grain matches the
+                // defect's grain cannot see the defect.
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
         }
         "sleep" => {
             std::thread::sleep(std::time::Duration::from_secs(3600));

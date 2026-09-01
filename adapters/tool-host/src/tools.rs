@@ -9,7 +9,7 @@ use std::path::Path;
 use graphhelm_tool_broker::call::valid_commit_message;
 use graphhelm_tool_broker::path::RelativePath;
 
-use crate::process::{CapturedProcess, HostError, ProcessLimits, run_in_workspace};
+use crate::process::{CancelSignal, CapturedProcess, HostError, ProcessLimits, run_in_workspace};
 use crate::workspace::resolve_within;
 
 /// Repository reads are in-process under the containment walk — Tier 0 runs no child at all
@@ -44,6 +44,9 @@ fn in_process(stdout: Vec<u8>, truncated: bool) -> CapturedProcess {
         stderr_truncated: false,
         truncated,
         timed_out: false,
+        // Tier 0 spawns nothing, so no cancellation could have stopped a child here. A
+        // measurement about a path with no child, not a default.
+        cancelled: false,
     }
 }
 
@@ -110,6 +113,7 @@ impl RepositoryTool {
         target: &Path,
         path_prepend: &[std::path::PathBuf],
         limits: &ProcessLimits,
+        cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
         let target_text = crate::workspace::git_safe(target);
         run_in_workspace(
@@ -125,6 +129,7 @@ impl RepositoryTool {
             path_prepend,
             None,
             limits,
+            cancel,
         )
     }
 
@@ -135,6 +140,7 @@ impl RepositoryTool {
         patch: &str,
         path_prepend: &[std::path::PathBuf],
         limits: &ProcessLimits,
+        cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
         run_in_workspace(
             workspace_root,
@@ -144,6 +150,7 @@ impl RepositoryTool {
             path_prepend,
             Some(patch.as_bytes()),
             limits,
+            cancel,
         )
     }
 
@@ -155,6 +162,7 @@ impl RepositoryTool {
         message: &str,
         path_prepend: &[std::path::PathBuf],
         limits: &ProcessLimits,
+        cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
         if !valid_commit_message(message) {
             return Err(HostError::Config {
@@ -169,6 +177,7 @@ impl RepositoryTool {
             path_prepend,
             None,
             limits,
+            cancel,
         )?;
         if add.exit_code != Some(0) {
             return Ok(add);
@@ -192,6 +201,7 @@ impl RepositoryTool {
             path_prepend,
             None,
             limits,
+            cancel,
         )
     }
 }
@@ -203,6 +213,7 @@ impl ShellTool {
         arguments: &[String],
         path_prepend: &[std::path::PathBuf],
         limits: &ProcessLimits,
+        cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
         run_in_workspace(
             workspace_root,
@@ -212,6 +223,7 @@ impl ShellTool {
             path_prepend,
             None,
             limits,
+            cancel,
         )
     }
 }
@@ -224,6 +236,7 @@ impl TestsTool {
         arguments: &[String],
         path_prepend: &[std::path::PathBuf],
         limits: &ProcessLimits,
+        cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
         run_in_workspace(
             workspace_root,
@@ -233,6 +246,7 @@ impl TestsTool {
             path_prepend,
             None,
             limits,
+            cancel,
         )
     }
 }

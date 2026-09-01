@@ -49,6 +49,12 @@ pub struct CapturedStreams {
 pub struct ToolHost {
     config: HostConfig,
     call_counter: AtomicU64,
+    /// Raised by [`ToolHost::cancel_all`], read by the spawn loop at its next 50 ms poll (#180).
+    ///
+    /// Held by the HOST rather than per call, because a caller cancelling a run does not know
+    /// which call is in flight -- it knows the execution is over. Every child this host spawns
+    /// shares it, which is exactly the scope `cancel_all` names.
+    cancel: crate::process::CancelSignal,
 }
 
 /// The stable rule name a refusal records — the `Denied` disposition's content-free vocabulary.
@@ -76,6 +82,7 @@ fn host_error_code(error: &HostError) -> String {
         HostError::ExecutableNotPinned { .. } => "GHTOOL008_EXECUTABLE_UNPINNED".to_owned(),
         HostError::ExecutableMismatch { .. } => "GHTOOL009_EXECUTABLE_MISMATCH".to_owned(),
         HostError::SnapshotMismatch { .. } => "GHTOOL010_SNAPSHOT_MISMATCH".to_owned(),
+        HostError::Cancelled => "GHTOOL011_CANCELLED".to_owned(),
     }
 }
 
@@ -103,12 +110,32 @@ impl ToolHost {
         Self {
             config,
             call_counter: AtomicU64::new(0),
+            cancel: crate::process::CancelSignal::new(),
         }
+    }
+
+    /// Kill and reap every child this host has in flight (#180).
+    ///
+    /// The mechanism is the deadline's rather than a new one: the poll loop that already owns
+    /// each child gains a second reason to kill it, and reaps by the same two lines. What this
+    /// does NOT do is unwind the call -- the invocation still returns a record, now for a child
+    /// that stopped, which is what keeps a cancelled run from becoming an absence in the journal.
+    ///
+    /// One-way, and that matches the caller: a run is cancelled once, and the host that carried
+    /// it is not reused afterwards.
+    pub fn cancel_all(&self) {
+        self.cancel.cancel();
     }
 
     /// One decided call, end to end. A [`BrokerRefusal`] becomes `Denied` and NO filesystem
     /// action of any kind happens after it; execution failures become `HostError`; a deadline
-    /// kill becomes `TimedOut`; everything else is `Completed` with the child's exit code.
+    /// kill becomes `TimedOut`; a cancellation becomes `HostError { GHTOOL011_CANCELLED }`;
+    /// everything else is `Completed` with the child's exit code.
+    ///
+    /// The cancellation arm is read BEFORE the exit code because a killed child HAS one — this
+    /// sentence said "everything else" while a cancelled call fell through to
+    /// `Completed { exit_code: 1 }` on Windows, and the description was accurate about the code
+    /// while being wrong about the outcome.
     pub fn invoke(
         &self,
         call: &ToolCall,
@@ -189,7 +216,28 @@ impl ToolHost {
         let executed = self.execute_plan(call, &plan, actor);
         let (disposition, captured) = match executed {
             Ok(captured) => {
-                let disposition = if captured.timed_out {
+                // Cancellation is read BEFORE the exit code, because a killed child HAS one
+                // (Codex, #609). Falling through recorded a cancelled call as
+                // `Completed { exit_code: 1 }` on Windows — a tool that ran and failed — which
+                // `ToolFailureSemantics::RetryEligible` turns into `RetryableFailure`. The record
+                // then invited a retry of something an operator had deliberately stopped.
+                //
+                // It reuses GHTOOL011_CANCELLED so the code means ONE thing: this call reached no
+                // tool verdict because the host was cancelled — whether the spawn was refused or
+                // the running child was killed. Those were inconsistent before: only the refusal
+                // had a name, and the case that actually matters had none.
+                //
+                // NARROWER than it could be, deliberately. The honest disposition is a
+                // `Cancelled` variant of its own; adding one is a wire-vocabulary change with its
+                // own schema and vocabulary-agreement guards, which is protocol scope rather than
+                // this issue's. `HostError` reaches `TerminalFailure`, which is the right outcome
+                // for a cancellation — you do not retry what an operator stopped — so the
+                // narrowing costs the NAME and not the behaviour.
+                let disposition = if captured.cancelled {
+                    ToolDisposition::HostError {
+                        code: "GHTOOL011_CANCELLED".to_owned(),
+                    }
+                } else if captured.timed_out {
                     ToolDisposition::TimedOut
                 } else {
                     match captured.exit_code {
@@ -215,6 +263,9 @@ impl ToolHost {
                     stderr_truncated: false,
                     truncated: false,
                     timed_out: false,
+                    // A refusal before the spawn already carries its own code through
+                    // `host_error_code`; this arm is about a child that never existed.
+                    cancelled: false,
                 },
             ),
         };
@@ -318,6 +369,7 @@ impl ToolHost {
                         self.config.workspace.project(),
                         prepend,
                         limits,
+                        Some(&self.cancel),
                     );
                     let _ = std::fs::remove_dir_all(&scratch);
                     result
@@ -329,14 +381,30 @@ impl ToolHost {
                     Tier1Workspace::provision(&self.config.workspace, &self.next_call_id())?;
                 let result = match call {
                     ToolCall::Repository(RepositoryAction::ApplyPatch { patch }) => {
-                        RepositoryTool::apply_patch(workspace.root(), patch, prepend, limits)
+                        RepositoryTool::apply_patch(
+                            workspace.root(),
+                            patch,
+                            prepend,
+                            limits,
+                            Some(&self.cancel),
+                        )
                     }
                     ToolCall::Repository(RepositoryAction::Commit { message }) => {
-                        RepositoryTool::commit(workspace.root(), message, prepend, limits)
+                        RepositoryTool::commit(
+                            workspace.root(),
+                            message,
+                            prepend,
+                            limits,
+                            Some(&self.cancel),
+                        )
                     }
-                    ToolCall::Repository(RepositoryAction::Diff) => {
-                        RepositoryTool::diff(workspace.root(), workspace.root(), prepend, limits)
-                    }
+                    ToolCall::Repository(RepositoryAction::Diff) => RepositoryTool::diff(
+                        workspace.root(),
+                        workspace.root(),
+                        prepend,
+                        limits,
+                        Some(&self.cancel),
+                    ),
                     ToolCall::Repository(
                         RepositoryAction::ReadFile { .. } | RepositoryAction::ListFiles { .. },
                     ) => {
@@ -355,6 +423,7 @@ impl ToolHost {
                             &action.arguments,
                             prepend,
                             limits,
+                            Some(&self.cancel),
                         )
                     }
                     ToolCall::Tests(action) => {
@@ -370,6 +439,7 @@ impl ToolHost {
                             &action.arguments,
                             prepend,
                             limits,
+                            Some(&self.cancel),
                         )
                     }
                 };

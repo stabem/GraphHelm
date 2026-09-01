@@ -220,9 +220,19 @@ impl ToolPort for ServeToolPort {
         })
     }
 
-    // No cancel hook: `ToolHost` exposes no kill surface for in-flight children beyond what the
-    // process's own deadline already bounds (`ProcessLimits`) — the default no-op is accepted
-    // and reported, matching `ServeModelPort`'s own note.
+    /// #180: cancelling a run kills the tool children it left running.
+    ///
+    /// The comment this replaces said `ToolHost` exposed no kill surface, and it was TRUE when
+    /// written -- the host retained no handle to an in-flight child, so the default no-op was the
+    /// honest thing to accept. It stopped being true in the same commit as this line: the host now
+    /// carries a cancel signal that the spawn loop reads at its next poll, killing and reaping
+    /// through the deadline's own path.
+    ///
+    /// A comment is a claim, so it goes out with the code it described rather than staying to
+    /// certify the opposite.
+    fn cancel_all(&self) {
+        self.host.cancel_all();
+    }
 }
 
 /// A sealer that always refuses. Wired in when `serve` runs without a keyring: a fixture story

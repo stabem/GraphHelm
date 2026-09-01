@@ -142,6 +142,12 @@ impl Tier1Workspace {
         // `git apply --index` there ("does not match index"), because the smudged worktree
         // no longer re-hashes to its index entry once the filter is gone. Consistency of
         // config IS the correctness condition, so HOME points at the empty no-hooks scratch.
+        // #180/#609: these provisioning spawns are OUTSIDE `CancelSignal`. The reason is the one
+        // above -- `run_in_workspace` needs an existing root and this is what creates it -- and the
+        // consequence is stated rather than left to be discovered: a cancellation arriving mid
+        // provision does not stop this `git`. It is bounded by its own exit and happens before the
+        // call a caller would cancel, so the window is small; it is not zero, and nothing here
+        // pretends it is.
         let status = Command::new("git")
             .arg("-c")
             .arg(format!("core.hooksPath={}", git_safe(&no_hooks)))

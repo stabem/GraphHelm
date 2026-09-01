@@ -153,7 +153,7 @@ fn a_call_hands_the_provider_the_snapshot_and_the_confined_cache() {
     let session = ContainedProviderSession::open(&workspace, verified, pinned);
 
     let captured = session
-        .call(&["env-dump".to_owned()], None, &limits())
+        .call(&["env-dump".to_owned()], None, &limits(), None)
         .expect("a contained call runs");
 
     let dump = String::from_utf8_lossy(&captured.stdout);
@@ -187,7 +187,7 @@ fn a_tampered_snapshot_refuses_the_call_before_any_spawn() {
     std::fs::write(&tamper_target, b"moved under the session").unwrap();
 
     let refused = session
-        .call(&["env-dump".to_owned()], None, &limits())
+        .call(&["env-dump".to_owned()], None, &limits(), None)
         .expect_err("a call read a snapshot that no longer matches its pin");
 
     assert!(

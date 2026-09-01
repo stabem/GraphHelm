@@ -104,6 +104,7 @@ fn a_verified_spawn_runs_the_pinned_binary_in_the_workspace() {
         &[],
         None,
         &limits(),
+        None,
     )
     .expect("a verified binary runs");
 

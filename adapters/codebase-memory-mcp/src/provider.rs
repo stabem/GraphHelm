@@ -113,7 +113,16 @@ impl StructuralCodeIndex for ContainedIndexProvider {
         let stdin = self.request_lines(request);
         let captured = self
             .session
-            .call(&self.provider_arguments, Some(&stdin), &self.process_limits)
+            // #180: not wired to a cancel signal. This session is opened by the provider, not
+            // by a ToolHost, so there is no host-scoped signal to share -- its bound stays the
+            // deadline. Passing None is a declared limit, not an oversight: cancelling a run
+            // does not yet reach a contained index child.
+            .call(
+                &self.provider_arguments,
+                Some(&stdin),
+                &self.process_limits,
+                None,
+            )
             .map_err(|_| StructuralCodeIndexError::Unavailable)?;
 
         // The reply to id 2 is the LAST id-bearing line; provider prose on other lines is not

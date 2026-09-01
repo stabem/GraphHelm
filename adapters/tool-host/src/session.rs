@@ -21,7 +21,9 @@ use std::path::PathBuf;
 
 use graphhelm_tool_broker::record::{ContainedSessionIdentity, digest_hex};
 
-use crate::process::{CapturedProcess, HostError, ProcessLimits, run_verified_in_workspace};
+use crate::process::{
+    CancelSignal, CapturedProcess, HostError, ProcessLimits, run_verified_in_workspace,
+};
 use crate::snapshot::{PinnedSnapshot, verify_pinned};
 use crate::verified::VerifiedExecutable;
 use crate::workspace::Tier1Workspace;
@@ -102,6 +104,7 @@ impl ContainedProviderSession {
         arguments: &[String],
         stdin_bytes: Option<&[u8]>,
         limits: &ProcessLimits,
+        cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
         verify_pinned(self.snapshot.root(), self.snapshot.generation())?;
         let mut extra = BTreeMap::new();
@@ -117,6 +120,7 @@ impl ContainedProviderSession {
             &[],
             stdin_bytes,
             limits,
+            cancel,
         )
     }
 }

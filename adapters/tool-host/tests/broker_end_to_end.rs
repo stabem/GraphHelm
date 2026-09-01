@@ -239,6 +239,78 @@ fn a_timeout_record_keeps_the_complete_program_allowlist() {
     assert_eq!(record.program_allowlist, lease.programs);
 }
 
+/// #609, Codex: the durable record must NAME the cause, not merely withhold the wrong one.
+///
+/// `timed_out = expired && !cancelled` keeps the clock from being blamed. It does not put the
+/// cancellation anywhere, and the disposition then falls through to the exit code — which a killed
+/// child HAS. On Windows that made a cancelled call read as `Completed { exit_code: 1 }`, a tool
+/// that ran and failed, which `ToolFailureSemantics::RetryEligible` maps to `RetryableFailure`. The
+/// record invited a retry of something an operator had deliberately stopped.
+///
+/// The arrangement control is the load-bearing half here, because the two routes to
+/// `GHTOOL011_CANCELLED` are indistinguishable in the record: a spawn REFUSED under a raised signal
+/// carries the same code. The child is therefore observed writing OUTSIDE the process before the
+/// cancel, so this cell measures a killed child rather than a refused spawn.
+#[test]
+fn a_cancelled_invocation_names_the_cancellation_instead_of_a_tool_failure() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let evidence = tempfile::tempdir().unwrap();
+    let trace = evidence.path().join("trace.txt");
+    // A generous deadline on purpose: the clock must not be what stops this child.
+    let host = host_with(
+        &project,
+        staging.path(),
+        Duration::from_secs(60),
+        "fake_tool",
+    );
+    // `full_lease` allows git and cargo only; without this the call is DENIED before any spawn,
+    // which the arrangement control below caught by naming the disposition.
+    let mut lease = full_lease("agent-sleeper");
+    lease.programs.insert("fake_tool".to_owned());
+    let call = ToolCall::Shell(ShellAction {
+        program: "fake_tool".to_owned(),
+        arguments: vec!["append-forever".to_owned(), trace.display().to_string()],
+    });
+
+    let record = std::thread::scope(|scope| {
+        let running = scope.spawn(|| host.invoke(&call, &lease, "agent-sleeper"));
+
+        // Tier 1 provisions a git worktree before it spawns, and this machine runs many
+        // toolchains at once, so the window is generous. It fails toward RED either way: a
+        // window that expires reports that nothing was measured rather than certifying a kill.
+        let mut grew = false;
+        for _ in 0..400 {
+            if std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0) > 0 {
+                grew = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        host.cancel_all();
+        let (record, streams) = running.join().expect("the invoking thread returns");
+        assert!(
+            grew,
+            "arrangement: no child was observed writing, so the cancel refused a spawn rather \
+             than killing a child -- and a refusal carries this same code by the other route, \
+             which would make the assertion below vacuous. disposition: {:?}; stderr: {}",
+            record.disposition,
+            String::from_utf8_lossy(&streams.stderr)
+        );
+        record
+    });
+
+    assert_eq!(
+        record.disposition,
+        ToolDisposition::HostError {
+            code: "GHTOOL011_CANCELLED".to_owned()
+        },
+        "a cancelled call must name the cancellation; recording the kill's exit code says the tool \
+         ran and failed, which is a different false cause from the one this change removed"
+    );
+}
+
 #[test]
 fn a_host_error_record_keeps_the_complete_program_allowlist() {
     let (_dir, project) = scratch_repo();

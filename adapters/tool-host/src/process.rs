@@ -8,6 +8,139 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Default)]
+struct CancelState {
+    raised: std::sync::atomic::AtomicBool,
+    /// Spawns currently inside the poll loop with this signal attached.
+    in_flight: std::sync::Mutex<usize>,
+    reaped: std::sync::Condvar,
+}
+
+/// A stop condition the caller can raise AFTER the child is running (#180).
+///
+/// A PARAMETER and not a field of [`ProcessLimits`], deliberately. Limits are configuration a
+/// caller fixes before starting; this is control exercised during. Keeping it in the signature
+/// means every spawn path has to SAY whether it is cancellable -- and a cancellation that
+/// silently reached nothing is the whole of #180.
+///
+/// The deadline already proves the shape works: the poll loop owns the child and knows how to
+/// kill and reap it. This gives that loop a SECOND reason to do exactly what it already does.
+///
+/// # What it does NOT reach, and the reasons are not the same
+///
+/// **Descendants.** [`Child::kill`] ends the direct child; a grandchild it spawned survives and is
+/// reparented (Codex, #609). Worse than a leak: a grandchild that inherited stdout or stderr keeps
+/// those pipes open, so the reader joins below block after the direct child is already reaped — the
+/// failure shows up as a wedged caller rather than as a cancellation that did not take. Closing it
+/// means a Windows job object or a Unix process group, which is platform work this change does not
+/// carry. Tracked as #618.
+///
+/// This comment used to add that nothing in this repository reaches the gap today, on the grounds
+/// that `fake_tool` spawns nothing and the builtin tools run `git` directly. That was a measurement
+/// of the FIXTURES wearing the clothes of a claim about the FUNNEL. `validate_program_name` checks
+/// the shape of a name only — it is not an allowlist — and `ToolCall::Tests` runs
+/// `config.tests_runner`, an operator-supplied program whose whole job is to spawn other processes.
+/// `TestsTool` in production is the shape that reaches this, and it reaches it every time; the
+/// repository's own tests do not only because they set `tests_runner` to `fake_tool`.
+///
+/// **Workspace management.** `workspace.rs` runs `git` directly rather than through
+/// [`run_in_workspace`], for the reason written there: provisioning has no workspace to run inside
+/// yet. Those spawns are outside this signal. Provisioning runs BEFORE the call a caller would
+/// cancel, so a cancellation reaching it arrived before the tool ran at all — but **cleanup runs
+/// AFTER the tool child is killed**, which is exactly when a caller that just cancelled is waiting
+/// on this signal to return. That second one is the reachable half, and the first version of this
+/// paragraph described only the first. Tracked as #617.
+pub struct CancelSignal(std::sync::Arc<CancelState>);
+
+impl CancelSignal {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Raise it and WAIT until every child attached to it has been killed and reaped.
+    ///
+    /// Signalling and guaranteeing are different promises, and #180's criterion is the second one:
+    /// *a cancelled execution leaves no live child*. A `cancel` that only stored a flag would let
+    /// the caller observe "cancelled" while a child is still running for up to one poll interval,
+    /// so the caller could not act on the return at all -- it would have to invent its own wait,
+    /// which is the bookkeeping this type exists to hold. (Codex, #609.)
+    ///
+    /// The wait is bounded rather than open: the loop it waits on polls every 50 ms and kills on
+    /// sight, so a spawn cannot outlive the signal by more than that plus its own reap. The bound
+    /// below exists for the case where a spawn never registered its exit -- a harness fault, not a
+    /// slow child -- and it returns rather than blocking a caller forever.
+    pub fn cancel(&self) {
+        self.0
+            .raised
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let Ok(guard) = self.0.in_flight.lock() else {
+            return;
+        };
+        let _ =
+            self.0
+                .reaped
+                .wait_timeout_while(guard, std::time::Duration::from_secs(30), |count| {
+                    *count > 0
+                });
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.raised.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Register a spawn that has NOT happened yet, or refuse because cancellation already decided
+    /// the count was zero.
+    ///
+    /// The check and the increment are one critical section on purpose. `cancel` stores `raised`
+    /// and only then takes this lock, so a caller reaching the lock first either increments before
+    /// `cancel` reads the count — and `cancel` then waits for it — or reads the flag `cancel`
+    /// already stored and refuses. There is no interleaving that lets `cancel` return claiming the
+    /// reap is done while a child appears afterwards. (Codex, #609, second round.)
+    ///
+    /// A poisoned lock refuses rather than proceeding uncounted. Fail-closed is the right side
+    /// here: an uncounted spawn is invisible to `cancel`, which is the exact defect this guards.
+    fn attach(&self) -> Option<AttachedSpawn<'_>> {
+        let mut count = self.0.in_flight.lock().ok()?;
+        if self.0.raised.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        *count += 1;
+        Some(AttachedSpawn(self))
+    }
+
+    fn leave(&self) {
+        if let Ok(mut count) = self.0.in_flight.lock() {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.0.reaped.notify_all();
+            }
+        }
+    }
+}
+
+impl Clone for CancelSignal {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl Default for CancelSignal {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(CancelState::default()))
+    }
+}
+
+impl std::fmt::Debug for CancelSignal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CancelSignal")
+            .field("raised", &self.is_cancelled())
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct ProcessLimits {
     pub timeout: Duration,
     pub max_output_bytes: usize,
@@ -36,6 +169,15 @@ pub struct CapturedProcess {
     /// and anything that only asks "was anything cut" keeps working unchanged.
     pub truncated: bool,
     pub timed_out: bool,
+    /// Whether a raised [`CancelSignal`] is what stopped this child (#609, Codex).
+    ///
+    /// `timed_out = expired && !cancelled` removes the WRONG cause from the record; it does not
+    /// put the right one there. Without this field the disposition falls through to the exit code,
+    /// and a killed child has one: on Windows a cancelled call was recorded as
+    /// `Completed { exit_code: 1 }` — a tool that ran and failed — which
+    /// `ToolFailureSemantics::RetryEligible` maps to `RetryableFailure`. A cancellation dressed as
+    /// a retryable failure is worse than a misnamed one, because a consumer may act on it.
+    pub cancelled: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +208,11 @@ pub enum HostError {
     /// running.
     #[error("the executable does not match its pin")]
     ExecutableMismatch { expected: String, actual: String },
+    /// The host's cancellation signal was already raised when this call asked to spawn (#609).
+    /// Refused rather than spawned-then-killed: `cancel` waits only for the children it knows
+    /// about, so one created after it returned would outlive the guarantee it had just given.
+    #[error("the host was cancelled before this call could spawn")]
+    Cancelled,
     /// The index-snapshot copy no longer hashes to its recorded generation (#539). Carries both
     /// values — re-pin or investigate, never read anyway.
     #[error("the index snapshot does not match its pin")]
@@ -134,6 +281,7 @@ fn extra_env_name_allowed(name: &str) -> bool {
 ///
 /// # Errors
 /// Exactly [`run_in_workspace`]'s.
+#[allow(clippy::too_many_arguments)]
 pub fn run_verified_in_workspace(
     root: &Path,
     verified: &crate::verified::VerifiedExecutable,
@@ -142,6 +290,7 @@ pub fn run_verified_in_workspace(
     path_prepend: &[PathBuf],
     stdin_bytes: Option<&[u8]>,
     limits: &ProcessLimits,
+    cancel: Option<&CancelSignal>,
 ) -> Result<CapturedProcess, HostError> {
     run_in_workspace(
         root,
@@ -151,6 +300,7 @@ pub fn run_verified_in_workspace(
         path_prepend,
         stdin_bytes,
         limits,
+        cancel,
     )
 }
 
@@ -167,6 +317,31 @@ pub fn run_verified_in_workspace(
 /// # Errors
 /// [`HostError::ExtraEnvDenied`] before anything runs; [`HostError::Prepare`]/
 /// [`HostError::Spawn`] if the workspace dirs or the process cannot be created.
+/// Decrements the in-flight count however this spawn ends -- normal return, early error, or panic.
+///
+/// A manual decrement at the end of the function would be wrong on every path that returns before
+/// it, and those paths exist: an unspawnable program, a broken pipe. A cancel waiting on a count
+/// that a failed spawn never decremented would block for the full bound.
+struct AttachedSpawn<'signal>(&'signal CancelSignal);
+
+impl Drop for AttachedSpawn<'_> {
+    fn drop(&mut self) {
+        self.0.leave();
+    }
+}
+
+/// The eighth argument, and the alternative that was rejected (#180).
+///
+/// Folding `cancel` into [`ProcessLimits`] would keep the arity at seven and is coherent on its
+/// face -- the timeout living there is a stop condition too, and `CancelSignal` is `Arc`-backed so
+/// clones share rather than diverge. It was still rejected, for a cost that shows at the call
+/// sites: `ProcessLimits` also travels to `RepositoryTool::read_file` and `list_files`, which are
+/// Tier 0 and spawn NO child. Those paths would then carry a cancellation they structurally cannot
+/// honour, and a signal that reaches a path unable to act on it is how #180 started.
+///
+/// So the parameter stays a parameter, every spawn path says whether it is cancellable, and the
+/// lint is allowed here with that reason rather than silenced.
+#[allow(clippy::too_many_arguments)]
 pub fn run_in_workspace(
     root: &Path,
     program: &str,
@@ -175,6 +350,7 @@ pub fn run_in_workspace(
     path_prepend: &[PathBuf],
     stdin_bytes: Option<&[u8]>,
     limits: &ProcessLimits,
+    cancel: Option<&CancelSignal>,
 ) -> Result<CapturedProcess, HostError> {
     for name in extra_env.keys() {
         if !extra_env_name_allowed(name) {
@@ -230,6 +406,23 @@ pub fn run_in_workspace(
         command.env(name, value);
     }
     command.envs(extra_env);
+
+    // Registered BEFORE the spawn, so cancellation cannot decide the count is zero in the window
+    // between a child existing and this function admitting it exists (Codex, #609). The first
+    // version registered nineteen lines lower, after `spawn` — a cancel landing in that window saw
+    // `in_flight == 0`, returned claiming the reap was done, and the child attached afterwards and
+    // ran until the next poll. A hole at the entrance of the exact guarantee this type gives.
+    //
+    // Refusal rather than a killed-on-arrival record, because the same window has a second shape:
+    // `RepositoryTool::commit` calls this twice, and between the two the count is legitimately
+    // zero. Without the refusal the second `git` starts after `cancel` has already returned.
+    let _attached = match cancel {
+        Some(signal) => match signal.attach() {
+            Some(guard) => Some(guard),
+            None => return Err(HostError::Cancelled),
+        },
+        None => None,
+    };
 
     let mut child = command
         .spawn()
@@ -344,14 +537,30 @@ pub fn run_in_workspace(
     // and reap, never leaving a zombie.
     let deadline = Instant::now() + limits.timeout;
     let mut timed_out = false;
+    let mut was_cancelled = false;
     let exit_status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
-                if Instant::now() >= deadline {
+                let expired = Instant::now() >= deadline;
+                let cancelled = cancel.is_some_and(CancelSignal::is_cancelled);
+                // #180: cancellation kills through the SAME reaping path as the deadline. The
+                // two differ only in `timed_out`, because a cancelled call did not run out of
+                // time -- recording it as a timeout would put a false cause in the record.
+                if expired || cancelled {
                     let _ = child.kill();
                     let status = child.wait().ok();
-                    timed_out = true;
+                    // Cancellation WINS when both are true (Codex, #609). A cancel raised inside
+                    // the last poll interval before the deadline leaves both conditions true at
+                    // the same poll, and the two mistakes are not equally bad: blaming the clock
+                    // invents a fault nobody committed, while crediting the cancel names an act
+                    // that certainly happened. Ordering them would take a second clock, so the
+                    // record takes the side that cannot fabricate.
+                    timed_out = expired && !cancelled;
+                    // And the cause is CARRIED, not merely withheld (Codex, #609). Clearing
+                    // `timed_out` takes the false cause out of the record; without this the
+                    // disposition then falls through to the exit code, which a killed child has.
+                    was_cancelled = cancelled;
                     break status;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -374,6 +583,7 @@ pub fn run_in_workspace(
         stderr_truncated,
         truncated: stdout_truncated || stderr_truncated,
         timed_out,
+        cancelled: was_cancelled,
     })
 }
 

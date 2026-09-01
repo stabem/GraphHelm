@@ -29,6 +29,7 @@ fn run(root: &Path, args: &[&str], limits: &ProcessLimits) -> CapturedProcess {
         &[],
         None,
         limits,
+        None,
     )
     .unwrap()
 }
@@ -134,6 +135,7 @@ fn path_prepend_directories_lead_the_child_path() {
         std::slice::from_ref(&tool_dir),
         None,
         &limits(),
+        None,
     )
     .unwrap();
     let dump = String::from_utf8_lossy(&captured.stdout);
@@ -171,6 +173,7 @@ fn extra_env_is_validated_and_recorded_shape_only() {
             &[],
             None,
             &limits(),
+            None,
         );
         assert!(
             matches!(refused.unwrap_err(), HostError::ExtraEnvDenied { .. }),
@@ -191,9 +194,156 @@ fn extra_env_is_validated_and_recorded_shape_only() {
         &[],
         None,
         &limits(),
+        None,
     )
     .unwrap();
     assert!(String::from_utf8_lossy(&captured.stdout).contains("CARGO_HOME="));
+}
+
+/// #180: a cancelled call leaves no live child, proved by EFFECT rather than by PID.
+///
+/// `sleep` would let this be faked: a parent that stops waiting looks the same as a child that
+/// died, because the only observable is the call returning. `append-forever` writes OUTSIDE the
+/// process, so "the child is gone" is measured by the file no longer growing -- a claim about the
+/// machine rather than about the parent's own bookkeeping.
+///
+/// The deadline is 60 s and this finishes in well under one: if the cancel path were removed the
+/// call would sit there writing, which is the state `main` was in before this commit.
+#[test]
+fn a_cancelled_call_leaves_no_live_child() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().to_path_buf();
+    let trace = root.join("trace.txt");
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+
+    let handle = {
+        let (root, trace, signal) = (root.clone(), trace.clone(), signal.clone());
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &["append-forever".to_owned(), trace.display().to_string()],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    timeout: Duration::from_secs(60),
+                    max_output_bytes: 1024 * 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    // ARRANGEMENT CONTROL: the child must really be running and really writing, or "it stopped"
+    // is a statement about a process that never started.
+    let mut grew = false;
+    for _ in 0..100 {
+        if std::fs::read(&trace).map(|b| b.len()).unwrap_or(0) > 20 {
+            grew = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        grew,
+        "the child never started writing; nothing below measures a cancellation"
+    );
+
+    signal.cancel();
+    let captured = handle
+        .join()
+        .expect("the call thread returns")
+        .expect("a record");
+
+    // A WITNESS, and NOT the discriminator -- credited correctly after M measured which assertion
+    // actually fires (#609). Under `main` this cannot fail: the call returns from `join` only when
+    // `run_in_workspace` does, which under the old behaviour is at the 60 s deadline, AFTER it has
+    // killed and reaped. So `settled` is sampled once the child is already dead, by the very
+    // deadline that masks the defect. It is kept because it is the only thing here that speaks
+    // about the MACHINE rather than about a field, and because under a future wrong fix that
+    // returns early without killing it is the one that would notice.
+    let settled = std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0);
+    std::thread::sleep(Duration::from_millis(400));
+    let later = std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0);
+    assert_eq!(
+        settled, later,
+        "the trace file kept growing after the call returned: a child survived the cancellation"
+    );
+
+    // THE CLAIM, and the only assertion here that separates the fix from `main`: a cancelled call
+    // must not be recorded as a timeout. Under the old behaviour the 60 s deadline is what stopped
+    // the child, so `timed_out` is true and the journal blames a clock for a decision. Sixty
+    // seconds did not elapse from the caller's point of view -- it cancelled in under one.
+    assert!(
+        !captured.timed_out,
+        "a cancelled call recorded as TIMED OUT puts a false cause in the journal"
+    );
+}
+
+/// `cancel` RETURNS ONLY AFTER THE REAP — the difference between signalling and guaranteeing.
+///
+/// #180's criterion is "a cancelled execution leaves no live child", and a caller can only rely on
+/// that if it holds AT THE RETURN. A `cancel` that stored a flag and returned left a child running
+/// for up to one poll interval, so the caller had to invent its own wait — which is the bookkeeping
+/// the signal exists to hold (Codex, #609).
+///
+/// This cell deliberately does NOT join the call thread before measuring. Joining would wait for
+/// the child by another route and hide exactly the property under test: the previous cell passes
+/// under both behaviours because it joins first, which is why it could not have caught this.
+#[test]
+fn cancel_returns_only_after_the_child_is_reaped() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().to_path_buf();
+    let trace = root.join("trace.txt");
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+
+    let handle = {
+        let (root, trace, signal) = (root.clone(), trace.clone(), signal.clone());
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &["append-forever".to_owned(), trace.display().to_string()],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    timeout: Duration::from_secs(60),
+                    max_output_bytes: 1024 * 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    let mut grew = false;
+    for _ in 0..100 {
+        if std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0) > 20 {
+            grew = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        grew,
+        "the child never started writing; nothing below measures a reap"
+    );
+
+    signal.cancel();
+
+    // No join between the cancel and this measurement. If `cancel` merely signalled, the child is
+    // still inside its poll interval here and the file grows across these two samples.
+    let at_return = std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0);
+    std::thread::sleep(Duration::from_millis(300));
+    let after = std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0);
+    assert_eq!(
+        at_return, after,
+        "the child was still writing when cancel returned: the caller was told the run stopped \
+         while it had not"
+    );
+
+    let _ = handle.join().expect("the call thread returns");
 }
 
 #[test]
@@ -451,6 +601,7 @@ fn an_extra_env_cbm_cache_dir_is_refused_before_the_process_starts() {
             &[],
             None,
             &limits(),
+            None,
         )
         .expect_err("a caller-supplied cache path must be refused, not honoured");
         assert!(
@@ -498,5 +649,110 @@ fn a_host_cbm_cache_dir_never_reaches_the_child() {
     assert!(
         dump.lines().any(|line| line.starts_with("CBM_CACHE_DIR=")),
         "the confined value must be present in its place"
+    );
+}
+
+/// #609, Codex round 3. `cancel` waits only for the children it has already counted, so any spawn
+/// that registers AFTER it returned outlives the guarantee it just gave. The gap has two shapes and
+/// they close together: between `Command::spawn` and the registration, and between the two
+/// subprocesses of `RepositoryTool::commit`, where the count is legitimately zero in between.
+///
+/// The observable here is the REFUSAL rather than the race. Catching the window itself would take a
+/// sleep inside the library; asserting that a raised signal admits no further spawn is
+/// deterministic, and it is exactly the property that closes both shapes.
+#[test]
+fn a_raised_signal_refuses_the_next_spawn() {
+    let workspace = tempfile::tempdir().unwrap();
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+    signal.cancel();
+
+    let refused = run_in_workspace(
+        workspace.path(),
+        &fake_tool(),
+        &["echo".to_owned(), "hello".to_owned()],
+        &BTreeMap::new(),
+        &[],
+        None,
+        &limits(),
+        Some(&signal),
+    );
+
+    match refused {
+        Err(graphhelm_tool_host::process::HostError::Cancelled) => {}
+        Err(other) => panic!("the spawn was refused for the wrong reason: {other}"),
+        Ok(captured) => panic!(
+            "a raised signal let another child start; it exited {:?}",
+            captured.exit_code
+        ),
+    }
+}
+
+/// #609, Codex round 3. `timed_out` was `expired` inside `if expired || cancelled`, so a cancel
+/// raised inside the last poll interval before the deadline left BOTH true and the record blamed
+/// the clock for a decision the caller had made — the one field this change calls its
+/// discriminator.
+///
+/// The coincidence is not reachable by picking one instant, so this SWEEPS the raise time instead
+/// of guessing it. The first version of this cell did guess — cancel at 280 ms against a 300 ms
+/// deadline — and it passed under the sabotage, proving nothing. The reason is a reference point:
+/// the deadline is computed INSIDE the call, after the spawn, so an externally timed raise lands
+/// earlier than intended by the whole cost of creating a process, and the control I had written
+/// (the call returned at or after the deadline) could not see that, because the returned-at instant
+/// includes the kill, the reap, and both reader joins.
+///
+/// The sweep's adequacy is not asserted, it is MEASURED: with `timed_out = expired` restored, some
+/// step of this sweep must report a timeout. That is the check that makes the green below mean
+/// something, and it is recorded in the PR rather than left as a claim.
+#[test]
+fn a_cancel_inside_the_last_poll_is_not_recorded_as_a_timeout() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().to_path_buf();
+    let timeout = Duration::from_millis(300);
+
+    // The sweep stops BELOW the nominal timeout, and that bound is the assertion's licence rather
+    // than caution. The deadline is computed inside the call, after the spawn, so the internal
+    // deadline is always at or later than `timeout` measured from out here: any raise before
+    // `timeout` is therefore guaranteed to precede it, and `timed_out` must be false for every one
+    // of them. Past `timeout` that guarantee is gone — the deadline's own poll can fire before the
+    // cancel exists, and a timeout is then the TRUE record. The first version of this sweep ran to
+    // 310 ms and failed on the fixed code for exactly that reason: it demanded a cancellation
+    // verdict from runs the caller had not yet cancelled.
+    let mut blamed_the_clock = Vec::new();
+    for raise_at in (240..300).step_by(5) {
+        let signal = graphhelm_tool_host::process::CancelSignal::new();
+        let raiser = {
+            let signal = signal.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(raise_at));
+                signal.cancel();
+            })
+        };
+
+        let captured = run_in_workspace(
+            &root,
+            &fake_tool(),
+            &["sleep".to_owned()],
+            &BTreeMap::new(),
+            &[],
+            None,
+            &ProcessLimits {
+                timeout,
+                max_output_bytes: 1024,
+            },
+            Some(&signal),
+        )
+        .expect("a cancelled call still returns a record for the child that stopped");
+        raiser.join().expect("the raising thread returns");
+
+        if captured.timed_out {
+            blamed_the_clock.push(raise_at);
+        }
+    }
+
+    assert!(
+        blamed_the_clock.is_empty(),
+        "the caller cancelled and the record blamed the clock; raise offsets that did it: {:?}ms \
+         against a {timeout:?} deadline",
+        blamed_the_clock
     );
 }

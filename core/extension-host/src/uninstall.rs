@@ -36,6 +36,7 @@ pub fn uninstall_version(
     install_root: &Path,
     digest: &str,
 ) -> Result<(), InstallRefusal> {
+    crate::install::require_unlinked_layout(install_root)?;
     let directory = directory_for_digest(digest).map_err(|_| InstallRefusal::UnknownVersion)?;
     let adopted = install_root.join("versions").join(directory);
     if !adopted.is_dir() {

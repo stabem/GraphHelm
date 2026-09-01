@@ -101,6 +101,10 @@ fn install_refusal(
             "the active pointer still names this version as current or previous",
             target,
         ),
+        InstallRefusal::UnsafeLayoutPath => (
+            "the install root or its versions directory is a link",
+            "/root",
+        ),
         InstallRefusal::Unwritable => ("the install layout could not be written", "/root"),
     };
     lifecycle_refusal(command, message, pointer)

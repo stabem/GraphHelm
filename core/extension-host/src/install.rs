@@ -45,6 +45,9 @@ pub enum InstallRefusal {
     /// The pointer still names this version as current or previous, so removing it would cost
     /// the machine its active version or rollback its target.
     VersionRetained,
+    /// The layout's own ancestors -- the install root or versions/ -- are a link, so every
+    /// path-based operation would act outside the root the caller named.
+    UnsafeLayoutPath,
     /// The layout could not be written at all.
     Unwritable,
 }
@@ -97,6 +100,97 @@ pub(crate) fn directory_for_digest(digest: &str) -> Result<String, InstallRefusa
         return Err(InstallRefusal::UnknownVersion);
     }
     Ok(format!("sha256-{hex}"))
+}
+
+/// Refuse a layout whose own ANCESTORS are links: the install root, and `versions/` under it.
+///
+/// The link refusals elsewhere in this crate apply to the target tree; this one covers the path
+/// that every layout operation walks to REACH a target. `versions/` replaced by a junction or a
+/// symlink hands each `install_root.join(...)` a location outside the root the caller named,
+/// and every subsequent guarantee -- re-derivation, retention, the pointer flip -- then holds
+/// about the wrong place. (Ancestor limit found by D reviewing #535; the wiring is this check.)
+///
+/// On Windows the probe is the REPARSE attribute, not `is_symlink`: junctions are mount-point
+/// reparse points and a symlink-only probe can miss them, which is precisely the face the cells
+/// measure. `NotFound` passes -- an absent `versions/` is a fresh root, and absence is the root
+/// assertions' vocabulary elsewhere, not a link.
+///
+/// DECLARED LIMIT 1: check-then-use. The gap between this check and the operation that follows is
+/// real, and the full cure is the anchored-handle discipline the activation walk implements;
+/// this refusal raises the bar for the arrangements a lifecycle actually meets, and says so
+/// rather than claiming the discipline it does not have.
+///
+/// DECLARED LIMIT 2, and it is a DIFFERENT one: **this probes two paths, not every component of
+/// them.** `symlink_metadata` does not follow the FINAL component, but it does resolve every
+/// intermediate one -- so a symlink at an ancestor ABOVE `install_root` is followed silently, both
+/// probes report ordinary directories, and the lifecycle operates on the redirected tree.
+/// `uninstall_version` can then remove a matching version outside the claimed root. (Found by
+/// Codex reviewing #596.)
+///
+/// This is NOT limit 1 wearing another face, and saying so matters: limit 1 is a RACE, and the
+/// hostile link here can already exist when the check runs. A gap must not shelter under a
+/// declaration written for a different gap.
+///
+/// **Why the obvious fix is not applied here.** Walking every ancestor and refusing any link among
+/// them would refuse legitimate layouts on any system where a parent is a symlink -- macOS resolves
+/// `/tmp` to `/private/tmp`, which is where temporary install roots live, so the naive walk turns
+/// a security probe into a refusal of ordinary use. (Reasoned, not measured: this lane has no macOS
+/// host.) The cure that actually holds is the anchored-handle discipline -- resolve the root once
+/// and perform every operation through that handle -- which is a larger change than the one this
+/// module makes, and is named here so the next person does not re-derive it from the symptom.
+/// The path the ancestor probe is allowed to see: the same location, named as a FINAL COMPONENT.
+///
+/// Purely lexical -- it drops a trailing separator (and redundant `.` components) without
+/// resolving `..` and without following any link, which is the only normalization safe to run
+/// BEFORE a security probe. A path that is nothing but a root survives as itself, and a root
+/// cannot be a symlink.
+///
+/// It is a NAMED function so the guard pinning this behaviour has THIS code as its subject.
+/// Asserting the same property against `Path::components` directly would have been a test of the
+/// standard library: green with the normalization deleted from the probe, which is exactly the
+/// shape of a guard that certifies nothing.
+fn probe_path(path: &Path) -> &Path {
+    path.components().as_path()
+}
+
+pub(crate) fn require_unlinked_layout(install_root: &Path) -> Result<(), InstallRefusal> {
+    fn is_link(path: &Path) -> Result<bool, InstallRefusal> {
+        // The probe must see the path as a FINAL COMPONENT, never as a trailing-separator
+        // directory reference. POSIX resolves a pathname ending in `/` as a directory, so
+        // `lstat("link/")` DEREFERENCES a final-component symlink and answers about its target:
+        // the probe would read "not a link" about the very link it was aimed at, and
+        // `--root /some/path/` reaches here straight off a CLI argument with no trim in between.
+        // (Found by G reviewing #596. This defeats the CHECK, and is not the check-then-use
+        // window declared above.)
+        //
+        // `components().as_path()` drops the trailing separator without resolving `..` or
+        // following any link -- it is a purely lexical normalization, which is the only kind
+        // safe to run before a security probe. A path that is nothing but a root survives as
+        // itself, and a root cannot be a symlink.
+        //
+        // DECLARED LIMIT: Rust does not normalize Windows VERBATIM paths (`\\?\C:\...`), by
+        // design, so one named that way keeps whatever separator it was given.
+        let path = probe_path(path);
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(_) => return Err(InstallRefusal::Unwritable),
+        };
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+            Ok(metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(metadata.file_type().is_symlink())
+        }
+    }
+    if is_link(install_root)? || is_link(&install_root.join("versions"))? {
+        return Err(InstallRefusal::UnsafeLayoutPath);
+    }
+    Ok(())
 }
 
 /// Copy a package tree, refusing to follow anything that is not a plain file or directory.
@@ -179,6 +273,7 @@ pub fn install_package(
     install_root: &Path,
     package: &Path,
 ) -> Result<InstalledVersion, InstallRefusal> {
+    require_unlinked_layout(install_root)?;
     let validated = graphhelm_schema::validate_extension_package(package)
         .map_err(|_| InstallRefusal::Invalid)?;
     let digest = validated.package_digest;
@@ -239,6 +334,7 @@ pub fn switch_active(
     install_root: &Path,
     digest: &str,
 ) -> Result<ActiveVersions, InstallRefusal> {
+    require_unlinked_layout(install_root)?;
     let directory = directory_for_digest(digest)?;
     let adopted = install_root.join("versions").join(directory);
     if !adopted.is_dir() {
@@ -275,6 +371,7 @@ pub fn roll_back(
     _claim: &ActivationClaim,
     install_root: &Path,
 ) -> Result<ActiveVersions, InstallRefusal> {
+    require_unlinked_layout(install_root)?;
     let Some(active) = read_pointer(install_root)? else {
         return Err(InstallRefusal::NoPreviousVersion);
     };
@@ -304,4 +401,37 @@ pub fn roll_back(
 /// Returns [`InstallRefusal::CorruptPointer`] when a pointer exists but cannot be read as one.
 pub fn active_versions(install_root: &Path) -> Result<Option<ActiveVersions>, InstallRefusal> {
     read_pointer(install_root)
+}
+
+#[cfg(test)]
+mod probe_path_tests {
+    use super::probe_path;
+
+    /// The cure's mechanism for G's P1, decidable on EVERY platform.
+    ///
+    /// The behavioural cell in `tests/links.rs` is redundant on Windows -- measured -- because the
+    /// OS does not dereference a trailing-separator name there. This one does not depend on OS
+    /// path semantics at all: it pins that the production probe normalizes before it looks.
+    /// Delete the body of `probe_path` and this goes red everywhere.
+    #[test]
+    fn a_trailing_separator_is_dropped_before_the_probe_looks() {
+        let mut trailing = std::path::PathBuf::from("root").into_os_string();
+        trailing.push(std::path::MAIN_SEPARATOR.to_string());
+        let trailing = std::path::PathBuf::from(trailing);
+
+        assert!(
+            trailing
+                .as_os_str()
+                .to_string_lossy()
+                .ends_with(std::path::MAIN_SEPARATOR),
+            "CONTROL: the arrangement must actually carry a trailing separator"
+        );
+        assert!(
+            !probe_path(&trailing)
+                .as_os_str()
+                .to_string_lossy()
+                .ends_with(std::path::MAIN_SEPARATOR),
+            "the ancestor probe must be handed a final component, never a directory reference"
+        );
+    }
 }

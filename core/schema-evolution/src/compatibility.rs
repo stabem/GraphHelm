@@ -1116,6 +1116,25 @@ fn one_of_additions_are_disjoint(
 /// because it is the one that ANSWERS for the shape this repository actually writes. Type sets
 /// decide only when the branches differ at the top level, and every branch of a tagged union is
 /// `"object"`, so on its own that test is silent exactly where the schemas need it (#626).
+/// Whether EVERY pair of branches in a `oneOf` is provably disjoint.
+///
+/// The same question `one_of_additions_are_disjoint` asks of an addition, asked of a union as it
+/// stands — exposed because the set of unions this prover CANNOT decide is a property the gate pins
+/// (D-049). A blind spot nobody enumerates grows in silence; one that is pinned fires both when it
+/// grows and when it becomes stale.
+///
+/// Answers only about the branches handed to it. A union whose branches reach their constraints
+/// through `$ref` or through an enclosing schema reads as unprovable here, which is the honest
+/// answer for a prover that deliberately looks at neither.
+#[must_use]
+pub fn one_of_branches_are_provably_disjoint(branches: &[Value]) -> bool {
+    branches.iter().enumerate().all(|(index, left)| {
+        branches[index + 1..]
+            .iter()
+            .all(|right| branches_are_provably_disjoint(left, right))
+    })
+}
+
 fn branches_are_provably_disjoint(left: &Value, right: &Value) -> bool {
     discriminators_are_disjoint(left, right) || branch_types_are_disjoint(left, right)
 }

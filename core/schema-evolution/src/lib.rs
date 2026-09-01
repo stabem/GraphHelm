@@ -17,6 +17,7 @@ pub use catalog::{
 };
 pub use compatibility::{
     CompatibilityChange, CompatibilityClass, CompatibilityReport, SemverImpact, compare_catalogs,
+    one_of_branches_are_provably_disjoint,
 };
 pub use conformance::{
     ConformanceCase, ConformanceCaseMetadata, ConformanceCaseResult, ConformanceExpectation,

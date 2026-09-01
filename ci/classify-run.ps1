@@ -83,6 +83,7 @@ param(
     [switch] $Mine
 )
 
+. (Join-Path $PSScriptRoot 'run-class.ps1')
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $Manifest)) {
@@ -117,21 +118,96 @@ $GreenSideClasses = @('green-by-luck', 'flaky-observed')
 # a manifest field is believed only alongside the fields that CORROBORATE it. Enumerated over every
 # site in this file that reads a field and acts on it -- five, of which two were already sound
 # (:104 acts on ABSENCE, which is the fact itself; the instrumentSuspect block only PRINTS) and
-# three needed this: the class needs `runClassOrigin`, a `green` needs `status` + `overallPassed`,
-# and a refinement needs the DURABLE TWIN. (Found in review on #640.)
+# three needed this: the class needs `runClassOrigin`, an automatic class needs `status` +
+# `overallPassed`, and a refinement needs the DURABLE TWIN. (Found in review on #640.)
+#
+# THE PREDICATE, corrected on #644, because the first version of this rule was too weak: it is not
+# enough that the corroborating field EXISTS and holds a legal value. IT MUST AGREE. A stated
+# `runClassOrigin: automatic` beside `runClass: real-red` is present, spelled correctly, and false --
+# and taken raw it walked straight past the human-judgement guard. Every pair below is therefore
+# checked for AGREEMENT, and where the two disagree the manifest is refused rather than believed.
 
 # Absent `runClassOrigin` is DERIVED, and the derivation is sound rather than a guess: the two
 # producers have disjoint, closed vocabularies. `green` and `UNCLASSIFIED` can only come from
 # `gate.ps1`; every other class can only come from THIS script, whose ValidateSet cannot emit them.
 # So the value determines the origin for every manifest written before the field existed.
+# SHAPE IS ASSERTED ONCE, AT THE READ. In PowerShell `-eq` and `-ne` against an array are FILTERS
+# returning a collection, and BOTH are truthy -- so no comparison written after an untrusted field is
+# read is a scalar test, whichever way its sign points. Worse, a ONE-ELEMENT array compares equal to
+# its own element, so `@('human')` behaves exactly like `'human'` until something enumerates it.
+#
+# Checking the shape here, once, is what makes every `if` below an ordinary scalar comparison. The
+# alternative -- hardening each comparison -- leaves the next one added by the next author unhardened.
+# (Found in review by K on #645; the previous code refused these by luck, because the vocabulary
+# check happens to reject a collection, not because anything tested the shape.)
+function Read-ScalarField {
+    param(
+        [Parameter(Mandatory)] $Run,
+        [Parameter(Mandatory)] [string] $Name,
+        # When the gate can only write a CLOSED set of values, give it here. A value outside the set
+        # is refused at the read rather than carried into a comparison that cannot tell it apart:
+        # `'banana' -ne 'GREEN'` yields exactly what `'RED' -ne 'GREEN'` yields, so the refusal comes
+        # out plausible and for the wrong reason. Fifth instance of that pattern in this pair of
+        # files. (Found in review on #645.)
+        [string[]] $Vocabulary
+    )
+
+    if (-not ($Run.PSObject.Properties.Name -contains $Name)) { return $null }
+    $value = $Run.$Name
+    if (($value -is [System.Array]) -or ($value -is [System.Collections.IList])) {
+        throw "this manifest's $Name is not a single value: it holds a collection of $($value.Count). PowerShell's -eq and -ne both return truthy against an array, so no comparison below could test it. Fix the manifest."
+    }
+    # PRESENT-BUT-NULL is refused, and that is the whole distinction: ABSENT means the manifest
+    # predates the field and is tolerated; NULL means something wrote nothing where a value belongs.
+    # The earlier version made this distinction for `status`, through the vocabulary, and NOT for
+    # `overallPassed`, whose type check was guarded by `$null -ne $field` -- false for a present null,
+    # so the check was skipped and `[bool]$null` coerced silently to false. A null corroborator then
+    # agreed with a RED status. PowerShell coerces null to false, to '' and to 0 without complaining,
+    # so the only safe place to stop it is before any comparison. (Found in review on #645 -- the
+    # sixth instance of this file's own pattern, and the second where the fix was in place for one
+    # field and not its neighbour.)
+    #
+    # Vocabulary first, so a field WITH a closed set keeps the more specific message.
+    if ($Vocabulary -and ($value -notin $Vocabulary)) {
+        $seen = if ($null -eq $value) { 'null' } else { "'$value'" }
+        throw "this manifest's $Name is $seen, which is not a $Name the gate writes. The gate's vocabulary is closed: $($Vocabulary -join ', '). Refused at the read, because a value outside the set compares unequal to every member and would produce a refusal for the wrong reason."
+    }
+    if ($null -eq $value) {
+        throw "this manifest's $Name is present and null. Absent would mean the manifest predates the field, which is tolerated; present and null means something wrote nothing where a value belongs. PowerShell coerces null to false, to '' and to 0 without complaint, so it is refused here rather than carried into a comparison that cannot tell it from a real answer."
+    }
+    return $value
+}
+
 $slotDir = if ($env:GRAPHHELM_SLOT_DIR) { $env:GRAPHHELM_SLOT_DIR } else { 'D:/graphhelm-slot' }
 $fileName = Split-Path -Leaf $Manifest
-$existingClass = $run.runClass
+$existingClass = Read-ScalarField -Run $run -Name 'runClass'
+# gate.ps1:391 -- [ValidateSet('GREEN', 'RED', 'ABORTED-BY-CANARY')], and the AST confirms it is the
+# only ValidateSet in that file, so this is the whole vocabulary rather than a sample of it.
+$GateStatuses = @('GREEN', 'RED', 'ABORTED-BY-CANARY')
+$statusField = Read-ScalarField -Run $run -Name 'status' -Vocabulary $GateStatuses
+$passedField = Read-ScalarField -Run $run -Name 'overallPassed'
+
+# The TYPE is part of the shape. `[bool]` on a non-empty string is TRUE in PowerShell, so the string
+# "false" where the gate writes a Boolean would read as success -- and nothing later would notice.
+if ($null -ne $passedField -and $passedField -isnot [bool]) {
+    throw "this manifest's overallPassed is not a Boolean: it holds '$passedField' of type $($passedField.GetType().Name). PowerShell casts any non-empty string to true, so this cannot be read as a verdict. Fix the manifest."
+}
+
+# A PAIR THE GATE CANNOT EMIT, refused before anything is recomputed from it. `gate.ps1:720` makes
+# the status RED only when `$failed.Count` is nonzero, and `:441` requires that same count to be ZERO
+# for `overallPassed` -- so `overallPassed` true implies status GREEN, always. Recomputing the class
+# from an impossible pair yields a PLAUSIBLE answer, which is the dangerous kind: UNCLASSIFIED, which
+# then corroborates and lets impossible evidence become an irreversible human judgement.
+#
+# Checked for EVERY class rather than inside the automatic branch below: the manifest that gets
+# persisted as `real-red` never reaches that branch. (Found in review on #645.)
+if ($null -ne $statusField -and $true -eq $passedField -and $statusField -ne 'GREEN') {
+    throw "this manifest says overallPassed = true beside status = '$statusField', which gate.ps1 cannot emit: status is non-GREEN only when a stage failed, and overallPassed requires that same count to be zero. Refused before recomputing, because the pair is impossible rather than merely unusual."
+}
 $AutomaticClasses = @('green', 'UNCLASSIFIED')
 $HumanClasses = @('real-red', 'dead', 'green-by-luck', 'flaky-observed')
-$existingOrigin = if ($run.PSObject.Properties.Name -contains 'runClassOrigin') {
-    $run.runClassOrigin
-} elseif ($existingClass -in $AutomaticClasses) {
+$OriginVocabulary = @('automatic', 'human')
+$existingOrigin = if ($existingClass -in $AutomaticClasses) {
     'automatic'
 } elseif ($existingClass -in $HumanClasses) {
     'human'
@@ -145,18 +221,41 @@ $existingOrigin = if ($run.PSObject.Properties.Name -contains 'runClassOrigin') 
     throw "this manifest's runClass is '$existingClass', which belongs to neither vocabulary: gate.ps1 writes $($AutomaticClasses -join ', ') and this script writes $($HumanClasses -join ', '). Its origin cannot be derived, so it is refused rather than guessed. Fix the manifest, or say by hand what wrote it."
 }
 
-# `gate.ps1:441` writes `green` only when $Status -eq 'GREEN' AND $passedEverything. A manifest
-# whose class says green while its own status does not was never written by that rule, so there is
-# no automatic green here to refine. ABSENT counts as not corroborated, deliberately: absent and
-# false are different facts, and this file already treats them so for `instrumentSuspect` -- a green
-# nobody can corroborate is not one anybody should refine.
-if ($existingClass -eq 'green') {
+# A STATED origin is CROSS-CHECKED against the class, never taken raw. The class determines the
+# origin on its own -- the producers' vocabularies are disjoint -- so a stored `runClassOrigin` is a
+# second witness, and a second witness that disagrees is the whole reason to have one. Taking it raw
+# made it a way to OVERRIDE the derivation: `real-red` + `automatic` skipped the human-judgement
+# guard entirely. (Found in review on #644.)
+if ($run.PSObject.Properties.Name -contains 'runClassOrigin') {
+    $statedOrigin = Read-ScalarField -Run $run -Name 'runClassOrigin'
+    if ($statedOrigin -notin $OriginVocabulary) {
+        $seen = if ($null -eq $statedOrigin) { 'null' } else { "'$statedOrigin'" }
+        throw "this manifest states runClassOrigin = $seen, which is neither 'automatic' nor 'human'. An origin outside its own vocabulary cannot corroborate anything, so it is refused rather than trusted."
+    }
+    if ($statedOrigin -ne $existingOrigin) {
+        throw "this manifest's runClass '$existingClass' and its stated runClassOrigin '$statedOrigin' disagree: '$existingClass' can only have been written by a $existingOrigin producer. Present and legal is not the same as agreeing. Reconcile the manifest before classifying."
+    }
+}
+
+# `gate.ps1:441` is ONE rule with two outcomes: green when $Status is GREEN AND $passedEverything,
+# UNCLASSIFIED otherwise. The first version of this check mirrored only the green half, so
+# `UNCLASSIFIED` beside a fully passing status -- a pair the gate cannot emit -- passed unexamined.
+# Mirroring the whole rule costs the same and leaves no half unchecked. (#644)
+#
+# ABSENT counts as not corroborated, deliberately: absent and false are different facts, and this
+# file already treats them so for `instrumentSuspect`. A class nobody can corroborate is not one
+# anybody should act on.
+if ($existingClass -in $AutomaticClasses) {
     $hasStatus = $run.PSObject.Properties.Name -contains 'status'
     $hasPassed = $run.PSObject.Properties.Name -contains 'overallPassed'
-    if (-not ($hasStatus -and $hasPassed) -or $run.status -ne 'GREEN' -or -not $run.overallPassed) {
+    if (-not ($hasStatus -and $hasPassed)) {
         $sawStatus = if ($hasStatus) { "'$($run.status)'" } else { 'ABSENT' }
         $sawPassed = if ($hasPassed) { "$($run.overallPassed)" } else { 'ABSENT' }
-        throw "this manifest's runClass is 'green' but that green is not corroborated by the fields the gate writes it from: status = $sawStatus, overallPassed = $sawPassed. A green written by gate.ps1 carries status GREEN and overallPassed true. Refused rather than refined."
+        throw "this manifest's runClass is '$existingClass' but that class is not corroborated: status = $sawStatus, overallPassed = $sawPassed. Both are needed to say which class gate.ps1 would have written."
+    }
+    $classTheGateWouldWrite = Get-RunClassFrom -Status $statusField -PassedEverything ([bool]$passedField)
+    if ($classTheGateWouldWrite -ne $existingClass) {
+        throw "this manifest's runClass is '$existingClass' but that class is not corroborated by the fields the gate writes it from: status = '$($run.status)', overallPassed = $($run.overallPassed). From those, gate.ps1 would have written '$classTheGateWouldWrite'. Refused rather than believed."
     }
 }
 

@@ -15,9 +15,10 @@
 # repository carries no Pester dependency and this issue is not the place to add one. The declared
 # total is what separates "everything passed" from "half the file vanished in a merge".
 #
-# 22 = 22 Assert-True calls. Assert-Equal is not used here; every case asserts a boolean outcome or
+# 45 = 45 runtime assertions: 43 direct Assert-True calls plus the one inside the two-item
+# consumer loop, which the naive grep counts once and which fires twice. Assert-Equal is not used here; every case asserts a boolean outcome or
 # a string equality expressed through Assert-True, so the naive grep and the runtime count agree.
-$ExpectedAssertionCount = 22
+$ExpectedAssertionCount = 45
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -99,7 +100,7 @@ try {
     # guard -- the cure is the same, assert the MESSAGE.
     Assert-True ((-not $again.Ok) -and ($again.Error -match 'already classified')) "a green already refined by a person refuses a second refinement, naming the prior judgement"
 
-    $red = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED' }
+    $red = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $false }
     $judged = Invoke-Classify -Path $red -Class 'real-red' -Because 'the code failed'
     Assert-True $judged.Ok "UNCLASSIFIED still accepts a first human judgement (was: $($judged.Error))"
 
@@ -129,7 +130,7 @@ try {
     # "not UNCLASSIFIED" let a FAILED run be recorded as flaky-observed -- as a human judgement
     # nothing afterwards can overwrite. A green-side class refines an observed pass; where the gate
     # never observed one, there is nothing to refine.
-    $notPassing = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED' }
+    $notPassing = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $false }
     $greenOnFail = Invoke-Classify -Path $notPassing -Class 'flaky-observed' -Because 'this run did not pass everything'
     Assert-True ((-not $greenOnFail.Ok) -and ($greenOnFail.Error -match 'nothing to refine')) "a run that did not pass everything refuses a green-side class, and the refusal says why"
     Assert-True ((Read-Manifest -Path $notPassing).runClass -eq 'UNCLASSIFIED') "and the refused call left it unclassified"
@@ -181,6 +182,166 @@ try {
     [System.IO.File]::WriteAllText((Join-Path (Join-Path $sandbox 'gate-runs') $okName), (@{ headSha = 'd' * 40; status = 'GREEN'; overallPassed = $true; runClass = 'green' } | ConvertTo-Json -Depth 8), $utf8NoBomLocal)
     $onAgree = Invoke-Classify -Path $okCommittable -Class 'green-by-luck' -Because 'twin agrees'
     Assert-True $onAgree.Ok "an agreeing durable twin does not block the refinement (was: $($onAgree.Error))"
+
+    # #644: PRESENCE and VOCABULARY are not AGREEMENT. The enumeration on #640 found the right
+    # five sites and checked that the corroborating field EXISTS and is a legal value; it never
+    # checked that the corroborator SAYS THE SAME THING. A stated origin was taken raw.
+    $lyingOrigin = New-Manifest -Properties @{ runClass = 'real-red'; runClassOrigin = 'automatic'; status = 'RED'; overallPassed = $false }
+    $onLyingOrigin = Invoke-Classify -Path $lyingOrigin -Class 'dead' -Because 'the stated origin contradicts the class'
+    Assert-True ((-not $onLyingOrigin.Ok) -and ($onLyingOrigin.Error -match 'disagree')) "a stated origin that contradicts its own class is refused, naming the disagreement"
+
+    $bogusOrigin = New-Manifest -Properties @{ runClass = 'green'; runClassOrigin = 'banana' }
+    $onBogusOrigin = Invoke-Classify -Path $bogusOrigin -Class 'green-by-luck' -Because 'the origin is not a word this taxonomy uses'
+    Assert-True ((-not $onBogusOrigin.Ok) -and ($onBogusOrigin.Error -match 'neither .*automatic.* nor .*human|not a recognised origin')) "an origin outside its own vocabulary is refused rather than trusted"
+
+    # gate.ps1:441 emits UNCLASSIFIED only when the COMBINED result did not pass. The #640 fix
+    # corroborated the green side and left the red side unchecked -- half a mirror.
+    # The case gate.ps1's own comment records as having happened: stages all passed, so $Status was
+    # GREEN, while the stricter combined verdict was false because of stale artifacts. The two
+    # verdicts DISAGREE, and only a rule that reads both gets this right. Without this fixture, a
+    # sabotage that drops $PassedEverything from the rule changes no behaviour any cell observes.
+    $staleArtifacts = New-Manifest -Properties @{ runClass = 'green'; status = 'GREEN'; overallPassed = $false }
+    $onStale = Invoke-Classify -Path $staleArtifacts -Class 'green-by-luck' -Because 'GREEN stages, failing combined verdict'
+    Assert-True ((-not $onStale.Ok) -and ($onStale.Error -match 'not corroborated')) "a GREEN status with a failing combined verdict does not corroborate a green class"
+
+    $impossible = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'GREEN'; overallPassed = $true }
+    $onImpossible = Invoke-Classify -Path $impossible -Class 'real-red' -Because 'unclassified, yet everything passed'
+    Assert-True ((-not $onImpossible.Ok) -and ($onImpossible.Error -match 'not corroborated')) "UNCLASSIFIED beside a fully passing status is refused: the gate never writes that pair"
+
+    # CONTROLS. A corroborator that AGREES must block nothing -- otherwise a guard that refuses
+    # whenever the field is present passes every sabotage and proves nothing.
+    $honest = New-Manifest -Properties @{ runClass = 'real-red'; runClassOrigin = 'human'; status = 'RED'; overallPassed = $false }
+    $onHonest = Invoke-Classify -Path $honest -Class 'dead' -Because 'agreeing origin, still a human judgement'
+    Assert-True ((-not $onHonest.Ok) -and ($onHonest.Error -match 'by a person')) "an AGREEING origin still routes to the human-judgement refusal, not to a corroboration refusal"
+
+    $honestUnclassified = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $false; runClassOrigin = 'automatic' }
+    $onHonestUnclassified = Invoke-Classify -Path $honestUnclassified -Class 'real-red' -Because 'every corroborator agrees'
+    Assert-True $onHonestUnclassified.Ok "a manifest whose corroborators all agree is classified normally (was: $($onHonestUnclassified.Error))"
+
+    # #644, the debt declared on #640 and now paid. Everything above rests on ONE premise: the two
+    # producers have disjoint closed vocabularies, which holds only while `gate.ps1` assigns
+    # `runClass` in exactly ONE place. A second assignment could quietly win over the first and
+    # nothing here would go red -- the derivation would keep answering, wrongly.
+    #
+    # The guard lives with the CONSUMER of the premise, not the producer: `classify-run.ps1` is what
+    # breaks if the premise fails, and a guard beside the code that depends on it is the one someone
+    # reads when they change that code.
+    #
+    # Parsed, not grepped. `^\s*\$runClass\s*=` counts source TEXT: it misses an assignment inside
+    # a block on one line, and matches one inside a comment or a here-string. The AST answers about
+    # the program.
+    $gatePath = Join-Path $scriptDir 'gate.ps1'
+    $parseErrors = $null
+    $gateAst = [System.Management.Automation.Language.Parser]::ParseFile($gatePath, [ref]$null, [ref]$parseErrors)
+    # The ARRANGEMENT is asserted before the assertion that depends on it: a file that did not parse
+    # would report zero assignments, and a zero would read as "the premise holds" when it means
+    # "nothing was measured".
+    Assert-True ($parseErrors.Count -eq 0) "gate.ps1 parses, so the assignment count below is a measurement rather than a silent zero"
+    $runClassAssignments = $gateAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $node.Left.VariablePath.UserPath -eq 'runClass'
+    }, $true)
+    Assert-True ($runClassAssignments.Count -eq 1) "gate.ps1 assigns runClass exactly once (found $($runClassAssignments.Count)); the origin derivation is unsound the moment there are two"
+
+    # #644: the gate's class rule now lives in ONE place, and these cells are what that buys.
+    # Before extraction, `classify-run.ps1` recomputed the rule to catch a manifest lying about it --
+    # a second copy of the oracle, written to police the first. An oracle duplicated is an oracle
+    # that can disagree with itself, and the copy nobody looks at is the one that drifts.
+    . (Join-Path $scriptDir 'run-class.ps1')
+    Assert-True ((Get-RunClassFrom -Status 'GREEN' -PassedEverything $true) -eq 'green') "GREEN and everything passed is the only pair that yields green"
+    Assert-True ((Get-RunClassFrom -Status 'GREEN' -PassedEverything $false) -eq 'UNCLASSIFIED') "a GREEN status whose combined verdict failed is UNCLASSIFIED, not green"
+    Assert-True ((Get-RunClassFrom -Status 'RED' -PassedEverything $true) -eq 'UNCLASSIFIED') "a RED status is UNCLASSIFIED even when the combined verdict passed"
+
+    # Both consumers must CALL it rather than keep a copy. Asked of the AST, not of the source text:
+    # a grep for the name matches the mention in a comment, and would pass on a file that only talks
+    # about the function.
+    foreach ($consumer in @('gate.ps1', 'classify-run.ps1')) {
+        $consumerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $scriptDir $consumer), [ref]$null, [ref]$null)
+        $calls = $consumerAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Get-RunClassFrom'
+        }, $true)
+        Assert-True ($calls.Count -ge 1) "$consumer calls Get-RunClassFrom instead of carrying its own copy of the rule"
+    }
+
+    # #645 review (K): in PowerShell, `-eq` and `-ne` against an ARRAY are FILTERS, not tests --
+    # both return a collection, and both are truthy. So no comparison written after an untrusted
+    # field is read is a scalar test. Measured:
+    #     @('automatic','human') -eq 'automatic'  -> truthy
+    #     @('automatic','human') -ne 'automatic'  -> truthy
+    #     @('human')             -eq 'human'      -> True    <- a one-element array passes AS a scalar
+    # Today these are refused, but by the vocabulary check happening to reject a collection -- luck,
+    # not a scalar test. The shape is asserted ONCE at the read, so no later `if` is accidentally
+    # structural.
+    $arrayOrigin = New-Manifest -Properties @{ runClass = 'green'; runClassOrigin = @('automatic', 'human') }
+    $onArrayOrigin = Invoke-Classify -Path $arrayOrigin -Class 'green-by-luck' -Because 'the origin is an array'
+    Assert-True ((-not $onArrayOrigin.Ok) -and ($onArrayOrigin.Error -match 'not a single value')) "an array-valued runClassOrigin is refused as a SHAPE error, not left to a comparison that cannot test it"
+
+    $arrayClass = New-Manifest -Properties @{ runClass = @('green') }
+    $onArrayClass = Invoke-Classify -Path $arrayClass -Class 'green-by-luck' -Because 'the class is a one-element array'
+    Assert-True ((-not $onArrayClass.Ok) -and ($onArrayClass.Error -match 'not a single value')) "a one-element array runClass is refused too: it compares equal to its own element"
+
+    # #645 review: a pair the gate cannot emit. gate.ps1:720 makes status RED only when
+    # $failed.Count is nonzero, and :441 requires that same count to be ZERO for overallPassed --
+    # so overallPassed true implies status GREEN, always. Recomputing the class from an impossible
+    # pair yields a plausible answer (UNCLASSIFIED) and lets impossible evidence become an
+    # irreversible human judgement. Checked for EVERY class, not only the automatic ones: the
+    # manifest that gets persisted as real-red never reaches the automatic branch.
+    $impossiblePair = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $true }
+    $onImpossiblePair = Invoke-Classify -Path $impossiblePair -Class 'real-red' -Because 'RED yet everything passed'
+    Assert-True ((-not $onImpossiblePair.Ok) -and ($onImpossiblePair.Error -match 'cannot emit')) "a RED status claiming overall success is refused: the gate cannot emit that pair"
+
+    # Not special-cased to RED: the rule is that overallPassed true implies status GREEN.
+    $abortedPair = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'ABORTED-BY-CANARY'; overallPassed = $true }
+    $onAbortedPair = Invoke-Classify -Path $abortedPair -Class 'dead' -Because 'aborted yet everything passed'
+    Assert-True ((-not $onAbortedPair.Ok) -and ($onAbortedPair.Error -match 'cannot emit')) "the same refusal covers ABORTED-BY-CANARY, because the rule is about the pair and not about RED"
+
+    # Found while fixing the above: [bool]'false' is TRUE in PowerShell, so a string where the
+    # gate writes a Boolean would read as success. The type is part of the shape.
+    $stringPassed = New-Manifest -Properties @{ runClass = 'green'; status = 'GREEN'; overallPassed = 'false' }
+    $onStringPassed = Invoke-Classify -Path $stringPassed -Class 'green-by-luck' -Because 'overallPassed is the STRING false'
+    Assert-True ((-not $onStringPassed.Ok) -and ($onStringPassed.Error -match 'not a Boolean')) "a non-Boolean overallPassed is refused rather than cast, because [bool] on a non-empty string is always true"
+
+    # #645 review: the FIFTH turn of the same screw in this pair of files. Shape was checked
+    # (scalar), type was checked (Boolean), agreement was checked -- and a `status` that is not a
+    # word the gate can write still entered the comparison. `'banana' -ne 'GREEN'` yields exactly
+    # what `'RED' -ne 'GREEN'` yields, so the refusal came out PLAUSIBLE and for the wrong reason.
+    # The vocabulary is closed and lives in gate.ps1:391 as [ValidateSet('GREEN','RED',
+    # 'ABORTED-BY-CANARY')], confirmed by AST as the only one in that file.
+    $bogusStatus = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'banana'; overallPassed = $false }
+    $onBogusStatus = Invoke-Classify -Path $bogusStatus -Class 'real-red' -Because 'the status is not a word the gate writes'
+    Assert-True ((-not $onBogusStatus.Ok) -and ($onBogusStatus.Error -match 'not a status the gate writes')) "a status outside the gate's vocabulary is refused AT THE READ, not left to a comparison that cannot tell it from RED"
+
+    # Present-but-null is a third fact again: absent means the manifest predates the field, null
+    # means something wrote nothing where a verdict belongs.
+    $nullStatus = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = $null; overallPassed = $false }
+    $onNullStatus = Invoke-Classify -Path $nullStatus -Class 'dead' -Because 'the status is present and null'
+    Assert-True ((-not $onNullStatus.Ok) -and ($onNullStatus.Error -match 'not a status the gate writes')) "a present-but-null status is refused too: absent and null are different facts"
+
+    # CONTROL: the third legal value must still pass. A vocabulary guard that only admits the two
+    # values my other fixtures happen to use would pass every sabotage above and reject real runs.
+    $aborted = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'ABORTED-BY-CANARY'; overallPassed = $false }
+    $onAborted = Invoke-Classify -Path $aborted -Class 'dead' -Because 'a genuine canary abort'
+    Assert-True $onAborted.Ok "ABORTED-BY-CANARY is a legal status and classifies normally (was: $($onAborted.Error))"
+
+    # #645 review: PRESENT-BUT-NULL is not ABSENT, and I applied that distinction to `status` and
+    # not to `overallPassed`. The type-check was guarded by `$null -ne $passedField`, which is FALSE
+    # for a present null -- so the check was skipped and `[bool]$null` silently coerced to false.
+    # A null corroborator then agreed with a RED status and corroborated the class.
+    $nullPassed = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $null }
+    $onNullPassed = Invoke-Classify -Path $nullPassed -Class 'real-red' -Because 'overallPassed is present and null'
+    Assert-True ((-not $onNullPassed.Ok) -and ($onNullPassed.Error -match 'present and null')) "a present-but-null overallPassed is refused, not coerced to false"
+
+    # CONTROL: ABSENT must still be tolerated at the read, or every manifest written before these
+    # fields existed becomes unclassifiable. The distinction is the whole point of the fix.
+    $utf8NoBom2 = New-Object System.Text.UTF8Encoding($false)
+    $legacyBare = Join-Path $sandbox 'eeeeeeeeeeee-20260828T000000Z.json'
+    [System.IO.File]::WriteAllText($legacyBare, (@{ headSha = 'e' * 40; runClass = 'real-red' } | ConvertTo-Json -Depth 8), $utf8NoBom2)
+    $onLegacyBare = Invoke-Classify -Path $legacyBare -Class 'dead' -Because 'no status or overallPassed at all'
+    Assert-True ((-not $onLegacyBare.Ok) -and ($onLegacyBare.Error -match 'by a person')) "a manifest with NEITHER field still reaches the human-judgement refusal: absent is tolerated, null is not"
 
     Write-Host "`n-- the pre-taxonomy refusal still stands --"
 

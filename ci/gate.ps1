@@ -319,6 +319,7 @@ function Write-SlotEvent {
 # `present` field could not tell "genuinely no lock" apart from "looked in the wrong place", and why
 # that distinction is now a `status` tag with three states instead of two.
 . (Join-Path $PSScriptRoot 'slot-lock.ps1')
+. (Join-Path $PSScriptRoot 'run-class.ps1')
 
 # #152: one `--no-run --message-format=json` pass over the whole workspace enumerates every test
 # binary (unit-test binaries per crate, integration-test binaries per crate including each
@@ -438,7 +439,7 @@ function Write-RunManifest {
 # the new field from the WEAKER of two verdicts the manifest already holds imports exactly the
 # flattening the field was added to remove. (Found in review by L Agent, against `2b5396e`.)
 $passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($staleArtifacts.Count -eq 0)
-$runClass = if ($Status -eq 'GREEN' -and $passedEverything) { 'green' } else { 'UNCLASSIFIED' }
+$runClass = Get-RunClassFrom -Status $Status -PassedEverything $passedEverything
 
 # #199: "was the INSTRUMENT broken?" is DERIVED, never chosen -- and it is born HERE, beside the
 # numbers it is computed from, so it cannot disagree with them. Not "they agree today": they have no

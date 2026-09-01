@@ -469,6 +469,10 @@ fn resume_without_project_succeeds_when_the_deployer_configured_a_default() {
             route_id.into(),
             "--staging".into(),
             staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
             // The fix under test: the deployer's own default, set once, never overlapping
             // --staging. Remove this one pair of args (with nothing else changed) to observe the
             // pre-fix collision this test replaces as the project's strongest available red.

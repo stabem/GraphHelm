@@ -545,6 +545,10 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
             route_id.into(),
             "--staging".into(),
             staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
         ],
         // Both keys are needed: `GRAPHHELM_GATEWAY_KEY` for the credential broker
         // (`ServeModelPort::build`), `GRAPHHELM_EVENTS_KEY` for the driver's own evidence sealer
@@ -874,6 +878,10 @@ fn an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence() {
             route_id.into(),
             "--staging".into(),
             staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
         ],
         env: vec![
             ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),

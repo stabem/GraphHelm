@@ -290,8 +290,9 @@ pub struct ServeArgs {
     pub read_audit: Option<PathBuf>,
     #[arg(long = "tests-runner", default_value = "cargo")]
     pub tests_runner: String,
-    /// Repeatable; defaults to `git`+`cargo` when empty (the same default the plan gives
-    /// `graphhelm tool invoke`'s equivalent flag).
+    /// Repeatable; REQUIRED with the real-executor flags (#583). There is no default: the set of
+    /// programs an execution may spawn is declared per run, so the journal records a choice rather
+    /// than an inheritance.
     #[arg(long = "allow-program")]
     pub allow_program: Vec<String>,
     /// Repeatable; directories joined ahead of the child's inherited PATH.

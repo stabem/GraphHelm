@@ -179,6 +179,19 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     rt.block_on(serve_forever(address, state))
 }
 
+// #583: there is deliberately NO default program allowlist here.
+//
+// `DEFAULT_ALLOW_PROGRAMS = ["git", "cargo"]` used to live at this spot and was substituted when
+// the operator declared none. It is gone, and re-adding it would undo the point: with a default,
+// a deliberate choice and an inherited one produce byte-identical journals, and the record keeps
+// the list while losing the decision. The executor now refuses an undeclared allowlist outright
+// (see the argument checks above), so the ambiguous state cannot be reached rather than being
+// recorded and explained.
+//
+// #177's closed-vocabulary guard over that constant was retired in the same commit. It was doing
+// real work -- it made GROWTH of the default a visible test change -- but its subject no longer
+// exists, and a guard whose subject is gone certifies nothing while still looking like coverage.
+
 /// STEP 2's grouping rule, enforced once at startup (`serve_invalid` on violation) rather than
 /// per-request: `{manifest, broker, route, staging}` is all-or-none; `{keyring, key-id}` is
 /// all-or-none; real-executor mode (a non-`None` `RuntimeWiring`) additionally requires BOTH
@@ -186,25 +199,6 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
 /// fail fast) and the configured `--route` is resolved to a cloned `ModelRoute` — never re-parsed
 /// per drive.
 #[allow(clippy::type_complexity)]
-/// The programs a `serve` execution may spawn when the operator declares none.
-///
-/// #177: this is a SECURITY SURFACE, not configuration — it is the set of executables an execution
-/// is permitted to start. It was previously an inline `vec!["git", "cargo"]` at the substitution
-/// site, which made two different situations indistinguishable to anyone reading the wiring: an
-/// operator who deliberately allowed these two, and an operator who declared nothing and received
-/// them.
-///
-/// **The failure mode this guards is GROWTH, not the current value.** The issue names it exactly:
-/// treated as config, "the allowlist grows one entry per demo until it means nothing". So the
-/// defence is not that these two are the right two — it is that changing the set cannot happen
-/// quietly. `the_default_allow_programs_are_exactly_the_declared_two` below pins it as a closed
-/// vocabulary, so widening it is a visible test change that someone has to justify in a diff,
-/// rather than an edit nobody reviews.
-///
-/// Widening for a particular run belongs at the CALL SITE via `--allow-program`, where it is
-/// declared per execution and travels with that execution's wiring. It does not belong here.
-const DEFAULT_ALLOW_PROGRAMS: [&str; 2] = ["git", "cargo"];
-
 fn build_wiring(
     args: &ServeArgs,
 ) -> Result<(Option<RuntimeWiring>, Option<SignalKeyring>), Failure> {
@@ -234,6 +228,28 @@ fn build_wiring(
     if executor_all && !keyring_all {
         return Err(serve_invalid(
             "the real-executor flags require --keyring and --key-id as well",
+            "/arguments",
+        ));
+    }
+    // #583: the program allowlist is the set of executables an execution may spawn, so it is
+    // DECLARED or the execution does not start. It used to default to two names when the operator
+    // gave none, which made a deliberate choice and an inherited one produce byte-identical
+    // journals -- the record kept the list and lost the decision.
+    //
+    // The cure makes the ambiguous state unrepresentable instead of recording it: with no default,
+    // every journal's allowlist was chosen by someone. That is the same shape as this module's
+    // sibling rules, where a half-given group is refused rather than completed on the caller's
+    // behalf.
+    //
+    // This sits BEFORE the manifest is read, with the other argument-shape refusals, so an
+    // operator learns what is missing without first needing every path to be valid.
+    //
+    // The message names the FLAG and never the programs. If it suggested a list, every operator
+    // would paste that list back and "declared deliberately" would be theatre -- the refusal asks
+    // the question, it does not hand over an answer.
+    if executor_all && args.allow_program.is_empty() {
+        return Err(serve_invalid(
+            "the real-executor flags require --allow-program: the set of programs an execution              may spawn is declared per run, never defaulted",
             "/arguments",
         ));
     }
@@ -269,10 +285,8 @@ fn build_wiring(
                 serve_invalid("--route does not name a route in the manifest", "/route")
             })?
             .clone();
-        let mut allow_programs = args.allow_program.clone();
-        if allow_programs.is_empty() {
-            allow_programs = DEFAULT_ALLOW_PROGRAMS.map(str::to_owned).to_vec();
-        }
+        // Never empty: the argument check above refuses an executor run that declared none.
+        let allow_programs = args.allow_program.clone();
         Some(RuntimeWiring {
             manifest_path: manifest_path.clone(),
             route,
@@ -2336,24 +2350,6 @@ mod tests {
         assert!(
             OpaqueId::parse(derived.clone()).is_ok(),
             "the maximum-length derived key must still be a valid OpaqueId: {derived:?}"
-        );
-    }
-    /// Pins the default program allowlist as a CLOSED vocabulary (#177 item 3).
-    ///
-    /// The value is not the claim — the claim is that the value cannot move quietly. A new entry
-    /// here is a failing test that names what was added, which is the whole difference between a
-    /// security surface and a config knob. If you are here because this test failed: say in the
-    /// commit which program you added and why an execution must be able to spawn it.
-    #[test]
-    fn the_default_allow_programs_are_exactly_the_declared_two() {
-        assert_eq!(
-            DEFAULT_ALLOW_PROGRAMS,
-            ["git", "cargo"],
-            "the default allowlist changed; widening it is a decision, not an edit"
-        );
-        assert!(
-            !DEFAULT_ALLOW_PROGRAMS.is_empty(),
-            "an empty default would silently permit nothing and read as 'no policy' rather than as a refusal -- if that is ever wanted, it needs its own argument"
         );
     }
 }

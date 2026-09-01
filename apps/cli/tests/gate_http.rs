@@ -340,6 +340,10 @@ fn gate_serve(directory: &Path, execution: &str) -> GateServe {
             route_id.into(),
             "--staging".into(),
             staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
         ],
         env: vec![
             ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),

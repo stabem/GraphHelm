@@ -507,6 +507,58 @@ fn health_answers_without_auth_and_everything_else_refuses_without_the_token() {
     );
 }
 
+/// #583: the program allowlist is a security surface, so an execution must DECLARE it. `serve`
+/// used to substitute `["git", "cargo"]` when the operator declared none, which made two
+/// situations produce byte-identical journals: an operator who deliberately allowed those two,
+/// and an operator who declared nothing and inherited them.
+///
+/// The cure is that the bad state stops being representable, rather than being recorded and
+/// explained. A journal in which the default is impossible is stronger than one that confesses
+/// inheritance.
+///
+/// The refusal fires during argument validation, before any file is read -- which is why this
+/// test can point the executor flags at paths that do not exist.
+#[test]
+fn the_executor_refuses_to_run_without_a_declared_program_allowlist() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("nothing-here");
+    let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--bind", "127.0.0.1:0"])
+        .args(["--events", directory.path().to_str().unwrap()])
+        .args(["--manifest", missing.to_str().unwrap()])
+        .args(["--broker", missing.to_str().unwrap()])
+        .args(["--route", "some-route"])
+        .args(["--staging", missing.to_str().unwrap()])
+        .args(["--keyring", missing.to_str().unwrap()])
+        .args(["--key-id", "some-key"])
+        // and deliberately NO --allow-program
+        .output()
+        .unwrap();
+
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(2), "{stdout_text}");
+    let value: Value = serde_json::from_str(&stdout_text).unwrap_or_else(|error| {
+        panic!("stdout must be one JSON envelope ({error}): {stdout_text:?}")
+    });
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["diagnostics"][0]["code"], "GHCLI006_SERVE_INVALID");
+
+    let message = value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.contains("--allow-program"),
+        "the refusal must name the flag the operator has to use: {message}"
+    );
+    // The refusal must NOT prescribe the list. If it says "use git,cargo", every operator pastes
+    // git,cargo and "deliberate" becomes theatre -- the guard asks the question, it does not hand
+    // over the answer.
+    assert!(
+        !message.contains("git") && !message.contains("cargo"),
+        "the refusal must not prescribe which programs to allow, or the declaration is theatre:          {message}"
+    );
+}
+
 /// The loopback-only guard, named in the milestone's definition of done: a non-loopback `--bind`
 /// is refused fail-closed before any listener is opened — no startup line, a domain failure
 /// carrying `GHCLI006_SERVE_INVALID`, and a non-zero exit. `0.0.0.0` parses as a valid socket

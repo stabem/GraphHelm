@@ -1,10 +1,20 @@
 # #639: isolated tests for ci/classify-run.ps1 -- the green side of the taxonomy.
 #
-# WHAT THIS FILE EXISTS TO PROVE. A gate manifest recorded `runClass: green` for a run whose own
-# author measured it as luck (`171e4fdadb93`, PASS=4 FAIL=1, written into the NEXT commit's message
-# because there was nowhere else to put it). Three sites made that unrecordable: `gate.ps1` assigns
-# `green` automatically, this script REFUSES anything already classified, and its vocabulary was
-# red-side only. So no person could mark that green, and a census reading colour read it as proof.
+# WHAT THIS FILE EXISTS TO PROVE. A gate manifest recorded `runClass: green` for a run its own
+# author had measured as luck -- run alone five times, PASS=4 FAIL=1 -- and wrote that into a commit
+# message because there was nowhere else to put it. Three sites made that unrecordable: `gate.ps1`
+# assigns `green` automatically, this script REFUSES anything already classified, and its
+# vocabulary was red-side only. So no person could mark that green, and a census reading colour read it as proof.
+#
+# TWO CORRECTIONS TO THE PARAGRAPH ABOVE, both to statements I made and both measured since (#659).
+# The earlier wording said the measurement was written into the NEXT commit's message. It was not:
+# it is in `171e4fdadb93`'s OWN message, lines 5-6 of its body. And `171e4fdadb93` is the commit that
+# CARRIES the measurement, not the head of the run it refers to -- that commit says the lucky green
+# was "already recorded" when it was written at 13:54:15Z, while the run at its own head did not
+# start until 13:57:22Z and ran WITH the fix applied. The green it points at is the last one before
+# the failure, `47569a13bc96` at 07:01:49Z. Recorded here because the first version of these
+# sentences was cited by a review as the standard against which a correct record was judged wrong:
+# a comment that misstates its own evidence does not merely fail to help, it actively misleads.
 #
 # The distinction that fixes it without breaking anything: the refusal at the re-classification
 # guard protects a HUMAN JUDGEMENT from being overwritten. An automatic `green` is not a judgement --

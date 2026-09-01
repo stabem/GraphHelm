@@ -208,6 +208,35 @@ const MAX_AUTHORED_FILE_BYTES: u64 = 4 * 1024 * 1024;
 /// copied out of those bytes.
 const MAX_AUTHORED_SWEEP_BYTES: u64 = 16 * MAX_AUTHORED_FILE_BYTES;
 
+/// The per-item bound, then the aggregate, in the order that makes the aggregate mean anything:
+/// debited BEFORE any read, so a file the per-item check would refuse never reaches the aggregate
+/// at all. Pulled out of `offending_lines` so a test can drive this exact code against a fixture
+/// tree without either duplicating it (a twin proves nothing about the shipped function) or routing
+/// through the workspace-wide walk, which has no injection point (#656).
+///
+/// Size from METADATA before the read, not after (Codex, #578). `read_to_string` allocates the
+/// whole file, and the walk's entry bound counts paths rather than the bytes behind any one of
+/// them -- so one oversized file kills this process with no diagnostic, in a guard whose only job
+/// is to produce one.
+///
+/// Debited before the read, from one budget for the whole sweep. Every file passing the per-item
+/// bound independently is not a bound on the sweep -- the same question as the per-item one, a
+/// floor up (Codex, #578).
+fn debit_sweep_budget(relative_path: &str, file_bytes: u64, spent: &mut u64) {
+    assert!(
+        file_bytes <= MAX_AUTHORED_FILE_BYTES,
+        "HARNESS-BROKE: {relative_path} is {file_bytes} bytes, past the \
+         {MAX_AUTHORED_FILE_BYTES}-byte bound this sweep reads under; it is not measuring what it \
+         claims"
+    );
+    *spent = spent.saturating_add(file_bytes);
+    assert!(
+        *spent <= MAX_AUTHORED_SWEEP_BYTES,
+        "HARNESS-BROKE: the sweep passed {MAX_AUTHORED_SWEEP_BYTES} bytes of source at \
+         {relative_path} ({spent} so far); it is not measuring what it claims"
+    );
+}
+
 fn offending_lines() -> Vec<String> {
     let mut out = Vec::new();
     let mut spent = 0_u64;
@@ -216,34 +245,13 @@ fn offending_lines() -> Vec<String> {
         if exempt(&relative_path).is_some() {
             continue;
         }
-        // Size from METADATA before the read, not after (Codex, #578). `read_to_string` allocates
-        // the whole file, and the walk's entry bound counts paths rather than the bytes behind any
-        // one of them -- so one oversized file kills this process with no diagnostic, in a guard
-        // whose only job is to produce one. The repository already reads sizes this way before
-        // acting on them (`core/events/src/local.rs:935`, `core/extension-host/src/activation.rs:305`);
-        // this site was the one not following the convention.
-        //
         // Measured before choosing the bound, because a bound tighter than its subject turns this
         // red on a legitimate checkout: the largest Rust file in the workspace is
         // `core/events/src/local.rs` at 290_676 bytes, against 4 MiB here.
         let Ok(metadata) = std::fs::metadata(&path) else {
             continue;
         };
-        assert!(
-            metadata.len() <= MAX_AUTHORED_FILE_BYTES,
-            "HARNESS-BROKE: {relative_path} is {} bytes, past the {MAX_AUTHORED_FILE_BYTES}-byte \
-             bound this sweep reads under; it is not measuring what it claims",
-            metadata.len()
-        );
-        // Debited BEFORE the read, from one budget for the whole sweep. Every file passing the
-        // per-item bound independently is not a bound on the sweep -- the same question as the
-        // per-item one, a floor up (Codex, #578).
-        spent = spent.saturating_add(metadata.len());
-        assert!(
-            spent <= MAX_AUTHORED_SWEEP_BYTES,
-            "HARNESS-BROKE: the sweep passed {MAX_AUTHORED_SWEEP_BYTES} bytes of source at \
-             {relative_path} ({spent} so far); it is not measuring what it claims"
-        );
+        debit_sweep_budget(&relative_path, metadata.len(), &mut spent);
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -257,6 +265,19 @@ fn offending_lines() -> Vec<String> {
             }
         }
     }
+    // The new cell for the aggregate bound proves the FUNCTION, not the WIRING: it calls
+    // `debit_sweep_budget` directly, so deleting the call at the site above reddens nothing --
+    // the real sweep still reads under its 67 MiB budget with 8x headroom (found by L reviewing
+    // #657; the seam the extraction created was never checked from this side of it). `spent` is
+    // this loop's only witness that the call ran at all, so it is the one thing worth asserting
+    // here: zero would mean either an empty workspace or a deleted call, and this workspace is
+    // never empty.
+    assert!(
+        spent > 0,
+        "HARNESS-BROKE: the sweep read zero bytes of source, so nothing called \
+         debit_sweep_budget; the aggregate bound's own test cell would not catch that call being \
+         deleted here"
+    );
     out
 }
 
@@ -533,5 +554,149 @@ fn the_composed_predicate_catches_the_defect_and_spares_ordinary_rust() {
     assert!(
         !offends(&whitespace_value),
         "a literal that is ONLY spaces is a value whose being whitespace is the point"
+    );
+}
+
+/// The sweep's AGGREGATE byte budget refuses a tree whose total exceeds it, even though every
+/// individual file stays under the per-file bound (#578, #656).
+///
+/// `MAX_AUTHORED_SWEEP_BYTES` composes the two limits that already existed --
+/// `WORKSPACE_WALK_MAX_ENTRIES` times `MAX_AUTHORED_FILE_BYTES` is ~32 GiB of legal reads -- and
+/// shipped without a cell: arming it against the real workspace needs over 64 MiB of Rust, which
+/// this repository does not carry and should not grow to have on purpose. Generated here instead,
+/// in a tmpdir, never committed.
+///
+/// Drives `debit_sweep_budget` directly rather than `offending_lines`: that function has no
+/// injection point (it always walks the real workspace), and duplicating its bound-checking logic
+/// here would sabotage a TWIN rather than the shipped function -- proving nothing about the code
+/// that ships. This is the exact function `offending_lines` calls, unchanged.
+#[test]
+fn the_sweep_byte_budget_refuses_a_tree_over_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    // Each file sits comfortably under the PER-FILE bound (4 MiB), so only the AGGREGATE can be
+    // what trips -- a file this size would never redden the per-item assert first.
+    let per_file_bytes: usize = 3 * 1024 * 1024;
+    let content = "// filler line, repeated to build a cheap oversized fixture\n"
+        .repeat(per_file_bytes / 60 + 1)
+        .into_bytes();
+    let content = &content[..per_file_bytes];
+    // 24 * 3 MiB = 72 MiB, comfortably over the 64 MiB aggregate bound with margin for filesystem
+    // rounding, and comfortably under it for the first ~21 files so the budget genuinely runs out
+    // partway through rather than on file one.
+    let file_count = 24;
+    let mut paths = Vec::new();
+    for index in 0..file_count {
+        let path = dir.path().join(format!("filler_{index}.rs"));
+        std::fs::write(&path, content).expect("the fixture file writes");
+        paths.push(path);
+    }
+
+    // ARRANGEMENT, asserted rather than assumed: the fixture's own total must exceed the bound
+    // before the guard is judged, or a refusal below could be about anything.
+    let total: u64 = paths
+        .iter()
+        .map(|path| {
+            std::fs::metadata(path)
+                .expect("fixture metadata reads")
+                .len()
+        })
+        .sum();
+    assert!(
+        total > MAX_AUTHORED_SWEEP_BYTES,
+        "arrangement: the fixture must exceed the aggregate bound to test refusing it, got \
+         {total} bytes against a {MAX_AUTHORED_SWEEP_BYTES}-byte budget"
+    );
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut spent = 0_u64;
+        for path in &paths {
+            let metadata = std::fs::metadata(path).expect("fixture metadata reads");
+            debit_sweep_budget(&path.display().to_string(), metadata.len(), &mut spent);
+        }
+    }));
+
+    let error = result.expect_err(
+        "the sweep byte budget must refuse a tree whose cumulative size exceeds it, not read \
+         all of it",
+    );
+    let message = error
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| error.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+        .expect("the panic payload is a string");
+    assert!(
+        message.contains("HARNESS-BROKE") && message.contains("passed"),
+        "the refusal must name the limit it hit, not just panic: {message}"
+    );
+}
+
+#[cfg(windows)]
+fn make_directory_link(link: &Path, target: &Path) {
+    let status = std::process::Command::new("cmd")
+        .args([
+            "/c",
+            "mklink",
+            "/J",
+            link.to_str().expect("link path is unicode"),
+            target.to_str().expect("target path is unicode"),
+        ])
+        .status()
+        .expect("mklink runs");
+    assert!(
+        status.success(),
+        "ARRANGEMENT: the directory junction was not created"
+    );
+}
+
+#[cfg(unix)]
+fn make_directory_link(link: &Path, target: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("ARRANGEMENT: the symlink was not created");
+}
+
+/// A member root that resolves outside the workspace via a directory link is refused, not
+/// silently traversed (#578, #656).
+///
+/// A junction needs no admin privilege on Windows, unlike a symlink -- measured with a throwaway
+/// probe before writing this cell: `std::fs::canonicalize` resolves a junction to its target
+/// exactly as it resolves a symlink, so the same code path (`member_root_inside`'s
+/// `canonicalize` + `starts_with`) is genuinely exercised on every platform, just through a
+/// different link kind. Unix uses a real symlink; Windows uses a junction; the assertion under
+/// test is identical either way.
+#[test]
+fn a_member_root_escaping_via_a_directory_link_is_refused() {
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let outside = tempfile::tempdir().expect("a temp dir");
+    let workspace_root = std::fs::canonicalize(workspace.path()).expect("workspace root resolves");
+
+    let link_path = workspace.path().join("escaped-member");
+    make_directory_link(&link_path, outside.path());
+
+    // ARRANGEMENT, asserted rather than assumed: the link must actually resolve OUTSIDE the
+    // workspace root before the guard is judged, on THIS platform's link mechanism.
+    let resolved = std::fs::canonicalize(&link_path).expect("the link resolves");
+    assert!(
+        !resolved.starts_with(&workspace_root),
+        "arrangement: the directory link must resolve outside the workspace root, got {} under \
+         {}",
+        resolved.display(),
+        workspace_root.display()
+    );
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        member_root_inside(&workspace_root, &link_path)
+    }));
+
+    let error = result.expect_err(
+        "a member root that resolves outside the workspace via a directory link must be refused, \
+         not traversed",
+    );
+    let message = error
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| error.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+        .expect("the panic payload is a string");
+    assert!(
+        message.contains("HARNESS-BROKE") && message.contains("outside the workspace"),
+        "the refusal must name why, not just panic: {message}"
     );
 }

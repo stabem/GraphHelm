@@ -210,6 +210,27 @@ fn the_contained_producer_yields_a_validated_receipt_naming_program_and_session(
         .as_ref()
         .expect("a named program");
     assert!(executable.path.ends_with("fake_mcp_server.exe"));
+    // #153 item 3 asks for "which binary (path AND hash)", and the path alone is half of it.
+    //
+    // The digest is taken OF THE FILE THE RECORD NAMES -- not of a path this test knows by another
+    // route -- so the two fields are proved against EACH OTHER. That is what makes them one
+    // identity instead of two loose facts: a `sha256` populated from the wrong source would still
+    // be a well-formed digest, and nothing here would notice.
+    //
+    // Measured before this line existed: with `provider.rs` populating `sha256` from unrelated
+    // bytes, this whole suite stayed GREEN (3 passed). The blindness was real, not hypothetical.
+    let named = std::path::Path::new(&executable.path);
+    let bytes = std::fs::read(named).unwrap_or_else(|error| {
+        panic!(
+            "the record names {}, which cannot be read: {error}",
+            executable.path
+        )
+    });
+    assert_eq!(
+        executable.sha256,
+        graphhelm_tool_broker::record::digest_hex(&bytes),
+        "a path carrying another binary's hash names one thing and identifies another"
+    );
     let session_identity = record.contained_session.as_ref().expect("a named session");
     assert_eq!(
         session_identity.snapshot_generation, session_generation,

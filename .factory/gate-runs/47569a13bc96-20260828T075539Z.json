@@ -1,7 +1,5 @@
 {
     "status":  "GREEN",
-    "runClass":  "green",
-    "relatedToDiff":  null,
     "headSha":  "47569a13bc96b590314b64133ae0bbd955b9a938",
     "dirtyDiffHash":  "51c2a537aa0e22130c9f0c046baba69ec3b2d9aaea5c9665fc0264b6b2ae4277",
     "runStartUtc":  "2026-08-28T07:01:49.4201647Z",
@@ -1869,5 +1867,11 @@
                       },
     "slotLockStartEndIdentical":  false,
     "instrumentSuspect":  false,
-    "overallPassed":  true
+    "overallPassed":  true,
+    "runClassRefinedFrom":  "green",
+    "runClass":  "green-by-luck",
+    "runClassOrigin":  "human",
+    "relatedToDiff":  null,
+    "runClassBecause":  "measurement carried in commit 171e4fdadb93\u0027s message (run alone 5x, PASS=4 FAIL=1), referring to THIS run (47569a13bc96, started 2026-08-28T07:01:49Z) -- the last green before the failure at 8926bbf9c607 (12:22:46Z) that 171e4fdadb93 fixed; 171e4fdadb93\u0027s own run (13:57:22Z) is post-fix and legitimately green (#639, corrected)",
+    "runClassAtUtc":  "2026-09-01T21:35:44.5991924Z"
 }

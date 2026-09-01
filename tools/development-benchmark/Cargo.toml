@@ -17,6 +17,11 @@ graphhelm-runtime = { path = "../../core/runtime" }
 graphhelm-gateway = { path = "../../core/gateway" }
 graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
 graphhelm-events = { path = "../../core/events" }
+# generate-retrieval only: the contained session (verified executable, pinned snapshot, Tier 1
+# workspace) is the ONLY door this repository speaks to an index provider through -- the
+# generator rides it rather than growing a second, unconfined spawn path.
+graphhelm-tool-host = { path = "../../adapters/tool-host" }
+graphhelm-tool-broker = { path = "../../core/tool-broker" }
 # rt only: the broker's open/lease are async and the driver bridges with a current-thread
 # block_on exactly as apps/cli/src/commands/gateway/probe.rs does.
 tokio = { workspace = true, features = ["rt"] }
@@ -26,6 +31,7 @@ serde_yaml_ng.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+
 [[bin]]
 name = "graphhelm-development-benchmark"
 path = "src/main.rs"
@@ -33,3 +39,11 @@ path = "src/main.rs"
 [[bin]]
 name = "paired-driver"
 path = "src/bin/paired-driver.rs"
+
+[[bin]]
+name = "generate-retrieval"
+path = "src/bin/generate-retrieval.rs"
+
+[[bin]]
+name = "fake-index-provider"
+path = "src/bin/fake-index-provider.rs"

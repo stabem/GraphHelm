@@ -81,6 +81,43 @@ fn arrange(root: &Path) -> PathBuf {
         .unwrap();
     }
 
+    // The repo fixture is a real git checkout now, because the driver DERIVES the identity of the
+    // tree it reads instead of trusting the artifact's declaration (Codex P1: coordinates produced
+    // against one source tree must not slice another). The artifacts declare `sha256-g1`, so the
+    // arrangement rewrites that to the tree this checkout actually hashes to.
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(root.join("repo"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@test.invalid")
+            .env("GIT_COMMITTER_NAME", "fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@test.invalid")
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "fixture"]);
+    let tree = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD^{tree}"])
+            .current_dir(root.join("repo"))
+            .output()
+            .expect("git runs")
+            .stdout,
+    )
+    .expect("a tree id")
+    .trim()
+    .to_owned();
+    for id in ["alpha", "beta"] {
+        let path = bench.join("retrieval").join(format!("{id}.json"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("sha256-g1", &tree)).unwrap();
+    }
+
     let cases: Vec<Case> = ["alpha", "beta"]
         .iter()
         .map(|id| Case {
@@ -93,10 +130,11 @@ fn arrange(root: &Path) -> PathBuf {
         .map(|case| serde_json::to_value(case).unwrap())
         .collect();
     let manifest = serde_json::json!({
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "corpusDigest": corpus_digest(&case_values),
         "oracleDigest": frozen_files_digest(&bench, "oracle", &cases).unwrap(),
         "objectivesDigest": frozen_files_digest(&bench, "objectives", &cases).unwrap(),
+        "retrievalDigest": frozen_files_digest(&bench, "retrieval", &cases).unwrap(),
         "cases": case_values,
     });
     std::fs::write(
@@ -105,6 +143,33 @@ fn arrange(root: &Path) -> PathBuf {
     )
     .unwrap();
     bench
+}
+
+/// Re-freeze the manifest after a test deliberately edits a frozen file: these cells exist to
+/// prove the refusal DOWNSTREAM of the freeze (stale bindings, partial drives), so the freeze
+/// itself must agree with the edited bytes or it intercepts first and the downstream gate is
+/// never exercised.
+fn refreeze(bench: &Path) {
+    let cases: Vec<Case> = ["alpha", "beta"]
+        .iter()
+        .map(|id| Case {
+            id: (*id).to_owned(),
+            oracle_id: format!("oracle-{id}"),
+        })
+        .collect();
+    let text = std::fs::read_to_string(bench.join("manifest.json")).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_str(&text).unwrap();
+    manifest["oracleDigest"] =
+        serde_json::json!(frozen_files_digest(bench, "oracle", &cases).unwrap());
+    manifest["objectivesDigest"] =
+        serde_json::json!(frozen_files_digest(bench, "objectives", &cases).unwrap());
+    manifest["retrievalDigest"] =
+        serde_json::json!(frozen_files_digest(bench, "retrieval", &cases).unwrap());
+    std::fs::write(
+        bench.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
 }
 
 fn drive(bench: &Path, root: &Path) -> std::process::Output {
@@ -214,14 +279,19 @@ fn a_stale_retrieval_artifact_refuses_the_drive_itself() {
     let bench = arrange(directory.path());
     let stale = bench.join("retrieval/alpha.json");
     let text = std::fs::read_to_string(&stale).unwrap();
-    std::fs::write(&stale, text.replace("\"sha256-g1\",", "\"sha256-g0\",")).unwrap();
+    std::fs::write(
+        &stale,
+        text.replacen("\"indexGeneration\": \"", "\"indexGeneration\": \"g0", 1),
+    )
+    .unwrap();
     // The replace above must hit exactly one of the two binding fields, or the artifact is not
     // stale (equal ids are fresh whatever their value).
     let rewritten = std::fs::read_to_string(&stale).unwrap();
     assert!(
-        rewritten.contains("sha256-g0") && rewritten.contains("sha256-g1"),
+        rewritten.contains("\"g0"),
         "arrangement: the two binding halves must now differ"
     );
+    refreeze(&bench);
 
     let drove = drive(&bench, directory.path());
     assert_eq!(drove.status.code(), Some(2), "a typed refusal, not a run");
@@ -263,12 +333,17 @@ fn a_partial_drive_persists_completed_cases_but_stays_unreadable_as_a_run() {
     // order, so its receipt exists by the time beta refuses.
     let stale = bench.join("retrieval/beta.json");
     let text = std::fs::read_to_string(&stale).unwrap();
-    std::fs::write(&stale, text.replace("\"sha256-g1\",", "\"sha256-g0\",")).unwrap();
+    std::fs::write(
+        &stale,
+        text.replacen("\"indexGeneration\": \"", "\"indexGeneration\": \"g0", 1),
+    )
+    .unwrap();
     let rewritten = std::fs::read_to_string(&stale).unwrap();
     assert!(
-        rewritten.contains("sha256-g0") && rewritten.contains("sha256-g1"),
+        rewritten.contains("\"g0"),
         "arrangement: beta's binding halves must differ"
     );
+    refreeze(&bench);
 
     let drove = drive(&bench, directory.path());
     assert_eq!(drove.status.code(), Some(2), "the drive refuses on beta");
@@ -307,7 +382,7 @@ fn a_disabled_route_refuses_before_key_or_broker() {
     let directory = tempfile::tempdir().unwrap();
     let bench = arrange(directory.path());
     let manifest = serde_json::json!({
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "routes": [{
             "id": "anthropic_prod",
             "provider": "anthropic",
@@ -413,5 +488,60 @@ fn an_oversized_gateway_manifest_refuses_before_it_is_read() {
     assert!(
         stderr.contains("refused before reading"),
         "the refusal must come from the pre-read bound, not from the parser after the          allocation: {stderr}"
+    );
+}
+
+/// Codex P1 (post-rebase): the freeze verified one directory and the drive read ANOTHER.
+///
+/// `verify_frozen_files` hashes `<manifest parent>/retrieval`; the drive then read artifacts from
+/// the independent `--retrieval` argument. An approved frozen directory passed while modified
+/// artifacts from somewhere else determined the compiled contexts — the fourth digest verified,
+/// and verified something nobody consumed.
+///
+/// Closed by REFUSING the divergence rather than by verifying the argument: two paths that must
+/// agree are a state that can disagree, and the operator who pointed elsewhere gets told, instead
+/// of having their argument silently ignored.
+#[test]
+fn a_retrieval_directory_other_than_the_verified_one_refuses_the_drive() {
+    let directory = tempfile::tempdir().unwrap();
+    let bench = arrange(directory.path());
+
+    // A byte-identical COPY: identical content, different address. The freeze cannot tell the
+    // difference, which is precisely why the address has to be the thing that is checked.
+    let elsewhere = directory.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    for case in ["alpha", "beta"] {
+        std::fs::copy(
+            bench.join("retrieval").join(format!("{case}.json")),
+            elsewhere.join(format!("{case}.json")),
+        )
+        .unwrap();
+    }
+
+    let drove = driver()
+        .arg("--manifest")
+        .arg(bench.join("manifest.json"))
+        .arg("--retrieval")
+        .arg(&elsewhere)
+        .arg("--repo-root")
+        .arg(directory.path().join("repo"))
+        .arg("--out")
+        .arg(directory.path().join("out"))
+        .arg("--provider")
+        .arg("fake")
+        .arg("--clock")
+        .arg("2026-08-31T03:00:00Z")
+        .arg("--binary-digest")
+        .arg("sha256-dryrun")
+        .arg("--environment")
+        .arg("env-dryrun")
+        .output()
+        .expect("the driver binary exists");
+
+    assert_eq!(drove.status.code(), Some(2), "a typed refusal, not a run");
+    let stdout = String::from_utf8_lossy(&drove.stdout);
+    assert!(
+        stdout.contains("retrieval"),
+        "the refusal must name what diverged, got: {stdout}"
     );
 }

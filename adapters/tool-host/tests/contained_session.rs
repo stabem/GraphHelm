@@ -141,15 +141,17 @@ fn a_different_snapshot_yields_a_different_session_id() {
     );
 }
 
-/// The call path: the provider runs through the ONE spawn funnel, and the session HANDS it the
-/// snapshot -- CBM_SNAPSHOT_DIR points at the pinned copy, and #538's CBM_CACHE_DIR arrives
-/// confined because the funnel already does that. The composition is observable from inside
-/// the child, not asserted from outside.
+/// The call path: the provider runs through the ONE spawn funnel, and the address it reads its
+/// store from — `CBM_CACHE_DIR`, the only name the real provider consults (measured against
+/// codebase-memory-mcp 0.10.8) — holds the PINNED bytes when the child starts. The session
+/// copies the verified pin there before every spawn; the pin itself is never handed over,
+/// because the provider writes into its cache dir and a written-into pin would fail its own
+/// next re-verification. Observable from inside the child (the env dump names the address) and
+/// from the bytes at that address.
 #[test]
-fn a_call_hands_the_provider_the_snapshot_and_the_confined_cache() {
+fn a_call_serves_the_pinned_bytes_at_the_confined_cache_dir() {
     let (_project, _staging, workspace) = provisioned("session-c");
     let (verified, pinned) = contained(workspace.root());
-    let snapshot_root = pinned.root().to_path_buf();
     let session = ContainedProviderSession::open(&workspace, verified, pinned);
 
     let captured = session
@@ -157,20 +159,22 @@ fn a_call_hands_the_provider_the_snapshot_and_the_confined_cache() {
         .expect("a contained call runs");
 
     let dump = String::from_utf8_lossy(&captured.stdout);
-    let snapshot_line = dump
+    let cache_line = dump
         .lines()
-        .find(|line| line.starts_with("CBM_SNAPSHOT_DIR="))
-        .expect("the provider is TOLD where the pinned snapshot lives");
+        .find(|line| line.starts_with("CBM_CACHE_DIR="))
+        .expect("#538's confinement composes: the cache dir arrives via the same funnel");
+    let cache_dir = Path::new(cache_line.trim_start_matches("CBM_CACHE_DIR="));
     assert!(
-        Path::new(snapshot_line.trim_start_matches("CBM_SNAPSHOT_DIR="))
+        cache_dir
             .canonicalize()
             .unwrap()
-            .starts_with(snapshot_root.canonicalize().unwrap()),
-        "the snapshot handed to the provider is the PINNED COPY, not the host index"
+            .starts_with(workspace.root().canonicalize().unwrap()),
+        "the cache dir the provider reads stays inside the workspace"
     );
-    assert!(
-        dump.lines().any(|line| line.starts_with("CBM_CACHE_DIR=")),
-        "#538's confinement composes: the cache dir arrives via the same funnel"
+    assert_eq!(
+        std::fs::read(cache_dir.join("graph/nodes.bin")).expect("the serving copy exists"),
+        b"node bytes v1",
+        "the address the provider reads serves the PINNED snapshot's bytes"
     );
 }
 

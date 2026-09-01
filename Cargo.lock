@@ -945,6 +945,8 @@ dependencies = [
  "graphhelm-model-gateway",
  "graphhelm-protocols",
  "graphhelm-runtime",
+ "graphhelm-tool-broker",
+ "graphhelm-tool-host",
  "hex",
  "serde",
  "serde_json",

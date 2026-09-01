@@ -17,17 +17,17 @@
       "lines": "84-97"
     },
     {
-      "path": "core/execution/src/ready.rs",
-      "lines": "341-356"
+      "path": "apps/cli/tests/development_sabotage.rs",
+      "lines": "257-273"
     },
     {
-      "path": "apps/cli/tests/development_contract_schemas.rs",
-      "lines": "567-579"
+      "path": "core/execution/src/ready.rs",
+      "lines": "341-356"
     }
   ],
-  "coverage": "excluded",
+  "coverage": "partial",
   "pages": 1,
-  "maxResults": 50,
+  "maxResults": 5,
   "maxPages": 8,
   "maxBytes": 1000000,
   "maxTokens": 250000

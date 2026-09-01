@@ -65,6 +65,7 @@ fn composed(
     tempfile::TempDir,
     ContainedProviderSession,
     Tier1Workspace,
+    PathBuf,
 ) {
     let (project_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
@@ -79,7 +80,7 @@ fn composed(
     std::fs::write(index_source.join("graph.bin"), b"index bytes v1").unwrap();
     let pinned = pin_snapshot(&index_source, workspace.root()).unwrap();
     let session = ContainedProviderSession::open(&workspace, verified, pinned);
-    (project_dir, staging, session, workspace)
+    (project_dir, staging, session, workspace, project)
 }
 
 fn provider_over(
@@ -185,10 +186,13 @@ fn hex_digest(bytes: &[u8]) -> String {
 /// and its broker record names the program AND the session -- D-042's closing demand, produced.
 #[test]
 fn the_contained_producer_yields_a_validated_receipt_naming_program_and_session() {
-    let (_project, _staging, session, workspace) = composed("producer-a");
+    // The reader reads the PROJECT tree, the way production does — never the provider's
+    // workspace, whose sandbox dirs the session writes into on every call (the serving copy of
+    // the pin, at minimum), which would move the reader's snapshot mid-validation.
+    let (_project, _staging, session, _workspace, project) = composed("producer-a");
     let session_generation = session.identity().snapshot_generation.clone();
     let reader = WorkspaceSourceReader::open(
-        workspace.root(),
+        &project,
         SourceReaderLimits {
             max_files: 100_000,
             max_bytes: 1024 * 1024 * 1024,
@@ -239,10 +243,42 @@ fn the_contained_producer_yields_a_validated_receipt_naming_program_and_session(
     );
 }
 
+/// The bytes the provider READS are the bytes the broker PINNED. The real provider (measured:
+/// codebase-memory-mcp 0.10.8) reads its store from `CBM_CACHE_DIR` — the directory #538's
+/// funnel confines — and ignores every other name; a pin that lives anywhere else is a pin no
+/// provider ever consults. The `echo-cache` mode reports what actually sits at that address, and
+/// this cell demands it be the pinned snapshot's content: fail here means the containment chain
+/// pins one tree and serves another (an EMPTY one), which is exactly the silent hole #219's
+/// composition exists to close.
+#[test]
+fn the_cache_dir_the_provider_reads_serves_the_pinned_bytes() {
+    let (_project, _staging, session, _workspace, _source) = composed("producer-d");
+
+    let stdin = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_graph","arguments":{}}}"#,
+        "\n",
+    );
+    let captured = session
+        .call(
+            &["echo-cache".to_owned()],
+            Some(stdin.as_bytes()),
+            &process_limits(),
+        )
+        .expect("the echo-cache call completes");
+
+    let reply = String::from_utf8_lossy(&captured.stdout);
+    assert!(
+        reply.contains("index bytes v1"),
+        "the provider's CBM_CACHE_DIR does not serve the pinned snapshot's bytes; it answered: {reply}"
+    );
+}
+
 /// A provider that answers garbage is UNAVAILABLE -- a typed refusal, never a partial answer.
 #[test]
 fn a_garbage_provider_is_unavailable_not_partially_believed() {
-    let (_project, _staging, session, _workspace) = composed("producer-b");
+    let (_project, _staging, session, _workspace, _source) = composed("producer-b");
     let provider = provider_over(session, "sha256-x", "garbage");
 
     let refused = provider
@@ -262,9 +298,9 @@ fn a_garbage_provider_is_unavailable_not_partially_believed() {
 fn a_plan_over_another_generation_refuses_index_stale() {
     use graphhelm_runtime::retrieval::RetrievalReceiptError;
 
-    let (_project, _staging, session, workspace) = composed("producer-c");
+    let (_project, _staging, session, _workspace, project) = composed("producer-c");
     let reader = WorkspaceSourceReader::open(
-        workspace.root(),
+        &project,
         SourceReaderLimits {
             max_files: 100_000,
             max_bytes: 1024 * 1024 * 1024,
@@ -280,4 +316,38 @@ fn a_plan_over_another_generation_refuses_index_stale() {
         .expect_err("a plan over another generation was served anyway");
 
     assert!(matches!(refused, RetrievalReceiptError::IndexStale));
+}
+
+/// Codex P1 on #579: the provider has TWO valid encodings and the producer read only one.
+///
+/// `search_graph` answers either a flat `rows` list or a GROUPED page, where a shared
+/// `(qn_prefix, file)` header is printed once and the top-level `rows` is left EMPTY. The decoder
+/// supports both — `search_graph_grouped.json` is checked in and exercises it — while the
+/// producer iterated `page.rows()` alone. Every grouped answer therefore produced ZERO hits, and
+/// zero hits is a legal answer that means something completely different: it reaches
+/// `compile_plan` as a negative claim about the repository rather than as a decoding failure.
+///
+/// The subject is the SHIPPED fixture, so this cell moves the moment the provider's real encoding
+/// does.
+#[test]
+fn a_grouped_page_yields_its_files_rather_than_nothing() {
+    let fixture = include_str!("fixtures/search_graph_grouped.json");
+    let value: serde_json::Value = serde_json::from_str(fixture).expect("the fixture parses");
+    let page = graphhelm_codebase_memory_mcp::decode_search_graph(
+        &serde_json::to_vec(&value).unwrap(),
+        DecodeLimits::default(),
+    )
+    .expect("the decoder accepts the grouped encoding it ships a fixture for");
+
+    assert!(
+        page.rows().is_empty(),
+        "arrangement: a grouped page leaves the flat rows empty, which is why reading only rows \
+         lost everything"
+    );
+    let files: Vec<&str> = page.groups().iter().map(|group| group.file()).collect();
+    assert_eq!(
+        files,
+        vec!["core/tool-broker/src/record.rs"],
+        "the group header carries the path; that is what it exists for"
+    );
 }

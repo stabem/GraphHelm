@@ -77,7 +77,7 @@ pub fn verify_pinned(root: &Path, expected_generation: &str) -> Result<(), HostE
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), HostError> {
+pub(crate) fn copy_tree(source: &Path, destination: &Path) -> Result<(), HostError> {
     std::fs::create_dir_all(destination).map_err(|source| HostError::Prepare { source })?;
     let entries = std::fs::read_dir(source).map_err(|source| HostError::Prepare { source })?;
     for entry in entries {

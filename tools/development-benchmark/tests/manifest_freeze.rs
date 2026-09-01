@@ -16,10 +16,11 @@ fn frozen_manifest(case_ids: &[&str]) -> String {
         .collect();
     let digest = graphhelm_development_benchmark::corpus_digest(&cases);
     serde_json::json!({
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "corpusDigest": digest,
         "oracleDigest": "sha256:not-checked-by-the-loader",
         "objectivesDigest": "sha256:not-checked-by-the-loader",
+        "retrievalDigest": "sha256:not-checked-by-the-loader",
         "cases": cases,
     })
     .to_string()
@@ -118,10 +119,11 @@ fn an_untouched_frozen_manifest_loads() {
 #[test]
 fn an_unknown_field_on_a_case_cannot_survive_the_freeze() {
     let manifest = r#"{
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "corpusDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "oracleDigest": "sha256:0",
         "objectivesDigest": "sha256:0",
+        "retrievalDigest": "sha256:0",
         "cases": [{ "id": "a", "oracleId": "oracle-a", "criticality": "critical" }]
     }"#;
 
@@ -139,10 +141,11 @@ fn an_unknown_field_on_a_case_cannot_survive_the_freeze() {
 #[test]
 fn an_unknown_field_on_the_manifest_cannot_survive_the_freeze() {
     let manifest = r#"{
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "corpusDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "oracleDigest": "sha256:0",
         "objectivesDigest": "sha256:0",
+        "retrievalDigest": "sha256:0",
         "judgeSpread": 0.02,
         "cases": []
     }"#;
@@ -150,4 +153,131 @@ fn an_unknown_field_on_the_manifest_cannot_survive_the_freeze() {
     let refusal = load_manifest(manifest).expect_err("an unknown manifest field was dropped");
 
     assert!(matches!(refusal, BenchmarkRefusal::Unreadable { .. }));
+}
+
+/// Codex P1-1: a case id BECOMES A PATH — `<kind>/<case id>.json` in `frozen_files_digest`, and
+/// the same join in the generator's write. A manifest is untrusted input frozen by a digest that
+/// is perfectly happy to bind a traversal, so an id carrying a separator or a parent hop reads
+/// and WRITES outside the corpus directory.
+///
+/// Rejected by SHAPE at the loader, the same posture as the restore archive's blob names
+/// (`apps/cli/src/commands/events/restore.rs`): an id that is not a plain file name is not an id,
+/// and repairing it would be guessing at intent. At the LOADER because every consumer -- digest,
+/// verify, generator, driver -- goes through it, so one guard covers them all.
+#[test]
+fn a_case_id_that_is_not_a_plain_file_name_refuses() {
+    for hostile in [
+        "../escape",
+        "nested/case",
+        r"..\windows-escape",
+        "",
+        ".",
+        "..",
+    ] {
+        let cases = vec![serde_json::json!({
+            "id": hostile, "oracleId": format!("oracle-{hostile}")
+        })];
+        let digest = graphhelm_development_benchmark::corpus_digest(&cases);
+        let manifest = serde_json::json!({
+            "manifestVersion": 2,
+            "corpusDigest": digest,
+            "oracleDigest": "sha256:not-checked-by-the-loader",
+            "objectivesDigest": "sha256:not-checked-by-the-loader",
+            "retrievalDigest": "sha256:not-checked-by-the-loader",
+            "cases": cases,
+        })
+        .to_string();
+
+        let refusal = load_manifest(&manifest).expect_err(&format!(
+            "case id {hostile:?} became a path component and the loader accepted it"
+        ));
+        match refusal {
+            BenchmarkRefusal::Unreadable { detail } => assert!(
+                detail.contains("case id"),
+                "the refusal must name WHAT is malformed, got: {detail}"
+            ),
+            other => panic!("shape did not decide this for {hostile:?}: {other:?}"),
+        }
+    }
+}
+
+/// Codex, fresh evidence beyond the traversal finding: the shape check accepted names that are
+/// not usable filenames ON WINDOWS, which is where this repository is developed. `CON`, `AUX`,
+/// `bad?name`, and names ending in a dot or space all pass `file_name()` and then fail — or
+/// worse, RESOLVE through reserved-device semantics — at the `.json` read the id feeds.
+///
+/// A traversal guard is about where the path goes; this is about whether the path is a file at
+/// all. Different property, same field, and the first guard was measured to miss it.
+#[test]
+fn a_case_id_that_is_not_a_portable_filename_refuses() {
+    for hostile in [
+        "CON",
+        "aux",
+        "NUL",
+        "COM1",
+        "LPT9",
+        "bad?name",
+        "bad:name",
+        "bad*name",
+        "bad|name",
+        "trailing.",
+        "trailing ",
+        "quote\"name",
+    ] {
+        let cases = vec![serde_json::json!({
+            "id": hostile, "oracleId": format!("oracle-{hostile}")
+        })];
+        let manifest = serde_json::json!({
+            "manifestVersion": 2,
+            "corpusDigest": graphhelm_development_benchmark::corpus_digest(&cases),
+            "oracleDigest": "sha256:not-checked-by-the-loader",
+            "objectivesDigest": "sha256:not-checked-by-the-loader",
+            "retrievalDigest": "sha256:not-checked-by-the-loader",
+            "cases": cases,
+        })
+        .to_string();
+
+        let refusal = load_manifest(&manifest).expect_err(&format!(
+            "case id {hostile:?} is not a usable filename on Windows and the loader accepted it"
+        ));
+        assert!(
+            matches!(refusal, BenchmarkRefusal::Unreadable { .. }),
+            "shape must decide this for {hostile:?}: {refusal:?}"
+        );
+    }
+}
+
+/// A duplicate id is DIGEST-VALID: the corpus digest binds the list as written, and a list can say
+/// the same thing twice. Both artifacts then write to one filename and the driver reads that
+/// single receipt twice, biasing the medians and inflating `cases_measured`.
+///
+/// This cell exists because the guard it covers was written, reported as landed, and then
+/// silently dropped by an amend of mine — caught by a reviewer reading the FINAL loader instead
+/// of trusting the reply. A fix with no cell is a fix with a half-life.
+#[test]
+fn a_duplicate_case_id_refuses_even_though_the_digest_is_valid() {
+    let cases = vec![
+        serde_json::json!({"id": "alpha", "oracleId": "oracle-alpha"}),
+        serde_json::json!({"id": "alpha", "oracleId": "oracle-alpha"}),
+    ];
+    let manifest = serde_json::json!({
+        "manifestVersion": 2,
+        "corpusDigest": graphhelm_development_benchmark::corpus_digest(&cases),
+        "oracleDigest": "sha256:not-checked-by-the-loader",
+        "objectivesDigest": "sha256:not-checked-by-the-loader",
+        "retrievalDigest": "sha256:not-checked-by-the-loader",
+        "cases": cases,
+    })
+    .to_string();
+
+    let refusal = load_manifest(&manifest)
+        .expect_err("a repeated case id passed the loader; the digest cannot see it");
+
+    match refusal {
+        BenchmarkRefusal::Unreadable { detail } => assert!(
+            detail.contains("more than once"),
+            "the refusal must name the repetition, got: {detail}"
+        ),
+        other => panic!("uniqueness did not decide this: {other:?}"),
+    }
 }

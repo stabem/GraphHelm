@@ -35,6 +35,20 @@ fn arrange(root: &std::path::Path) {
     write(&oracle, "beta.json", b"{\"answer\":\"b\"}");
     write(&objectives, "alpha.json", b"{\"objective\":\"a\"}");
     write(&objectives, "beta.json", b"{\"objective\":\"b\"}");
+    // The retrieval artifacts carry the objective VERBATIM as their query, which is the
+    // producer's own mechanical rule and what `verify_frozen_files` now cross-checks.
+    let retrieval = root.join("retrieval");
+    std::fs::create_dir_all(&retrieval).unwrap();
+    write(
+        &retrieval,
+        "alpha.json",
+        b"{\"caseId\":\"alpha\",\"query\":\"a\"}",
+    );
+    write(
+        &retrieval,
+        "beta.json",
+        b"{\"caseId\":\"beta\",\"query\":\"b\"}",
+    );
 }
 
 /// POSITIVE CONTROL, first: untouched files digest to the same value twice.
@@ -104,6 +118,60 @@ fn the_digest_binds_file_bytes_to_their_case_ids() {
     );
 }
 
+/// The FOURTH freeze (#225): the retrieval artifacts are inputs to the compiled arm the same way
+/// the objectives are inputs to both -- an artifact regenerated after the freeze changes what
+/// the run measures just as silently as a rewritten objective. The manifest carries
+/// `retrievalDigest`, `verify_frozen_files` checks it, and a moved artifact refuses naming its
+/// own kind so the operator lands on the right directory.
+#[test]
+fn a_moved_retrieval_artifact_refuses_with_its_own_kind() {
+    use graphhelm_development_benchmark::{corpus_digest, load_manifest, verify_frozen_files};
+
+    let directory = tempfile::tempdir().unwrap();
+    arrange(directory.path());
+    let retrieval = directory.path().join("retrieval");
+
+    let case_values: Vec<serde_json::Value> = cases()
+        .iter()
+        .map(|case| serde_json::to_value(case).unwrap())
+        .collect();
+    let manifest_json = serde_json::json!({
+        "manifestVersion": 2,
+        "corpusDigest": corpus_digest(&case_values),
+        "oracleDigest": frozen_files_digest(directory.path(), "oracle", &cases()).unwrap(),
+        "objectivesDigest":
+            frozen_files_digest(directory.path(), "objectives", &cases()).unwrap(),
+        "retrievalDigest":
+            frozen_files_digest(directory.path(), "retrieval", &cases()).unwrap(),
+        "cases": case_values,
+    });
+    let manifest = load_manifest(&serde_json::to_string(&manifest_json).unwrap())
+        .expect("a manifest with a retrieval freeze loads");
+
+    // POSITIVE CONTROL: untouched, all four freezes verify.
+    verify_frozen_files(&manifest, directory.path()).expect("untouched artifacts verify");
+
+    // The query stays TRUE to the objective; only other bytes move, so this cell still tests the
+    // digest rather than the new objective/query coupling.
+    write(
+        &retrieval,
+        "beta.json",
+        b"{\"caseId\":\"beta\",\"query\":\"b\",\"hits\":[]}",
+    );
+
+    let refusal = verify_frozen_files(&manifest, directory.path())
+        .expect_err("a regenerated retrieval artifact verified anyway");
+    match refusal {
+        BenchmarkRefusal::FrozenFilesMismatch { kind, .. } => {
+            assert_eq!(
+                kind, "retrieval",
+                "the refusal names the directory that moved"
+            );
+        }
+        other => panic!("the freeze did not decide this: {other:?}"),
+    }
+}
+
 /// A case whose file is missing is a refusal naming the path, never a digest over the subset --
 /// a partial corpus is a DIFFERENT corpus.
 #[test]
@@ -123,5 +191,67 @@ fn a_missing_file_refuses_instead_of_digesting_the_subset() {
             );
         }
         other => panic!("readability did not decide this: {other:?}"),
+    }
+}
+
+/// THE GAP BETWEEN THE DIGESTS (Codex P2): three intact freezes, one incoherent corpus.
+///
+/// Edit an objective, refresh its digest, leave retrieval alone — every file-digest check still
+/// passes, because each binds its own directory and nothing binds them to each other. The drive
+/// then sends the NEW objective to the model while compiling hits selected for the OLD one.
+///
+/// The producer's mechanical rule is what makes this checkable: the query IS the objective,
+/// verbatim. So this is the existing convention enforced, not a new one invented.
+#[test]
+fn an_objective_edited_without_regenerating_retrieval_refuses() {
+    use graphhelm_development_benchmark::{corpus_digest, load_manifest, verify_frozen_files};
+
+    let directory = tempfile::tempdir().unwrap();
+    arrange(directory.path());
+
+    // The edit, done PROPERLY: the objective changes and its digest is refreshed with it, so all
+    // three freezes are internally valid. Only the coupling is broken.
+    write(
+        directory.path().join("objectives").as_path(),
+        "beta.json",
+        b"{\"objective\":\"a different question entirely\"}",
+    );
+
+    let case_values: Vec<serde_json::Value> = cases()
+        .iter()
+        .map(|case| serde_json::to_value(case).unwrap())
+        .collect();
+    let manifest = load_manifest(
+        &serde_json::json!({
+            "manifestVersion": 2,
+            "corpusDigest": corpus_digest(&case_values),
+            "oracleDigest": frozen_files_digest(directory.path(), "oracle", &cases()).unwrap(),
+            "objectivesDigest":
+                frozen_files_digest(directory.path(), "objectives", &cases()).unwrap(),
+            "retrievalDigest":
+                frozen_files_digest(directory.path(), "retrieval", &cases()).unwrap(),
+            "cases": case_values,
+        })
+        .to_string(),
+    )
+    .expect("every digest is internally valid");
+
+    let refusal = verify_frozen_files(&manifest, directory.path())
+        .expect_err("three intact freezes let an incoherent corpus through");
+
+    match refusal {
+        BenchmarkRefusal::FrozenFilesMismatch {
+            kind,
+            declared,
+            actual,
+        } => {
+            assert_eq!(kind, "retrieval");
+            assert!(
+                declared.contains('b') && actual.contains("different question"),
+                "the refusal must show BOTH sides so the operator sees which moved: \
+                 declared={declared}, actual={actual}"
+            );
+        }
+        other => panic!("the coupling did not decide this: {other:?}"),
     }
 }

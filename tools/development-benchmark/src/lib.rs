@@ -33,6 +33,11 @@ pub struct Manifest {
     /// Same freeze for what the arms are HANDED: an objective edited after the freeze changes
     /// what the run measures just as silently.
     pub objectives_digest: String,
+    /// The fourth freeze (#225): `retrieval/<id>.json` per case, raw bytes. The compiled arm's
+    /// context is BUILT from these artifacts, so a regeneration after the freeze is a treatment
+    /// change with no trace in the other three digests -- the exact silence the first three
+    /// exist to close, one input further downstream.
+    pub retrieval_digest: String,
     pub cases: Vec<Case>,
 }
 
@@ -217,6 +222,25 @@ pub fn frozen_files_digest(
     let mut lines = String::new();
     for case in cases {
         let path = root.join(kind).join(format!("{}.json", case.id));
+        // Bounded BEFORE the read that allocates it. This is the SECOND time this bound has gone
+        // missing from a commit of mine: the first attempt's patch did not match and I did not
+        // check, then reported it landed. Codex found the absence both times by reading the final
+        // verifier. 4 MiB is three orders of magnitude above the shipped files.
+        const FROZEN_FILE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+        let declared = std::fs::metadata(&path)
+            .map_err(|error| BenchmarkRefusal::Unreadable {
+                detail: format!("{kind}/{}.json: {error}", case.id),
+            })?
+            .len();
+        if declared > FROZEN_FILE_MAX_BYTES {
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!(
+                    "{kind}/{}.json is {declared} bytes, beyond the {FROZEN_FILE_MAX_BYTES}-byte \
+                     bound",
+                    case.id
+                ),
+            });
+        }
         let bytes = std::fs::read(&path).map_err(|error| BenchmarkRefusal::Unreadable {
             detail: format!("{kind}/{}.json: {error}", case.id),
         })?;
@@ -249,6 +273,7 @@ pub fn verify_frozen_files(
     for (kind, declared) in [
         ("oracle", &manifest.oracle_digest),
         ("objectives", &manifest.objectives_digest),
+        ("retrieval", &manifest.retrieval_digest),
     ] {
         let actual = frozen_files_digest(root, kind, &manifest.cases)?;
         if &actual != declared {
@@ -256,6 +281,47 @@ pub fn verify_frozen_files(
                 kind: kind.to_owned(),
                 declared: declared.clone(),
                 actual,
+            });
+        }
+    }
+
+    // THE GAP BETWEEN THE DIGESTS. Each of the three binds its own directory and nothing binds
+    // them to EACH OTHER: edit an objective, refresh its digest, leave retrieval alone, and all
+    // three checks pass while the artifact's `query` still describes the old objective. The drive
+    // then sends the NEW objective to the model and compiles hits that were selected for the old
+    // one (Codex P2). Three intact freezes, one incoherent corpus.
+    //
+    // The producer's own mechanical rule is what makes this checkable: the query IS the objective,
+    // verbatim. So equality per case is not a new convention, it is the existing one enforced.
+    for case in &manifest.cases {
+        let read = |kind: &str| -> Result<serde_json::Value, BenchmarkRefusal> {
+            let path = root.join(kind).join(format!("{}.json", case.id));
+            let text =
+                std::fs::read_to_string(&path).map_err(|error| BenchmarkRefusal::Unreadable {
+                    detail: format!("{kind}/{}.json: {error}", case.id),
+                })?;
+            serde_json::from_str(&text).map_err(|error| BenchmarkRefusal::Unreadable {
+                detail: format!("{kind}/{}.json: {error}", case.id),
+            })
+        };
+        let objective = read("objectives")?;
+        let artifact = read("retrieval")?;
+        let stated =
+            objective["objective"]
+                .as_str()
+                .ok_or_else(|| BenchmarkRefusal::Unreadable {
+                    detail: format!("objectives/{}.json: no objective string", case.id),
+                })?;
+        let queried = artifact["query"]
+            .as_str()
+            .ok_or_else(|| BenchmarkRefusal::Unreadable {
+                detail: format!("retrieval/{}.json: no query string", case.id),
+            })?;
+        if stated != queried {
+            return Err(BenchmarkRefusal::FrozenFilesMismatch {
+                kind: "retrieval".to_owned(),
+                declared: format!("query selected for: {queried}"),
+                actual: format!("objective now reads: {stated}"),
             });
         }
     }
@@ -472,6 +538,265 @@ pub struct RetrievalHit {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<String>,
+}
+
+/// The crate's own sha256 hex, exposed so cells can compute an expected digest the way an
+/// operator would (the arming-site guards need a CORRECT digest to isolate the check under test).
+#[must_use]
+pub fn sha256_hex_of(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+/// Decode a provider page's `cols` and `rows` BY SHAPE, refusing anything that does not fit.
+///
+/// The version this replaces used `filter_map` on both, and that is a repair rather than a read:
+/// a non-string column name was removed while the row arrays kept their length, shifting the
+/// computed `file` index onto a different cell — a label or a rank could freeze as a repository
+/// path. A non-array row was dropped outright, silently shrinking the hit set recall is measured
+/// from. Both turn a malformed page into a plausible one, and the result is frozen (Codex P2 pair
+/// on #579).
+///
+/// # Errors
+/// [`BenchmarkRefusal::Unreadable`] naming which part of the page does not fit.
+pub fn page_of(
+    structured: &serde_json::Value,
+    case_id: &str,
+) -> Result<(Vec<String>, Vec<Vec<serde_json::Value>>), BenchmarkRefusal> {
+    let refuse = |what: &str| BenchmarkRefusal::Unreadable {
+        detail: format!("case {case_id}: the provider page {what}"),
+    };
+    let cols_value = structured
+        .get("cols")
+        .ok_or_else(|| refuse("has no cols"))?;
+    let cols_array = cols_value
+        .as_array()
+        .ok_or_else(|| refuse("has a cols that is not an array"))?;
+    let mut cols = Vec::with_capacity(cols_array.len());
+    for entry in cols_array {
+        cols.push(
+            entry
+                .as_str()
+                .ok_or_else(|| refuse("has a column name that is not a string"))?
+                .to_owned(),
+        );
+    }
+    // Duplicate names make the mapping AMBIGUOUS, and `position` resolves ambiguity by silently
+    // preferring the first -- so `cols: ["file", "file"]` freezes whichever string happened to
+    // come first as a repository path (Codex P2). A page that names one column twice has not said
+    // which column it means, and guessing is what every other refusal here exists to prevent.
+    let mut unique = std::collections::BTreeSet::new();
+    for name in &cols {
+        if !unique.insert(name.as_str()) {
+            return Err(refuse(&format!("names the column {name:?} more than once")));
+        }
+    }
+    // `total` is the page's own account of its result set, and the production decoder requires
+    // it. Accepting a page without one — or one claiming FEWER results than it returned — let the
+    // generator freeze rows the provider never coherently described (Codex P2). Once again the
+    // generator was more permissive than the decoder it feeds.
+    let total = structured
+        .get("total")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| refuse("states no numeric total"))?;
+    // GROUPED pages carry their rows inside `groups`, with no top-level `rows` at all. I fixed
+    // this encoding in the producer and left the generator refusing it outright — the same defect,
+    // in the second of the two places that read provider pages, found because the reviewer checked
+    // the OTHER reader after I reported the first one fixed.
+    if structured.get("rows").is_none()
+        && let Some(groups) = structured
+            .get("groups")
+            .and_then(serde_json::Value::as_array)
+    {
+        let mut rows = Vec::new();
+        for group in groups {
+            let file = group
+                .get("file")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| refuse("has a group with no file"))?;
+            let group_rows = group
+                .get("rows")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| refuse("has a group with no rows array"))?;
+            for entry in group_rows {
+                let mut row = entry
+                    .as_array()
+                    .ok_or_else(|| refuse("has a group row that is not an array"))?
+                    .clone();
+                // The flattened `file` column is appended at index `cols.len()`, so a row WIDER
+                // than cols would leave its extra cell sitting at that index and the mapping
+                // would read the wrong value as the path (Codex P1). A row that does not match
+                // the declared width is a page whose shape nobody stated.
+                if row.len() != cols.len() {
+                    return Err(refuse(&format!(
+                        "has a group row of {} cells against {} declared columns",
+                        row.len(),
+                        cols.len()
+                    )));
+                }
+                // The group header carries the path once; flattening puts it back on every row so
+                // the by-NAME column mapping downstream sees the same shape either encoding takes.
+                row.push(serde_json::Value::String(file.to_owned()));
+                rows.push(row);
+            }
+        }
+        // The early return skipped the total reconciliation the flat path performs, so a grouped
+        // page could declare fewer results than it carried and freeze them anyway (Codex P1).
+        if (rows.len() as u64) > total {
+            return Err(refuse(&format!(
+                "returned {} grouped rows while declaring a total of {total}",
+                rows.len()
+            )));
+        }
+        let mut flattened = cols;
+        flattened.push("file".to_owned());
+        return Ok((flattened, rows));
+    }
+    let rows_value = structured
+        .get("rows")
+        .ok_or_else(|| refuse("has no rows"))?;
+    let rows_array = rows_value
+        .as_array()
+        .ok_or_else(|| refuse("has a rows that is not an array"))?;
+    let mut rows = Vec::with_capacity(rows_array.len());
+    for entry in rows_array {
+        rows.push(
+            entry
+                .as_array()
+                .ok_or_else(|| refuse("has a row that is not an array"))?
+                .clone(),
+        );
+    }
+    if (rows.len() as u64) > total {
+        return Err(refuse(&format!(
+            "returned {} rows while declaring a total of {total}",
+            rows.len()
+        )));
+    }
+    Ok((cols, rows))
+}
+
+/// Read a page's `has_more` as the provider STATED it, refusing when it did not.
+///
+/// A default here is not a convenience, it is a fabricated negative with a permanent
+/// consequence: these artifacts freeze under a digest and become the corpus every future run is
+/// measured against, so a page silently read as exhausted becomes `coverage: "complete"` and
+/// that overclaim can no longer be revised. "The provider did not say" and "the provider said
+/// no" are different facts and only one of them may freeze.
+///
+/// # Errors
+/// [`BenchmarkRefusal::Unreadable`] naming the field when it is absent or not a boolean.
+pub fn has_more_of(
+    structured: &serde_json::Value,
+    case_id: &str,
+) -> Result<bool, BenchmarkRefusal> {
+    structured
+        .get("has_more")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| BenchmarkRefusal::Unreadable {
+            detail: format!(
+                "case {case_id}: the provider page does not state has_more as a boolean, and a                  page read as exhausted would freeze that overclaim into the corpus"
+            ),
+        })
+}
+
+/// Build one frozen retrieval artifact from a `search_graph` structured answer (#225 wiring).
+///
+/// The provider's measured wire shape (codebase-memory-mcp 0.10.8, `format:"json"`): a `cols`
+/// name list and per-row value lists. The mapping is mechanical -- `file` and `lines` columns by
+/// NAME, never by position -- and a page without a `file` column refuses rather than guessing,
+/// because a fallback that grabs "the last string cell" fabricates paths the moment the provider
+/// reorders its columns. Duplicate (path, lines) pairs collapse to their first appearance; rows
+/// beyond the first `limits.max_results` are never consulted.
+pub fn artifact_from_search_rows(
+    case_id: &str,
+    query: &str,
+    snapshot: &str,
+    cols: &[String],
+    rows: &[Vec<serde_json::Value>],
+    limits: &graphhelm_protocols::DeclaredLimits,
+) -> Result<RetrievalArtifact, BenchmarkRefusal> {
+    let file_column = cols.iter().position(|name| name == "file").ok_or_else(|| {
+        BenchmarkRefusal::Unreadable {
+            detail: format!(
+                "case {case_id}: the provider page has no `file` column (cols: {cols:?})"
+            ),
+        }
+    })?;
+    let lines_column = cols.iter().position(|name| name == "lines");
+
+    let mut seen: std::collections::BTreeSet<(String, Option<String>)> =
+        std::collections::BTreeSet::new();
+    let mut hits: Vec<RetrievalHit> = Vec::new();
+    for row in rows.iter().take(limits.max_results as usize) {
+        let path = row
+            .get(file_column)
+            .and_then(|cell| cell.as_str())
+            .ok_or_else(|| BenchmarkRefusal::Unreadable {
+                detail: format!("case {case_id}: a row's `file` cell is not a string"),
+            })?
+            .to_owned();
+        // An absent column and an explicit null are legitimate whole-file hits; a PRESENT cell
+        // that is a number or an object is provider schema drift, and mapping it to `None` would
+        // silently widen the hit to the entire file -- inflating the token measurement and
+        // changing the evidence rather than refusing (Codex P2).
+        // A SHORT ROW is not an absent column. `row.get(index)` returns `None` both when the page
+        // declares no `lines` column and when it declares one but a row ends before it, and my
+        // previous fix merged the two: the malformed case widened the hit to the WHOLE FILE,
+        // exactly like the legitimate one. Codex found it by reading the final code after I had
+        // reported this fixed — the second time in one review that a repair of mine covered the
+        // case I was looking at and not the case beside it.
+        let cell = match lines_column {
+            None => None,
+            Some(index) => Some(row.get(index).ok_or_else(|| BenchmarkRefusal::Unreadable {
+                detail: format!(
+                    "case {case_id}: the page declares a `lines` column but a row is too short to \
+                     carry one"
+                ),
+            })?),
+        };
+        let lines = match cell {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(value)) => Some(value.clone()),
+            Some(other) => {
+                return Err(BenchmarkRefusal::Unreadable {
+                    detail: format!(
+                        "case {case_id}: a row's `lines` cell is present but not a string ({other})"
+                    ),
+                });
+            }
+        };
+        if seen.insert((path.clone(), lines.clone())) {
+            hits.push(RetrievalHit { path, lines });
+        }
+    }
+
+    Ok(RetrievalArtifact {
+        case_id: case_id.to_owned(),
+        query: query.to_owned(),
+        repo_snapshot: snapshot.to_owned(),
+        index_generation: snapshot.to_owned(),
+        hits,
+        // ALWAYS partial -- the same rule the production adapter
+        // enforces at `provider.rs:156-160`. `has_more == false` means the PAGE ended, never
+        // that the SEARCH was exhaustive, and a best-effort provider cannot support a
+        // completeness claim at all. Freezing `complete` here manufactured one: for a zero-result
+        // query it reaches `compile_plan` as VERIFIED ABSENCE -- a fabricated "the repository
+        // does not contain this", frozen under a digest so every future run measures against it
+        // (Codex P2).
+        //
+        // `has_more` no longer reaches this function at all, because a parameter that decides
+        // nothing is theatre. It stays REQUIRED at the generator (`has_more_of`) for a different
+        // reason, stated there: a provider that will not describe its own page is a provider
+        // whose answer should not be frozen.
+        coverage: "partial".to_owned(),
+        pages: 1,
+        max_results: limits.max_results,
+        max_pages: limits.max_pages,
+        max_bytes: limits.max_bytes,
+        max_tokens: limits.max_tokens,
+    })
 }
 
 /// A compiled arm's context, plus the paths that went into it (recall is judged against these).
@@ -764,6 +1089,20 @@ pub fn load_manifest(text: &str) -> Result<Manifest, BenchmarkRefusal> {
             detail: error.to_string(),
         })?;
 
+    // The schema CHANGED when `retrievalDigest` became required, so the number changed with it: a
+    // version-1 manifest is not a version-2 one wearing the same label, and the loader refuses to
+    // guess which fields a corpus was written with (Codex P2). Enforced rather than documented —
+    // a version field nothing checks is a comment.
+    const MANIFEST_VERSION: u32 = 2;
+    if manifest.manifest_version != MANIFEST_VERSION {
+        return Err(BenchmarkRefusal::Unreadable {
+            detail: format!(
+                "manifest version {} is not {MANIFEST_VERSION}; the fourth freeze made                  retrievalDigest required, so the older schema cannot be read as this one",
+                manifest.manifest_version
+            ),
+        });
+    }
+
     let cases: Vec<serde_json::Value> = manifest
         .cases
         .iter()
@@ -780,6 +1119,67 @@ pub fn load_manifest(text: &str) -> Result<Manifest, BenchmarkRefusal> {
             // count means one was edited in place.
             cases: manifest.cases.len(),
         });
+    }
+
+    // A case id BECOMES A PATH COMPONENT (`<kind>/<id>.json` in `frozen_files_digest`, and the
+    // same join where the generator WRITES). The manifest is untrusted input and the corpus
+    // digest is perfectly happy to bind a traversal: it hashes what is there, whatever that is.
+    // So an id carrying a separator or a parent hop would read -- and write -- outside the
+    // corpus directory (Codex P1 on #579).
+    //
+    // Rejected by SHAPE, never sanitised, the same posture the restore archive takes with blob
+    // names (`apps/cli/src/commands/events/restore.rs`): an id that is not a plain file name is
+    // not an id, and repairing it would be guessing at intent. Checked AFTER the digest so the
+    // freeze still speaks first about a corpus that was edited, and here rather than at each
+    // consumer so one guard covers digest, verify, generator and driver alike.
+    for case in &manifest.cases {
+        let id = case.id.as_str();
+        if id.is_empty()
+            || std::path::Path::new(id).file_name() != Some(std::ffi::OsStr::new(id))
+            || id.contains(['/', '\\'])
+        {
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!("case id {id:?} is not a plain file name"),
+            });
+        }
+        // A SECOND property on the same field, and the traversal guard above was MEASURED to miss
+        // it: "where does this path go" is not "is this a filename at all". On Windows -- where
+        // this repository is developed -- `CON`, `bad?name`, and a trailing dot or space all pass
+        // the check above and then fail at the `.json` read the id feeds, or worse RESOLVE
+        // through reserved-device semantics (Codex on #579, fresh evidence beyond the traversal
+        // finding).
+        const RESERVED: &[&str] = &[
+            "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
+            "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+        ];
+        let stem = id.split('.').next().unwrap_or(id).to_ascii_lowercase();
+        let portable = id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        });
+        if !portable || id.ends_with('.') || id.ends_with(' ') || RESERVED.contains(&stem.as_str())
+        {
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!("case id {id:?} is not a portable filename"),
+            });
+        }
+    }
+
+    // RESTORED. This guard existed and an amend of mine dropped it while I was fixing something
+    // else, and I reported it as landed. Codex caught the absence by reading the FINAL loader
+    // rather than trusting the reply — the control that reads what is THERE rather than what the
+    // author expects to be there.
+    //
+    // A digest-valid manifest can still REPEAT an id: the digest binds the list as written, and a
+    // list can say the same thing twice. Both artifacts then write to one filename, and the driver
+    // reads that single receipt twice — biasing the medians and inflating `cases_measured` with a
+    // case that ran once.
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for case in &manifest.cases {
+        if !seen_ids.insert(case.id.as_str()) {
+            return Err(BenchmarkRefusal::Unreadable {
+                detail: format!("case id {:?} appears more than once", case.id),
+            });
+        }
     }
 
     Ok(manifest)
@@ -985,8 +1385,28 @@ pub struct ArmInputs {
 /// and guessing it is the kind of interpretation `comparable` exists to refuse.
 ///
 /// Nothing else is interpreted. See `comparable`.
+/// **The one canonical form for comparing paths in this crate.**
+///
+/// It existed here, private, serving the oracle-isolation check alone — while two other sites
+/// compared paths as RAW STRINGS: the working-tree cleanliness check and, far worse, the RECALL
+/// comparison. So `./src/lib.rs` and `src/lib.rs` — one file, two spellings — read as different
+/// paths, and recall is the gate on the paired run's spend (Codex P1 on #579).
+///
+/// This is the third finding in one review about comparing paths as if a path had one spelling.
+/// The answer to a third instance is a shared form, not a third local patch — the same move the
+/// symlink finding needed, where the seam already existed in a sibling module and I had not looked.
+///
+/// A leading `./` is stripped for the same reason a trailing slash is: it names the same file and
+/// carries no information. Nothing else is interpreted — see `comparable`.
+#[must_use]
+pub fn canonical_path(path: &str) -> String {
+    let slashed = path.replace('\\', "/");
+    let stripped = slashed.strip_prefix("./").unwrap_or(&slashed);
+    stripped.trim_end_matches('/').to_lowercase()
+}
+
 fn normalise(path: &str) -> String {
-    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
+    canonical_path(path)
 }
 
 /// Whether a normalised path can be compared to the oracle path at all.

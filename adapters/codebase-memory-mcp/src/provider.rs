@@ -90,10 +90,14 @@ impl ContainedIndexProvider {
             serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
             serde_json::json!({
                 "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                // "format":"json" is what makes the real provider answer structuredContent at
+                // all (measured, 0.10.8): without it search_graph returns a text block the
+                // house decoder refuses. "detail" is not in the tool's schema and was silently
+                // ignored — dropped rather than transmitted as a false claim.
                 "params": {"name": "search_graph",
                             "arguments": {"project": self.project, "query": query,
                                           "limit": request.limits.max_results,
-                                          "detail": "ids"}}
+                                          "format": "json"}}
             }),
         ];
         let mut bytes = Vec::new();
@@ -146,6 +150,18 @@ impl StructuralCodeIndex for ContainedIndexProvider {
         let file_column = page.columns().iter().position(|name| name == "file");
         let mut seen = BTreeSet::new();
         let mut hits = Vec::new();
+        // GROUPED pages first. The provider has two valid encodings and the decoder supports
+        // both: a flat `rows` list, and `groups` where a shared (prefix, file) header is printed
+        // once and `rows` is left EMPTY. Reading only `page.rows()` turned every grouped answer
+        // into zero hits -- silently, because an empty hit list is a legal answer that means
+        // something completely different (Codex P1 on #579). The group's own `file` is the path;
+        // that is what the header exists to carry.
+        for group in page.groups() {
+            let path = group.file();
+            if !path.is_empty() && seen.insert(path.to_owned()) {
+                hits.push(path.to_owned());
+            }
+        }
         for row in page.rows() {
             let candidate = file_column
                 .and_then(|index| row.get(index))
@@ -194,7 +210,21 @@ impl StructuralCodeIndex for ContainedIndexProvider {
             .collect();
 
         let total = u32::try_from(page.total()).unwrap_or(u32::MAX);
-        let results = u32::try_from(page.rows().len()).unwrap_or(u32::MAX);
+        // Grouped pages carry their rows INSIDE the groups, so counting only the flat list
+        // reported zero results beside a non-empty hit list — the same half-fix as the extraction
+        // itself, one field further along (Codex, after my grouped-page fix).
+        // A grouped page's RESULTS are its rows, and this field is page evidence about the
+        // provider's answer — not about the hit set. Counting group rows is right here; what
+        // would be wrong is letting that number stand in for hits, since a group is one FILE
+        // however many symbols it carries. `hits` above is deduplicated by path and `total`
+        // comes from the provider; this is the third quantity and it counts rows.
+        let row_count = page.rows().len()
+            + page
+                .groups()
+                .iter()
+                .map(|group| group.rows().len())
+                .sum::<usize>();
+        let results = u32::try_from(row_count).unwrap_or(u32::MAX);
         let stdout_bytes = captured.stdout.len() as u64;
         let record = ToolCallRecord {
             tool: request.provider.tool.clone(),

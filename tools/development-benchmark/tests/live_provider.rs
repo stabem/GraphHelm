@@ -36,7 +36,7 @@ impl HttpTransport for CannedTransport {
 
 fn route_manifest() -> RouteManifest {
     let json = serde_json::json!({
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "routes": [{
             "id": "anthropic_prod",
             "provider": "anthropic",

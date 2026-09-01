@@ -13,8 +13,11 @@
 //! consumer that speaks it (#543's SourceReader / #219's producer): no SDK dependency enters the
 //! lock here (M06 freeze), and a live long-running child would be a second spawn path this crate
 //! refuses to grow. Each call re-verifies the snapshot pin AT THE INSTANT OF USE — an address
-//! that can move is re-verified when read — and hands the provider `CBM_SNAPSHOT_DIR` pointing
-//! at the pinned copy, never at the host index.
+//! that can move is re-verified when read — then copies the verified pin into the funnel's
+//! confined `CBM_CACHE_DIR`, the one address the real provider reads its store from (measured
+//! against codebase-memory-mcp 0.10.8). The provider never sees the pin itself: it writes into
+//! its cache dir, and a written-into pin would fail its own next re-verification, so the
+//! serving copy is disposable and the pin stays the reference.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,6 +35,18 @@ use crate::workspace::Tier1Workspace;
 #[derive(Clone, Debug)]
 pub struct ContainedProviderSession {
     workspace: PathBuf,
+    /// Serialises `call`, because the SERVING COPY is shared mutable state.
+    ///
+    /// Each call clears and re-copies the pin into the workspace's one `CBM_CACHE_DIR`, so two
+    /// concurrent calls on one session would have the first deleting the tree the second's child
+    /// is reading. No caller does this today — the port is consulted once per plan — but
+    /// `StructuralCodeIndex` is declared `Send + Sync`, so the TYPE authorises exactly this and
+    /// nothing would warn the caller who first tries it (Codex P1 on #579). Closed structurally
+    /// rather than by a note about current callers, because the note is what goes stale.
+    ///
+    /// No deterministic red exists for a data race at reasonable cost; this is stated rather than
+    /// dressed up as a tested behaviour.
+    serving: std::sync::Arc<std::sync::Mutex<()>>,
     executable: VerifiedExecutable,
     snapshot: PinnedSnapshot,
     identity: ContainedSessionIdentity,
@@ -67,6 +82,7 @@ impl ContainedProviderSession {
         };
         Self {
             workspace: workspace.to_path_buf(),
+            serving: std::sync::Arc::new(std::sync::Mutex::new(())),
             executable,
             snapshot,
             identity,
@@ -92,8 +108,9 @@ impl ContainedProviderSession {
         &self.snapshot
     }
 
-    /// One provider invocation: re-verify the pin at the instant of use, then run the verified
-    /// binary through the one spawn funnel with the snapshot handed over confined.
+    /// One provider invocation: re-verify the pin at the instant of use, copy the verified pin
+    /// into the funnel's confined `CBM_CACHE_DIR`, then run the verified binary through the one
+    /// spawn funnel.
     ///
     /// # Errors
     /// [`HostError::SnapshotMismatch`] BEFORE any spawn when the pinned copy moved (proven by
@@ -106,12 +123,25 @@ impl ContainedProviderSession {
         limits: &ProcessLimits,
         cancel: Option<&CancelSignal>,
     ) -> Result<CapturedProcess, HostError> {
+        // Held across BOTH the re-copy and the child's run: releasing after the copy would let
+        // the next call clear the tree mid-read, which is the race itself.
+        let _serving = self
+            .serving
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         verify_pinned(self.snapshot.root(), self.snapshot.generation())?;
-        let mut extra = BTreeMap::new();
-        extra.insert(
-            "CBM_SNAPSHOT_DIR".to_owned(),
-            self.snapshot.root().display().to_string(),
-        );
+        // The address the provider actually reads (measured against codebase-memory-mcp 0.10.8:
+        // the binary consults CBM_CACHE_DIR and no other name) is the funnel's confined
+        // `.cbm-cache` — so the verified pin is COPIED there, fresh, before every spawn. The pin
+        // itself is never handed to the child: the provider writes into its cache dir (logs, at
+        // minimum), and a written-into pin would fail its own re-verification on the next call.
+        // The serving copy is disposable; the pin stays the reference that keeps verifying.
+        let serving = crate::process::cbm_cache_dir(&self.workspace);
+        if serving.exists() {
+            std::fs::remove_dir_all(&serving).map_err(|source| HostError::Prepare { source })?;
+        }
+        crate::snapshot::copy_tree(self.snapshot.root(), &serving)?;
+        let extra = BTreeMap::new();
         run_verified_in_workspace(
             &self.workspace,
             &self.executable,

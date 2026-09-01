@@ -1,8 +1,4 @@
 {
-  "manifestVersion": 1,
-  "corpusDigest": "sha256:33cb957755630fb7bebefe74350d864b6b6fb8c5f8a94aa6f318c43b3d5aa8b2",
-  "oracleDigest": "sha256:8b5692ee9f778d5dc7ed9312a9cafac7e4da0a04f8c1fa6877d5ae0f06100bf6",
-  "objectivesDigest": "sha256:2608b9c15bf12b542c6649e062aa0a38a393268ace74eddf339897c6e5b34b92",
   "cases": [
     {
       "id": "events-open-verdict",
@@ -52,5 +48,10 @@
       "id": "extension-inventory",
       "oracleId": "oracle-extension-inventory"
     }
-  ]
+  ],
+  "corpusDigest": "sha256:33cb957755630fb7bebefe74350d864b6b6fb8c5f8a94aa6f318c43b3d5aa8b2",
+  "manifestVersion": 2,
+  "objectivesDigest": "sha256:2608b9c15bf12b542c6649e062aa0a38a393268ace74eddf339897c6e5b34b92",
+  "oracleDigest": "sha256:8b5692ee9f778d5dc7ed9312a9cafac7e4da0a04f8c1fa6877d5ae0f06100bf6",
+  "retrievalDigest": "sha256:ffc66791edad1cd6a06358cbfb092d2c62d14801c4b0c554b3ccdc769f3571b0"
 }

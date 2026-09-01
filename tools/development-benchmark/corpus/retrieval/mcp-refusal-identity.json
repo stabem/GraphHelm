@@ -25,9 +25,9 @@
       "lines": "201-212"
     }
   ],
-  "coverage": "complete",
+  "coverage": "partial",
   "pages": 1,
-  "maxResults": 50,
+  "maxResults": 5,
   "maxPages": 8,
   "maxBytes": 1000000,
   "maxTokens": 250000

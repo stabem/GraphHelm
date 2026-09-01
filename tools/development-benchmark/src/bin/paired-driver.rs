@@ -334,7 +334,154 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
     verify_frozen_files(&manifest, &bench_root)?;
 
     let repo_root = std::path::Path::new(&arguments.repo_root);
+    // The artifacts' coordinates were produced against ONE source tree; `capsule_for_case` slices
+    // whatever tree `--repo-root` points at. Nothing bound the two, so line ranges computed over
+    // snapshot A were being applied to checkout B -- and the store check added earlier does not
+    // help: it binds the STORE to a declared revision, never either identifier to the tree the
+    // driver actually reads (Codex P1).
+    //
+    // Derived, not declared: the tree hash comes from the repository itself, so the operator
+    // cannot assert agreement into existence. The artifacts carry a git tree id (that is what the
+    // generator was given), so `HEAD^{tree}` is the identity to compare.
+    let observed_tree = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD^{tree}"])
+        .current_dir(repo_root)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .ok_or_else(|| BenchmarkRefusal::Unreadable {
+            detail: format!(
+                "the repo root {} is not a git checkout, so its identity cannot be bound to the                  artifacts' coordinates",
+                repo_root.display()
+            ),
+        })?;
+    // `HEAD^{tree}` names the COMMITTED tree, and the readers below read the WORKING one. A
+    // modified tracked file — or an untracked file at a path an artifact names — leaves the check
+    // passing while `naive_context` and `capsule_for_case` slice different bytes (Codex P1). The
+    // tree id cannot see that by construction, so the working tree has to be clean for it to mean
+    // anything.
+    let dirty = std::process::Command::new("git")
+        // `--ignored` as well: an IGNORED file at a path an artifact names is read by the arms
+        // exactly like any other, and `--untracked-files=all` does not list it (Codex P1, after
+        // my clean-tree fix). The question is "does the working tree hold bytes the committed
+        // tree does not", and ignoring is not an answer to it.
+        .args([
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ])
+        .current_dir(repo_root)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .ok_or_else(|| BenchmarkRefusal::Unreadable {
+            detail: "the repo root's working-tree state could not be read".to_owned(),
+        })?;
+    // NARROWED, because my own previous fix broke ordinary use: adding `--ignored` made `target/`
+    // — which Cargo creates under any repo root the driver is built in — a blocking dirty entry,
+    // so no normal drive could run (Codex P1 on the fix itself).
+    //
+    // The question was never "is the tree pristine". It is "do the bytes the arms will READ differ
+    // from the tree the artifacts declare", so only entries at paths the corpus actually names
+    // matter. An ignored `target/` is invisible to the arms; an ignored file at an oracle's
+    // required path is not.
+    let dirty_paths: Vec<&str> = dirty
+        .lines()
+        .filter_map(|line| line.get(3..))
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .collect();
+    let read_paths: std::collections::BTreeSet<String> = manifest
+        .cases
+        .iter()
+        .flat_map(|case| {
+            // BOTH sides of what the arms read, not just the oracle's (Codex). The naive arm
+            // reads the oracle's required evidence; the COMPILED arm reads the paths its
+            // retrieval artifact names, and those are frequently different files. Populating this
+            // set from the oracle alone left every compiled-arm path outside the check — the
+            // question is "do the bytes the arms READ differ", and half the reading was missing
+            // from the population.
+            let oracle = bench_root.join("oracle").join(format!("{}.json", case.id));
+            let mut paths = oracle_evidence_paths(&oracle)
+                .map(|(evidence, _)| evidence)
+                .unwrap_or_default();
+            let artifact =
+                std::path::Path::new(&arguments.retrieval).join(format!("{}.json", case.id));
+            if let Ok(text) = std::fs::read_to_string(&artifact)
+                && let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                && let Some(hits) = value["hits"].as_array()
+            {
+                paths.extend(
+                    hits.iter()
+                        .filter_map(|hit| hit["path"].as_str())
+                        .map(str::to_owned),
+                );
+            }
+            paths
+        })
+        .collect();
+    let colliding: Vec<&&str> = dirty_paths
+        .iter()
+        // BOTH directions, because git reports an ignored DIRECTORY as a single entry
+        // (`some/dir/`) rather than listing the files inside it: corpus evidence living in an
+        // ignored directory slips past a one-way prefix test. That is the hole on the other side
+        // of my own `--ignored` fix (Codex P1) — I closed the case where an ignored FILE sits at
+        // a read path and left open the case where an ignored DIRECTORY contains one.
+        .filter(|path| {
+            read_paths.iter().any(|read| {
+                // Through the crate's canonical form, the same one recall and the oracle check
+                // use: comparing raw strings made  and  different paths
+                // (Codex P1). Third finding in this file about comparing paths as if a path had
+                // one spelling; this is the shared answer rather than a third local patch.
+                let path = graphhelm_development_benchmark::canonical_path(path);
+                let read = graphhelm_development_benchmark::canonical_path(read);
+                path.starts_with(&read) || read.starts_with(&path)
+            })
+        })
+        .collect();
+    if !colliding.is_empty() {
+        return Err(BenchmarkRefusal::Unreadable {
+            detail: format!(
+                "the repo root holds uncommitted bytes at {} path(s) the corpus reads (first:                  {}); the tree id names the COMMITTED bytes while the arms would read these",
+                colliding.len(),
+                colliding[0]
+            ),
+        });
+    }
     let retrieval_root = std::path::Path::new(&arguments.retrieval);
+    // The freeze verified `<manifest parent>/retrieval`; this argument decides what is actually
+    // READ. Two paths that must agree are a state that can disagree, and it did: an approved
+    // frozen directory passed verification while byte-different artifacts from another directory
+    // determined the compiled contexts (Codex P1). The fourth digest verified something nobody
+    // consumed.
+    //
+    // Refused rather than re-verified, and refused rather than silently overridden: the operator
+    // who pointed elsewhere is told, instead of watching their argument be ignored. Compared
+    // after canonicalisation so a different spelling of the same directory is not a divergence.
+    let verified_retrieval = bench_root.join("retrieval");
+    let same_directory = match (
+        retrieval_root.canonicalize(),
+        verified_retrieval.canonicalize(),
+    ) {
+        (Ok(given), Ok(verified)) => given == verified,
+        // An unreadable path is not an agreement. The read below would fail anyway; refusing here
+        // names the reason.
+        _ => false,
+    };
+    if !same_directory {
+        return Err(BenchmarkRefusal::Unreadable {
+            detail: format!(
+                "the retrieval directory given ({}) is not the one the freeze verified ({}): the                  artifacts that would be read are not the artifacts that were checked",
+                retrieval_root.display(),
+                verified_retrieval.display()
+            ),
+        });
+    }
     let out_root = std::path::Path::new(&arguments.out);
 
     // COMPLETED WORK PERSISTS AS IT COMPLETES (Codex #531 P1): a live drive that fails part way
@@ -416,6 +563,14 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
         match &index_generation {
             None => {
                 index_generation = Some(artifact.index_generation.clone());
+                if artifact.repo_snapshot != observed_tree {
+                    return Err(BenchmarkRefusal::Unreadable {
+                        detail: format!(
+                            "the artifacts were produced against tree {} and the repo root is at                              {observed_tree}: coordinates from one source tree would slice another",
+                            artifact.repo_snapshot
+                        ),
+                    });
+                }
                 repo_snapshot = Some(artifact.repo_snapshot.clone());
             }
             Some(generation) => {
@@ -436,7 +591,17 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
         let compiled = capsule_for_case(&objective.objective, &artifact, repo_root)?;
         let compiled_recall = evidence
             .iter()
-            .all(|path| compiled.evidence_paths.contains(path));
+            // Through the crate's canonical form, because THIS comparison is the recall gate:
+            // two spellings of one file (`./src/lib.rs` and `src/lib.rs`) were reading as a miss,
+            // and a miss here refuses the paired run. The bar that decides the spend was deciding
+            // on textual equality of strings (Codex P1).
+            .all(|path| {
+                let wanted = graphhelm_development_benchmark::canonical_path(path);
+                compiled
+                    .evidence_paths
+                    .iter()
+                    .any(|have| graphhelm_development_benchmark::canonical_path(have) == wanted)
+            });
 
         // Naive first, compiled second, per case -- the per-case arm order is part of the
         // protocol and it is fixed rather than recorded because it never varies.

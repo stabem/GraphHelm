@@ -243,6 +243,13 @@ const INHERITED: &[&str] = &[
 /// same mechanism as its siblings, so one sweep of this list answers "what does Tier 1 redirect".
 const REDIRECTED: &[&str] = &["HOME", "USERPROFILE", "TEMP", "TMP", "CBM_CACHE_DIR"];
 
+/// The one address a broker-run index provider reads its store from: the funnel sets
+/// `CBM_CACHE_DIR` here (#538), so anything that must be VISIBLE to the provider — the pinned
+/// snapshot's serving copy — must be placed here, by the session, before the spawn.
+pub(crate) fn cbm_cache_dir(root: &Path) -> PathBuf {
+    root.join(".cbm-cache")
+}
+
 /// The fixed git posture: no system config, no prompts, no optional locks, and a synthetic
 /// commit identity — `env_clear` plus an empty redirected HOME leaves git with no
 /// `user.name`/`user.email` anywhere, and `git commit` would refuse with "Please tell me who
@@ -360,7 +367,7 @@ pub fn run_in_workspace(
 
     let home = root.join(".home");
     let tmp = root.join(".tmp");
-    let cbm_cache = root.join(".cbm-cache");
+    let cbm_cache = cbm_cache_dir(root);
     std::fs::create_dir_all(&home).map_err(|source| HostError::Prepare { source })?;
     std::fs::create_dir_all(&tmp).map_err(|source| HostError::Prepare { source })?;
     std::fs::create_dir_all(&cbm_cache).map_err(|source| HostError::Prepare { source })?;

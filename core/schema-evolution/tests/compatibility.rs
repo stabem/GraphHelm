@@ -1027,3 +1027,118 @@ fn swapping_two_prefix_items_positions_is_breaking() {
         report.changes
     );
 }
+
+/// A tagged union grows by one tag, and the discriminator proves the branches cannot overlap.
+///
+/// **Every branch of a tagged union has the SAME top-level type.** `event-envelope.schema.json`'s
+/// `$defs/eventKind` is 44 branches, all `"type": "object"`, all discriminated one level down by
+/// `properties.type.const` -- and `branch_types_are_disjoint` compares only the top-level `"type"`
+/// keyword, so `"object" != "object"` is false for every pair. The prover cannot classify ANY
+/// addition to a const-discriminated union as compatible, no matter how obviously the tags
+/// separate (#626). The cost lands on `baseline_origin.rs`: a purely additive wire-vocabulary
+/// growth reads as `GHC003_BREAKING_CHANGE` and then demands the exact next major to count as
+/// declared, which is a semantic lie about an additive change.
+#[test]
+fn a_new_const_discriminated_branch_is_compatible_because_the_tags_cannot_overlap() {
+    let imported = json!({
+        "type": "object",
+        "required": ["type", "data"],
+        "properties": {"type": {"const": "graph_imported"}, "data": {"type": "object"}},
+    });
+    let published = json!({
+        "type": "object",
+        "required": ["type", "data"],
+        "properties": {"type": {"const": "graph_version_published"}, "data": {"type": "object"}},
+    });
+
+    assert_keyword_change(
+        "oneOf",
+        json!([imported.clone()]),
+        json!([imported, published]),
+        CompatibilityClass::Compatible,
+    );
+}
+
+/// The discriminator proves disjointness only when an instance CANNOT omit it.
+///
+/// **The trap for the fix this file is about to receive.** Comparing `properties.<tag>.const` and
+/// stopping there is unsound: if the tag is not `required`, an instance carrying neither tag
+/// satisfies BOTH branches, they overlap, and a `oneOf` that must match exactly one is broken by
+/// the addition. A prover that called this pair disjoint would turn today's false BREAKING into a
+/// false COMPATIBLE -- silent, and strictly worse, because nothing downstream re-checks it.
+///
+/// The three arrangements below stay unprovable for three different reasons, and each is a
+/// separate way the naive fix goes wrong: the tag is optional, the tags are EQUAL, or there is no
+/// tag at all. Only the first is new; the last is the behaviour that must not regress.
+#[test]
+fn a_const_discriminator_proves_nothing_when_an_instance_could_omit_it() {
+    let optional_tag = |tag: &str| {
+        json!({
+            "type": "object",
+            "properties": {"type": {"const": tag}, "data": {"type": "object"}},
+        })
+    };
+    let required_tag = |tag: &str| {
+        json!({
+            "type": "object",
+            "required": ["type", "data"],
+            "properties": {"type": {"const": tag}, "data": {"type": "object"}},
+        })
+    };
+    let untagged = json!({"type": "object", "properties": {"data": {"type": "object"}}});
+
+    for (baseline, candidate) in [
+        // The tag is present and different in both, but neither branch REQUIRES it.
+        (optional_tag("a"), optional_tag("b")),
+        // Required in both, and the same tag: the discriminator separates nothing.
+        (required_tag("a"), required_tag("a")),
+        // No discriminator at all -- the pre-existing conservative answer, unchanged.
+        (untagged.clone(), json!({"type": "object"})),
+        // NUMERIC tags that JSON Schema considers EQUAL. `const: 1` and `const: 1.0` are the same
+        // value to a validator, so these branches overlap -- but `serde_json`'s `PartialEq` on
+        // `Number` does not say they are equal, and a proof that trusted it would call them
+        // disjoint. The prover answers only for string tags, so this stays unprovable.
+        (
+            json!({
+                "type": "object",
+                "required": ["type"],
+                "properties": {"type": {"const": 1}},
+            }),
+            json!({
+                "type": "object",
+                "required": ["type"],
+                "properties": {"type": {"const": 1.0}},
+            }),
+        ),
+        // The tag is required and the string consts differ, but neither branch says
+        // `"type": "object"` -- and `required`/`properties` are NO-OPS for a non-object instance.
+        // The number `42` satisfies both branches, so they overlap, and the discriminator argument
+        // never applied: it reasons about properties an instance need not have at all
+        // (Codex P1 on PR #627).
+        (
+            json!({"required": ["type"], "properties": {"type": {"const": "a"}}}),
+            json!({"required": ["type"], "properties": {"type": {"const": "b"}}}),
+        ),
+        // Object is ALLOWED but not the only option. A string instance satisfies both branches for
+        // the same reason, so a type SET wider than exactly `{object}` proves nothing either.
+        (
+            json!({
+                "type": ["object", "string"],
+                "required": ["type"],
+                "properties": {"type": {"const": "a"}},
+            }),
+            json!({
+                "type": ["object", "string"],
+                "required": ["type"],
+                "properties": {"type": {"const": "b"}},
+            }),
+        ),
+    ] {
+        assert_keyword_change(
+            "oneOf",
+            json!([baseline.clone()]),
+            json!([baseline, candidate]),
+            CompatibilityClass::Breaking,
+        );
+    }
+}

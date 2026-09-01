@@ -1105,9 +1105,109 @@ fn one_of_additions_are_disjoint(
         baseline_fingerprints.contains(&fingerprint)
             || baseline_branches.iter().all(|baseline_branch| {
                 normalized_schema_bytes(baseline_resources, owner, baseline_branch, 0).is_some()
-                    && branch_types_are_disjoint(baseline_branch, candidate_branch)
+                    && branches_are_provably_disjoint(baseline_branch, candidate_branch)
             })
     })
+}
+
+/// Nothing can satisfy both branches, by either proof this module can carry out.
+///
+/// Two independent arguments, and the order is deliberate: the tagged-union proof runs first
+/// because it is the one that ANSWERS for the shape this repository actually writes. Type sets
+/// decide only when the branches differ at the top level, and every branch of a tagged union is
+/// `"object"`, so on its own that test is silent exactly where the schemas need it (#626).
+fn branches_are_provably_disjoint(left: &Value, right: &Value) -> bool {
+    discriminators_are_disjoint(left, right) || branch_types_are_disjoint(left, right)
+}
+
+/// The tagged-union proof: one property both branches REQUIRE and each pins to a DIFFERENT const.
+///
+/// **`required` is load-bearing and is not a formality.** A property that both branches pin to a
+/// different constant but neither demands proves nothing at all: an instance carrying no such
+/// property satisfies both, the branches overlap, and a `oneOf` that must match exactly one really
+/// is broken by the addition. Comparing the consts alone would turn today's FALSE BREAKING into a
+/// false COMPATIBLE -- silent, and strictly worse, because a breaking change classified as
+/// breaking still gets a version bump while one classified as compatible gets nothing and nothing
+/// downstream re-checks it. Measured against the corpus this exists for: all 44 branches of
+/// `event-envelope`'s `$defs/eventKind` and both of `$defs/clearanceVerifier` require their tag,
+/// so the sound rule costs nothing that the lax one would have bought.
+///
+/// **And the tag must be a STRING**, for a second soundness reason found by reading rather than by
+/// a failing test: JSON Schema compares `const` by value, where `1` and `1.0` are the same number,
+/// while `serde_json`'s `PartialEq` on `Number` does not agree. Two branches pinning `1` and `1.0`
+/// would read as different tags and are not. Tagged unions tag with strings, so the restriction
+/// costs nothing real and removes the ambiguity outright.
+///
+/// **And both branches must be object-only.** `required` and `properties` say nothing about a
+/// non-object instance, so two branches that omit `"type": "object"` -- or admit anything besides
+/// it -- overlap on every non-object value no matter how distinct their tags read. That was a real
+/// hole in the first version of this function, found in review, and it is the third restriction of
+/// the same family as the two above: free against this corpus, and invisible to the test the fix
+/// was written for.
+///
+/// Deliberately NOT generalised beyond this: no `enum` of one value, no `allOf` flattening, no
+/// looking through `$ref`. Each would be a separate proof with its own soundness argument, and an
+/// unsound widening here fails in the silent direction.
+fn discriminators_are_disjoint(left: &Value, right: &Value) -> bool {
+    let (Some(left_branch), Some(right_branch)) = (left.as_object(), right.as_object()) else {
+        return false;
+    };
+    // BOTH branches must accept objects and NOTHING ELSE, and this is the restriction the whole
+    // argument rests on rather than a tidiness check. `required` and `properties` are NO-OPS for a
+    // non-object instance: a branch that does not say `"type": "object"` accepts the number `42`,
+    // and so does its sibling, so the two overlap on every non-object value while their tags look
+    // perfectly distinct. The discriminator argument reasons about properties an instance need not
+    // carry at all (Codex P1 on PR #627).
+    //
+    // Exactly `{object}`, not "contains object": a branch typed `["object", "string"]` overlaps its
+    // sibling on every string for the same reason.
+    let object_only = |branch: &Value| {
+        branch_type_set(branch).is_some_and(|types| types.len() == 1 && types.contains("object"))
+    };
+    if !object_only(left) || !object_only(right) {
+        return false;
+    }
+    let shared_requirements: BTreeSet<&str> = required_property_names(left)
+        .intersection(&required_property_names(right))
+        .copied()
+        .collect();
+    shared_requirements.iter().any(|name| {
+        match (
+            const_of_property(left_branch, name),
+            const_of_property(right_branch, name),
+        ) {
+            // STRING consts only, and this is the second place `required` is: a narrowing that
+            // fails safe. JSON Schema compares `const` by VALUE, where `1` and `1.0` are the same
+            // number, while `serde_json`'s `PartialEq` on `Number` does not say so. Two branches
+            // pinning `1` and `1.0` would be "different" here and are not, which is the silent
+            // direction. A tagged union tags with strings; anything else stays unprovable.
+            (Some(Value::String(left_tag)), Some(Value::String(right_tag))) => {
+                left_tag != right_tag
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The names a branch demands. A branch with no `required` array demands nothing.
+fn required_property_names(branch: &Value) -> BTreeSet<&str> {
+    branch
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|names| names.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// The constant a branch pins one of its properties to, if it pins it at all.
+fn const_of_property<'a>(
+    branch: &'a serde_json::Map<String, Value>,
+    name: &str,
+) -> Option<&'a Value> {
+    branch
+        .get("properties")?
+        .as_object()?
+        .get(name)?
+        .get("const")
 }
 
 fn branch_types_are_disjoint(left: &Value, right: &Value) -> bool {

@@ -253,22 +253,87 @@ pub fn run_in_workspace(
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
     let reader = |mut pipe: Box<dyn Read + Send>| {
         std::thread::spawn(move || {
-            let mut kept = Vec::new();
-            let mut truncated = false;
+            // #177 tail half: keep the HEAD *and* the TAIL, eliding the middle.
+            //
+            // Keeping only the head is biased against the reason anyone opens the log. In a red
+            // suite the failing assertion and the `test result: FAILED` line are at the END, so a
+            // head-only capture reliably discards the one part a triager needs. Both ends carry
+            // real failures, each with a live instance from this repository's own work: a
+            // toolchain fault (`invalid metadata for crate core`) prints as the build STARTS, and
+            // the assertion that failed prints LAST. Tail-only would just move the blind spot.
+            //
+            // Memory stays bounded by `cap`: the head stops at `head_cap`, and the tail is a ring
+            // holding at most `tail_cap`. The pipe is still drained to EOF either way -- dropping
+            // bytes must never mean leaving them in the pipe, which is what would deadlock the
+            // child.
+            let head_cap = cap / 2;
+            let tail_cap = cap - head_cap;
+            let mut head = Vec::new();
+            let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+            let mut elided: u64 = 0;
             let mut chunk = [0_u8; 8192];
             loop {
                 match pipe.read(&mut chunk) {
                     Ok(0) | Err(_) => break,
                     Ok(count) => {
-                        let room = cap.saturating_sub(kept.len());
-                        let take = count.min(room);
-                        kept.extend_from_slice(&chunk[..take]);
-                        if take < count {
-                            truncated = true;
+                        let mut rest = &chunk[..count];
+                        let room = head_cap.saturating_sub(head.len());
+                        if room > 0 {
+                            let take = rest.len().min(room);
+                            head.extend_from_slice(&rest[..take]);
+                            rest = &rest[take..];
+                        }
+                        if rest.is_empty() {
+                            continue;
+                        }
+                        // NOT `truncated = true` here (D's finding 1 on #582). Bytes past the head
+                        // are not lost -- they go to the tail. Setting the flag here made every
+                        // stream over `head_cap` claim data loss even when every byte survived,
+                        // which under the production cap is every stream over 4 MiB. The flag is
+                        // derived from `elided` below, where loss is actually known.
+                        tail.extend(rest.iter().copied());
+                        while tail.len() > tail_cap {
+                            tail.pop_front();
+                            elided = elided.saturating_add(1);
                         }
                     }
                 }
             }
+            let kept = if elided == 0 {
+                // Everything after the head still fit: the original bytes, unmarked.
+                head.extend(tail.iter().copied());
+                head
+            } else {
+                // The marker is paid for out of the TAIL so the capture still fits `cap`.
+                //
+                // D's finding 2 on #582: the previous version formatted the marker TWICE and
+                // budgeted with the first length. Popping a byte raises `elided`, which can carry
+                // it across a power of ten and make the second marker one byte longer -- measured
+                // at `cap = 7_388_638`, one byte over. The same defect in a worse shape: when the
+                // cap is smaller than the marker itself, the loop exited on `!tail.is_empty()` and
+                // appended the whole marker anyway -- 52 bytes under a 40-byte cap.
+                //
+                // One cause: the budgeted length and the emitted length came from different values
+                // of `elided`. So the loop now re-formats each round and exits only when the marker
+                // it will actually emit fits beside the tail it will actually keep.
+                let mut marker = elision_marker(elided);
+                while head.len() + marker.len() + tail.len() > cap && !tail.is_empty() {
+                    tail.pop_front();
+                    elided = elided.saturating_add(1);
+                    marker = elision_marker(elided);
+                }
+                if head.len() + marker.len() + tail.len() > cap {
+                    // The tail is empty and the marker alone still does not fit: the cap is smaller
+                    // than the sentence. Shorten the marker rather than exceed the budget -- the
+                    // capture's size is a promise to the caller, the marker's completeness is not.
+                    marker.truncate(cap.saturating_sub(head.len()));
+                }
+                head.extend_from_slice(&marker);
+                head.extend(tail.iter().copied());
+                debug_assert!(head.len() <= cap, "the capture must never exceed its cap");
+                head
+            };
+            let truncated = elided > 0;
             (kept, truncated)
         })
     };
@@ -310,4 +375,15 @@ pub fn run_in_workspace(
         truncated: stdout_truncated || stderr_truncated,
         timed_out,
     })
+}
+
+/// The elision sentence, built in ONE place so the budgeted length and the emitted length can never
+/// be computed from different values of `elided` (D's finding 2 on #582).
+fn elision_marker(elided: u64) -> Vec<u8> {
+    format!(
+        "
+[... {elided} bytes elided ...]
+"
+    )
+    .into_bytes()
 }

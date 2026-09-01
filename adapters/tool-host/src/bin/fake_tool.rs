@@ -12,6 +12,10 @@
 //! - `cwd`: print the current directory, exit 0
 //! - `sleep`: sleep 3600 s (the host must kill it)
 //! - `big-output`: write 8 MiB of `x` to stdout, exit 0
+//! - `marked-output`: write a HEAD sentinel, 8 MiB of filler, then a TAIL sentinel, exit 0.
+//!   `big-output` cannot test which END of an overflowing stream survives -- it writes 8 MiB of
+//!   identical `x`, so keeping the head and keeping the tail produce the same bytes. This one
+//!   makes the two answers different.
 //! - `big-stderr`: write 8 MiB of `x` to STDERR and one short line to stdout, exit 0.
 //!   The mirror of `big-output`: it exists so a cut on one stream can be told apart
 //!   from a cut on the other, which a single fused flag cannot express (#177).
@@ -53,6 +57,25 @@ fn main() {
             for _ in 0..128 {
                 out.write_all(&chunk).expect("stdout");
             }
+        }
+        "marked-output" => {
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            out.write_all(
+                b"HEAD-SENTINEL
+",
+            )
+            .expect("stdout");
+            let chunk = vec![b'.'; 64 * 1024];
+            for _ in 0..128 {
+                out.write_all(&chunk).expect("stdout");
+            }
+            out.write_all(
+                b"
+TAIL-SENTINEL
+",
+            )
+            .expect("stdout");
         }
         "big-stderr" => {
             // stdout stays SHORT on purpose: the pair (big-output, big-stderr) differs in which

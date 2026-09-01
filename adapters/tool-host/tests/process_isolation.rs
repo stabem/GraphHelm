@@ -227,6 +227,122 @@ fn oversize_output_is_capped_and_marked_truncated_without_deadlock() {
 }
 
 #[test]
+fn a_capped_stream_keeps_its_end_where_the_failing_assertion_lives() {
+    // #177, the tail half. The reader kept the HEAD and discarded everything after the cap. In a
+    // red test suite the assertion that failed, and the `test result: FAILED` line, are at the END
+    // -- so the capture was structurally biased against the one thing a triager opens the log for.
+    //
+    // Both ends matter, and each has a live instance from this repository's own work:
+    //   HEAD -- a toolchain failure (`invalid metadata for crate core`) prints as the build starts;
+    //   TAIL -- the failing assertion and the result line print last.
+    // So the shape is head + tail with the middle elided, not tail-only.
+    let workspace = tempfile::tempdir().unwrap();
+    let cap = 64 * 1024;
+    let limits = ProcessLimits {
+        timeout: Duration::from_secs(30),
+        max_output_bytes: cap,
+    };
+    let captured = run(workspace.path(), &["marked-output"], &limits);
+
+    // ARRANGEMENT CONTROL: the stream must really have overflowed, or "the tail survived" is a
+    // statement about a stream that was never cut.
+    assert!(
+        captured.stdout_truncated,
+        "marked-output must overflow the cap, or this proves nothing about truncation"
+    );
+    assert!(
+        captured.stdout.len() <= cap,
+        "the capture must stay within its budget: {}",
+        captured.stdout.len()
+    );
+
+    let text = String::from_utf8_lossy(&captured.stdout);
+    assert!(
+        text.contains("TAIL-SENTINEL"),
+        "the END of the stream must survive the cap -- that is where a red suite puts the failure"
+    );
+    assert!(
+        text.contains("HEAD-SENTINEL"),
+        "the START must survive too: a toolchain or setup failure prints before anything else"
+    );
+}
+
+/// #582 finding 1 (D): a stream that passes `head_cap` but loses NOTHING must not claim loss.
+///
+/// The first version set `truncated` as soon as any byte went past the head, so under the
+/// production 8 MiB cap every stream over 4 MiB was recorded as truncated whether or not anything
+/// was elided. #177 exists because the record did not say what happened; a slice of it must not add
+/// a field that says something that did not happen.
+#[test]
+fn a_stream_that_loses_nothing_is_not_recorded_as_truncated() {
+    let workspace = tempfile::tempdir().unwrap();
+    // 12 MiB cap over 8 MiB of output: past the 6 MiB head, nothing dropped.
+    let limits = ProcessLimits {
+        timeout: Duration::from_secs(30),
+        max_output_bytes: 12 * 1024 * 1024,
+    };
+    let captured = run(workspace.path(), &["big-output"], &limits);
+
+    // ARRANGEMENT: the stream really did pass head_cap, or the claim is about nothing.
+    assert!(
+        captured.stdout.len() > 6 * 1024 * 1024,
+        "the stream must exceed head_cap for this to test anything: {}",
+        captured.stdout.len()
+    );
+    assert!(
+        !captured.stdout_truncated,
+        "every byte survived, so the record must not claim data loss"
+    );
+    assert!(
+        !captured
+            .stdout
+            .windows(9)
+            .any(|w| w == b"elided ..".as_slice()),
+        "nothing was elided, so no marker may appear"
+    );
+}
+
+/// #582 finding 2 (D): the marker's own length must never carry the capture past the cap.
+///
+/// Two shapes, one cause — the budgeted length and the emitted length came from different values of
+/// `elided`. Both caps below are D's measured boundaries, not invented ones.
+#[test]
+fn the_elision_marker_never_pushes_the_capture_over_its_cap() {
+    let cases = [
+        (
+            64 * 1024_usize,
+            "an ordinary cap, the control that this is about boundaries",
+        ),
+        (
+            7_388_638,
+            "the digit-carry boundary: measured one byte over",
+        ),
+        (
+            40,
+            "a cap smaller than the marker itself: measured twelve bytes over",
+        ),
+    ];
+    for (cap, why) in cases {
+        let workspace = tempfile::tempdir().unwrap();
+        let limits = ProcessLimits {
+            timeout: Duration::from_secs(30),
+            max_output_bytes: cap,
+        };
+        let captured = run(workspace.path(), &["big-output"], &limits);
+        // EQUALITY, not `<= cap`, and the difference is not pedantry. A one-sided bound is
+        // satisfied by an EMPTY capture, so it cannot tell "the marker fit" from "nothing was
+        // captured at all" -- measured: a broken build of this loop produced len=0 here and the
+        // `<=` version passed. The stream is 8 MiB against every cap below, so a correct capture
+        // fills its budget exactly.
+        assert_eq!(
+            captured.stdout.len(),
+            cap,
+            "cap {cap} must be filled exactly, not exceeded and not left short ({why})"
+        );
+    }
+}
+
+#[test]
 fn a_stdout_cut_is_distinguishable_from_a_stderr_cut() {
     // #177: `CapturedProcess` fused the two into `stdout_truncated || stderr_truncated`, so a stage
     // whose stderr was cut and whose stdout was whole was indistinguishable from the reverse. The

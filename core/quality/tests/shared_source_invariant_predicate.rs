@@ -17,6 +17,22 @@ include!(concat!(
     "/../../tools/source-invariants/detect.rs"
 ));
 
+/// Builds one fixture source line WITHOUT writing a run of spaces into this file.
+///
+/// Every cell below feeds the predicate a line that CONTAINS the defect, so writing those
+/// lines as literals put ten authored runs in this file. That is why it was exempt from the
+/// workspace sweep -- and, because `core/quality` has no per-crate source guard, why nothing
+/// scanned it at all. Composing the run instead lets this file be swept like any other, which
+/// is the method the exemption entry itself named as the way to close its own gap.
+///
+/// `INDENT` is the simulated source indentation every fixture opens with. It is built rather
+/// than written for the same reason: four spaces inside the raw string is itself a run above
+/// the predicate's threshold of three, so leaving it authored would keep the file red.
+fn source_line(before: &str, run: usize, after: &str) -> String {
+    const INDENT: usize = 4;
+    format!("{}{before}{}{after}", " ".repeat(INDENT), " ".repeat(run))
+}
+
 /// The defect the predicate exists to catch: a run of spaces inside a string literal, which a
 /// reader gets verbatim.
 ///
@@ -29,9 +45,11 @@ include!(concat!(
 /// refuted by the lane that proved it.
 #[test]
 fn it_catches_a_collapsed_run_inside_a_literal() {
-    assert!(has_run_in_literal(
-        r#"    "a waiter waits on its OWN                  lease","#
-    ));
+    assert!(has_run_in_literal(&source_line(
+        r#""a waiter waits on its OWN"#,
+        18,
+        r#"lease","#
+    )));
 }
 
 /// Both halves of the false positive that reached two crates by being copied.
@@ -42,11 +60,15 @@ fn it_catches_a_collapsed_run_inside_a_literal() {
 #[test]
 fn it_ignores_ordinary_rust_that_merely_looks_spaced() {
     assert!(
-        !has_run_in_literal(r#"    let x = "short";        // an aligned trailing comment"#),
+        !has_run_in_literal(&source_line(
+            r#"let x = "short";"#,
+            8,
+            "// an aligned trailing comment"
+        )),
         "spacing before a trailing comment is code, not a literal body"
     );
     assert!(
-        !has_run_in_literal(r#"    f("first",        "second");"#),
+        !has_run_in_literal(&source_line(r#"f("first","#, 8, r#""second");"#)),
         "spacing BETWEEN two literals is code, not a literal body"
     );
 }
@@ -56,20 +78,20 @@ fn it_ignores_ordinary_rust_that_merely_looks_spaced() {
 /// first test and still be unable to show that the exemption ever fires.
 #[test]
 fn detection_and_exemption_are_independently_observable() {
-    let commented = r#"    // "a comment whose run          is deliberate""#;
+    let commented = source_line(r#"// "a comment whose run"#, 10, r#"is deliberate""#);
     assert!(
-        has_run_in_literal(commented),
+        has_run_in_literal(&commented),
         "the DETECTOR must still see the run -- if it did not, the exemption below would \
          be exempting nothing and this file could not tell the difference"
     );
     assert!(
-        is_line_comment(commented),
+        is_line_comment(&commented),
         "and the EXEMPTION is what removes it"
     );
 
-    let code = r#"    let s = "a run          that is not in a comment";"#;
-    assert!(has_run_in_literal(code));
-    assert!(!is_line_comment(code), "an ordinary line is not exempted");
+    let code = source_line(r#"let s = "a run"#, 10, r#"that is not in a comment";"#);
+    assert!(has_run_in_literal(&code));
+    assert!(!is_line_comment(&code), "an ordinary line is not exempted");
 }
 
 /// An escaped quote inside a literal must not end the literal.
@@ -80,7 +102,11 @@ fn detection_and_exemption_are_independently_observable() {
 #[test]
 fn a_literal_holding_an_escaped_quote_is_still_scanned() {
     assert!(
-        has_run_in_literal(r#"    let s = "he said \" and then          waited";"#),
+        has_run_in_literal(&source_line(
+            r#"let s = "he said \" and then"#,
+            10,
+            r#"waited";"#
+        )),
         "a run inside a literal must be caught even when the literal contains an escaped quote"
     );
 }
@@ -93,7 +119,7 @@ fn a_literal_holding_an_escaped_quote_is_still_scanned() {
 #[test]
 fn an_escaped_quote_does_not_make_following_code_look_like_a_literal() {
     assert!(
-        !has_run_in_literal(r#"    let s = "x\"";          let t = 1;"#),
+        !has_run_in_literal(&source_line(r#"let s = "x\"";"#, 10, "let t = 1;")),
         "spacing after a literal is code, and an escaped quote must not change that"
     );
 }
@@ -114,7 +140,7 @@ fn an_escaped_quote_does_not_make_following_code_look_like_a_literal() {
 #[test]
 fn an_escaped_backslash_does_not_swallow_the_closing_quote() {
     assert!(
-        !has_run_in_literal(r#"    let root = "C:\\";          let n = 1;"#),
+        !has_run_in_literal(&source_line(r#"let root = "C:\\";"#, 10, "let n = 1;")),
         "the quote after an escaped backslash CLOSES the literal, so the spacing that \
          follows is code"
     );
@@ -125,7 +151,7 @@ fn an_escaped_backslash_does_not_swallow_the_closing_quote() {
 #[test]
 fn an_escaped_backslash_does_not_hide_a_later_literals_run() {
     assert!(
-        has_run_in_literal(r#"    let a = "C:\\"; let b = "x          y";"#),
+        has_run_in_literal(&source_line(r#"let a = "C:\\"; let b = "x"#, 10, r#"y";"#)),
         "a run in a literal AFTER an escaped backslash must still be caught"
     );
 }
@@ -217,7 +243,11 @@ fn repo_relative(raw: &str) -> String {
 #[test]
 fn an_escaped_backslash_does_not_resurrect_the_aligned_comment_false_positive() {
     assert!(
-        !has_run_in_literal(r#"    assert!(!debug.contains("C:\\"));        // aligned"#),
+        !has_run_in_literal(&source_line(
+            r#"assert!(!debug.contains("C:\\"));"#,
+            8,
+            "// aligned"
+        )),
         "spacing before a trailing comment is code, with or without an escaped backslash \
          earlier in the line"
     );

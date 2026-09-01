@@ -97,25 +97,11 @@ fn offends(line: &str) -> bool {
 /// their own crate's per-crate guard still scans — which is the first thing making the twelve
 /// load-bearing rather than redundant, and a reason not to delete them without replacing that
 /// coverage. The exceptions are named in their entries.
-const EXEMPT: [(&str, &str); 8] = [
+const EXEMPT: [(&str, &str); 7] = [
     // ---- Species A: a guard quoting the defect on purpose. -------------------------------------
     // These files exist to hold examples of collapsed runs. Rewriting them to satisfy this sweep
     // would delete the samples the predicate is tested against, which is the one edit a guard must
     // never provoke.
-    (
-        "core/quality/tests/shared_source_invariant_predicate.rs",
-        "the shared predicate's own detection fixtures (9 of them). NOTE: core/quality has no \
-         per-crate guard, so this file is scanned by nothing once exempt here -- the narrowest \
-         gap this list opens, and the one to close first if the exemption is ever made finer. \
-         THE METHOD IS IN THIS FILE (found by L reviewing #578): the cells below never write a run \
-         into the source, they BUILD one at runtime with `\" \".repeat(n)`, which is why a file \
-         full of detection fixtures needs no exemption and scans itself. Those nine are written as \
-         literals with the runs in the source and use repeat() zero times; rewriting them the same \
-         way closes both this entry and the gap. Not free -- some of them must LOOK like real Rust \
-         (aligned trailing comments, two literals on one line) and constructing that reads worse \
-         than writing it -- and out of scope here, but the follow-up has a method rather than an \
-         open question",
-    ),
     (
         "tools/pathogens/tests/source_invariants.rs",
         "that crate's own detection fixtures; its per-crate guard scans this file",

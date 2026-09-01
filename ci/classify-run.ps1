@@ -37,7 +37,12 @@
     Path to the run manifest, in the repo or in the slot directory.
 
 .PARAMETER Class
-    real-red | instrument-red | dead
+    real-red | dead | green-by-luck | flaky-observed
+
+    The first two judge a RED. The last two refine an automatic GREEN, and exist because a green
+    that passed by luck was previously unrecordable (#639). `instrument-red` is named here no
+    longer: this file's own description removed it as a class, and the line that still listed it
+    was stale. Corrected rather than left to contradict the paragraph above it.
 
 .PARAMETER Because
     One line of why. Required: a class with no reason is a label, and the next reader cannot check
@@ -46,7 +51,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $Manifest,
-    [Parameter(Mandatory)] [ValidateSet('real-red', 'dead')] [string] $Class,
+    [Parameter(Mandatory)] [ValidateSet('real-red', 'dead', 'green-by-luck', 'flaky-observed')] [string] $Class,
     [Parameter(Mandatory)] [string] $Because,
 
     # #199: declare the failure UNRELATED to the diff under judgement. All three are required
@@ -100,8 +105,98 @@ if (-not ($run.PSObject.Properties.Name -contains 'runClass')) {
     throw "this manifest has no runClass field, so it predates the taxonomy (#202). Classifying it would produce a record that looks like a judged run of the new gate and is not one. Re-run the gate, or annotate the file by hand and say it was pre-taxonomy."
 }
 
-if ($run.runClass -and $run.runClass -ne 'UNCLASSIFIED') {
-    throw "this run is already classified as '$($run.runClass)'. Classifying twice would overwrite a judgement someone already made; edit deliberately if that is what you mean."
+# #639: the refusal is about ORIGIN, not existence. The invariant this guard protects is that A
+# HUMAN JUDGEMENT IS NOT OVERWRITTEN -- and an automatic `green` is not a judgement. It is what
+# `gate.ps1` writes when no stage failed: the absence of failures, not anyone's reading of them.
+# Refusing on existence made a green TERMINAL, so a green whose own author had measured it as luck
+# (PASS=4 FAIL=1) stayed recorded as proof, with the refutation stranded in a commit message the
+# ledger does not link to.
+$GreenSideClasses = @('green-by-luck', 'flaky-observed')
+
+# THE CLASS these guards belong to, written once so the fourth site is not rediscovered by a sweep:
+# a manifest field is believed only alongside the fields that CORROBORATE it. Enumerated over every
+# site in this file that reads a field and acts on it -- five, of which two were already sound
+# (:104 acts on ABSENCE, which is the fact itself; the instrumentSuspect block only PRINTS) and
+# three needed this: the class needs `runClassOrigin`, a `green` needs `status` + `overallPassed`,
+# and a refinement needs the DURABLE TWIN. (Found in review on #640.)
+
+# Absent `runClassOrigin` is DERIVED, and the derivation is sound rather than a guess: the two
+# producers have disjoint, closed vocabularies. `green` and `UNCLASSIFIED` can only come from
+# `gate.ps1`; every other class can only come from THIS script, whose ValidateSet cannot emit them.
+# So the value determines the origin for every manifest written before the field existed.
+$slotDir = if ($env:GRAPHHELM_SLOT_DIR) { $env:GRAPHHELM_SLOT_DIR } else { 'D:/graphhelm-slot' }
+$fileName = Split-Path -Leaf $Manifest
+$existingClass = $run.runClass
+$AutomaticClasses = @('green', 'UNCLASSIFIED')
+$HumanClasses = @('real-red', 'dead', 'green-by-luck', 'flaky-observed')
+$existingOrigin = if ($run.PSObject.Properties.Name -contains 'runClassOrigin') {
+    $run.runClassOrigin
+} elseif ($existingClass -in $AutomaticClasses) {
+    'automatic'
+} elseif ($existingClass -in $HumanClasses) {
+    'human'
+} else {
+    # REFUSED, not widened. The derivation rests on the two producers having disjoint CLOSED
+    # vocabularies; a value in neither falls outside that justification entirely. Reading it as
+    # `human` -- the earlier behaviour -- was the expensive guess: a human class cannot be
+    # overwritten, so a malformed or untrusted manifest would lock that run out of classification
+    # permanently. Saying "I cannot place this" costs one line and locks nothing.
+    # (Found in review on #640.)
+    throw "this manifest's runClass is '$existingClass', which belongs to neither vocabulary: gate.ps1 writes $($AutomaticClasses -join ', ') and this script writes $($HumanClasses -join ', '). Its origin cannot be derived, so it is refused rather than guessed. Fix the manifest, or say by hand what wrote it."
+}
+
+# `gate.ps1:441` writes `green` only when $Status -eq 'GREEN' AND $passedEverything. A manifest
+# whose class says green while its own status does not was never written by that rule, so there is
+# no automatic green here to refine. ABSENT counts as not corroborated, deliberately: absent and
+# false are different facts, and this file already treats them so for `instrumentSuspect` -- a green
+# nobody can corroborate is not one anybody should refine.
+if ($existingClass -eq 'green') {
+    $hasStatus = $run.PSObject.Properties.Name -contains 'status'
+    $hasPassed = $run.PSObject.Properties.Name -contains 'overallPassed'
+    if (-not ($hasStatus -and $hasPassed) -or $run.status -ne 'GREEN' -or -not $run.overallPassed) {
+        $sawStatus = if ($hasStatus) { "'$($run.status)'" } else { 'ABSENT' }
+        $sawPassed = if ($hasPassed) { "$($run.overallPassed)" } else { 'ABSENT' }
+        throw "this manifest's runClass is 'green' but that green is not corroborated by the fields the gate writes it from: status = $sawStatus, overallPassed = $sawPassed. A green written by gate.ps1 carries status GREEN and overallPassed true. Refused rather than refined."
+    }
+}
+
+# The DURABLE TWIN. This script writes both copies and has always known the twin exists; it decided
+# the refinement from the committable copy alone. Its own doc explains the surviving divergence after
+# a partial write -- committable UNCLASSIFIED, durable classified -- and the same crash also leaves
+# the committable copy an automatic `green` while the durable one already holds a human judgement.
+# Reading the twin is what makes "refine once" true across both copies rather than per file.
+$durableTwin = [System.IO.Path]::Combine([System.IO.Path]::Combine($slotDir, 'gate-runs'), $fileName)
+if ((Test-Path -LiteralPath $durableTwin) -and ((Resolve-Path -LiteralPath $durableTwin).Path -ne (Resolve-Path -LiteralPath $Manifest).Path)) {
+    $twin = Get-Content -LiteralPath $durableTwin -Raw | ConvertFrom-Json
+    $twinClass = if ($twin.PSObject.Properties.Name -contains 'runClass') { $twin.runClass } else { 'ABSENT' }
+    if ($twinClass -ne $existingClass) {
+        throw "this copy and its durable twin disagree: this one says '$existingClass', the durable twin at $durableTwin says '$twinClass'. Classifying from one copy would overwrite whatever the other already records. Reconcile them before classifying."
+    }
+}
+
+if ($existingClass -and $existingClass -ne 'UNCLASSIFIED' -and $existingOrigin -eq 'human') {
+    throw "this run is already classified as '$existingClass' by a person. Classifying twice would overwrite a judgement someone already made; edit deliberately if that is what you mean."
+}
+
+# Both rules below anchor on the class being EXACTLY an automatic `green`, and that precision is the
+# whole of them. An earlier version gated on `-ne 'UNCLASSIFIED'`, which reads as "nothing failed" and
+# is not: `UNCLASSIFIED` is what `gate.ps1` writes when the run did NOT pass everything. So a FAILED
+# run could be persisted as `flaky-observed` -- as a HUMAN judgement nothing afterwards overwrites.
+# (Found in review by K on #640. It is this file's own rule with the sign flipped, which is why the
+# approximate anchor passed a reading and failed a test.)
+
+# A green-side class REFINES an observed pass. Where the gate never observed one, there is nothing
+# to refine -- the mirror of the rule below it.
+if ($Class -in $GreenSideClasses -and $existingClass -ne 'green') {
+    $seen = if ($existingClass) { "'$existingClass'" } else { 'no class' }
+    throw "'$Class' refines an automatic green, and this run carries $seen. The gate never recorded a passing run here, so there is nothing to refine. A run that failed is judged with: real-red, dead."
+}
+
+# An automatic green may be refined but not CONTRADICTED. `real-red` and `dead` are readings of a
+# FAILURE this run did not have; applying one would make the ledger assert something the gate never
+# observed, which is the defect this change exists to remove rather than to mirror.
+if ($existingClass -eq 'green' -and $Class -notin $GreenSideClasses) {
+    throw "'$existingClass' was assigned automatically because no stage failed, so it can be refined but not contradicted: '$Class' is a reading of a failure this run did not have. Use one of: $($GreenSideClasses -join ', ')."
 }
 
 # #199: attribution, and the gate that keeps "not mine" from being the cheapest sentence to write.
@@ -162,7 +257,13 @@ if ($UnrelatedTestFile -or $UnrelatedIssue -or $FailThenPassObserved) {
     $run | Add-Member -NotePropertyName failThenPassObserved -NotePropertyValue 'asserted-by-holder' -Force
 }
 
+# The class this replaced, so the ledger is self-describing: a census can see that the run was
+# green AND that a person refined it, without having to find the commit that says so.
+if ($existingClass -eq 'green') {
+    $run | Add-Member -NotePropertyName runClassRefinedFrom -NotePropertyValue $existingClass -Force
+}
 $run | Add-Member -NotePropertyName runClass -NotePropertyValue $Class -Force
+$run | Add-Member -NotePropertyName runClassOrigin -NotePropertyValue 'human' -Force
 $run | Add-Member -NotePropertyName relatedToDiff -NotePropertyValue $relatedToDiff -Force
 $run | Add-Member -NotePropertyName runClassBecause -NotePropertyValue $Because -Force
 $run | Add-Member -NotePropertyName runClassAtUtc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
@@ -171,8 +272,6 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $out = $run | ConvertTo-Json -Depth 8
 
 $written = New-Object System.Collections.Generic.List[string]
-$slotDir = if ($env:GRAPHHELM_SLOT_DIR) { $env:GRAPHHELM_SLOT_DIR } else { 'D:/graphhelm-slot' }
-$fileName = Split-Path -Leaf $Manifest
 
 # ORDER IS THE MITIGATION, and it is chosen rather than defaulted. Two copies cannot be written
 # atomically, so one of them is written first and the question is WHICH DIVERGENCE IS SURVIVABLE if

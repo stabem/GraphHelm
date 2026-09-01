@@ -473,6 +473,10 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
     $manifest = [ordered]@{
         status             = $Status
         runClass           = $runClass
+        # #639: WHO assigned the class. `automatic` means no stage failed, not that anyone judged
+        # the run -- which is what lets `classify-run.ps1` refine a green without overwriting a
+        # human judgement.
+        runClassOrigin     = 'automatic'
         relatedToDiff      = $relatedToDiff
         headSha            = $headSha
         dirtyDiffHash      = $dirtyDiffHash

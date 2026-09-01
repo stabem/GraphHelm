@@ -92,7 +92,7 @@ sides and asserts there are eight states. It is careful and correct. It says not
 anything references the definition or carries the value. *"The coverage vocabulary is guarded"* is
 true; *"coverage is enforced"* is what it will be taken to mean.
 
-**Oracle drift, recorded as drift.** `core/governor/src/memory.rs:294` screens with
+**Oracle drift, recorded as drift.** `core/governor/src/memory.rs:296` screens with
 `content.contains("ghp_")`; `core/graph/src/persistence.rs:736` requires a prefix **and** a tail of
 16 or 20. A bare `ghp_` is refused by the first and not the second. The direction is fail-safe —
 memory refuses more — so this is logged as divergence between two oracles, **not** as a
@@ -519,7 +519,7 @@ than a silent reinterpretation.
 
 | | site | trigger |
 |---|---|---|
-| memory admission | `core/governor/src/memory.rs:294` | `content.contains("ghp_")` — one prefix, no tail requirement |
+| memory admission | `core/governor/src/memory.rs:296` | `content.contains("ghp_")` — one prefix, no tail requirement |
 | durable content | `core/graph/src/persistence.rs:736` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, authorization, environment-URI and reference-name forms |
 
 `memory.rs` documents its own boundary, and that doc comment was **verified against
@@ -633,9 +633,9 @@ protection's location.**
 **Protection.**
 
 ```
-core/governor/src/memory.rs:249   if content_is_secret_shaped(content) { ... }
-core/governor/src/memory.rs:254   code: MemoryRefusalCode::SecretDetected
-core/governor/src/memory.rs:294   fn content_is_secret_shaped -> content.contains("ghp_")
+core/governor/src/memory.rs:251   if content_is_secret_shaped(content) { ... }
+core/governor/src/memory.rs:256   code: MemoryRefusalCode::SecretDetected
+core/governor/src/memory.rs:296   fn content_is_secret_shaped -> content.contains("ghp_")
 core/governor/tests/memory.rs:63, 858, 887
 ```
 

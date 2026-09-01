@@ -1,5 +1,47 @@
 # Specification Changelog
 
+## Local Studio MVP and the execution index, #105 - 2026-08-27
+
+- **The Studio stopped being a specification with no code behind it.** `apps/studio` is a
+  local-first operator surface: it lists the runs a store holds, answers which one needs the
+  operator and why, shows the sixteen node states and the append-only timeline, and performs
+  three mutations - pause, approve a node, resume. It is NOT the Studio `docs/ux/STUDIO_SPEC.md`
+  specifies: no graph canvas, no DSL editor, no chat, no collaboration, no cloud.
+  `docs/ux/STUDIO_MVP.md` records the line between the two.
+- **D-040 is unchanged.** The monitor stays local, read-only, and simple; it gained no
+  operational action. The Studio is a separate application, and it may use only public Runtime
+  contracts - it imports no crate and reads no event file.
+- **The board draws real edges, and only ones it can prove.** `POST /v1/graph/topology` reads a
+  graph file on the Runtime host and returns its entrypoints, nodes and edges together with the
+  `semanticHash` that says WHICH graph it is. The Studio compares that hash against the one the
+  run itself recorded in `execution_started` and draws on a match and only on a match: mismatched
+  or unverified yields an EMPTY edge list by construction, so a component that forgets to branch
+  cannot render the wrong graph. Sabotaging that single expression turns two guards red. It grants
+  no reach the API lacked - `start` and `resume` already load a file by path - and it returns node
+  identity only, never objectives or agent blocks. Reachable from all three surfaces.
+- **`GET /v1/executions` exists because scraping `/monitor` was the alternative.** A presentation
+  surface for a human browser was the only way to discover which executions a store held. The new
+  index is authenticated like every other `/v1` route, ordered by execution id, bounded at 100
+  rows, and paged by an EXCLUSIVE cursor; an over-large limit is refused rather than clamped,
+  because a caller that asked for 500 and silently received 100 cannot tell a clamp from a short
+  store. Each row is a key subset of the same `render` value `execution status` replies with, so
+  the index cannot disagree with the detail view - checked field by field on a live store, not
+  asserted in prose. Reachable from all three surfaces: `graphhelm execution list`, the route, and
+  the MCP tool `list`.
+- **Seven WebMCP site tools over the SAME client the buttons use.** The adapter builds no request,
+  chooses no actor, and interprets no diagnostic; it calls `RuntimeClient`. `cancel` is
+  deliberately absent - it is the destructive verb, and the journey does not need it.
+- **No write reports success it has not verified.** Every mutation reads the head, mutates with
+  `If-Match`, then reads the status and the appended events back, and answers `succeeded`,
+  `refused`, or `unknown`. The third value is the point: reporting an unverifiable write as
+  succeeded makes the one state an operator must act on look exactly like the one they can ignore.
+- **A browser confirmation is consent, not authorship.** A mutation an agent chose is recorded as
+  actor type `agent`, id `studio-webmcp-adapter`, even though the person approved it in the
+  browser. Recording it as the owner would destroy the only distinction the audit log exists for.
+- Declared gap: the Studio's own suite is not part of `ci/gate.ps1`, which covers the Rust
+  workspace, schemas, and PostgreSQL. Running it is an explicit step, named in
+  `apps/studio/README.md`, rather than a risky pipeline change made to show a green check.
+
 ## Name the state you were true of, M10 — 2026-08-20
 
 - The milestone's product sentence, repeated eighteen times: **make the answer name which world it is in.** `GHCLI016` answered a setup refusal and a mid-drive failure with one value, so "the call failed" could not tell an operator whether their hold survived (#96); a restore step that ran out of time reported itself as a corrupt archive, with elapsed scattered across four variants and three codes, none of which named timing (#81); `wake-wait`'s timeout answered from a snapshot the store already contradicted (#88). Each fix is the same shape — the answer now names its world.

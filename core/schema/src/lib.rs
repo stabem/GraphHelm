@@ -5,7 +5,7 @@ mod document;
 mod extension;
 mod registry;
 
-pub use document::{LoadedExtension, LoadedGraph, load_extension, load_graph};
+pub use document::{LoadedExtension, LoadedGraph, load_extension, load_graph, load_graph_json};
 pub use extension::{
     __surface_allowlists_for_testing, ValidatedExtensionPackage, validate_extension_package,
 };

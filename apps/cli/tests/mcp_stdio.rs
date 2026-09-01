@@ -500,8 +500,43 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
     )
 }
 
+/// Every tool the MCP surface exposes, in the order it exposes them.
+///
+/// ONE list, because there were two and they drifted. `the_packaging_is_valid_and_names_only_real_tools`
+/// kept its own hand-written table of fourteen names to check skill references against; when
+/// `evidence` was added to the surface that table was not updated, so a skill naming a REAL tool
+/// would have been reported as naming one that "does not exist" -- the guard failing honest work
+/// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
+/// wrong reason. A second copy of a set is a second thing to forget.
+const MCP_TOOL_NAMES: [&str; 24] = [
+    "start",
+    "list",
+    "topology",
+    "status",
+    "events",
+    "evidence",
+    "signal",
+    "approve",
+    "pause",
+    "resume",
+    "cancel",
+    "routes",
+    "wake_arm",
+    "wake_status",
+    "amend_budget",
+    "wake_wait",
+    "probe",
+    "resolve_contract",
+    "memory_status",
+    "present",
+    "compile_context",
+    "memory_propose",
+    "accounting",
+    "sweep",
+];
+
 #[test]
-fn tools_list_names_exactly_the_twenty_one_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_twenty_four_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -517,33 +552,12 @@ fn tools_list_names_exactly_the_twenty_one_tools_with_closed_schemas() {
         .collect();
     assert_eq!(
         names,
-        vec![
-            "start",
-            "status",
-            "events",
-            "signal",
-            "approve",
-            "pause",
-            "resume",
-            "cancel",
-            "routes",
-            "wake_arm",
-            "wake_status",
-            "amend_budget",
-            "wake_wait",
-            "probe",
-            "resolve_contract",
-            "memory_status",
-            "present",
-            "compile_context",
-            "memory_propose",
-            "accounting",
-            "sweep"
-        ],
-        "exactly the twenty-one tools, in order, and NOTHING else — no credential tool exists by \
+        MCP_TOOL_NAMES.to_vec(),
+        "exactly the tools in `MCP_TOOL_NAMES`, in order, and NOTHING else — no credential tool exists by \
          design (omission is the enforcement); #223 added resolve_contract, memory_status, \
          present, compile_context, memory_propose, then accounting, each after the one before \
-         it; #288 added sweep after those. This pin is a LIST and not a count, so a tool added \
+         it; #288 added sweep after those; #105 added list beside start, the read a caller \
+         reaches for before it knows an execution id. This pin is a LIST and not a count, so a tool added \
          to TOOLS without a line here fails on the NAME rather than on a number -- which is what \
          happened to present (#357 moved TOOLS and not this list, and the gate that PR chose did \
          not run this file)."
@@ -600,6 +614,60 @@ fn tools_list_names_exactly_the_twenty_one_tools_with_closed_schemas() {
     assert!(
         CONSULT_ONLY.len() == 1 && CONSULT_ONLY[0] == "wake_wait",
         "a new consult-only tool needs its own justification, not a longer list"
+    );
+}
+
+/// THE `evidence` TOOL'S PATH ACTUALLY REACHES THE ROUTE.
+///
+/// The parity guards around it prove the tool EXISTS, that its schema is closed, and that the
+/// route named in its description is registered. None of them touches the path the dispatch
+/// composes, so a tool that built `/v1/executions/{id}/evidence` - or put the two ids the wrong
+/// way round, or dropped a segment - would satisfy every one of them and fail only in an
+/// operator's hands.
+///
+/// The discriminator is which REFUSAL comes back, and the two are unmistakable. A path that
+/// matches no route answers `GHCLI008_SERVE_NOT_FOUND`, from the router, before any handler runs.
+/// A path that reaches the evidence handler answers `GHCLI023_EVIDENCE_UNREADABLE`, because this
+/// execution's events reference no such evidence - the store's own reachability gate, which only
+/// exists inside the handler. Getting the second one is proof the request arrived where the
+/// description claims it goes.
+///
+/// A fixture-driven server seals nothing (`RefusingSealer`), so there is no plaintext to read here
+/// and this test does not pretend to check the decrypt - that is
+/// `a_sealed_model_reply_can_be_read_back_as_the_text_the_provider_sent`, over in `runtime_http`,
+/// against a real provider. What is missing until now, and what this closes, is the wiring between
+/// the two.
+#[test]
+fn the_evidence_tool_reaches_the_evidence_route_and_not_the_router() {
+    let harness = wired("exec-mcp-evidence");
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!(9),
+            "evidence",
+            serde_json::json!({
+                "executionId": "exec-mcp-evidence",
+                "evidenceId": "ev-this-execution-never-recorded-one",
+            }),
+        ),
+    ]);
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+
+    assert!(is_error, "a refusal travels as isError true: {envelope}");
+    let code = envelope["diagnostics"][0]["code"]
+        .as_str()
+        .unwrap_or_default();
+    assert_ne!(
+        code, "GHCLI008_SERVE_NOT_FOUND",
+        "the path the tool composed matched no route, so the tool points somewhere the route is \
+         not: {envelope}"
+    );
+    assert_eq!(
+        code, "GHCLI023_EVIDENCE_UNREADABLE",
+        "the request must arrive at the evidence handler and be refused by its own gate: \
+         {envelope}"
     );
 }
 
@@ -1299,6 +1367,42 @@ fn plugin_root() -> PathBuf {
     root_dir().join("examples/chat-surface")
 }
 
+/// Every skill the plugin actually ships, read from disk.
+///
+/// This used to be a hand-written list of two names in the loop below, which meant the guard's
+/// POPULATION was chosen by whoever last edited the test rather than by what the plugin contains:
+/// a skill added afterwards referenced tools nothing checked, and the guard stayed green while
+/// covering less than it appeared to. Enumerating the directory makes coverage follow the
+/// package. `expect` rather than `unwrap`: an empty or missing skills directory is a packaging
+/// defect, and it should say so instead of failing as an unwrap on a path nobody printed.
+fn shipped_skills() -> Vec<String> {
+    let directory = plugin_root().join("claude-code-plugin/skills");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .unwrap_or_else(|error| {
+            panic!("the plugin must ship a skills directory ({directory:?}): {error}")
+        })
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if !entry.file_type().ok()?.is_dir() {
+                return None;
+            }
+            // A directory without a SKILL.md is not a skill; skipping it here keeps the guard
+            // about skills rather than about whatever else lands in the folder.
+            entry
+                .path()
+                .join("SKILL.md")
+                .is_file()
+                .then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect();
+    names.sort();
+    assert!(
+        !names.is_empty(),
+        "the plugin ships no skills at all ({directory:?})"
+    );
+    names
+}
+
 /// Every `tool:`-marked name in a SKILL.md (the marker convention the skills define).
 fn skill_tool_names(skill: &str) -> Vec<String> {
     let text = std::fs::read_to_string(
@@ -1356,23 +1460,14 @@ fn the_packaging_is_valid_and_names_only_real_tools() {
 
     // Every tool a skill names exists in the current closed table; the credential-refusal sentence
     // is present verbatim in operate-execution; both READMEs carry the deletability sentence.
-    let table = [
-        "start",
-        "status",
-        "events",
-        "signal",
-        "approve",
-        "pause",
-        "resume",
-        "cancel",
-        "routes",
-        "wake_arm",
-        "wake_status",
-        "amend_budget",
-        "wake_wait",
-        "probe",
-    ];
-    for skill in ["operate-execution", "observe-agents"] {
+    // The SAME set the surface actually exposes, not a second copy of it. See `MCP_TOOL_NAMES`.
+    let table = MCP_TOOL_NAMES;
+    let shipped = shipped_skills();
+    assert!(
+        shipped.len() >= 3,
+        "the plugin's three skills must all be present, found: {shipped:?}"
+    );
+    for skill in &shipped {
         let names = skill_tool_names(skill);
         assert!(!names.is_empty(), "{skill} names its tools");
         for name in &names {
@@ -1592,5 +1687,67 @@ fn the_sweep_tool_reaches_the_route_it_names_and_the_record_lands() {
     assert!(
         harness.head_sequence("exec-mcp-sweep") > before,
         "a sweep over a clean stream still appends its own record: {envelope}"
+    );
+}
+
+/// #105: the `list` tool reaches `GET /v1/executions` and relays that route's envelope verbatim.
+///
+/// Two assertions, and the second is the one that matters: the tool's `data` must equal the data
+/// the API itself replies with for the same store. A tool that answered from anywhere else -- a
+/// cached list, a second read path, the monitor page -- would still produce a plausible array,
+/// and only a comparison against the route can tell the two apart.
+#[test]
+fn the_list_tool_reaches_the_execution_index_and_relays_it_verbatim() {
+    let harness = wired("exec-mcp-list");
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(serde_json::json!(2), "list", serde_json::json!({})),
+    ]);
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "{envelope}");
+    assert_eq!(envelope["command"], "execution.list");
+
+    let listed: Vec<&str> = envelope["data"]["executions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the index carried no array: {envelope}"))
+        .iter()
+        .map(|row| row["executionId"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        listed,
+        vec!["exec-mcp-list"],
+        "the seeded store holds exactly the one stream this harness started: {envelope}"
+    );
+
+    let direct = http_get_json(&harness.base, &harness.token, "/v1/executions");
+    assert_eq!(
+        envelope["data"], direct["data"],
+        "the tool must relay the route's own answer, not compose a second one"
+    );
+}
+
+/// The tool's bounds are the API's bounds: an over-large limit is refused through the tool with
+/// the route's own diagnostic, never clamped into a plausible short page.
+#[test]
+fn the_list_tool_relays_the_routes_refusal_rather_than_clamping() {
+    let harness = wired("exec-mcp-list-bounds");
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!(2),
+            "list",
+            serde_json::json!({"limit": 500}),
+        ),
+    ]);
+    let (_is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert_eq!(envelope["ok"], serde_json::json!(false), "{envelope}");
+    assert_eq!(
+        envelope["diagnostics"][0]["code"],
+        serde_json::json!("GHCLI001_ARGUMENT_INVALID"),
+        "{envelope}"
     );
 }

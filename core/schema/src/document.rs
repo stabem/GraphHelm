@@ -137,6 +137,26 @@ pub fn load_extension(path: &Path) -> Result<LoadedExtension, Vec<Diagnostic>> {
     Ok(LoadedExtension { source, raw })
 }
 
+/// Loads a JSON graph document from BYTES ALREADY IN MEMORY and validates it offline — the same
+/// parse, bounds and validation `load_graph` performs, minus the filesystem.
+///
+/// This exists for callers who never had a file: an HTTP request whose body carries the graph
+/// itself, so a browser can start work without first writing a document onto the server's disk.
+/// The bound is not weakened by the missing file — `load_graph_bytes` re-checks the 4 MiB limit
+/// against the slice it is handed rather than trusting a caller's stated length, which is the
+/// check that matters when the length is attacker-supplied.
+///
+/// JSON ONLY, deliberately. `load_graph`'s YAML arm is selected by a file EXTENSION; bytes have
+/// no extension, so admitting YAML here would mean inventing a format parameter and trusting a
+/// caller to describe their own payload. Callers with YAML have a file, and `load_graph` reads it.
+///
+/// `source` is the label diagnostics are reported against. Callers without a filesystem path must
+/// pass one that is not a path (see the HTTP start handler): it reaches lint diagnostics, and a
+/// server-side path in a reply tells a remote caller about a disk they cannot see.
+pub fn load_graph_json(contents: &[u8], source: &str) -> Result<LoadedGraph, Vec<Diagnostic>> {
+    load_graph_bytes(contents, "json", source)
+}
+
 /// Loads YAML or JSON from a bounded local file and validates it offline.
 pub fn load_graph(path: &Path) -> Result<LoadedGraph, Vec<Diagnostic>> {
     let source = diagnostic_source(path);

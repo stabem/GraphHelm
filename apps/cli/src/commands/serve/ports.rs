@@ -7,9 +7,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use graphhelm_events::{EvidenceError, EvidenceSealer, RepositoryFuture, SecretBytes};
+use graphhelm_events::{
+    EvidenceError, EvidenceOpener, EvidenceSealer, RepositoryFuture, SecretBytes,
+};
 use graphhelm_gateway::call::{ModelCall, ModelReply};
-use graphhelm_gateway::manifest::{ModelRoute, Transport};
+use graphhelm_gateway::manifest::{ModelRoute, RouteManifest, Transport};
 use graphhelm_gateway::taxonomy::GatewayError;
 use graphhelm_model_gateway::broker::CredentialBroker;
 use graphhelm_model_gateway::byok::ByokAdapter;
@@ -59,14 +61,41 @@ pub(super) enum ServeModelPort {
     NativeRuntime { route: ModelRoute },
 }
 
+/// Finds an ENABLED route by id in a parsed manifest — the ONE place that comparison is written.
+///
+/// Startup (`--route`, `serve/mod.rs`) and per-drive selection (a request's `"route"`, see
+/// `prepare_drive`) both come through here. They used to be one site because only startup could
+/// choose; the moment a request can choose too, "which route does this id mean" exists in two
+/// places, and two spellings of the same lookup is how the flag and the field come to disagree
+/// about a manifest neither of them changed.
+///
+/// `enabled: false` is refused HERE, before any caller can lease the credential or reach a paid
+/// network call (PR #467 review): eligibility (`core/gateway/src/eligibility.rs`) and probe
+/// (`gateway/probe.rs`) already exclude disabled routes, and the Studio's own composer greys them
+/// out — this lookup was the one surface that ignored the flag, which put the restriction on the
+/// surface a human uses and not on the one an agent uses. A disabled route answers exactly like a
+/// missing one: it is not available for driving, and the caller learns nothing further.
+pub(super) fn find_route(manifest: &RouteManifest, route_id: &str) -> Option<ModelRoute> {
+    manifest
+        .routes()
+        .iter()
+        .find(|route| route.id() == route_id && route.enabled())
+        .cloned()
+}
+
 impl ServeModelPort {
-    /// Resolves `wiring.route`'s transport and, for `direct_api`, opens the broker and leases the
+    /// Resolves `route`'s transport and, for `direct_api`, opens the broker and leases the
     /// configured credential — an async step, run here (inside the async handler) rather than
     /// deferred into `spawn_blocking`, matching the plan's explicit instruction.
-    pub(super) async fn build(wiring: &RuntimeWiring) -> Result<Self, String> {
-        match wiring.route.transport() {
+    ///
+    /// The route arrives as a PARAMETER rather than being read from `wiring`, which is what lets a
+    /// request pick a model: `wiring.route` is the deployer's default, not the only answer. The
+    /// broker/keyring coordinates still come from `wiring` — those are deployment facts, and a
+    /// request that could redirect the credential lookup would be choosing whose key it spends.
+    pub(super) async fn build(wiring: &RuntimeWiring, route: &ModelRoute) -> Result<Self, String> {
+        match route.transport() {
             Transport::NativeRuntime => Ok(Self::NativeRuntime {
-                route: wiring.route.clone(),
+                route: route.clone(),
             }),
             Transport::DirectApi => {
                 let passphrase = gateway_passphrase()?;
@@ -78,19 +107,25 @@ impl ServeModelPort {
                 )
                 .await
                 .map_err(|error| error.to_string())?;
-                let credential_ref = wiring
-                    .route
+                let credential_ref = route
                     .credential_ref()
                     .ok_or_else(|| "direct_api route carries no credentialRef".to_owned())?;
                 let key = broker
-                    .lease(credential_ref, wiring.route.id())
+                    .lease(credential_ref, route.id())
                     .await
                     .map_err(|error| error.to_string())?;
                 Ok(Self::DirectApi {
-                    route: wiring.route.clone(),
+                    route: route.clone(),
                     key,
                 })
             }
+        }
+    }
+
+    /// The route this port was built for. `call` refuses any other id (see its own comment).
+    fn route(&self) -> &ModelRoute {
+        match self {
+            Self::DirectApi { route, .. } | Self::NativeRuntime { route } => route,
         }
     }
 }
@@ -98,12 +133,26 @@ impl ServeModelPort {
 impl ModelPort for ServeModelPort {
     fn call<'a>(
         &'a self,
-        _route_id: &'a str,
+        route_id: &'a str,
         call: &'a ModelCall,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ModelReply, GatewayError>> + Send + 'a>,
     > {
         Box::pin(async move {
+            // THE ID IS CHECKED, NOT IGNORED. This parameter used to be `_route_id`, which was
+            // harmless only while a server had exactly one route and no request could name
+            // another: the port's own route was necessarily the executor's. Now that a request
+            // chooses, the two are separately derived — the port from the resolved `ModelRoute`,
+            // the executor from `PreparedPorts::route_id` — and separately derived values drift.
+            //
+            // Drift here is silent and expensive in the worst way: the reply comes back from a
+            // model the operator did not pick, spends the credential of a route they did not
+            // choose, and every event records the id they asked for. Nothing downstream can
+            // notice, because the id is the only thing downstream ever sees. Refusing costs one
+            // comparison and turns an unobservable wrong answer into a named failure.
+            if route_id != self.route().id() {
+                return Err(GatewayError::PolicyDenied);
+            }
             // `ByokAdapter`/`RuntimeAdapter` are neither `Send` nor cheap to hold across an
             // await point (they borrow `route` and, for BYOK, a `SecretBytes` key) — this
             // clones the small config each call needs and constructs the adapter INSIDE the
@@ -264,6 +313,39 @@ pub(super) fn build_sealer(
     let Some(sealing) = sealing else {
         return Ok(Arc::new(RefusingSealer));
     };
+    Ok(Arc::new(graphhelm_events::EvidenceProtector::new(
+        open_key_provider(sealing)?,
+    )))
+}
+
+/// The mirror of `build_sealer`: the same keyring, opened for READING sealed Evidence back.
+///
+/// `EvidenceProtector` implements both halves, so this is the same construction reached through
+/// the other trait rather than a second key path — there is exactly one way this server gets at
+/// the keyring, and adding a read surface did not add another.
+///
+/// NO `RefusingSealer` EQUIVALENT, deliberately. A server with no keyring configured can still
+/// run (it seals nothing, and `RefusingSealer` is the honest answer to "seal this"), but it holds
+/// no key, so "open this" has no answer at all — not a refusal to perform an action, an inability
+/// to know. Returning an opener that always fails would push that discovery to call time and make
+/// every caller's error look like a decryption failure instead of a server that was never wired
+/// to decrypt.
+pub(super) fn build_opener(
+    sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
+) -> Result<Arc<dyn EvidenceOpener>, String> {
+    let Some(sealing) = sealing else {
+        return Err(
+            "this server has no keyring configured, so sealed evidence cannot be opened".to_owned(),
+        );
+    };
+    Ok(Arc::new(graphhelm_events::EvidenceProtector::new(
+        open_key_provider(sealing)?,
+    )))
+}
+
+fn open_key_provider(
+    sealing: &crate::commands::execution::signal::SignalKeyring,
+) -> Result<graphhelm_sealed_key_provider::SealedKeyProvider, String> {
     let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| {
         "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters".to_owned()
     })?;
@@ -282,13 +364,12 @@ pub(super) fn build_sealer(
             .map_err(|_| "GRAPHHELM_EVENTS_KEY is not valid hex".to_owned())?;
         material.push(byte);
     }
-    let provider = graphhelm_sealed_key_provider::SealedKeyProvider::open(
+    graphhelm_sealed_key_provider::SealedKeyProvider::open(
         &sealing.directory,
         sealing.key_id.clone(),
         SecretBytes::new(material),
     )
-    .map_err(|_| "the sealed keyring could not be opened".to_owned())?;
-    Ok(Arc::new(graphhelm_events::EvidenceProtector::new(provider)))
+    .map_err(|_| "the sealed keyring could not be opened".to_owned())
 }
 
 /// Reads `GRAPHHELM_GATEWAY_KEY` fresh (the gateway CLI's own precedent —

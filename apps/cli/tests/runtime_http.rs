@@ -950,3 +950,770 @@ fn an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence() {
     };
     assert_eq!(replay(()), replay(()), "replay must be byte-identical");
 }
+/// A base URL nothing listens on: bound to learn a free port, then dropped so a connection to it
+/// is refused immediately rather than hanging. Used as the DEPLOYER'S DEFAULT route in the tests
+/// below, so "the request's route was ignored" and "the request's route was honoured" produce
+/// visibly different outcomes instead of two indistinguishable successes.
+fn unreachable_base_url() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}")
+}
+
+/// The two-route wiring the route-selection tests share: `dead_route` is what `--route` names (and
+/// it cannot answer), `live_route` points at a provider that replies. Returns the serve arguments
+/// and the scratch project path.
+fn two_route_wiring(directory: &Path, live_base_url: &str) -> (ServeExtra, PathBuf) {
+    let broker = directory.join("broker");
+    let keyring = directory.join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.join("staging");
+    let key_id = "runtime-http-two-route-key";
+
+    credential_set(&broker, &keyring, key_id, "cred_dead", "dead_route");
+    credential_set(&broker, &keyring, key_id, "cred_live", "live_route");
+
+    let route = |id: &str, credential: &str, base: &str| {
+        serde_json::json!({
+            "id": id,
+            "provider": "anthropic",
+            "transport": "direct_api",
+            "authentication": "api_key",
+            "billingMode": "per_token",
+            "baseUrl": base,
+            "model": "claude-sonnet-5",
+            "credentialRef": credential,
+            "profiles": ["critical_reasoning"],
+            "enabled": true,
+            "timeoutSeconds": 30
+        })
+    };
+    let manifest = write_json(
+        directory,
+        "two-route-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [
+                route("dead_route", "cred_dead", &unreachable_base_url()),
+                route("live_route", "cred_live", live_base_url),
+            ]
+        }),
+    );
+
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            // The DEPLOYER'S default is the route that cannot answer. Every test below that
+            // reaches a provider therefore proves the request's own choice was used.
+            "--route".into(),
+            "dead_route".into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    (extra, scratch_project(directory))
+}
+
+/// A start request naming a route in the manifest RUNS ON THAT ROUTE, not on `--route`.
+///
+/// The discriminator is the deployer's default pointing at a dead port: before `prepare_drive`
+/// resolved the request's `"route"`, this drive built its port from `wiring.route`, the agent node
+/// could not reach a provider, and the execution did not complete. There is no way to read the
+/// reply text back today (evidence is sealed), so REACHABILITY is what separates the two routes -
+/// a discriminator that survives the fact that both routes would otherwise answer identically.
+#[test]
+fn a_start_request_runs_on_the_route_it_names_not_the_servers_default() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let live = replying_anthropic_server();
+    let (extra, project) = two_route_wiring(directory.path(), &live);
+
+    let execution = "exec-route-selected";
+    let graph = agent_tool_graph(directory.path(), execution);
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "route-selected"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+            "route": "live_route",
+        }),
+    );
+
+    assert_eq!(status_code, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["status"], "completed",
+        "the named route must be the one that ran: {reply}"
+    );
+    assert_eq!(reply["data"]["nodeStateCounts"]["succeeded"], 2, "{reply}");
+}
+
+/// A `"route"` naming nothing in the manifest is REFUSED, and the refusal points at the field.
+///
+/// Without this the unknown id falls through to the deployer's default and the operator is told
+/// the run succeeded on a model they did not ask for.
+#[test]
+fn a_start_request_naming_an_unknown_route_is_refused_at_the_field() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let live = replying_anthropic_server();
+    let (extra, project) = two_route_wiring(directory.path(), &live);
+
+    let execution = "exec-route-unknown";
+    let graph = agent_tool_graph(directory.path(), execution);
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "route-unknown"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+            "route": "no_such_route",
+        }),
+    );
+
+    assert_eq!(status_code, 400, "{reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
+    let diagnostic = &reply["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "GHCLI001_ARGUMENT_INVALID", "{reply}");
+    assert_eq!(
+        diagnostic["path"], "/route",
+        "the refusal must point at the field the caller got wrong: {reply}"
+    );
+}
+
+/// A `"route"` that is PRESENT but not a string is refused, never silently ignored.
+///
+/// THIS IS THE GUARD FOR A SPELLING, and the spelling is the natural one. Reading the field as
+/// `payload.get("route").and_then(Value::as_str)` folds "absent" and "present but the wrong type"
+/// into one `None`, and the `None` branch runs the deployer's default. A caller who sent
+/// `"route": 7` - a typo, a form that posted a number, a client that serialized an enum wrong -
+/// would then be told their run succeeded, on a model they did not choose, with nothing anywhere
+/// recording that their choice was discarded. The two-route wiring makes that failure observable:
+/// the ignored path reaches the dead default, so the mistyped request would come back as a drive
+/// outcome rather than as this refusal.
+#[test]
+fn a_route_that_is_not_a_string_is_refused_rather_than_quietly_ignored() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let live = replying_anthropic_server();
+    let (extra, project) = two_route_wiring(directory.path(), &live);
+
+    let execution = "exec-route-mistyped";
+    let graph = agent_tool_graph(directory.path(), execution);
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "route-mistyped"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+            "route": 7,
+        }),
+    );
+
+    assert_eq!(status_code, 400, "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/route",
+        "a mistyped route must be refused at the field, not folded into the default: {reply}"
+    );
+}
+/// THE MODEL'S OWN WORDS COME BACK OUT.
+///
+/// This is the end of the loop the sealing opened: `replying_anthropic_server` answers with the
+/// literal text below, the executor seals that reply into encrypted Evidence and records only a
+/// reference and a token count, and until now nothing could read it again. The assertion is on the
+/// PROVIDER'S text, not on a length or a digest, because a digest would pass just as happily on
+/// ciphertext and a length would pass on any string of the same size.
+///
+/// It also proves the two halves are actually joined: the `LocalEventRepository` half (which had
+/// no `EvidenceRepository` impl at all, only PostgreSQL did) and the opener half (which existed
+/// and was reachable only from the Governor).
+#[test]
+fn a_sealed_model_reply_can_be_read_back_as_the_text_the_provider_sent() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-evidence-key";
+    let route_id = "evidence_route";
+    let project = scratch_project(directory.path());
+
+    let base_url = replying_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_evidence", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "evidence-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_evidence",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 30
+            }]
+        }),
+    );
+
+    let execution = "exec-runtime-http-evidence";
+    let graph = agent_tool_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "evidence-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status_code, 200, "{reply}");
+    assert_eq!(reply["data"]["status"], "completed", "{reply}");
+
+    // The agent node's outcome carries the reference to its sealed reply. Found by walking the
+    // event stream the way any reader would, rather than by reconstructing the id from the naming
+    // convention: a test that rebuilds the id would keep passing if the recorded reference and the
+    // stored blob ever stopped agreeing, which is one of the things this route must not do.
+    let events_reply = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(&token),
+    );
+    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let reference = entries
+        .iter()
+        .filter(|entry| {
+            entry["kind"]["type"] == "node_outcome_recorded"
+                && entry["kind"]["data"]["nodeId"] == "implement"
+        })
+        .filter_map(|entry| entry["evidenceRefs"].as_array())
+        .flatten()
+        .find(|reference| {
+            reference["evidenceId"]
+                .as_str()
+                .is_some_and(|id| id.ends_with("reply"))
+        })
+        .unwrap_or_else(|| {
+            panic!("the agent outcome must reference its sealed reply: {entries:?}")
+        });
+    let evidence_id = reference["evidenceId"].as_str().unwrap();
+
+    let opened = get_json(
+        &format!("{base}/v1/executions/{execution}/evidence/{evidence_id}"),
+        Some(&token),
+    );
+    assert_eq!(opened["ok"], true, "{opened}");
+    assert_eq!(opened["data"]["mediaType"], "application/json", "{opened}");
+    // Named in the reply so a caller knows the class of what it is holding, not left to be
+    // inferred from where the id came from.
+    assert_eq!(opened["data"]["sensitivity"], "confidential", "{opened}");
+    let content = opened["data"]["content"].as_str().unwrap();
+    assert!(
+        content.contains("the model did the thing"),
+        "the provider's own text must survive sealing and come back: {opened}"
+    );
+    // AN EVIDENCE ID THIS EXECUTION NEVER RECORDED IS REFUSED.
+    //
+    // This is what the store's `evidence_exists` gate is for, and the id has to be one whose
+    // VALIDITY is not in question: a made-up id gets refused by the key encoder before the gate is
+    // ever consulted, so a test built on one passes whether the gate is there or not. That test
+    // existed here and was deleted - it survived a sabotage that removed the gate entirely.
+    //
+    // So the id is the one the assertion above just opened successfully, with a single character
+    // changed. Same shape, same length, same charset - it parses and encodes exactly as the real
+    // one did, three lines up, provably - and no recorded event references it. The only thing
+    // between this request and an answer is the gate.
+    //
+    // AN EARLIER VERSION STARTED A SECOND EXECUTION to borrow its scope, and that second execution
+    // was a second writer against the same store: measured at 4 passes in 5 runs ALONE, failing
+    // with `GHE008_STORAGE_FAILURE` from the store's own locking rather than from anything this
+    // test is about. A guard that is right four times out of five is not a guard, and the fix is
+    // to stop writing, not to retry until it agrees.
+    let unrecorded = flip_last_character(evidence_id);
+    assert_ne!(
+        unrecorded, evidence_id,
+        "the probe id must differ from the real one"
+    );
+
+    let refused = raw_request(
+        &format!("{base}/v1/executions/{execution}/evidence/{unrecorded}"),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(
+        refused.status, 409,
+        "evidence no event references must be refused by the gate, not attempted: {}",
+        refused.body
+    );
+    let refused_reply: Value = serde_json::from_str(&refused.body).unwrap();
+    assert_eq!(
+        refused_reply["diagnostics"][0]["code"], "GHCLI023_EVIDENCE_UNREADABLE",
+        "{refused_reply}"
+    );
+}
+
+/// One character of an evidence id changed, keeping its shape. Used to build an id that is
+/// unquestionably well-formed - it is a real id with a digit moved - and that nothing recorded.
+fn flip_last_character(id: &str) -> String {
+    let mut characters: Vec<char> = id.chars().collect();
+    let last = characters.len() - 1;
+    characters[last] = match characters[last] {
+        'a' => 'b',
+        'z' => 'y',
+        '0' => '1',
+        '9' => '8',
+        other if other.is_ascii_digit() => '0',
+        _ => 'a',
+    };
+    characters.into_iter().collect()
+}
+/// Creates the sealing key through the real `graphhelm gateway keyring init`, with no broker and no
+/// credential anywhere — the setup an operator who wants the message path and no model performs.
+fn keyring_init(keyring: &Path, key_id: &str) {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "gateway",
+            "keyring",
+            "init",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            key_id,
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", gateway_key())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "`gateway keyring init` failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// THE SETUP THE MESSAGE PATH ACTUALLY NEEDS, with nothing else in it.
+///
+/// Sealing evidence needs a key. Until `gateway keyring init` existed, the only way to put one in a
+/// keyring was `gateway credential set`, which stores a BYOK model credential and reads a secret
+/// from stdin — so an operator who wanted to send a message and had no model to wire had to invent
+/// an API key to get past the setup. Worse, nothing said so: `serve` starts happily against an
+/// empty keyring directory and the first message comes back refused with `the sealed keyring could
+/// not be opened` (measured 2026-08-28).
+///
+/// This drives the whole loop with NO broker and NO credential: create the key, start, say
+/// something with no path on the host, and read the words back out.
+#[test]
+fn a_runtime_can_seal_a_message_with_a_keyring_and_no_credential_at_all() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let key_id = "runtime-http-keyring-only";
+    keyring_init(&keyring, key_id);
+
+    let extra = ServeExtra {
+        args: vec![
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+        ],
+        env: vec![("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key())],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let execution = "exec-keyring-only";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let (started, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "keyring-only-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_eq!(started, 200, "{start_reply}");
+
+    let note = "no broker, no credential, and this still has to arrive";
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "keyring-only-signal"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": {
+                "id": "signal-keyring-only",
+                "source": {"type": "user", "id": "studio-operator"},
+                "type": "operator_note",
+                "severity": "low",
+                "description": note,
+                "evidence": [execution],
+                "emittedAt": "2026-08-28T00:00:00Z"
+            }
+        }),
+    );
+    assert_eq!(
+        status, 200,
+        "a keyring alone must be enough to record: {reply}"
+    );
+
+    let events_reply = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(&token),
+    );
+    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let reference = entries
+        .iter()
+        .filter(|entry| entry["kind"]["type"] == "signal_recorded")
+        .filter_map(|entry| entry["evidenceRefs"].as_array())
+        .flatten()
+        .next()
+        .unwrap_or_else(|| {
+            panic!("the recorded message must reference its sealed envelope: {entries:?}")
+        });
+
+    let opened = get_json(
+        &format!(
+            "{base}/v1/executions/{execution}/evidence/{}",
+            reference["evidenceId"].as_str().unwrap()
+        ),
+        Some(&token),
+    );
+    assert!(
+        opened["data"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(note),
+        "the words must come back out of a credential-free Runtime: {opened}"
+    );
+}
+
+/// A second `init` is refused rather than silently rotating the key.
+///
+/// Overwriting would orphan everything already sealed under the old one: the events keep their
+/// references and nothing can open the content again, and the loss is INVISIBLE, because an
+/// unopenable reference looks the same as one whose Runtime simply lacks the key. A repeated setup
+/// step is a far likelier reason for a second `init` than a deliberate rotation.
+#[test]
+fn initialising_a_key_twice_is_refused_rather_than_replacing_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    keyring_init(&keyring, "twice");
+
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "gateway",
+            "keyring",
+            "init",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "twice",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", gateway_key())
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "a second init must be refused: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "the refusal must be a readable envelope ({error}): {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
+    assert_eq!(reply["ok"], false);
+    let message = reply["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.contains("already holds that key"),
+        "the refusal must say why, not just fail: {reply}"
+    );
+}
+
+/// THE CALL SHAPE THAT PREDATES `evidenceOut` BEING OPTIONAL — a sealed Runtime, a signal that
+/// DOES name a path. It is here as a control, and it dates the defect it covers.
+///
+/// Making `evidenceOut` optional did not break sealed signals over HTTP; sealed signals over HTTP
+/// had never once been exercised. Every earlier signal test drove an UNSEALED server, where
+/// `sealing` is `None` and the seal never runs, or drove the CLI, where building a runtime is
+/// correct because there is no reactor to collide with. So the panic at `signal.rs:262` sat
+/// behind `--keyring` from Milestone 05d Task 9 onwards, reachable by any operator who started
+/// the Runtime the documented way, and no test could see it.
+///
+/// Without this test the fix would look like a repair to my own regression. With it, the two
+/// tests fail together before the fix and pass together after — which is what says the defect was
+/// already shipped, and says it in a form someone can re-run rather than take on my word.
+#[test]
+fn a_sealed_runtime_records_a_signal_that_also_names_a_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let broker = directory.path().join("broker");
+    let key_id = "runtime-http-signal-path-key";
+    credential_set(
+        &broker,
+        &keyring,
+        key_id,
+        "cred_signal_path",
+        "unused_route",
+    );
+
+    let extra = ServeExtra {
+        args: vec![
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let execution = "exec-signal-with-path";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let (started, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "signal-path-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_eq!(started, 200, "{start_reply}");
+
+    let evidence_out = directory.path().join("signal-envelope.json");
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "signal-with-path"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": {
+                "id": "signal-with-a-path",
+                "source": {"type": "node", "id": "implementation"},
+                "type": "risk_identified",
+                "severity": "high",
+                "description": "the path and the seal are both satisfied here",
+                "evidence": [execution],
+                "emittedAt": "2026-08-28T00:00:00Z"
+            },
+            "evidenceOut": evidence_out.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(
+        status, 200,
+        "a sealed Runtime with a path must record: {reply}"
+    );
+    assert!(
+        evidence_out.exists(),
+        "the operator-supplied path is still written when the Runtime also seals"
+    );
+}
+
+/// THE LOOP A BROWSER NEEDS, END TO END.
+///
+/// A message from the Studio is a signal, and a signal's envelope has to be durable BEFORE the
+/// event exists - that rule never relaxes. What changed is which copy satisfies it: with a keyring
+/// the envelope seals into the Evidence store before the append, so the operator-supplied file is
+/// a second copy of something already safe. A browser has no path on the Runtime's host, and until
+/// this it could not send a message at all.
+///
+/// The assertion is on the TEXT coming back out, not on the 200: recording something unreadable
+/// would satisfy a status check and defeat the entire point, which is that the person on the other
+/// end can read what was said.
+#[test]
+fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let broker = directory.path().join("broker");
+    let key_id = "runtime-http-signal-key";
+    // Initialises the keyring the same way every other sealed test here does.
+    credential_set(&broker, &keyring, key_id, "cred_signal", "unused_route");
+
+    let extra = ServeExtra {
+        args: vec![
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let execution = "exec-signal-no-path";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let (started, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "signal-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_eq!(started, 200, "{start_reply}");
+
+    // NO `evidenceOut`. This is the request a browser can actually make.
+    let note = "the fixture is missing, not flaky - I am looking at it";
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "signal-no-path"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": {
+                "id": "signal-from-the-studio",
+                "source": {"type": "node", "id": "implementation"},
+                "type": "risk_identified",
+                "severity": "high",
+                "description": note,
+                "evidence": [execution],
+                "emittedAt": "2026-08-28T00:00:00Z"
+            }
+        }),
+    );
+    assert_eq!(status, 200, "a sealed Runtime needs no path: {reply}");
+
+    // The envelope sealed, and the message is readable by whoever is watching.
+    let events_reply = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(&token),
+    );
+    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let reference = entries
+        .iter()
+        .filter(|entry| entry["kind"]["type"] == "signal_recorded")
+        .filter_map(|entry| entry["evidenceRefs"].as_array())
+        .flatten()
+        .next()
+        .unwrap_or_else(|| {
+            panic!("the recorded signal must reference its sealed envelope: {entries:?}")
+        });
+
+    let opened = get_json(
+        &format!(
+            "{base}/v1/executions/{execution}/evidence/{}",
+            reference["evidenceId"].as_str().unwrap()
+        ),
+        Some(&token),
+    );
+    assert!(
+        opened["data"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(note),
+        "the words sent from the Studio must come back out: {opened}"
+    );
+}

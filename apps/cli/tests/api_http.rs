@@ -3805,3 +3805,635 @@ fn a_sweep_interval_makes_the_server_sweep_itself_and_the_record_says_tick() {
         "the tick must record itself as the tick, not as an operator: {recorded}"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// #105: `GET /v1/executions`, the execution index the Studio reads instead of scraping the
+// human monitor page.
+// -------------------------------------------------------------------------------------------
+
+/// Seeds two streams in one store and returns their ids in the order the index must report them.
+fn two_seeded_executions(directory: &Path) -> (PathBuf, [&'static str; 2]) {
+    let events = directory.join("events");
+    // `index-alpha` blocks on implementation; `index-beta` gets past it and blocks on deploy. Two
+    // rows is the smallest population that can tell an ordered page from an accidental single-row
+    // one.
+    let blocking = fixtures_file(
+        directory,
+        serde_json::json!({ "implementation": "failure" }),
+    );
+    let later = write_json(
+        directory,
+        "fixtures-beta.json",
+        &serde_json::json!({ "nodeOutcomes": { "implementation": "success", "deploy": "failure" } }),
+    );
+    cli_start(&events, &blocking, "index-alpha");
+    cli_start(&events, &later, "index-beta");
+    (events, ["index-alpha", "index-beta"])
+}
+
+/// The index is authenticated exactly like every other `/v1` route, and it lists every stream in
+/// execution-id order with the attention verdict already decided.
+#[test]
+fn the_execution_index_is_authenticated_ordered_and_carries_the_attention_verdict() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, ids) = two_seeded_executions(directory.path());
+    let (_guard, base, token) = serve(&events);
+
+    let unauthenticated = raw_request(&format!("{base}/v1/executions"), None).unwrap();
+    assert_eq!(
+        unauthenticated.status, 401,
+        "the index must refuse an unauthenticated caller: {}",
+        unauthenticated.body
+    );
+
+    let wrong = raw_request(&format!("{base}/v1/executions"), Some("not-the-token")).unwrap();
+    assert_eq!(
+        wrong.status, 401,
+        "a wrong token must be refused: {}",
+        wrong.body
+    );
+
+    let reply = get_json(&format!("{base}/v1/executions"), Some(&token));
+    assert_eq!(reply["ok"], serde_json::json!(true), "{reply}");
+    assert_eq!(reply["command"], serde_json::json!("execution.list"));
+
+    let rows = reply["data"]["executions"].as_array().unwrap();
+    let listed: Vec<_> = rows
+        .iter()
+        .map(|row| row["executionId"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        listed,
+        ids.to_vec(),
+        "the index is ordered by execution id: {reply}"
+    );
+    for row in rows {
+        assert_eq!(
+            row["attention"],
+            serde_json::json!("needs_you"),
+            "both seeded runs block on a node, so both need the operator: {row}"
+        );
+        assert!(
+            row["headSequence"].as_u64().unwrap() > 0,
+            "a seeded stream has a head: {row}"
+        );
+    }
+    assert_eq!(reply["data"]["hasMore"], serde_json::json!(false));
+    assert_eq!(reply["data"]["nextCursor"], serde_json::Value::Null);
+}
+
+/// The cursor is EXCLUSIVE: paging with the id the previous page ended on returns the rest and
+/// never repeats a row. Paged end to end, the two pages reconstruct the unpaged answer exactly.
+#[test]
+fn the_index_cursor_is_exclusive_and_pages_reconstruct_the_whole_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, ids) = two_seeded_executions(directory.path());
+    let (_guard, base, token) = serve(&events);
+
+    let first = get_json(&format!("{base}/v1/executions?limit=1"), Some(&token));
+    let first_rows = first["data"]["executions"].as_array().unwrap();
+    assert_eq!(first_rows.len(), 1, "{first}");
+    assert_eq!(first_rows[0]["executionId"], serde_json::json!(ids[0]));
+    assert_eq!(first["data"]["hasMore"], serde_json::json!(true), "{first}");
+    assert_eq!(first["data"]["nextCursor"], serde_json::json!(ids[0]));
+
+    let cursor = first["data"]["nextCursor"].as_str().unwrap();
+    let second = get_json(
+        &format!("{base}/v1/executions?after={cursor}&limit=1"),
+        Some(&token),
+    );
+    let second_rows = second["data"]["executions"].as_array().unwrap();
+    assert_eq!(second_rows.len(), 1, "{second}");
+    assert_eq!(
+        second_rows[0]["executionId"],
+        serde_json::json!(ids[1]),
+        "the cursor is exclusive, so the row it names must not come back: {second}"
+    );
+    assert_eq!(second["data"]["hasMore"], serde_json::json!(false));
+
+    let whole = get_json(&format!("{base}/v1/executions"), Some(&token));
+    let paged: Vec<_> = first_rows
+        .iter()
+        .chain(second_rows.iter())
+        .cloned()
+        .collect();
+    assert_eq!(
+        whole["data"]["executions"].as_array().unwrap(),
+        &paged,
+        "two exclusive pages must reconstruct the unpaged answer byte for byte"
+    );
+}
+
+/// An over-large page is REFUSED, not clamped. A caller that asked for 500 and silently received
+/// 100 cannot tell a clamp from a short store.
+#[test]
+fn the_index_refuses_an_over_large_limit_rather_than_clamping_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, _) = two_seeded_executions(directory.path());
+    let (_guard, base, token) = serve(&events);
+
+    let response = raw_request(&format!("{base}/v1/executions?limit=500"), Some(&token)).unwrap();
+    assert_eq!(response.status, 400, "{}", response.body);
+    let reply: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(reply["ok"], serde_json::json!(false));
+    assert_eq!(
+        reply["diagnostics"][0]["code"],
+        serde_json::json!("GHCLI001_ARGUMENT_INVALID"),
+        "{reply}"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], serde_json::json!("/limit"));
+
+    let unparsable =
+        raw_request(&format!("{base}/v1/executions?limit=many"), Some(&token)).unwrap();
+    assert_eq!(unparsable.status, 400, "{}", unparsable.body);
+}
+
+/// ONE STORE, ONE TRUTH. Every field an index row carries must equal the value the per-execution
+/// status read reports for the same stream, at the same head. A row that disagreed with the
+/// detail view would make the index a second projection - the exact thing `execution::list`'s
+/// own doc comment forbids - and no test on either surface alone could see it.
+#[test]
+fn every_index_row_field_equals_the_status_reply_for_the_same_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, ids) = two_seeded_executions(directory.path());
+    let (_guard, base, token) = serve(&events);
+
+    let index = get_json(&format!("{base}/v1/executions"), Some(&token));
+    let rows = index["data"]["executions"].as_array().unwrap();
+    assert_eq!(rows.len(), ids.len(), "{index}");
+
+    for row in rows {
+        let id = row["executionId"].as_str().unwrap();
+        let status = get_json(&format!("{base}/v1/executions/{id}"), Some(&token));
+        let detail = &status["data"];
+        for (key, value) in row.as_object().unwrap() {
+            assert_eq!(
+                value, &detail[key],
+                "index row field {key} for {id} disagrees with the status reply: {row} vs {detail}"
+            );
+        }
+        // And the row is a STRICT subset: the detail fields stay where they belong.
+        for detail_only in [
+            "attentionReasons",
+            "nodeStateCounts",
+            "untriagedInterruptions",
+        ] {
+            assert!(
+                row.get(detail_only).is_none(),
+                "{detail_only} must not appear on an index row: {row}"
+            );
+            assert!(
+                detail.get(detail_only).is_some(),
+                "{detail_only} must still appear on the status reply: {detail}"
+            );
+        }
+    }
+}
+
+/// The CLI and the API answer the same question with the same bytes, the same way `status`
+/// already does - the "never a second path" rule, checked rather than asserted in prose.
+#[test]
+fn the_cli_index_and_the_api_index_agree_byte_for_byte() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, _) = two_seeded_executions(directory.path());
+    let (_guard, base, token) = serve(&events);
+
+    let over_http = get_json(&format!("{base}/v1/executions"), Some(&token));
+    let over_cli = cli(&["execution", "list", "--events", events.to_str().unwrap()]);
+    assert_eq!(
+        over_http["data"], over_cli["data"],
+        "CLI and API must report identical index data"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// #105: `POST /v1/graph/topology`, the read that turns a run's node list into a drawable graph.
+// -------------------------------------------------------------------------------------------
+
+/// The shape comes back, and it comes back with the hash that says which graph it is.
+#[test]
+fn the_topology_read_is_authenticated_and_returns_the_documents_shape() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let url = format!("{base}/v1/graph/topology");
+    let body = serde_json::json!({ "file": graph.to_str().unwrap() });
+
+    let unauthenticated = post_request(&url, "not-the-token", &[], &body);
+    assert_eq!(
+        unauthenticated.status, 401,
+        "the topology read must refuse a wrong token: {}",
+        unauthenticated.body
+    );
+
+    let (status, reply) = post_json(&url, &token, &[], &body);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["command"], serde_json::json!("graph.topology"));
+
+    let data = &reply["data"];
+    let ids: Vec<&str> = data["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["deploy", "implementation"], "{data}");
+    assert_eq!(data["entrypoints"], serde_json::json!(["implementation"]));
+
+    let edges = data["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 1, "{data}");
+    assert_eq!(edges[0]["from"], serde_json::json!("implementation"));
+    assert_eq!(edges[0]["to"], serde_json::json!("deploy"));
+    assert_eq!(edges[0]["type"], serde_json::json!("data"));
+
+    assert!(
+        data["semanticHash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("sha256:")),
+        "{data}"
+    );
+}
+
+/// THE WHOLE REASON THE HASH IS IN THE REPLY. An execution's log records its graph's hash and
+/// never its topology, so a client that wants to draw a run's graph has to prove the file it read
+/// is the graph that ran. This drives both halves on one store: start an execution, read the
+/// hash out of its own `execution_started` event, read the topology of the file it was started
+/// from, and require the two to be equal. If they ever diverge, every drawn edge in the Studio is
+/// a picture of the wrong graph.
+#[test]
+fn the_topology_hash_equals_the_graph_hash_the_execution_recorded() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, _) = (directory.path().join("events"), ());
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, "exec-topology");
+    let (_guard, base, token) = serve(&events);
+
+    let started = get_json(
+        &format!("{base}/v1/executions/exec-topology/events?after=0&limit=1"),
+        Some(&token),
+    );
+    let recorded = started["data"]["events"][0]["kind"]["data"]["graphHash"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the first event carries a graph hash: {started}"))
+        .to_owned();
+
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let (status, reply) = post_json(
+        &format!("{base}/v1/graph/topology"),
+        &token,
+        &[],
+        &serde_json::json!({ "file": graph.to_str().unwrap() }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["semanticHash"],
+        serde_json::json!(recorded),
+        "the topology read must hash to exactly what the execution recorded, or the edges it \
+         returns belong to some other graph"
+    );
+}
+
+/// The execution roster already supplies every box. The graph file may therefore contribute only
+/// each edge endpoint's stable id; names, types, optionality, objectives, agent blocks and
+/// instructions are unnecessary disclosure, and this route must not become a way to read them.
+#[test]
+fn a_topology_reply_carries_no_node_content() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let graph = root().join("examples/graphs/software-feature.yaml");
+
+    let (status, reply) = post_json(
+        &format!("{base}/v1/graph/topology"),
+        &token,
+        &[],
+        &serde_json::json!({ "file": graph.to_str().unwrap() }),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    for node in reply["data"]["nodes"]
+        .as_array()
+        .expect("nodes is an array")
+    {
+        let keys: Vec<&str> = node
+            .as_object()
+            .expect("a node is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["id"],
+            "a node must carry only its endpoint identity: {node}"
+        );
+    }
+
+    // KEYS, NOT WORDS: values may legitimately contain these words. What must never appear is a
+    // content key, so that is what this broader whole-reply guard matches.
+    let serialized = reply["data"].to_string();
+    for key in [
+        "objective",
+        "instructions",
+        "ephemeral",
+        "capabilities",
+        "completion",
+        "policies",
+    ] {
+        assert!(
+            !serialized.contains(&format!("\"{key}\":")),
+            "{key} is content and must not reach a topology reply: {serialized}"
+        );
+    }
+}
+
+/// A file that is not a graph is the CALLER's mistake, and the refusal says which - the same body
+/// the CLI prints for the same file, not a bare 400.
+#[test]
+fn a_file_that_is_not_a_graph_is_refused_with_the_loaders_own_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let intruder = directory.path().join("not-a-graph.yaml");
+    std::fs::write(&intruder, "just: text\n").unwrap();
+
+    let (status, reply) = post_json(
+        &format!("{base}/v1/graph/topology"),
+        &token,
+        &[],
+        &serde_json::json!({ "file": intruder.to_str().unwrap() }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["ok"], serde_json::json!(false));
+    assert!(
+        reply["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| !diagnostics.is_empty()),
+        "a refusal names what was wrong: {reply}"
+    );
+
+    let (missing_status, missing) = post_json(
+        &format!("{base}/v1/graph/topology"),
+        &token,
+        &[],
+        &serde_json::json!({}),
+    );
+    assert_eq!(missing_status, 400, "{missing}");
+    assert_eq!(
+        missing["diagnostics"][0]["path"],
+        serde_json::json!("/file"),
+        "{missing}"
+    );
+}
+
+/// One store, one truth: the CLI and the API answer the same question with the same bytes.
+#[test]
+fn the_cli_topology_and_the_api_topology_agree_byte_for_byte() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let graph = root().join("examples/graphs/research-to-publish.yaml");
+
+    let (status, over_http) = post_json(
+        &format!("{base}/v1/graph/topology"),
+        &token,
+        &[],
+        &serde_json::json!({ "file": graph.to_str().unwrap() }),
+    );
+    assert_eq!(status, 200, "{over_http}");
+    let over_cli = cli(&["graph", "topology", graph.to_str().unwrap()]);
+    assert_eq!(
+        over_http["data"], over_cli["data"],
+        "CLI and API must report identical topology data"
+    );
+}
+/// The repository's own valid graph fixture, as a JSON value, with its execution id repointed at
+/// the caller's. Reading the shipped conformance document rather than hand-writing one here keeps
+/// this test about the INLINE TRANSPORT: a graph invented in a test file could drift from the
+/// schema and fail for a reason that has nothing to do with how it arrived.
+fn inline_graph(execution: &str) -> Value {
+    let text =
+        std::fs::read_to_string(root().join("conformance/schemas/valid/graph.json")).unwrap();
+    let mut graph: Value = serde_json::from_str(&text).unwrap();
+    graph["metadata"]["executionId"] = serde_json::json!(execution);
+    graph
+}
+
+/// A start request can carry the graph document ITSELF, with no path and no file on the server.
+///
+/// This is what lets a caller with no filesystem on the server - a browser - start work. Before
+/// it, `POST .../start` accepted only `{"file": "<host path>"}`, so the only way to run a graph a
+/// person had just composed was to write it onto the server's disk first.
+#[test]
+fn a_start_request_can_carry_the_graph_inline() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-inline";
+    let fixtures = fixtures_file(directory.path(), serde_json::json!({ "start": "success" }));
+
+    let (_guard, base, token) = serve(&events);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "inline-start-1"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "graph": inline_graph(execution),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["command"], "execution.start");
+    // The execution genuinely exists afterwards: an inline graph is published like any other, not
+    // parsed and thrown away.
+    let event = last_event_of_kind(&base, &token, execution, "execution_started");
+    assert_eq!(event["actor"]["id"], "owner-local", "{event}");
+}
+
+/// Sending BOTH `file` and `graph` is refused rather than resolved by precedence.
+///
+/// A caller who sends both holds two different beliefs about which document is about to run under
+/// this execution id. Any precedence rule would be right for one of them and silently wrong for
+/// the other, and the wrong one gets a graph they did not intend under an id they did.
+#[test]
+fn a_start_request_carrying_both_a_file_and_a_graph_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-inline-both";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+
+    let (_guard, base, token) = serve(&events);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "inline-start-both"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "graph": inline_graph(execution),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+        "{reply}"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], "/graph", "{reply}");
+}
+
+/// Sending NEITHER is still refused, and still at `/file` - the contract that existed before
+/// inline graphs did.
+#[test]
+fn a_start_request_carrying_neither_a_file_nor_a_graph_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-inline-neither";
+
+    let (_guard, base, token) = serve(&events);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "inline-start-neither"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "mode": "supervised" }),
+    );
+
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/file", "{reply}");
+}
+
+/// AN INLINE GRAPH'S DIAGNOSTICS NAME THE REQUEST BODY, NEVER A PATH ON THE SERVER.
+///
+/// A file-backed graph reports its diagnostics against the operator's own path, which is theirs
+/// and which they can act on. An inline graph has no path, and the tempting shortcut - reusing
+/// whatever label was nearest, or letting a staging filename leak in if the document were ever
+/// written down on the way in - would tell a remote caller about a disk they cannot see and did
+/// not ask about. It would also mean the document touched the filesystem, which is exactly what
+/// this transport exists to avoid.
+///
+/// The sabotage this catches: passing a real path as `load_graph_json`'s `source`. That compiles,
+/// produces diagnostics that look entirely normal, and is only visibly wrong here.
+#[test]
+fn an_inline_graph_names_the_request_body_and_no_path_on_the_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-inline-bad";
+
+    let (_guard, base, token) = serve(&events);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "inline-start-bad"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        // Shaped like a graph, and not one: an object so it passes the field's type check, with
+        // nothing the schema recognizes, so the refusal comes from the loader rather than from
+        // `graph_source`.
+        &serde_json::json!({
+            "graph": {"apiVersion": "p50.dev/graph/v1", "kind": "ExecutionGraph"},
+            "mode": "supervised",
+        }),
+    );
+
+    assert_eq!(status, 400, "{reply}");
+    let text = reply.to_string();
+    assert!(
+        text.contains("<request body>"),
+        "an inline graph's diagnostics must name the body they came from: {reply}"
+    );
+    // No Windows drive letter and no POSIX-looking absolute path anywhere in the reply. Written as
+    // an absence check over the WHOLE reply rather than over one field, because the point is that
+    // no path reaches the caller by any route, including one added later.
+    assert!(
+        !text.contains(":\\\\") && !text.contains("/home/") && !text.contains("/tmp/"),
+        "no server-side path may appear in an inline graph's diagnostics: {reply}"
+    );
+}
+/// WITHOUT A KEYRING THE PATH IS STILL THE ONLY COPY, so it is still required - and the refusal
+/// says which of the two things to supply rather than only that something is missing.
+///
+/// This is the half that keeps the change honest: `evidenceOut` did not become optional, it became
+/// conditional on the envelope having somewhere else to be.
+#[test]
+fn a_signal_without_a_path_is_refused_when_nothing_can_seal_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+
+    let execution = "exec-signal-unsealed";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let (started, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "unsealed-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_eq!(started, 200, "{start_reply}");
+
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "unsealed-signal"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "signal": signal_envelope("signal-unsealed", "risk_identified") }),
+    );
+    assert_ne!(status, 200, "nothing could preserve the envelope: {reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/evidenceOut", "{reply}");
+}
+
+/// A PRESENT-BUT-UNUSABLE `evidenceOut` is refused, never folded into absent.
+///
+/// The tempting spelling - `get("evidenceOut").and_then(as_str)` - reads "absent" and "present but
+/// not a string" as the same `None`. On an unsealed Runtime that turns a typo into "no path given"
+/// and refuses for the wrong reason; on a sealed one it silently drops the operator's file.
+#[test]
+fn an_evidence_path_that_is_not_a_string_is_refused_rather_than_ignored() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/exec-signal-mistyped/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "mistyped-signal"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": signal_envelope("signal-mistyped", "risk_identified"),
+            "evidenceOut": 7
+        }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/evidenceOut", "{reply}");
+}

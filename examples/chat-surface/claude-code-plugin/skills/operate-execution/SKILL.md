@@ -20,7 +20,10 @@ not do (§6 parity).
 
 - `tool:start` — load the graph file and begin, in the mode the user names.
 - `tool:approve` — ready one blocked or ghost node after the user decides.
-- `tool:signal` — record a signal envelope (evidence externalized to the path given).
+- `tool:signal` — record a signal envelope. `evidenceOut` is OPTIONAL: a Runtime started with
+  a keyring seals the envelope itself, and a path is then a second copy of something already
+  durable. Without a keyring the path is the only copy and the call is refused without it. For
+  notes addressed to a person watching rather than signals about the run, see `leave-records`.
 - `tool:pause` / `tool:resume` — hold and continue. **Immediate-stop is explicit and
   confirmed**: `pause` with `mode: "immediate"` interrupts in-flight work and blocks the
   interrupted node for triage — say so and get a confirmation before sending it; a plain

@@ -369,9 +369,22 @@ fn d037_customs_budget_exception_rejects_every_near_miss() {
     }
 }
 
-// Pins the deliberate divergence: one additive schema and no mutation of the published set.
+// The day the mirror broke, recorded from the other side.
+//
+// This test used to assert baseline == candidate (the "mirror era": no schema had ever evolved,
+// so the gate's compatibility stage could not refuse anything). It fired on 2026-08-30 when
+// graph-signal 1.1.0 became the first declared evolution - exactly as designed - and its job
+// changed: the release baseline is now FROZEN HISTORY, and what must hold is that the live
+// candidate diverges from it only compatibly, with every divergent schema declaring itself in its
+// own documentVersion. The stage in ci/gate.ps1 is no longer a tautology; this is the property it
+// actually gates.
+//
+// MERGED INTENT (rebase over main, 2026-08-30): main's version of this test pinned the deliberate
+// divergence BY NAME (then: execution-accounting-receipt alone). That ledger survives below as
+// the exact-set assertion - the general property alone would also admit an unlisted third
+// evolution, and naming each deliberate divergence is what keeps this file the register of them.
 #[test]
-fn the_gate_baseline_records_the_one_additive_current_schema() {
+fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
     let baseline = checked_in_catalog(RELEASE_CATALOG);
     let candidate = checked_in_catalog(LIVE_CATALOG);
 
@@ -387,22 +400,50 @@ fn the_gate_baseline_records_the_one_additive_current_schema() {
 
     let report = compare_catalogs(&baseline, &candidate);
     assert_eq!(
-        (report.class, report.impact, report.changes.len()),
-        (CompatibilityClass::Compatible, SemverImpact::Minor, 1),
-        "the current catalog must differ from 1.0.0 by exactly one additive minor schema"
+        (report.class, report.impact),
+        (CompatibilityClass::Compatible, SemverImpact::Minor),
+        "the live catalog must diverge from frozen 1.0.0 only compatibly and minor: {:#?}",
+        report
+            .changes
+            .iter()
+            .filter(|change| change.class == CompatibilityClass::Breaking)
+            .collect::<Vec<_>>()
     );
-    assert_eq!(report.changes[0].schema, "execution-accounting-receipt");
-    assert_eq!(report.changes[0].pointer, "/");
+    // The ledger of deliberate divergences, by name. Exactly these; a third evolution joins this
+    // list in the same commit that introduces it, or this fails and says so.
+    let mut divergent: Vec<&str> = report
+        .changes
+        .iter()
+        .map(|change| change.schema.as_str())
+        .collect();
+    divergent.sort();
+    divergent.dedup();
+    assert_eq!(
+        divergent,
+        vec!["execution-accounting-receipt", "graph-signal"],
+        "the deliberate divergences from 1.0.0 are exactly these two"
+    );
+    for change in &report.changes {
+        assert_ne!(
+            document_version(&baseline, &change.schema),
+            document_version(&candidate, &change.schema),
+            "{} changed at {} ({}) without moving its documentVersion - evolution has to say \
+             its own name",
+            change.schema,
+            change.pointer,
+            change.code
+        );
+    }
 
-    // Positive control: the silence above is the subject's, not the instrument's.
+    // Positive control: the acceptance above is the subject's, not the instrument's.
     let mut divergent = candidate.clone();
     let removed = divergent.schemas.keys().next().unwrap().clone();
     divergent.schemas.remove(&removed);
     assert_eq!(
         compare_catalogs(&baseline, &divergent).class,
         CompatibilityClass::Breaking,
-        "compare_catalogs did not report a removed schema as breaking, so its additive verdict \
-         above says nothing about the published contracts"
+        "compare_catalogs did not report a removed schema as breaking, so its verdict above says \
+         nothing about the catalogs"
     );
 }
 

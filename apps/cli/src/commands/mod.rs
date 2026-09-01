@@ -14,6 +14,7 @@ mod schema;
 mod serve;
 mod simulate;
 mod tool;
+mod topology;
 mod validate;
 mod wake_wait;
 
@@ -26,8 +27,8 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
-    ExtensionCommand, GatewayCommand, GraphCommand, QualityCommand, SchemaCommand, ToolCommand,
-    TopLevel,
+    ExtensionCommand, GatewayCommand, GraphCommand, KeyringCommand, QualityCommand, SchemaCommand,
+    ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -37,6 +38,7 @@ pub fn run(command: TopLevel) -> Outcome {
             GraphCommand::Validate { file } => validate::run(&file),
             GraphCommand::Lint { file } => lint::run(&file),
             GraphCommand::Hash { file } => hash::run(&file),
+            GraphCommand::Topology { file } => topology::run(&file),
             GraphCommand::Simulate {
                 file,
                 events,
@@ -183,6 +185,11 @@ pub fn run(command: TopLevel) -> Outcome {
                 &mode,
                 execution.as_deref(),
             ),
+            ExecutionCommand::List {
+                events,
+                after,
+                limit,
+            } => execution::list::run(&events, after.as_deref(), limit),
             ExecutionCommand::Status {
                 events,
                 execution,
@@ -290,6 +297,11 @@ pub fn run(command: TopLevel) -> Outcome {
                     key_id,
                     reference,
                 } => gateway::credential::remove(&broker, &keyring, &key_id, &reference),
+            },
+            GatewayCommand::Keyring(args) => match args.command {
+                KeyringCommand::Init { keyring, key_id } => {
+                    gateway::keyring::init(&keyring, &key_id)
+                }
             },
         },
         TopLevel::Serve(args) => serve::run(&args),

@@ -120,20 +120,22 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 /// **Hand-written on purpose, never derived.** Computing this as `tools/list` minus
 /// [`DEVELOPMENT_OPERATION_FAMILIES`] would make the completeness guard a tautology: the list
 /// would agree with the real surface by construction and could never disagree with it. What is
-/// written here is a CLAIM -- "these fourteen are not development operations" -- and the two
+/// written here is a CLAIM -- "these seventeen are not development operations" -- and the two
 /// guards below check that claim against the real built binary in both directions.
 ///
-/// **What the arity does and does not do.** `[&str; 15]` forces this LITERAL to hold fifteen
-/// entries. It does not force those fourteen to be the right ones, or the complete set -- that is
+/// **What the arity does and does not do.** `[&str; 17]` forces this LITERAL to hold seventeen
+/// entries. It does not force those seventeen to be the right ones, or the complete set -- that is
 /// exactly the trap #272 names for hand-sized vocabulary arrays. The arity is a tripwire that
 /// makes an edit here deliberate; the completeness comes from
 /// `every_real_mcp_tool_is_classified` and `every_named_exception_still_names_a_real_tool`, not
-/// from the number. Do not read the 14 as the guarantee.
+/// from the number. Do not read the 17 as the guarantee.
 ///
-/// **The `MCP_TOOLS` coincidence -- measured, and deliberately NOT bound.**
-/// `core/schema/src/extension.rs`'s `MCP_TOOLS` currently holds exactly these same fourteen
-/// strings. That is a coincidence of today, not a shared definition, and no test asserts the two
-/// are equal. `MCP_TOOLS` is a narrow allowlist of the domain surface a skill journey may claim
+/// **The `MCP_TOOLS` overlap -- measured, and deliberately NOT bound.**
+/// `core/schema/src/extension.rs`'s `MCP_TOOLS` holds fourteen of these seventeen strings, as of
+/// this edit: `sweep` (#288), `list` and `topology` (#105) are exceptions here and are NOT in
+/// that allowlist.
+/// The overlap is a fact of today, not a shared definition, and no test asserts the two are
+/// equal. `MCP_TOOLS` is a narrow allowlist of the domain surface a skill journey may claim
 /// to drive, documented there as deliberately NOT the full surface, with mutating and destructive
 /// operations excluded on purpose. This list is the complement of the development families over
 /// the WHOLE tool surface. The day a destructive tool is added the two diverge correctly: it
@@ -143,10 +145,13 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 15] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 18] = [
     "start",
+    "list",
+    "topology",
     "status",
     "events",
+    "evidence",
     "signal",
     "approve",
     "pause",

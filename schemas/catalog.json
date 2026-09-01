@@ -64,9 +64,9 @@
     },
     "graph-signal": {
       "id": "https://p50.dev/schemas/graph-signal.schema.json",
-      "documentVersion": "1.0.0",
+      "documentVersion": "1.1.0",
       "path": "schemas/graph-signal.schema.json",
-      "sha256": "sha256:44b92e9c8d464383adac3c227cd119f4e9e5d8f87d1dca261ed316b4c3d93e12"
+      "sha256": "sha256:fec294bbecb4b8661946ae779f2c31847988452c0c5e2840ca7473915e78c816"
     },
     "node": {
       "id": "https://p50.dev/schemas/node.schema.json",

@@ -331,6 +331,21 @@ pub enum ExecutionCommand {
         #[arg(long)]
         execution: Option<String>,
     },
+    /// Lists the execution streams the event store holds: one summary row per stream, ordered
+    /// by execution id, sliced by `--after` (exclusive) and `--limit`.
+    ///
+    /// The same answer `GET /v1/executions` replies with. It exists so a client never has to
+    /// scrape the human monitor page to discover which executions are present.
+    List {
+        #[arg(long)]
+        events: PathBuf,
+        /// Exclusive cursor: the last execution id the caller already read.
+        #[arg(long)]
+        after: Option<String>,
+        /// Page size, 1..=100. Defaults to 20. A larger value is refused, never clamped.
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     /// Replays a stream and reports the execution's current state — the operator's triage view.
     Status {
         #[arg(long)]
@@ -535,6 +550,33 @@ pub enum GatewayCommand {
     },
     /// Manages BYOK credentials held in the broker.
     Credential(CredentialArgs),
+    /// Manages the sealing keyring itself, independently of any credential.
+    Keyring(KeyringArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct KeyringArgs {
+    #[command(subcommand)]
+    pub command: KeyringCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeyringCommand {
+    /// Creates the sealing key a Runtime needs to seal evidence, and nothing else.
+    ///
+    /// This key encrypts evidence held on this machine. It is not a model credential, is never
+    /// sent anywhere, and grants access to nothing outside this keyring.
+    ///
+    /// It exists because until now the ONLY way to put a key in a keyring was
+    /// `gateway credential set`, which stores a BYOK model credential and reads a secret from
+    /// stdin. A Runtime that seals a message needs the key and does not need a credential, so an
+    /// operator who wanted only the message path had to invent an API key to get past the setup.
+    Init {
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -708,6 +750,16 @@ pub enum GraphCommand {
         file: PathBuf,
     },
     Hash {
+        file: PathBuf,
+    },
+    /// Reports a graph file's shape - entrypoints, nodes, edges - plus the semantic hash that
+    /// says WHICH graph it is.
+    ///
+    /// The hash is the load-bearing field: an execution's log records the graph's hash and never
+    /// its topology, so a caller that wants to draw a run's graph compares this hash against the
+    /// `graphHash` in that run's `execution_started` event before believing the edges belong to
+    /// it. Nodes carry identity only - no objectives, agents or completion controls.
+    Topology {
         file: PathBuf,
     },
     Simulate {

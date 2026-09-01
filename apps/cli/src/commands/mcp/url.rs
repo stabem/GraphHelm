@@ -31,6 +31,27 @@ pub(crate) fn segment_path(segments: &[&str]) -> String {
     out
 }
 
+/// Percent-encode one QUERY-STRING VALUE.
+///
+/// A STRICTER allowlist than [`is_safe_in_segment`], and deliberately a second function rather
+/// than a reuse: `pchar` permits the sub-delims `&` and `=`, which are exactly the two bytes that
+/// end a query value. A cursor containing either one, encoded with the path rule, would split
+/// into a second parameter the caller never wrote. Unreserved characters only here - anything
+/// else is escaped, so an over-encoded value round-trips through the server's decoder unchanged
+/// while an under-encoded one cannot exist.
+pub(crate) fn encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{byte:02X}"));
+        }
+    }
+    out
+}
+
 /// RFC 3986 `pchar` = unreserved / sub-delims / ":" / "@", minus `%` which must always be escaped.
 const fn is_safe_in_segment(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()

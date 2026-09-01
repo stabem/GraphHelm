@@ -26,7 +26,14 @@ defect; the test is deleting the wrapper and losing nothing but convenience.
 
 ## 3. MCP tool vocabulary (the 05e base)
 
-The current server exposes fourteen tools: `start`, `status`, `events` (paged tail), `signal`,
+> **This section records the 05e BASELINE, not the present surface.** The vocabulary has
+> grown since: #223 added the six development operations, #288 added `sweep`, and #105 added
+> `list`. The authoritative list is `TOOLS` in `apps/cli/src/commands/mcp/tools.rs`, pinned by
+> name in `apps/cli/tests/mcp_stdio.rs`; a count written in prose here cannot be guarded and
+> so is not maintained. What the paragraph below still states correctly is the SHAPE every
+> tool obeys, which has not changed.
+
+As of 05e the server exposed fourteen tools: `start`, `status`, `events` (paged tail), `signal`,
 `approve`, `pause` (graceful and immediate), `resume`, `cancel`, `routes`, `wake_arm`,
 `wake_status`, `amend_budget`, `wake_wait`, and `probe`. Thirteen adapt public Runtime API
 operations. `wake_wait` is the one bounded local helper and preserves CLI parity. Every mutating

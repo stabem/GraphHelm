@@ -476,7 +476,17 @@ fn five_schema_commands_return_one_json_document_with_exact_names() {
 }
 
 #[test]
-fn checked_in_catalog_reports_the_additive_1_1_0_candidate() {
+fn checked_in_catalog_reports_the_additive_evolutions_as_one_minor_step() {
+    // 1.1.0, and a THIRD evolution does not move it. Two independent minors stand between the
+    // frozen 1.0.0 and the live set -- execution-accounting-receipt added whole, and graph-signal's
+    // optional addressing -- and the reported version is one transition from the baseline, sized by
+    // the cumulative impact, never one bump per evolution: `expected_version(1.0.0, Minor)` is
+    // 1.1.0 in core/schema-evolution/src/release.rs.
+    //
+    // The name said `as_1_2_0` and the assertion agreed with it. Both were a guard certifying the
+    // defect the release gate catches: `graphhelm schema check` answers GHC004_SEMVER_MISMATCH on
+    // 1.2.0. What DOES move this number is publishing a new frozen baseline -- and the by-name
+    // ledger in core/schema-evolution/tests/baseline_origin.rs is where a new evolution is named.
     let catalog = repository_root().join("schemas/catalog.json");
     let output = run_catalog(&catalog);
     assert!(

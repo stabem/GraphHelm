@@ -29,13 +29,21 @@ tab — measured, in a probe run against this README.
   `calmed_by_amendment`, with the reason and the node named, and time on the surface.
 * **A read-only monitor**, an HTTP API, and an **MCP server** exposing the same operations to a
   chat client.
+* **A Local Studio MVP** — GraphHelm now includes a Local Studio MVP for inspecting and
+  controlling executions through the Public Runtime API, with optional WebMCP site tools. It
+  lists runs, answers which one needs you and why, shows the event evidence, and can pause,
+  approve a node, and resume — each mutation verified after the fact. See
+  [apps/studio/README.md](apps/studio/README.md). It is an operator surface, not the visual
+  Studio specified below: no graph canvas, no DSL editor, no chat, no collaboration, no cloud.
 * **A quality gate** that refuses to certify itself against a suite of deliberately useless
   deliverables, and a **blind judge** — an evaluator that cannot see the code and only probes
   the shipped surface.
 
 **Does not exist yet, said plainly because the specification below describes it in detail:**
 
-* **Studio** — the visual application. Specified, not built. No command opens it.
+* **Studio, the visual application** — the graph canvas, the Graph DSL editor, the embedded
+  chat, and the collaboration surfaces described in `docs/ux/STUDIO_SPEC.md` are specified, not
+  built. What exists today is the operator MVP named above.
 * **Context Compiler** and **Dreams Engine** — specified, not built.
 * Anything describing a VPS daemon deployment story.
 
@@ -86,7 +94,7 @@ The product is made up of three open surfaces:
 
 1. **Framework** — Graph Engine, Harness Compiler, Context Compiler, Policy Engine, Agent Registry, Model Gateway, Dreams Engine, and protocols.
 2. **Runtime** — daemon installed on the user's VPS, responsible for execution, sandboxes, events, artifacts, credentials, and jobs.
-3. **Studio** — local application for chat, graph, running agents, documents, files, auditing, and sovereign workflow control.
+3. **Studio** — local application for chat, graph, running agents, documents, files, auditing, and sovereign workflow control. Today an MVP of its operator surface exists ([apps/studio](apps/studio/README.md)); the rest is specification.
 
 ## How to read this repository
 

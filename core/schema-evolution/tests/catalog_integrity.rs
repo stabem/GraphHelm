@@ -149,11 +149,23 @@ fn repository_has_one_safe_initial_release() {
         )
         .collect::<std::collections::BTreeSet<_>>();
 
+    // 1.1.0, and the number does NOT count evolutions. Two independent minors stand between the
+    // frozen 1.0.0 and the live set -- execution-accounting-receipt added whole, and graph-signal's
+    // optional addressing -- and both land in ONE transition, because the release rule measures a
+    // single step from the frozen baseline sized by the CUMULATIVE impact:
+    // `expected_version(1.0.0, Minor) == 1.1.0` in core/schema-evolution/src/release.rs.
+    //
+    // This assertion said 1.2.0, stacking the second minor on top of the first. The refutation is
+    // two lines below, written by the same comment: `schemas/releases/1.1.0` does not exist. There
+    // is no 1.1.0 to stack on. A minor accumulates against the last RELEASE, not against the last
+    // change, and `graphhelm schema check --baseline schemas/releases/1.0.0/catalog.json` refuses
+    // 1.2.0 with GHC004_SEMVER_MISMATCH -- which is how this was found.
     assert_eq!(catalog.release_version, Version::new(1, 1, 0));
     assert_eq!(catalog.schemas.len(), 16);
     assert!(!root.join("schemas/releases/1.1.0").exists());
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 52);
-    assert_eq!(declared_resources.len(), 54);
+    assert!(!root.join("schemas/releases/1.2.0").exists());
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 54);
+    assert_eq!(declared_resources.len(), 56);
 }
 
 #[test]
@@ -166,6 +178,8 @@ fn current_catalog_adds_execution_accounting_without_backfilling_release_1_0_0()
     )
     .unwrap();
 
+    // 1.1.0: one transition from the frozen baseline, sized by cumulative impact -- see the
+    // reasoning at the release_version assertion above.
     assert_eq!(current.release_version, Version::new(1, 1, 0));
     assert_eq!(current.schemas.len(), 16);
     assert!(current.schemas.contains_key("execution-accounting-receipt"));
@@ -522,8 +536,8 @@ fn release_catalog_directory_must_match_its_release_version() {
     assert_eq!(report.diagnostics[0].path, "/releaseVersion");
 }
 
-// Prevents the single public baseline from being partial or diverging between mutable root and
-// immutable snapshot bytes.
+// Prevents the public baseline from being partial, and pins the rule that replaced byte-identity
+// the day the first schema evolved.
 //
 // #508: this test was RED on main from `14f82b2` until the hotfix that carries this comment. The
 // `event-envelope` entry in BOTH catalogs — live and the frozen `releases/1.0.0/` snapshot —
@@ -548,12 +562,26 @@ fn release_catalog_directory_must_match_its_release_version() {
 // JSON with key order preserved — and NONE produces `214527df…`. So HOW it was computed is not
 // established; the likeliest story, marked as inference and not measurement, is a digest taken over
 // an intermediate draft during that commit and never recomputed against the bytes that shipped.
+//
+// AND the byte-identity rule this test carried changed the same day, for a second reason:
+// Until 2026-08-30 this test asserted current == release, byte for byte, for every schema - the
+// guard that caught #339's silent drift. That mirror could hold only while NOTHING had ever
+// evolved; graph-signal 1.1.0 (optional `to`/`replyTo`, the multi-agent conversation's addressing)
+// is the first declared evolution, which takes the decision #229 reserved: `schemas/releases/1.0.0`
+// is a FROZEN SNAPSHOT of history, and the live root moves ahead of it.
+//
+// The #339 class stays caught, in a sharper form: a schema whose documentVersion still equals the
+// release's MUST remain byte-identical to the snapshot (drift without a declaration), and a schema
+// whose version moved MUST actually differ (a declaration without a change is the same lie
+// mirrored). Retiring the check outright would have been [dont-retire-the-check-that-catches-you];
+// this is its replacement, and it can still go red on both sides of the line.
 #[test]
-fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
+fn the_release_snapshot_is_frozen_and_divergence_is_version_declared() {
     let root = repository_root();
     let current = load_repo_catalog(RepositoryPackage::Current);
     let release = load_repo_catalog(RepositoryPackage::Release1_0_0);
 
+    // 1.1.0, for the reason written at the first release_version assertion in this file.
     assert_eq!(current.catalog.release_version, Version::new(1, 1, 0));
     assert_eq!(release.catalog.release_version, Version::new(1, 0, 0));
     assert_eq!(current.catalog.schemas.len(), 16);
@@ -572,15 +600,53 @@ fn checked_in_1_0_0_release_is_complete_and_raw_byte_identical() {
         );
     }
 
+    // MERGED INTENT: main's loop asserted every released schema byte-identical (its world had
+    // only an ADDED schema); this branch's declared evolution needs the finer #339 form - equal
+    // bytes exactly where the documentVersion did not move, different bytes exactly where it did.
+    // The finer form implies main's for every undeclared schema, so nothing main gated is lost.
+    let mut evolved = 0usize;
     for name in RELEASE_1_0_0_SCHEMA_NAMES {
-        assert_eq!(
-            fs::read(root.join(RepositoryPackage::Current.schema_path(name))).unwrap(),
-            fs::read(root.join(RepositoryPackage::Release1_0_0.schema_path(name))).unwrap(),
-            "{name}"
+        let current_entry = &current.catalog.schemas[name];
+        let release_entry = &release.catalog.schemas[name];
+        let current_bytes =
+            fs::read(root.join(RepositoryPackage::Current.schema_path(name))).unwrap();
+        let release_bytes =
+            fs::read(root.join(RepositoryPackage::Release1_0_0.schema_path(name))).unwrap();
+
+        if current_entry.document_version == release_entry.document_version {
+            // The #339 guard, alive: same declared version, so the bytes may not have moved.
+            assert_eq!(
+                current_bytes, release_bytes,
+                "{name} drifted from the release snapshot without moving its documentVersion"
+            );
+            assert_eq!(current_entry.sha256, release_entry.sha256, "{name}");
+        } else {
+            evolved += 1;
+            assert!(
+                current_entry.document_version > release_entry.document_version,
+                "{name} declares a version behind the released one"
+            );
+            assert_ne!(
+                current_bytes, release_bytes,
+                "{name} moved its documentVersion without changing a byte - a declaration \
+                 without a change is the mirrored form of the drift this test exists to refuse"
+            );
+        }
+    }
+    // The live release_version may only move ahead of the snapshot when something actually
+    // changed - a schema evolved, or one was ADDED (main's accounting receipt moved 1.1.0 on an
+    // addition alone, a legitimate cause this check must admit); a bumped catalog over an
+    // identical set is the catalog telling a story on its own.
+    let added = current.catalog.schemas.len() > release.catalog.schemas.len();
+    if current.catalog.release_version > release.catalog.release_version {
+        assert!(
+            evolved > 0 || added,
+            "the live catalog's releaseVersion moved but every schema is still at the snapshot"
         );
-        assert_eq!(
-            current.catalog.schemas[name].sha256, release.catalog.schemas[name].sha256,
-            "{name}"
+    } else {
+        assert!(
+            evolved == 0 && !added,
+            "the schema set changed but the catalog's releaseVersion did not move"
         );
     }
 }
@@ -759,7 +825,10 @@ fn current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts() 
         .filter(|case| case["kind"] == "schema")
         .collect::<Vec<_>>();
 
-    assert_eq!(schema_cases.len(), 32);
+    // 34 = main's 32 plus the two graph-signal-reply cases the 1.1.0 evolution shipped.
+    assert_eq!(schema_cases.len(), 34);
+    let current_catalog = load_repo_catalog(RepositoryPackage::Current).catalog;
+    let release_catalog = load_repo_catalog(RepositoryPackage::Release1_0_0).catalog;
     for case in schema_cases {
         let name = case["schema"].as_str().unwrap();
         if name == "execution-accounting-receipt" {
@@ -776,12 +845,29 @@ fn current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts() 
                 .map(|diagnostic| (diagnostic.code.clone(), diagnostic.path.clone()))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            signature(&release_diagnostics),
-            signature(&current_diagnostics),
-            "{}",
-            case["id"]
-        );
+        if current_catalog.schemas[name].document_version
+            == release_catalog.schemas[name].document_version
+        {
+            assert_eq!(
+                signature(&release_diagnostics),
+                signature(&current_diagnostics),
+                "{}",
+                case["id"]
+            );
+        } else {
+            // An evolved schema's contract is ASYMMETRIC by design: additive evolution means
+            // every document the frozen 1.0.0 validator accepts must still be accepted by the
+            // live one (old data never goes invalid), while a document using the new fields is
+            // legitimately refused by the snapshot that predates them. The forbidden quadrant is
+            // the live validator refusing what the release accepted - that would be evolution
+            // invalidating history while calling itself minor.
+            assert!(
+                !release_diagnostics.is_empty() || current_diagnostics.is_empty(),
+                "{}: the evolved {name} validator refuses a document the frozen 1.0.0 one \
+                 accepts - a backward break wearing a minor version",
+                case["id"]
+            );
+        }
     }
 }
 

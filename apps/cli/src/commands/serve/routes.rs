@@ -10,24 +10,30 @@ use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use graphhelm_events::EvidenceSealer;
+use graphhelm_events::{EventRepositoryError, EvidenceRead, EvidenceSealer};
 use graphhelm_graph::GraphVersion;
-use graphhelm_protocols::{ActorId, Diagnostic, PersistedActor, PersistedActorType};
+use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
 use graphhelm_runtime::driver::{StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{AsyncNodeExecutor, PortExecutor};
 use graphhelm_runtime::fixture::FixtureAsyncExecutor;
 use graphhelm_simulation::FixtureExecutor;
 use graphhelm_tool_broker::lease::{Capability, ToolLease};
 
-use super::ports::{ServeModelPort, ServeToolPort, build_sealer};
+use graphhelm_gateway::manifest::{ModelRoute, RouteManifest};
+
+use super::ports::{
+    RuntimeWiring, ServeModelPort, ServeToolPort, build_opener, build_sealer, find_route,
+};
 use super::{
     ExecutorWiring, MutationError, ServeState, parse_mutation_headers, respond, respond_failure,
     run_idempotent_mutation,
 };
 use crate::commands::execution::PreparedDrive;
-use crate::commands::{event_store, execution, owner, publish_loaded};
+use crate::commands::{event_store, execution, owner, publish_loaded, topology};
 use crate::output::Outcome;
 
+const LIST_COMMAND: &str = "execution.list";
+const TOPOLOGY_COMMAND: &str = "graph.topology";
 const STATUS_COMMAND: &str = "execution.status";
 const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
@@ -36,6 +42,7 @@ const APPROVE_COMMAND: &str = "execution.approve";
 const AMEND_BUDGET_COMMAND: &str = "execution.amend_budget";
 const PAUSE_COMMAND: &str = "execution.pause";
 const RESUME_COMMAND: &str = "execution.resume";
+const EVIDENCE_COMMAND: &str = "execution.evidence";
 const CANCEL_COMMAND: &str = "execution.cancel";
 const SWEEP_COMMAND: &str = "execution.sweep";
 const SOURCE: &str = "serve-cli";
@@ -46,6 +53,148 @@ const DEFAULT_EVENTS_LIMIT: usize = 100;
 /// truncated, per the plan: the caller must always be able to tell "there is more" from the
 /// response shape, not guess it from getting back fewer events than asked for.
 const MAX_EVENTS_LIMIT: usize = 1000;
+
+/// `POST /v1/graph/topology` with `{"file": "..."}`: the graph document's shape and its semantic
+/// hash, replying `graph.topology`'s own `data` - the exact same `topology::execute` the CLI's
+/// `graph topology` runs.
+///
+/// A READ THAT APPENDS NOTHING, which is why it is a POST rather than a GET: the graph is
+/// addressed by a filesystem path, and a path does not belong in a URL. It would land in request
+/// logs, in a browser's history and in any `Referer` the page sends onward - a directory layout
+/// leaked through the one field this Runtime cannot redact. The body keeps it out of all three.
+///
+/// It grants no reach `start` and `resume` did not already have: both take a `file` and load it,
+/// so the ability to ask this Runtime to read a graph file by path already existed. This is the
+/// same load with a read-only result.
+pub(super) async fn graph_topology(body: Bytes) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(TOPOLOGY_COMMAND, "the request body is not valid JSON", "/");
+        }
+    };
+    let Some(file) = payload.get("file").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            TOPOLOGY_COMMAND,
+            "the request body must carry \"file\"",
+            "/file",
+        );
+    };
+
+    match topology::execute(Path::new(file)) {
+        Ok(value) => respond(
+            StatusCode::OK,
+            Outcome::success(TOPOLOGY_COMMAND, value).output,
+        ),
+        // A file that is not a schema-valid graph is the CALLER's mistake, so 400 and the
+        // loader's own diagnostics - the same body the CLI prints for the same file, EXCEPT the
+        // `source`: the loader stamps it with the absolute filesystem path, which over HTTP is a
+        // directory-layout disclosure (and with --read-audit on, one that lands on disk in the
+        // audit line - PR #467 review). The doc comment above spends a whole paragraph keeping
+        // this path out of URLs; letting it back in through diagnostics would undo that.
+        Err(topology::Failure::Invalid(mut diagnostics)) => {
+            for diagnostic in &mut diagnostics {
+                diagnostic.source = "graph-file".to_owned();
+            }
+            respond(
+                StatusCode::BAD_REQUEST,
+                Outcome::domain(TOPOLOGY_COMMAND, diagnostics).output,
+            )
+        }
+        Err(topology::Failure::Internal(message)) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(TOPOLOGY_COMMAND, message).output,
+        ),
+    }
+}
+
+/// `GET /v1/executions?after=<executionId>&limit=N`: the execution index, replying
+/// `execution.list`'s own `data` - the exact same `execution::list::execute` the CLI's
+/// `execution list` runs, so the two report byte-identical output for the same store.
+///
+/// THIS ROUTE EXISTS SO NOTHING HAS TO SCRAPE `/monitor`. That page is HTML for a human browser
+/// (D-040 keeps it read-only and simple); a client that parsed its anchors to discover execution
+/// ids was depending on markup, not on a contract. Bounds and cursor semantics live in
+/// `execution::list`, not here - this handler only parses the query and relays the refusal.
+pub(super) async fn list_executions(
+    State(state): State<ServeState>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let (after, limit) = match parse_list_query(query.as_deref().unwrap_or("")) {
+        Ok(parsed) => parsed,
+        Err((message, pointer)) => return bad_request(LIST_COMMAND, message, pointer),
+    };
+    match execution::list::execute(&state.events, after.as_deref(), limit) {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(LIST_COMMAND, value).output),
+        Err(failure) => respond_failure(LIST_COMMAND, failure),
+    }
+}
+
+/// Hand-parsed for the same reason `parse_events_query` is: a malformed value must still reply
+/// the standard four-key envelope rather than axum's own rejection body. `limit` is only checked
+/// for SHAPE here - the 1..=100 range is `execution::list`'s to enforce, so the CLI and the API
+/// refuse the same value with the same diagnostic instead of two independently drifting bounds.
+fn parse_list_query(query: &str) -> Result<(Option<String>, usize), (&'static str, &'static str)> {
+    let mut after = None;
+    let mut limit = execution::list::DEFAULT_LIMIT;
+    for pair in query.split('&').filter(|segment| !segment.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        match key {
+            "after" => {
+                let decoded =
+                    percent_decode(value).ok_or(("after is not a valid execution id", "/after"))?;
+                if !decoded.is_empty() {
+                    after = Some(decoded);
+                }
+            }
+            "limit" => {
+                limit = value
+                    .parse()
+                    .map_err(|_| ("limit must be a positive integer", "/limit"))?;
+            }
+            _ => {}
+        }
+    }
+    Ok((after, limit))
+}
+
+/// The minimal percent-decoder this one query value needs. Refuses a malformed escape rather
+/// than dropping it: a cursor silently mangled into a different string would page from the wrong
+/// place, and a caller has no way to see that happen.
+///
+/// `+` decodes to a space, the ordinary form-encoding convention, and that was CHECKED rather
+/// than assumed. The tempting objection is that `+` is a legal `OpaqueId` byte (0x2b sits inside
+/// the 0x21..=0x2e run `is_opaque_id` accepts), so decoding it would mangle a real cursor. That
+/// is true about the id predicate and false about the system: the local event store refuses to
+/// open a repository whose stream id carries one. Measured, one command per id --
+/// `execution start --execution plusa+b` is refused `GHE005_INTEGRITY_FAILURE`, while
+/// `plaina-b` and `dot.a` are accepted. No reachable execution id contains a `+`, so no cursor
+/// this endpoint can be handed does either, and departing from the convention here would buy a
+/// behaviour nothing can exercise. Named rather than left implicit so the next reader meets the
+/// measurement instead of re-deriving the objection.
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                let hex = value.get(index + 1..index + 3)?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                index += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
 
 /// `GET /v1/executions/{id}`: replies `execution.status`'s own `data` — the exact same
 /// `execution::status::execute` the CLI's `execution status` runs, so the two report byte-identical
@@ -167,13 +316,97 @@ fn bad_request(command: &'static str, message: &str, pointer: &str) -> Response 
 /// would add an allocation to a failure path this function exists to keep cheap, for a function
 /// called at most once per `start`/`resume` request.
 #[allow(clippy::result_large_err)]
-fn load_and_publish(file: &Path, command: &'static str) -> Result<GraphVersion, Response> {
-    let loaded = graphhelm_schema::load_graph(file).map_err(|diagnostics| {
+/// The label inline graph diagnostics are reported against, where a file-backed graph would carry
+/// its path. Not a path, and not shaped like one: it names the only place the caller can look.
+const INLINE_GRAPH_SOURCE: &str = "<request body>";
+
+/// Where a start/resume request's graph document came from.
+///
+/// `File` is the original contract (D-040: the server is local by construction, so an operator's
+/// path is used as the CLI would use it). `Inline` is what lets a caller that has no filesystem on
+/// the server — a browser — start work: the document travels in the request body as JSON and is
+/// parsed from memory, never written to disk on the way in.
+enum GraphSource {
+    File(PathBuf),
+    Inline(serde_json::Value),
+}
+
+/// Reads the request body's graph, refusing every shape that could be read two ways.
+///
+/// BOTH FIELDS PRESENT IS A REFUSAL, not a precedence rule. A caller that sends `"file"` and
+/// `"graph"` together holds two different beliefs about which document is about to run, and any
+/// precedence this picked would be right for half of them and silently wrong for the other half.
+/// The wrong half runs a graph they did not intend, under an execution id they did.
+// `Response` in the `Err` arm, the same accepted tradeoff every mutation handler in this
+// file documents: a refusal here IS a built response, and boxing it would buy a smaller
+// `Result` at the cost of an allocation on the one path that is already returning.
+#[allow(clippy::result_large_err)]
+fn graph_source(
+    payload: &serde_json::Value,
+    command: &'static str,
+) -> Result<GraphSource, Response> {
+    let file = payload.get("file");
+    let graph = payload.get("graph");
+    let present =
+        |value: Option<&serde_json::Value>| !matches!(value, None | Some(serde_json::Value::Null));
+
+    match (present(file), present(graph)) {
+        (true, true) => Err(bad_request(
+            command,
+            "the request body carries both \"file\" and \"graph\"; give exactly one",
+            "/graph",
+        )),
+        (false, false) => Err(bad_request(
+            command,
+            "the request body must carry \"file\" or \"graph\"",
+            "/file",
+        )),
+        (true, false) => match file {
+            Some(serde_json::Value::String(path)) => Ok(GraphSource::File(PathBuf::from(path))),
+            _ => Err(bad_request(
+                command,
+                "\"file\" must be a string naming a graph document",
+                "/file",
+            )),
+        },
+        (false, true) => match graph {
+            // An object, never a string of JSON. A string would make the caller escape a document
+            // inside a document, and would leave this deciding whether to parse the string as YAML
+            // or JSON — the ambiguity `load_graph_json` exists to avoid.
+            Some(value @ serde_json::Value::Object(_)) => Ok(GraphSource::Inline(value.clone())),
+            _ => Err(bad_request(
+                command,
+                "\"graph\" must be the graph document as a JSON object",
+                "/graph",
+            )),
+        },
+    }
+}
+
+#[allow(clippy::result_large_err)] // see `graph_source`
+fn load_and_publish(source: &GraphSource, command: &'static str) -> Result<GraphVersion, Response> {
+    let to_response = |diagnostics| {
         respond(
             StatusCode::BAD_REQUEST,
             Outcome::domain(command, diagnostics).output,
         )
-    })?;
+    };
+    let loaded = match source {
+        GraphSource::File(path) => graphhelm_schema::load_graph(path).map_err(to_response)?,
+        GraphSource::Inline(value) => {
+            // `to_vec` on a `Value` that was itself parsed from the request body cannot fail, but
+            // the bound that matters is applied downstream regardless: `load_graph_json` re-checks
+            // the 4 MiB document limit against these bytes.
+            let bytes = serde_json::to_vec(value).map_err(|_| {
+                respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(command, "the inline graph could not be re-serialized")
+                        .output,
+                )
+            })?;
+            graphhelm_schema::load_graph_json(&bytes, INLINE_GRAPH_SOURCE).map_err(to_response)?
+        }
+    };
     let report = graphhelm_graph::lint(&loaded.graph, &loaded.source);
     if !report.errors.is_empty() {
         let mut diagnostics = report.errors;
@@ -233,14 +466,10 @@ pub(super) async fn start(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let Some(file) = payload.get("file").and_then(serde_json::Value::as_str) else {
-        return bad_request(
-            START_COMMAND,
-            "the request body must carry \"file\"",
-            "/file",
-        );
+    let source = match graph_source(&payload, START_COMMAND) {
+        Ok(source) => source,
+        Err(response) => return response,
     };
-    let file = PathBuf::from(file);
     let fixtures = payload
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
@@ -268,7 +497,7 @@ pub(super) async fn start(
         |actor, key| {
             Box::pin(async move {
                 let version =
-                    load_and_publish(&file, START_COMMAND).map_err(MutationError::Prepared)?;
+                    load_and_publish(&source, START_COMMAND).map_err(MutationError::Prepared)?;
                 // Reported deviation from the literal STEP 4 wording (see `drive_is_viable_for`'s
                 // own doc comment): the async drive is used whenever it CAN run this graph — a
                 // real executor is configured, or every node type classifies as Cognitive/Tool —
@@ -279,7 +508,7 @@ pub(super) async fn start(
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: same ordering as `resume` — the shared shape is where the fix lands, so
                     // `start` cannot commit `ExecutionStarted` for a drive whose setup then refuses.
-                    let setup = prepare_drive(&drive_state, &payload).await?;
+                    let setup = prepare_drive(&drive_state, START_COMMAND, &payload).await?;
                     let prepared = execution::start::execute_prepared(
                         &version,
                         &drive_state.events,
@@ -353,17 +582,24 @@ pub(super) async fn signal(
             );
         }
     };
-    let Some(evidence_out) = payload
-        .get("evidenceOut")
-        .and_then(serde_json::Value::as_str)
-    else {
-        return bad_request(
-            SIGNAL_COMMAND,
-            "the request body must carry \"evidenceOut\"",
-            "/evidenceOut",
-        );
+    // OPTIONAL, and refused when unusable rather than folded into absent - the same distinction
+    // `"route"` needed on start. A caller who sent `"evidenceOut": 7` gets told, instead of having
+    // their envelope quietly preserved somewhere else or nowhere.
+    //
+    // Whether absence is ALLOWED is not decided here: `signal::execute` owns that rule, because it
+    // is the function that knows the seal happens before the append. Deciding it twice is how the
+    // API and the CLI come to disagree about when an envelope is durable.
+    let evidence_out = match payload.get("evidenceOut") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(path)) => Some(PathBuf::from(path)),
+        Some(_) => {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "\"evidenceOut\" must be a string naming a path on the Runtime's host",
+                "/evidenceOut",
+            );
+        }
     };
-    let evidence_out = PathBuf::from(evidence_out);
     // Milestone 05d Task 9 STEP 5: flips the Task 6 declared discrepancy — when the server was
     // launched with a keyring (`state.sealing`), the signal route now seals through it, exactly
     // as the CLI's own `execution signal --keyring` does; absent a keyring, the API seam keeps
@@ -382,15 +618,37 @@ pub(super) async fn signal(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                Ok(execution::signal::execute(
-                    &events,
-                    Some(drive_execution_id.as_str()),
-                    &signal_bytes,
-                    &evidence_out,
-                    actor,
-                    key,
-                    sealing.as_deref(),
-                )?)
+                // `signal::execute` is synchronous, but the sealing API is async, so it drives the
+                // seal on a runtime it builds itself. On a reactor thread that construction is a
+                // PANIC, not an error ("Cannot start a runtime from within a runtime", measured
+                // 2026-08-28 at `execution/signal.rs:262`), and a panicking handler aborts the
+                // connection: the caller sees a truncated HTTP response instead of a refusal, so
+                // no diagnostic reaches them and nothing is recorded. `spawn_blocking` hands the
+                // command layer a thread with no reactor on it — the same seam
+                // `gateway_probe` above already uses for synchronous command work.
+                //
+                // This is load-bearing only when the server was started with a keyring; without
+                // one `sealing` is `None`, the seal never runs, and the panic never fires. That
+                // is why the defect outlived every earlier signal test: they all ran unsealed.
+                let recorded = tokio::task::spawn_blocking(move || {
+                    execution::signal::execute(
+                        &events,
+                        Some(drive_execution_id.as_str()),
+                        &signal_bytes,
+                        evidence_out.as_deref(),
+                        actor,
+                        key,
+                        sealing.as_deref(),
+                    )
+                })
+                .await
+                .map_err(|_| {
+                    MutationError::Prepared(respond(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Outcome::internal(SIGNAL_COMMAND, "the signal task failed").output,
+                    ))
+                })?;
+                Ok(recorded?)
             })
         },
     )
@@ -675,14 +933,10 @@ pub(super) async fn resume(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let Some(file) = payload.get("file").and_then(serde_json::Value::as_str) else {
-        return bad_request(
-            RESUME_COMMAND,
-            "the request body must carry \"file\"",
-            "/file",
-        );
+    let source = match graph_source(&payload, RESUME_COMMAND) {
+        Ok(source) => source,
+        Err(response) => return response,
     };
-    let file = PathBuf::from(file);
     let fixtures = payload
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
@@ -699,13 +953,13 @@ pub(super) async fn resume(
         |actor, key| {
             Box::pin(async move {
                 let version =
-                    load_and_publish(&file, RESUME_COMMAND).map_err(MutationError::Prepared)?;
+                    load_and_publish(&source, RESUME_COMMAND).map_err(MutationError::Prepared)?;
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the resume decision is the
                     // last thing that can fail rather than the first thing that commits. A setup
                     // refusal now leaves the operator's pause hold exactly where they left it.
-                    let setup = prepare_drive(&drive_state, &payload).await?;
+                    let setup = prepare_drive(&drive_state, RESUME_COMMAND, &payload).await?;
                     let prepared = execution::resume::execute_prepared(
                         &version,
                         &drive_state.events,
@@ -955,6 +1209,69 @@ struct PreparedPorts {
     lease: ToolLease,
 }
 
+/// Which model this drive runs on: the request's `"route"` when it names one, the deployer's
+/// `--route` default otherwise.
+///
+/// THE MANIFEST IS RE-READ, not answered from the `ModelRoute` cloned at startup. That is what
+/// `RuntimeWiring::manifest_path` is kept for, and it is what `GET /v1/gateway/routes` already
+/// does — so the listing a caller picks from and the resolution of what they picked read the same
+/// file. Answering from a startup snapshot would let the Studio offer a route this then refuses,
+/// or accept one the listing no longer shows, and the caller could not tell which of the two
+/// surfaces was lying.
+///
+/// A PRESENT-BUT-UNUSABLE `"route"` IS REFUSED, never quietly ignored. The tempting spelling is
+/// `payload.get("route").and_then(Value::as_str)`, which folds "absent" and "present but not a
+/// string" into the same `None` and runs the deployer's default. The operator asked for a
+/// specific model; spending a different one and reporting success is the one outcome this cannot
+/// produce.
+#[allow(clippy::result_large_err)] // `MutationError::Prepared` carries a built response
+fn resolve_requested_route(
+    wiring: &RuntimeWiring,
+    command: &'static str,
+    payload: &serde_json::Value,
+) -> Result<ModelRoute, MutationError> {
+    // THE DEFAULT GOES THROUGH THE FRESH MANIFEST TOO. The startup `ModelRoute` clone answered
+    // the omitted-route case directly, so an operator who edited the manifest after `serve`
+    // started could see `GET /v1/gateway/routes` reflect the change while the default path went
+    // on driving the removed, disabled, or re-keyed route from the snapshot (PR #467 review).
+    // Only the default's ID survives from startup; what that id MEANS is read from the file.
+    let requested = match payload.get("route") {
+        None | Some(serde_json::Value::Null) => wiring.route.id(),
+        Some(serde_json::Value::String(id)) => id,
+        Some(_) => {
+            return Err(MutationError::Prepared(bad_request(
+                command,
+                "\"route\" must be a string naming a route in the manifest",
+                "/route",
+            )));
+        }
+    };
+
+    let bytes = std::fs::read(&wiring.manifest_path).map_err(|_| {
+        // The path is NOT in the message. `manifest_path` is a filesystem location on the
+        // deployer's machine and this text reaches an HTTP caller; the caller cannot act on it
+        // and the operator already knows what they passed to `--manifest`.
+        MutationError::from(setup_failure("the configured manifest could not be read"))
+    })?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        MutationError::from(setup_failure("the configured manifest is not valid UTF-8"))
+    })?;
+    let manifest = RouteManifest::from_json(&text)
+        .map_err(|error| MutationError::from(setup_failure(&error.to_string())))?;
+
+    find_route(&manifest, requested).ok_or_else(|| {
+        // The requested id is echoed back deliberately: it is the caller's OWN input (or the
+        // deployer's default, which the deployer knows), it is the one fact that makes this
+        // actionable, and `GET /v1/gateway/routes` is the listing that says what would have
+        // worked.
+        MutationError::Prepared(bad_request(
+            command,
+            &format!("\"route\" does not name an enabled route in the manifest: {requested}"),
+            "/route",
+        ))
+    })
+}
+
 /// Builds everything in the drive's setup that can refuse, so the *decision* is the last thing that
 /// can fail rather than the first thing that commits.
 ///
@@ -966,13 +1283,15 @@ struct PreparedPorts {
 /// leaves nothing behind to release, and no lifetime story is owed.
 async fn prepare_drive(
     state: &ServeState,
+    command: &'static str,
     payload: &serde_json::Value,
 ) -> Result<DriveSetup, MutationError> {
     let sealer = build_sealer(state.sealing.as_deref())
         .map_err(|message| MutationError::from(setup_failure(&message)))?;
     let ports = match &state.runtime {
         Some(wiring) => {
-            let model = ServeModelPort::build(wiring)
+            let route = resolve_requested_route(wiring, command, payload)?;
+            let model = ServeModelPort::build(wiring, &route)
                 .await
                 .map_err(|message| MutationError::from(setup_failure(&message)))?;
             // Three-deep fallback (issue #82): the caller's own `"project"` wins when given (no
@@ -999,7 +1318,10 @@ async fn prepare_drive(
             Some(PreparedPorts {
                 model,
                 tools,
-                route_id: wiring.route.id().to_owned(),
+                // The route the drive RESOLVED, never `wiring.route` again: the executor stamps
+                // this id onto the work it dispatches, so a stale default here would label every
+                // call with a model that did not answer it.
+                route_id: route.id().to_owned(),
                 lease: ToolLease {
                     actor: "runtime".to_owned(),
                     capabilities: [
@@ -1468,4 +1790,176 @@ pub(super) async fn wake_lease_status(
         ),
         Err(failure) => respond_failure(WAKE_LEASE_COMMAND, failure),
     }
+}
+/// `GET /v1/executions/{id}/evidence/{evidenceId}`: the content behind an evidence reference,
+/// opened.
+///
+/// WHY THIS ROUTE EXISTS. Every outcome a node records seals its real content — a model's reply,
+/// a tool's stdout — into encrypted Evidence, and the event carries only the reference and the
+/// token counts (D-036, `core/runtime/src/executor.rs`). The event stream could therefore say
+/// THAT a node replied and never what it said, which is a log an operator cannot read and a chat
+/// surface cannot render. The sealing is right; the missing half was a way back in.
+///
+/// WHAT IT DOES NOT WIDEN. `evidence_exists` gates the lookup inside the store, and it answers
+/// from the events actually recorded — so this serves Evidence some event already references and
+/// refuses anything else, including a blob sitting in `blobs/` that nothing points at. The
+/// execution in the URL must ITSELF reference the id — checked against that execution's own
+/// replay below, because the store's gate is scope-wide and every execution here shares one
+/// scope; the store gate alone let one execution's evidence answer under another's URL. And the
+/// key is the server's own: a caller who could not already reach `serve`'s keyring gains nothing
+/// here.
+///
+/// WHAT IT DOES WIDEN, said plainly rather than left for someone to discover: this server's
+/// bearer token used to unlock metadata, and now unlocks `Confidential` plaintext — the class
+/// replies and streams are sealed under. That is the point of the route and it is a real change
+/// in what the token is worth. The reply names the `sensitivity` of what it returns so a caller
+/// holding it knows which class it is, rather than having to know where it came from.
+pub(super) async fn evidence(
+    State(state): State<ServeState>,
+    UrlPath((execution_id, evidence_id)): UrlPath<(String, String)>,
+) -> Response {
+    let Ok(id) = EvidenceId::parse(evidence_id.clone()) else {
+        return bad_request(
+            EVIDENCE_COMMAND,
+            "the evidence id is not a valid identifier",
+            "/evidenceId",
+        );
+    };
+    // Built BEFORE the store read, so a server that was never wired to decrypt says so instead of
+    // reading a blob it then cannot open — the refusal names the configuration, not the content.
+    let opener = match build_opener(state.sealing.as_deref()) {
+        Ok(opener) => opener,
+        Err(message) => return evidence_refusal(&message),
+    };
+
+    let events = state.events.clone();
+    let lookup = tokio::task::spawn_blocking(move || {
+        let store = event_store(&events).map_err(|error| execution::repository_failure(&error))?;
+        let (scope, _, history) = execution::resolve_stream(&store, Some(&execution_id))?;
+        // THE URL'S EXECUTION MUST ITSELF REFERENCE THE ID. `sealed_evidence` gates against the
+        // SCOPE-wide reachable set, and every execution here shares one workspace/project scope -
+        // so without this check, execution A's confidential content answered under execution B's
+        // URL, and a caller could misattribute whose evidence they were reading (PR #467 review).
+        // The history is this execution's own replay, already in hand from `resolve_stream`.
+        let referenced = history.iter().any(|event| {
+            event
+                .evidence_refs
+                .iter()
+                .any(|reference| reference.evidence_id() == &id)
+        });
+        if !referenced {
+            return Ok((scope, None));
+        }
+        // `Invalid` IS SEPARATED FROM EVERY OTHER STORE ERROR, and the separation is what makes
+        // the store's own gate visible from out here. `sealed_evidence` answers `Invalid` for an
+        // id no recorded event references, and `Integrity` when the store finds itself damaged.
+        // Folded together they are both "500, something went wrong", which would mean removing
+        // the gate entirely still produced a non-200 — a test asserting only "not 200" would go on
+        // passing, and the gate would be unguarded while looking guarded.
+        let read = match store.sealed_evidence(&scope, &id) {
+            Ok(read) => read,
+            Err(EventRepositoryError::Invalid) => return Ok((scope, None)),
+            Err(error) => return Err(execution::repository_failure(&error)),
+        };
+        Ok::<_, execution::Failure>((scope, Some(read)))
+    })
+    .await;
+
+    let (scope, read) = match lookup {
+        Ok(Ok(found)) => found,
+        Ok(Err(failure)) => return respond_failure(EVIDENCE_COMMAND, failure),
+        Err(_) => {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(EVIDENCE_COMMAND, "the evidence read task failed").output,
+            );
+        }
+    };
+    let Some(read) = read else {
+        return evidence_refusal(
+            "no evidence with that id is referenced by this execution's events",
+        );
+    };
+
+    let sealed = match read {
+        EvidenceRead::Available(sealed) => sealed,
+        // The store said the content is gone rather than that it never existed. The reason is
+        // reported as-is: "erased" and "expired" are different facts about the same absence, and
+        // collapsing them would tell an operator to go looking for something that was deleted on
+        // purpose.
+        EvidenceRead::Unavailable(reason) => {
+            return evidence_refusal(&format!("the evidence is unavailable: {reason:?}"));
+        }
+    };
+
+    // CHECKED BEFORE OPENING, the way the Governor checks before it materializes
+    // (`core/governor/src/materialize.rs`). Decrypting bytes this surface has already decided it
+    // cannot render would put plaintext in memory for nothing.
+    let media_type = sealed.media_type().as_str().to_owned();
+    if !renders_as_text(&media_type) {
+        return evidence_refusal(&format!(
+            "this evidence is {media_type}, which this route does not render; it serves JSON and text only"
+        ));
+    }
+    let sensitivity = sealed.sensitivity();
+    let content_sha256 = sealed.reference().content_sha256().to_owned();
+
+    let plaintext = match opener.open(scope, &sealed).await {
+        Ok(plaintext) => plaintext,
+        Err(error) => {
+            return evidence_refusal(&format!("the evidence could not be opened: {error}"));
+        }
+    };
+    // `SecretBytes` exposes only through a callback and zeroizes on drop; the UTF-8 check and the
+    // copy both happen inside that callback so nothing outstays it. From here the plaintext is an
+    // ordinary `String` in a response body — the zeroization guarantee ends at this line, and it
+    // ends here for every reader of this route, which is what the doc comment above is about.
+    let text = plaintext.expose(|bytes| String::from_utf8(bytes.to_vec()));
+    let Ok(text) = text else {
+        return evidence_refusal(
+            "this evidence is not valid UTF-8, so it cannot be rendered as text",
+        );
+    };
+
+    respond(
+        StatusCode::OK,
+        Outcome::success(
+            EVIDENCE_COMMAND,
+            serde_json::json!({
+                "evidenceId": evidence_id,
+                "mediaType": media_type,
+                "sensitivity": sensitivity,
+                "contentSha256": content_sha256,
+                "content": text,
+            }),
+        )
+        .output,
+    )
+}
+
+/// Evidence this route will render. The model reply — the reason the route exists — seals as
+/// `application/json` (`core/runtime/src/evidence.rs`), and a tool node's streams seal as
+/// `text/plain`. Anything else is refused rather than guessed at: a surface that base64s unknown
+/// bytes into a JSON string is not showing an operator their content, it is moving it.
+fn renders_as_text(media_type: &str) -> bool {
+    media_type == "application/json" || media_type.starts_with("text/")
+}
+
+/// One refusal shape for every way this read can decline, all of them 409: the request was
+/// well-formed and the server understood it, and what it could not do is a fact about this
+/// server's configuration or this evidence's state rather than about the caller's syntax.
+fn evidence_refusal(message: &str) -> Response {
+    respond(
+        StatusCode::CONFLICT,
+        Outcome::domain(
+            EVIDENCE_COMMAND,
+            vec![Diagnostic::error(
+                "GHCLI023_EVIDENCE_UNREADABLE",
+                message,
+                "/evidence",
+                SOURCE,
+            )],
+        )
+        .output,
+    )
 }

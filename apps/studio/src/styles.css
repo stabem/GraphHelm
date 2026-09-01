@@ -1,0 +1,2068 @@
+/* The two faces the reference direction drew in, vendored INTO the bundle - the header's
+   no-webfont rule said this was the one honest way to have them, and now they are here no
+   request leaves this machine for a glyph. Variable files, latin subset, 54KB together. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/space-grotesk-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+}
+
+/*
+ * GraphHelm Local Studio — the instrument.
+ *
+ * A MACHINE'S CONSOLE, READ BY A PERSON — and softly. Rounded blocks, warm accents, and depth
+ * carried by shadow rather than by outline. The instrument is still an instrument; it just does
+ * not have to be sharp to be precise.
+ *
+ * TWO FACES, EACH WITH A JOB. The interface speaks in a sans; MONOSPACE IS RESERVED for the
+ * things that are literally identifiers — execution and node ids, event payloads, a command you
+ * are asked to type. An earlier pass set monospace everywhere, which made ordinary prose read as
+ * output and left the ids with nothing to distinguish them. Where everything is code, nothing is.
+ *
+ * RADIUS IS A SCALE, NOT A HABIT. Five steps, and each one means something: `--r-pill` for things
+ * that are read as tokens (state chips, tool toggles), `--r-lg` for the surfaces you look AT
+ * (panels, node blocks) with `--r-xl` for the largest of them, `--r` for the things you click, and
+ * `--r-sm` for the small marks inside them.
+ * Picking a radius per element is how a rounded interface turns to mush; picking the step that
+ * matches what the element IS keeps it deliberate.
+ *
+ * NO WEBFONT, and that is a product constraint rather than a preference: this application makes
+ * no request to any host but the local Runtime, and a font CDN would be the first exception. The
+ * reference direction draws in Space Grotesk and JetBrains Mono; the system stacks hold those two
+ * roles until the files are vendored INTO the bundle, which is the only way to have them without
+ * making that request. Weight, tracking and scale carry the rest.
+ *
+ * SEPARATION BY TONE AND DEPTH, NEVER BY OUTLINE. Four greys stack — void, surface, raised,
+ * high — and a block is told apart from its neighbour by which one it sits on and by the shadow
+ * it casts. NO BOX IS RINGED: a 1px outline around a rounded block is the thing that makes a soft
+ * interface look drawn rather than lit, and the node cards carried exactly that. Rings survive on
+ * BLOCKS THAT ARE THE SUBJECT — the one that needs a person, and the one you selected — coloured
+ * and 2px, where a ring is not decoration but the loudest thing on the board. Everything else in
+ * this file that looks like a line is INSET, sits on a control you type into, and is its focus.
+ *
+ * ONE SIGNAL COLOUR. Tangerine means "a person is needed", everywhere, without exception — the
+ * run that needs you, the node that blocks, the button that acts, the operator's own voice. Mint
+ * is the Runtime moving under its own power and iris is an agent. Nothing else is coloured, so
+ * the tangerine never has to compete.
+ *
+ * FLOOR: text holds 4.5:1 against its own layer, focus is always visible, motion respects the
+ * reduced setting, and every meaning colour carries is also carried by shape or by words.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --void: #0a0a0b;
+  --surface: #151517;
+  --raised: #1e1e22;
+  --high: #2a2a30;
+  /* One step above --high, in the same neutral ramp. It was #2f3434 - a GREEN-grey, tuned to the
+     old palette - which reads as a tint of its own against these greys. */
+  --edge: #34343c;
+
+  --text: #f5f5f6;
+  --dim: #a2a2ad;
+  /* Was #6e6e7a, which measured 3.6:1 on --raised and 4.0:1 on --surface - under the 4.5:1
+     floor this file's own header claims. Lifted until it clears the floor on every layer it
+     is actually painted on. */
+  --faint: #8a8a96;
+
+  /* Tangerine, mint, iris, sky - warmer and lower-contrast than the amber set they replace, which
+     is what lets them sit on a rounded block without shouting. The token names are unchanged on
+     purpose: they name the MEANING, and the meanings did not move. */
+  --signal: #ff8a3d;
+  /* DERIVED, not typed. These were hand-picked against the amber set and stayed behind when the
+     accents moved - a wash tuned to a hue that no longer exists is exactly the drift that makes a
+     palette look almost right. Mixing them from their own accent means the tint can never again
+     disagree with the colour it belongs to. `--signal-ink` is TEXT on the signal, so it stays a
+     literal: contrast is a floor to be met, not an outcome of a mix. */
+  --signal-ink: #241004;
+  --signal-wash: color-mix(in oklab, var(--signal) 16%, var(--void));
+  --live: #3ddc97;
+  --live-wash: color-mix(in oklab, var(--live) 16%, var(--void));
+  --agent: #8b7cff;
+  --agent-wash: color-mix(in oklab, var(--agent) 18%, var(--void));
+  --danger: #ff6b6b;
+
+  /* The soft scale. Nothing in this file sets a raw radius; everything reaches for one of these,
+     so the whole interface moves together when the scale does. */
+  --r-sm: 6px;
+  --r: 12px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* Depth, also a scale. `--lift` is a block resting on the board; `--float` is the window over
+     it. Two steps, so "which of these is on top" is answerable by looking. */
+  --lift: 0 10px 26px rgb(0 0 0 / 30%);
+  --float: 0 24px 70px rgb(0 0 0 / 55%);
+
+  /* The canvas annotations only - notes a person pinned, the empty-board line. Windows ships
+     two real handwriting faces, so the Excalidraw register costs no webfont. Never used for
+     anything the Runtime said. */
+  --hand: "Segoe Print", "Ink Free", "Comic Sans MS", cursive;
+  --reading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  /* The hand-drawn outline. The no-outline doctrine stands for panels and chrome; the BOARD
+     is now a whiteboard, and on a whiteboard a block is a thing somebody drew. */
+  --sketch: #45454e;
+  --ink-pen: #8a8a96;
+  /* Motion: two durations and one deceleration. Hover and press take the quick one; anything
+     mounting takes the soft one. Nothing else is animated, and nothing loops except the
+     spinner and the waiting ring. */
+  --t-quick: 120ms;
+  --t-soft: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --pencil: color-mix(in oklab, var(--signal) 38%, var(--faint));
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 700;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+}
+
+/* Tight and heavy, so the wordmark reads as a mark rather than as a heading - it is the same face
+   as the rest of the interface now, and only the tracking and weight set it apart. */
+.wordmark {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+/* The mark is a TILE, not a glyph in a line of text: it is the one place the interface has a
+   solid block of colour, which is what makes the rail's top read as a header without a rule
+   under it. */
+.mark {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: var(--r);
+  background: var(--agent);
+  color: var(--void);
+  display: grid;
+  place-items: center;
+}
+
+.mark svg { width: 17px; height: 17px; }
+
+.lbl {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dim { color: var(--dim); }
+.faint { color: var(--faint); }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The scrollbar is chrome, not content: thin, rounded, and silent until touched. */
+* { scrollbar-width: thin; scrollbar-color: var(--high) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--high);
+  border-radius: var(--r-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--edge); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+
+svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.spin { animation: spin 0.9s linear infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-quick: 0ms; --t-soft: 0ms; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+  .spin { animation: spin 1.8s linear infinite !important; }
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  border-radius: var(--r);
+  background: var(--raised);
+  padding: 8px 14px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+.project-head,
+.run,
+.add-project,
+.show-more,
+.crew-member,
+.reply-hint,
+.talk-open,
+.grip {
+  transition:
+    background-color var(--t-quick) var(--ease),
+    color var(--t-quick) var(--ease),
+    scale var(--t-quick) var(--ease);
+}
+
+button:hover:not(:disabled) { background: var(--high); }
+button:active:not(:disabled) { scale: 0.97; }
+.act:active:not(:disabled),
+.send:active:not(:disabled) { scale: 0.96; }
+button:disabled { color: var(--faint); cursor: not-allowed; }
+
+.act {
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-weight: 700;
+}
+
+/* Lifted from the signal itself: a literal here is a second colour that has to be remembered. */
+.act:hover:not(:disabled) { background: color-mix(in oklab, var(--signal) 82%, white); }
+.act:disabled { background: var(--raised); color: var(--faint); font-weight: 400; }
+
+.ghost {
+  background: transparent;
+  color: var(--dim);
+  padding: 6px 10px;
+}
+
+.ghost:hover:not(:disabled) { background: var(--raised); color: var(--text); }
+
+/* ---------------------------------------------------------------- connect */
+
+/* Only reached when the dev server did not hand the page a session — a built bundle served
+   somewhere else. In the ordinary local loop nobody ever sees this. */
+.gate {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--void);
+}
+
+.gate-card {
+  border-radius: var(--r-lg);
+  width: min(470px, 100%);
+  background: var(--surface);
+  padding: 24px;
+  display: grid;
+  gap: 14px;
+}
+
+.gate-card h1 {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.gate-card form { display: grid; gap: 9px; }
+.gate-card label { color: var(--dim); font-size: 12px; }
+
+.field {
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--void);
+  padding: 0 11px;
+  color: var(--faint);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+
+.field:focus-within { box-shadow: inset 0 0 0 1px var(--signal); }
+
+.field input {
+  border-radius: var(--r);
+  flex: 1;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 11px 0;
+}
+
+.field input:focus { outline: none; }
+
+.form-error { color: var(--danger); }
+
+.gate-note {
+  border-left: 3px solid var(--signal);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--raised);
+  padding: 11px 12px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: clamp(200px, var(--rail, 268px), 460px) 5px minmax(0, 1fr);
+  background: var(--void);
+}
+
+/* -------------------------------------------------------------- projects */
+
+.rail {
+  padding: 20px 14px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px;
+}
+
+.rail-live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--live);
+}
+
+.rail-live.off { color: var(--faint); }
+
+.rail-live i {
+  border-radius: var(--r-pill);
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+}
+
+.projects {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+.project-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  color: var(--text);
+  text-align: left;
+  min-width: 0;
+}
+
+.project-head:hover { background: var(--raised); }
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Icon-only, fixed width, and it never joins the fight for the name's space. */
+.icon-action {
+  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+  display: inline-flex;
+  padding: 2px;
+  color: var(--faint);
+  line-height: 0;
+}
+
+.icon-action:hover:not(:disabled) { color: var(--signal); }
+.icon-action:disabled { opacity: 0.35; cursor: not-allowed; }
+.icon-action svg { width: 14px; height: 14px; }
+
+.project-runs {
+  display: grid;
+  gap: 3px;
+  margin: 3px 0 10px 20px;
+}
+
+.run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.run:hover { background: var(--raised); }
+.run.on { background: var(--high); }
+
+/* SIX PIXELS, and the word in the accessible name and the tooltip. The word used to be on the
+   line, where an id long enough to fill the rail cut "can sleep" to "can sl". A mark has no
+   length to lose. */
+.run-mark {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: var(--r-pill);
+  background: var(--faint);
+}
+
+.run.needs .run-mark { background: var(--signal); }
+.run.calm .run-mark { background: var(--live); }
+
+/* Two stacked lines beside the room's avatar, like a conversation list entry: the name, and
+   when it last moved. */
+.run-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.run-id {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-when { font-size: 10px; color: var(--faint); }
+
+.show-more {
+  color: var(--dim);
+  border-radius: var(--r-sm);
+  display: block;
+  width: 100%;
+  padding: 4px 8px 4px 14px;
+  color: var(--faint);
+  font-size: 11px;
+  text-align: left;
+}
+
+.show-more:hover:not(:disabled) { color: var(--dim); }
+.show-more:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.add-project {
+  color: var(--dim);
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: left;
+  min-width: 0;
+}
+
+.add-project:hover { background: var(--raised); color: var(--dim); }
+.add-project svg { width: 13px; height: 13px; flex: 0 0 auto; }
+
+/* The grip between the rail and the board. Five pixels of hit area, the edge tone until hovered. */
+.grip {
+  background: var(--edge);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.grip:hover, .grip.dragging { background: var(--signal); }
+
+.rail-empty {
+  color: var(--dim);
+  font-size: 11px;
+  padding: 6px 8px 6px 14px;
+  background: none;
+  text-align: left;
+  width: 100%;
+}
+.rail-empty:hover:not(:disabled) { background: var(--raised); }
+
+/* ----------------------------------------------------------------- stage */
+
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 16px 16px 16px 0;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, var(--high) 1.4px, transparent 0) 0 0 / 26px 26px,
+    var(--surface);
+}
+
+/* IN FLOW, NOT FLOATED. The strip used to be absolutely positioned over the stage, and the panel
+   was absolutely positioned under a hard-coded `top: 84px` - so the day the attention line
+   wrapped to a second row, the two overlapped (screenshot, 2026-08-30). In flow, a taller strip
+   pushes everything below it, and that whole class of collision cannot exist. */
+.topstrip {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+}
+
+/* The strip is a rail for cards, not a bar. `pointer-events` comes back on the cards themselves
+   so the board behind the gap between them stays draggable. */
+.strip-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--raised) 86%, transparent);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  min-width: 0;
+}
+
+.strip-card.right { margin-left: auto; padding: 7px 8px; gap: 4px; }
+
+/* The verdict's own explanation, wrapping to its own line inside the left strip card. Each
+   reason sentence carries the one action that is legal for it; the button sits in the sentence
+   because the sentence is what justifies it. */
+.strip-card { flex-wrap: wrap; }
+.why {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  padding-top: 2px;
+}
+.why > span { display: inline-flex; align-items: center; gap: 7px; }
+.why button {
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-size: 11px;
+}
+.why button:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
+/* Deployment context, not a reason: quieter than the sentences it qualifies. */
+.why-context { color: var(--faint); font-size: 11px; }
+
+.topstrip .run-name {
+  font-family: var(--mono);
+  border-radius: var(--r-sm);
+  background: none;
+  padding: 4px 8px;
+  font-weight: 700;
+}
+
+.tag {
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--high);
+  color: var(--dim);
+}
+
+.tag.needs { background: var(--signal); color: var(--signal-ink); }
+.tag.calm { background: var(--live-wash); color: var(--live); }
+.tag.unknown { background: var(--agent-wash); color: var(--agent); }
+
+.topstrip .meta { color: var(--faint); font-size: 11px; }
+.topstrip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+.toolchips { display: flex; gap: 2px; }
+.toolchips span {
+  border-radius: var(--r-pill); background: var(--surface); padding: 3px 9px; color: var(--faint); font-size: 10px; }
+.toolchips span.on { color: var(--live); }
+
+.banner {
+  border-radius: var(--r);
+  margin: 0 16px;
+  background: color-mix(in oklab, var(--danger) 16%, var(--void));
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ board */
+
+.sheet {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.sheet.panning { cursor: grabbing; }
+
+.sheet.tool-pen { cursor: crosshair; }
+/* In pen and note mode the cards get out of the ink's way: no cursor fights, no stray
+   clicks, and a stroke can start anywhere. */
+.sheet.tool-pen .node,
+.sheet.tool-pen .agent-blob,
+.sheet.tool-pen .talk-bubble,
+.sheet.tool-note .node,
+.sheet.tool-note .agent-blob,
+.sheet.tool-note .talk-bubble { pointer-events: none; }
+/* Holding a card IS a grab; the whole hand says so while one is held. */
+.sheet.tool-select .node-open,
+.sheet.tool-select .agent-open,
+.sheet.tool-select .talk-open { cursor: grab; }
+.sheet.dragging,
+.sheet.dragging * { cursor: grabbing !important; }
+.sheet.tool-note { cursor: cell; }
+.sheet.tool-hand { cursor: grab; }
+.sheet.tool-hand .node,
+.sheet.tool-hand .agent-blob,
+.sheet.tool-hand .talk-bubble,
+.sheet.tool-hand .sheet-note { pointer-events: none; }
+
+/* The camera: everything on the board rides this one transform. */
+.world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* The marquee: the operator's lasso, alive only while the button is down. */
+.marquee {
+  position: absolute;
+  z-index: 8;
+  border: 1px solid color-mix(in oklab, var(--text) 55%, transparent);
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+  border-radius: var(--r-sm);
+  pointer-events: none;
+}
+
+/* A multi-picked piece wears the same neutral ring as a single selection. */
+.node.multi,
+.talk-bubble.multi .talk-open { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+.agent-blob.multi .avatar { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+
+.zoomer { display: inline-flex; gap: 2px; margin-left: 8px; }
+.zoomer button { border-radius: var(--r); padding: 8px 10px; font-size: 12px; }
+.zoom-label { font-family: var(--mono); min-width: 52px; }
+
+.sheet-ink {
+  position: absolute;
+  inset: 0;
+  width: 2600px;
+  height: 1700px;
+  pointer-events: none;
+}
+
+.edge { fill: none; stroke: var(--pencil); stroke-width: 2; stroke-linecap: round; filter: url(#roughen); }
+.edge.control,
+.edge.condition { stroke-dasharray: 4 6; }
+.edge-tip { fill: none; stroke: var(--pencil); stroke-width: 2; stroke-linecap: round; }
+
+.stroke { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; filter: url(#roughen); }
+.stroke.ink { stroke: var(--ink-pen); }
+.stroke.flag { stroke: var(--signal); stroke-width: 3; }
+.stroke.calm { stroke: var(--live); }
+.stroke.live { opacity: 0.7; }
+
+.node {
+  animation: card-in var(--t-soft) var(--ease) both;
+  position: absolute;
+  width: 258px;
+  padding: 12px 14px 10px;
+  /* Asymmetric on purpose: four equal corners is a printed card, and this board is a
+     whiteboard now. The wonk is subtle enough that the text inside never notices. */
+  border: 1.5px solid var(--sketch);
+  border-radius: 17px 8px 15px 9px / 9px 15px 8px 17px;
+  background: var(--raised);
+  box-shadow: var(--lift);
+  cursor: grab;
+  z-index: 3;
+}
+
+.node,
+.agent-blob .avatar { transition: scale var(--t-quick) var(--ease); }
+.node:active { scale: 1.015; }
+.agent-blob:active .avatar { scale: 1.1; }
+.talk-open:active { scale: 0.985; }
+
+.node:nth-of-type(odd) { transform: rotate(-0.35deg); }
+.node:nth-of-type(even) { transform: rotate(0.3deg); }
+
+/* SELECTION IS NEUTRAL. Tangerine means a person is needed; a click is not that. The same
+   ring on all three kinds of canvas citizen. */
+.node.selected { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+
+
+/* THE EXCEPTION, and it is deliberate: a person is needed here. The ring is a pseudo so its
+   breath is opacity-only - compositor-clean - and FAILED wears the same ring, still. */
+.node.waiting,
+.node.dead { box-shadow: var(--lift); }
+.node.waiting::after,
+.node.dead::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--signal);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.node.waiting::after { animation: ring-breathe 2.4s var(--ease) infinite; }
+.node.moving { border-color: color-mix(in oklab, var(--live) 55%, var(--sketch)); }
+.node.dead .blob { background: var(--danger); }
+.node.dead .node-state { color: var(--danger); }
+@keyframes ring-breathe { 50% { opacity: 0.4; } }
+
+.node-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: none;
+  text-align: left;
+}
+
+/* A round blob of the node's own mood colour. The card carried a 3px strip along its top edge
+   instead - a hairline by another name, which vanished the moment the corners rounded. */
+.blob {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: var(--r);
+  background: var(--faint);
+}
+
+.node.waiting .blob { background: var(--signal); }
+.node.moving .blob { background: var(--live); }
+.node.done .blob { background: var(--agent); }
+
+.node-open:hover { background: none; }
+
+.node-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.node-id {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+/* Two lines, so the id is a NAME and not a caption: the block has a subject. */
+.node-name {
+  flex: 1;
+  min-width: 0;
+  display: block;
+}
+
+.node-kind {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.node-state {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.node.waiting .node-state { color: var(--signal); }
+.node.moving .node-state { color: var(--live); }
+
+.node-meta {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* Eyebrow: the block's address on the left; while something moves or waits, the state word
+   breathes on the right - the card says "alive" before you read a number. */
+.node-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.node-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.node-live-word {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.node-live-word.moving { color: var(--live); }
+.node-live-word.waiting { color: var(--signal); }
+.node-live-word i { font-style: normal; display: inline-block; animation: word-pulse 1.8s var(--ease) infinite; }
+@keyframes word-pulse { 50% { opacity: 0.35; } }
+
+.node-title {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One line, two truths: the tally on the left, the freshest movement on the right. */
+.node-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  min-width: 0;
+}
+.node-status > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-fresh { color: var(--dim); white-space: nowrap; flex: 0 0 auto; }
+
+/* The drawer: the node's own log, opened in place. Chips speak the surface's colours. */
+.node-history-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px 0 2px;
+  background: none;
+  border-top: 1px solid var(--edge);
+  border-radius: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  text-align: left;
+}
+.node-history-toggle:hover:not(:disabled) { background: none; color: var(--dim); }
+.node-history {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+  max-height: 170px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.node-history li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+.hist-chip {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  background: var(--high);
+  color: var(--faint);
+}
+.hist-chip.live { color: var(--live); background: var(--live-wash); }
+.hist-chip.alarm { color: var(--signal); background: var(--signal-wash); }
+.hist-chip.pulse { animation: word-pulse 1.8s var(--ease) infinite; }
+.hist-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+}
+.hist-when { flex: 0 0 auto; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+/* The canvas's own cheat line, centre-bottom, out of every path. */
+.canvas-hints {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 4;
+  display: flex;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* The hands on this block. Every actor that recently touched the node, newest first, wearing
+   the same derived colour it wears in the thread and the crew card - the board answers the
+   'who is on this' question without opening anything. */
+.node-crew {
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+  min-width: 0;
+}
+.node-crew .avatar { margin-right: -5px; box-shadow: 0 0 0 2px var(--raised); }
+.node-crew .who {
+  margin-left: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-note { position: absolute; width: 176px; padding: 6px; cursor: grab; }
+
+.sheet-note textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  padding: 9px;
+  border: 0;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--hand);
+  font-size: 12px;
+  border-radius: 6px 14px 8px 12px / 12px 8px 14px 6px;
+  box-shadow: inset 0 0 0 1px var(--sketch);
+}
+
+.sheet-note textarea:focus { outline: none; box-shadow: 0 0 0 2px var(--signal); }
+
+.sheet-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-family: var(--hand);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------- dock */
+
+.dock {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 2px;
+  z-index: 5;
+}
+
+.dock button {
+  border-radius: var(--r); padding: 8px 14px; font-size: 12px; }
+
+.tools {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 2px;
+  z-index: 5;
+}
+
+.tools button {
+  border-radius: var(--r); padding: 8px 14px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+.tools button.on { background: var(--signal); color: var(--signal-ink); font-weight: 700; }
+
+.tones { display: flex; gap: 2px; }
+.tones button {
+  border-radius: var(--r); width: 30px; padding: 8px 0; }
+.tones button i {
+  border-radius: var(--r-pill); display: block; width: 12px; height: 3px; margin: 0 auto; }
+.tones .ink i { background: var(--ink-pen); }
+.tones .flag i { background: var(--signal); }
+.tones .calm i { background: var(--live); }
+.tones button.on { box-shadow: inset 0 0 0 2px var(--text); }
+
+.graph-file {
+  position: absolute;
+  left: 16px;
+  bottom: 58px;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--edge);
+  border-radius: var(--r);
+  overflow: hidden;
+  z-index: 5;
+}
+
+.graph-file .wrap {
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--raised);
+  padding: 0 11px;
+  color: var(--faint);
+}
+
+.graph-file input {
+  border-radius: var(--r);
+  width: 300px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 9px 0;
+}
+
+.graph-file:focus-within { box-shadow: inset 0 0 0 1px var(--signal); }
+.graph-file input:focus { outline: none; }
+.graph-file button { padding: 9px 13px; font-size: 11px; }
+
+.edge-note {
+  border-radius: var(--r);
+  position: absolute;
+  left: 16px;
+  bottom: 100px;
+  max-width: 560px;
+  background: var(--raised);
+  border-left: 3px solid var(--edge);
+  padding: 8px 11px;
+  color: var(--dim);
+  font-size: 11px;
+  z-index: 5;
+}
+
+.edge-note .connect-toggle {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  background: var(--high);
+  color: var(--dim);
+  font-size: 11px;
+}
+.edge-note.proven { border-left-color: var(--live); }
+.edge-note.refused { border-left-color: var(--signal); }
+
+/* What the last button press did, standing over the buttons that did it. */
+.act-note {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  border-radius: var(--r);
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 5;
+  max-width: 420px;
+  background: var(--raised);
+  border-left: 3px solid var(--live);
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+  box-shadow: var(--lift);
+}
+.act-note.proven { border-left-color: var(--live); }
+.act-note.refused { border-left-color: var(--signal); color: var(--text); }
+
+/* ------------------------------------------------------------------ panel */
+
+/* The one thing on this screen that scrolls inside something else, and it earns it: a thread is
+   unbounded. Everything else fits or pans. */
+/* The two sides of a selected run: the task's conversation (`.talk`) beside the canvas
+   (`.scene`). Peers by structure - neither can bury the other, whatever grows inside them. */
+.split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The conversation column. The signal-orange hairline is its identity: this is where people and
+   agents talk, and orange is already the "someone should look here" colour everywhere else. */
+.talk {
+  width: clamp(320px, 34%, 440px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--edge);
+  border-top: 2px solid var(--edge);
+  background: var(--surface);
+}
+
+/* The canvas side. Nodes running live here; a node's own window is the ONE thing that layers,
+   and it layers over the canvas it describes, never over the conversation. */
+.scene {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--raised) 95%, transparent);
+}
+.panel .thread { flex: 1; }
+.panel .panel-empty { flex: 1; }
+
+/* Docked: the conversation fills its column, no float, no radius against the column edges. */
+.talk .panel {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+}
+
+/* Why this run needs you, standing directly above the conversation it is about. It came off
+   the top strip, where it was a second header narrating someone else's panel. */
+.attention {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--dim);
+  background: var(--signal-wash);
+}
+.attention > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.attention button {
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-size: 11px;
+}
+.attention button:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
+
+/* The chat and node columns: the same column the run's panel lives in, so a conversation or
+   a node's window NEVER covers the board - the board yields width instead. */
+.chat-col { width: clamp(280px, 24%, 380px); border-top-color: var(--agent); }
+.chat-col > .panel { animation: slide-l var(--t-soft) var(--ease) both; }
+.node-col > .panel { animation: slide-r var(--t-soft) var(--ease) both; }
+@keyframes slide-l { from { opacity: 0; translate: -10px 0; } }
+@keyframes slide-r { from { opacity: 0; translate: 10px 0; } }
+@keyframes rise-in { from { opacity: 0; translate: 0 4px; } }
+@keyframes card-in { from { opacity: 0; scale: 0.97; } }
+.node-col { width: clamp(280px, 24%, 380px); border-right: 0; border-left: 1px solid var(--edge); border-top-color: var(--live); }
+
+/* Layered: a node's window over the canvas, on the side away from the conversation. */
+.scene .panel {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  bottom: 16px;
+  width: 396px;
+  z-index: 7;
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--float);
+}
+
+.panel-head {
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--raised);
+}
+
+.panel-head i {
+  border-radius: var(--r-pill); width: 8px; align-self: stretch; background: var(--faint); }
+.panel-head.waiting i { background: var(--signal); }
+.panel-head.dead i { background: var(--danger); }
+.panel-head.moving i { background: var(--live); }
+.panel-head h2 { font-size: 16px; overflow-wrap: anywhere; }
+/* A persona's charter is prose: sentence case, reading rhythm, clamped before it swallows
+   the head. The .lbl treatment turned it into tracking caps. */
+.charter {
+  font-size: 11px;
+  color: var(--dim);
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.panel-head .close { margin-left: auto; }
+/* Docked flush in a square column, the rounded top read as a floating scrap. */
+.talk .panel-head { border-radius: 0; }
+
+.facts { display: flex; gap: 2px; }
+.facts > div {
+  border-radius: var(--r-sm); flex: 1; background: var(--surface); padding: 9px 12px; min-width: 0; }
+.facts strong {
+  font-family: var(--mono); display: block; margin-top: 3px; font-size: 13px; font-weight: 700; }
+
+.states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--r-pill);
+  background: var(--high);
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.state-chip strong { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
+.state-chip.alarm { background: var(--signal-wash); color: var(--signal); }
+.state-chip.alarm strong { color: var(--signal); }
+/* The zeros, asserted collectively: silence must still be a statement. */
+.states-rest { font-size: 11px; color: var(--faint); }
+
+.thread {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+/* Messenger turns: an avatar column and a body, the owner's own messages mirrored to the right.
+   The avatar IS the identity - one derived colour per actor, the same everywhere - so the old
+   coloured left border went with the layout that needed it. System narration keeps no avatar:
+   lifecycle is not a contact. */
+.turn { display: flex; gap: 8px; align-items: flex-start;
+  animation: rise-in var(--t-soft) var(--ease) both;
+  /* Long threads: off-screen turns skip layout and paint. Scroll anchoring is unaffected. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+.turn-name { font-weight: 700; }
+/* Continuations hang under their group's header: half the gap, an empty column where the
+   avatar would repeat. */
+.turn.cont { margin-top: -6px; }
+.avatar-hold { flex: none; width: 24px; }
+.turn.system { justify-content: center; }
+.turn.system .turn-body { flex: none; max-width: 88%; text-align: center; }
+.turn.system .turn-text { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+.turn.owner { flex-direction: row-reverse; text-align: right; }
+.turn.owner .turn-said { text-align: left; }
+
+.avatar {
+  flex: none;
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 40%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  user-select: none;
+}
+
+/* The face: two rounded bars, the same mark on every actor. It is what makes a coloured dot
+   read as SOMEBODY - the crew card, the thread and the node cards all wear the same one. */
+.avatar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 9px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 6px 0 0 #fff;
+  transform: translate(-4.5px, -50%);
+}
+
+.avatar.mini { width: 18px; height: 18px; }
+.avatar.mini::after { width: 2px; height: 7px; box-shadow: 5px 0 0 #fff; transform: translate(-3.5px, -50%); }
+
+.turn-body { min-width: 0; flex: 1; }
+
+.turn-who {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--faint); }
+.turn-text { margin-top: 3px; font-size: 12px; line-height: 1.6; }
+.turn.agent .turn-text { color: var(--agent); }
+.turn.owner .turn-text { color: var(--signal); }
+
+.turn code {
+  font-family: var(--mono);
+  border-radius: var(--r-sm);
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--void);
+  color: var(--dim);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The words themselves, opened out of sealed evidence. They get a surface of their own because
+   they are the only thing in the thread that was AUTHORED — every other line is composed from an
+   event's fields. Reading size, not label size. */
+.turn-said {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--reading);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+/* The formatter splits the sealed words into paragraphs, lists and code marks; the bubble
+   reads as a message, not as one unbroken transmission. */
+.turn-said p { margin: 0; white-space: pre-wrap; }
+.turn-said p + p,
+.turn-said ul + p,
+.turn-said ol + p,
+.turn-said p + ul,
+.turn-said p + ol { margin-top: 8px; }
+.turn-said ul,
+.turn-said ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.turn-said li { white-space: pre-wrap; }
+.turn-said li::marker { color: var(--faint); }
+/* Inline, whatever `.turn code` (the payload dump) says: a backticked identifier lives
+   INSIDE its sentence. */
+.turn-said code {
+  font-family: var(--mono);
+  font-size: 12px;
+  display: inline;
+  margin: 0;
+  background: color-mix(in oklab, currentColor 9%, transparent);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+  white-space: pre-wrap;
+}
+/* The owner's bubble carries their colour wash, mirrored right - the messenger convention the
+   reference design uses, and the fastest way to see which side of the exchange is yours. */
+.turn.owner .turn-said {
+  background: var(--high);
+  border-bottom-right-radius: var(--r-sm);
+}
+.turn:not(.owner) .turn-said { border-bottom-left-radius: var(--r-sm); }
+
+.cast { display: contents; }
+
+/* Agents on the canvas: a blob you can pick up. The anchor point is the blob's centre, so a
+   drag feels like holding the thing rather than its corner. */
+.agent-blob {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  width: 104px;
+  margin: -26px 0 0 -52px;
+  cursor: grab;
+  user-select: none;
+}
+.agent-open {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  background: none;
+  padding: 4px;
+  border-radius: var(--r);
+}
+.agent-open:hover:not(:disabled) { background: none; }
+.agent-blob .avatar { width: 40px; height: 40px; box-shadow: var(--lift); }
+.agent-blob .avatar::after { width: 4px; height: 12px; box-shadow: 8px 0 0 #fff; transform: translate(-6px, -50%); }
+.agent-blob.picked .avatar { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+.agent-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The funnel's stage captions: the hand's own writing, faint, naming the three columns. */
+.stage-label {
+  position: absolute;
+  font-family: var(--hand);
+  font-size: 13px;
+  color: var(--faint);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* The room outranks the pairs: wider, firmer border - it is the trunk of the funnel. */
+.talk-bubble.room .talk-open {
+  width: 252px;
+  border-color: var(--faint);
+}
+.talk-bubble.room .talk-title { font-size: 13px; }
+
+/* A conversation, standing on the board as a speech bubble: the faces in it, its name, how
+   much has been said and when last. The squared-off corner is the tail. Click opens the
+   history; drag moves it like anything else on the board. */
+.talk-bubble {
+  animation: card-in var(--t-soft) var(--ease) both;
+  position: absolute;
+  z-index: 4;
+  cursor: grab;
+  user-select: none;
+}
+/* The same anatomy as the node card - identity row, then a mono meta row - so the two kinds
+   of card on this board read as siblings. Only the tail corner says which one talks. */
+.talk-open {
+  display: block;
+  width: 224px;
+  background: var(--raised);
+  border: 1.5px solid var(--sketch);
+  border-radius: 15px 9px 15px 4px / 9px 15px 8px 15px;
+  padding: 12px;
+  box-shadow: var(--lift);
+  text-align: left;
+}
+.talk-open:hover:not(:disabled) { background: var(--high); }
+.talk-bubble.picked .talk-open { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+.talk-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.talk-faces { display: inline-flex; flex: 0 0 auto; }
+.talk-faces .avatar { margin-right: -5px; box-shadow: 0 0 0 2px var(--raised); }
+.talk-name { flex: 1; min-width: 0; display: block; }
+.talk-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.talk-kind {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.talk-meta {
+  display: flex;
+  gap: 14px;
+  margin-top: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* The thread from a conversation to each of its speakers: the bubble visibly BELONGS to its
+   agents instead of floating in space. */
+.talk-tie {
+  stroke: var(--edge);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 6;
+  stroke-linecap: round;
+  opacity: 0.35;
+}
+.talk-tie.on { opacity: 1; stroke: var(--faint); }
+
+.talk-more {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  align-self: center;
+  margin-left: 8px;
+}
+.agent-when { display: block; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+/* The empty board invites the first task instead of describing its own emptiness. */
+.board-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: var(--dim);
+  font-family: var(--hand);
+  font-size: 15px;
+}
+
+/* The huddle: agents dragged into each other's reach get one hand-drawn ring. Presentation
+   only - membership is recomputed from positions on every render and stored nowhere. */
+/* The ring is the OPERATOR'S arrangement, so it wears the pen's own grey - it must never
+   read as measured collaboration. */
+.huddle {
+  fill: none;
+  stroke: var(--ink-pen);
+  stroke-width: 1.5;
+  stroke-dasharray: 7 7;
+  filter: url(#roughen);
+}
+
+/* THE CREW CARD is dead - the crew stands on the canvas now. The role tag survives it. */
+.crew-role {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  background: var(--high);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+}
+
+/* The chosen recipient, above the box it applies to. */
+.to-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  justify-self: start;
+  border-radius: var(--r-pill);
+  padding: 3px 6px 3px 10px;
+  background: color-mix(in oklab, var(--signal) 16%, var(--void));
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.to-chip button { color: inherit; font-size: 13px; line-height: 1; padding: 0 3px; }
+.turn-said.loading { color: var(--faint); font-style: italic; }
+/* The envelope's address, above the words it addresses. Mono because both halves are
+   identifiers, and quiet because it orients rather than speaks. */
+.turn-addr {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--signal);
+}
+/* Sealed and unopenable. Muted rather than alarming: it is a fact about this Runtime's keys, not
+   a failure of the run, and the thread is still worth reading around it. */
+.turn-said.shut {
+  background: transparent;
+  border: 1px dashed var(--edge);
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* A sent message that nobody has answered yet. The pulse is the "something is on the other end"
+   cue the person asked for; the words stay honest about what is actually known - delivered, and
+   waiting - because the page cannot see anyone thinking. */
+.turn-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+.turn-wait i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--signal);
+}
+
+/* The way back in, at the foot of the run panel. Deliberately quieter than the new-task composer:
+   that one starts work, this one only says something. */
+/* The two answer cards over the say box: who is waiting, newest first. Picking one addresses
+   the box to them - it never writes words on anyone's behalf. */
+.reply-hints { display: flex; gap: 6px; flex-wrap: wrap; animation: rise-in var(--t-soft) var(--ease) both; }
+.reply-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--r);
+  background: var(--high);
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.reply-hint:hover:not(:disabled) { background: var(--high); box-shadow: inset 0 0 0 1px var(--signal); }
+.reply-hint-who { font-weight: 700; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-hint-when { color: var(--faint); font-size: 10px; }
+
+.saybox {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--edge);
+}
+.say-capsule { position: relative; }
+.saybox textarea {
+  width: 100%;
+  resize: none;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--edge);
+  background: var(--void);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 68px;
+  padding: 10px 52px 10px 12px;
+  display: block;
+}
+.saybox textarea:disabled { color: var(--faint); }
+/* The send lives in the field's own corner: a 34px signal circle, icon only. */
+.saybox .send {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: var(--r-pill);
+}
+
+.panel-foot {
+  margin-top: auto;
+  padding: 12px;
+  background: var(--raised);
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.panel-empty { padding: 24px 12px; color: var(--faint); text-align: center; }
+
+/* ---------------------------------------------------------------- loading */
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--faint);
+}
+
+/* ---- composing a task ------------------------------------------------------------------- */
+
+.panel-head.calm i { background: var(--live); }
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px;
+  min-height: 0;
+}
+
+.composer textarea { font-family: var(--sans); }
+.composer select,
+.composer textarea {
+  border-radius: var(--r);
+  width: 100%;
+  padding: 9px 10px;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 0;
+  outline-offset: 2px;
+}
+
+.composer textarea { resize: vertical; line-height: 1.5; }
+.composer select:disabled, .composer textarea:disabled { color: var(--faint); }
+
+/* The send button's look is unconditional, because two surfaces now send: the new-task composer
+   and the run panel's message box. Scoping it to `.composer` once meant the second one rendered as
+   bare text — no background, no padding — and looked broken rather than different. */
+.send {
+  border-radius: var(--r);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 11px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.send:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
+.send svg { width: 14px; height: 14px; }
+/* Only the composer's send needs the extra breath: it closes a tall stacked form. */
+.composer .send { margin-top: 4px; }
+
+/* Said before the send, not after: this is the one warning whose whole value is being read while
+   the operator can still act on it. */
+/* The one place a literal command appears. Selectable, wrapping, and set on the void so it reads
+   as a terminal line rather than as prose. */
+.command {
+  font-family: var(--mono);
+  display: block;
+  border-radius: var(--r);
+  background: var(--void);
+  padding: 10px 11px;
+  color: var(--live);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.notice {
+  border-radius: var(--r);
+  display: flex;
+  gap: 8px;
+  margin: 0 13px;
+  padding: 10px;
+  background: var(--signal-wash);
+  color: var(--signal);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.notice.bad { background: color-mix(in oklab, var(--danger) 16%, var(--void)); color: var(--danger); margin: 0; }
+.notice svg { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+.notice code {
+  border-radius: var(--r-sm); color: inherit; background: color-mix(in oklab, currentColor 10%, transparent); padding: 0 3px; }
+/* The section label above the folder list. It earns its place because the rail holds two
+   kinds of thing now - the list, and the action that adds to it - and without a name the first
+   reads as the whole rail. */
+.rail-section { margin: 0 0 -4px 6px; }
+/* A quiet line under the field it is about. The loud version - a full-width amber block above the
+   whole composer - was a configuration lecture standing where the work goes. A fact that changes
+   what you should EXPECT belongs beside the control it concerns; only a fact that STOPS you earns
+   the banner. */
+.hint {
+  margin: -2px 0 2px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.hint code {
+  color: var(--dim);
+  background: var(--void);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+}
+
+/* The placeholder is an example, not content: it must not read as text already typed. */
+.composer textarea::placeholder { color: var(--faint); opacity: 1; }
+
+
+
+/* The quoted debt inside the attention block: the actual unanswered question, wearing quote
+   marks so nobody reads the agent's words as the interface's own voice. */
+.why-quote {
+  display: block;
+  margin: 4px 0 6px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--signal);
+  color: var(--text);
+  font-style: italic;
+  quotes: "\201C" "\201D";
+}
+
+/* The folded stage directions: machine narration collapsed to one strip. The lines inside are
+   the exact turns they would have been - same voice, one click away. */
+.turn.stage details summary {
+  cursor: pointer;
+  color: var(--faint);
+  font-size: 11px;
+  list-style: none;
+}
+.turn.stage details summary::before { content: "▸ "; }
+.turn.stage details[open] summary::before { content: "▾ "; }
+
+.stage-lines {
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+/* A spoken error wears the danger surface - chat and lifecycle share one vocabulary. */
+.turn.grave .turn-said,
+.turn.grave .turn-text {
+  color: var(--danger);
+}
+
+/* The armed disconnect: one click from erasing the session, and it says so with its colour. */
+.ghost.arming {
+  color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 16%, var(--void));
+}
+
+
+/* A lone stage direction between speech: present - the log is the thread - but murmured.
+   Folding needs a neighbour; a single "Armed a wake doorbell" line gets reduced weight instead
+   of standing at parity with the sentence a person wrote above it. */
+.turn.murmur .turn-text,
+.turn.murmur .turn-who {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+
+/* The search over the thread: filters what the page already holds, opens nothing new.
+   (Added by the logic lane; visual pass welcome to restyle.) */
+.thread-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface);
+}
+.thread-search input {
+  flex: 1;
+  min-width: 0;
+  background: var(--void);
+  color: var(--text);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-pill);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  font: inherit;
+}
+.thread-search input::placeholder { color: var(--faint); }
+.thread-search input:focus { outline: none; border-color: var(--signal); }
+.thread-search .hint { padding: 0; white-space: nowrap; }
+
+/* A turn's citable coordinate: the sequence is the log's own address for the line. */
+.turn-seq {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  opacity: 0;
+  transition: opacity var(--t-quick) var(--ease);
+  cursor: copy;
+}
+.turn-seq:hover { color: var(--dim); background: var(--high); }
+.turn:hover .turn-seq,
+.turn-seq:focus-visible { opacity: 1; }
+
+/* The run capsule: a HUD over the canvas, not a citizen of it - it neither pans nor scales.
+   (Added by the logic lane; visual pass welcome to restyle/reposition.) */
+.run-capsule {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  z-index: 4;
+  min-width: 216px;
+  max-width: 300px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--raised) 90%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--lift);
+}
+.run-capsule .capsule-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+.run-capsule-title {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-capsule-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  margin: 4px 0 8px;
+}
+.run-progress {
+  display: block;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--high);
+  overflow: hidden;
+}
+.run-progress i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--live);
+}
+
+
+/* ---- the lint strip & the reopened chip (appendix; visual pass welcome) ------------------- */
+/* The board-face lint: each line an accusation the model attests, in the refused vocabulary
+   the edge-note already speaks. Kept quiet - it is a strip, not a banner. */
+.lint-strip {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-radius: var(--r);
+  border-left: 3px solid var(--danger);
+  background: color-mix(in oklab, var(--danger) 10%, var(--void));
+  box-shadow: var(--lift);
+  max-width: 460px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--signal);
+}
+.lint-strip li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dim);
+}
+.lint-strip li .turn-seq { opacity: 1; color: var(--faint); }
+.lint-strip li .turn-seq:hover { color: var(--text); }
+/* "Reopened after done" on the node card: the alarm wash the history chips wear, with the two
+   log coordinates in mono. */
+.node-reopened {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}

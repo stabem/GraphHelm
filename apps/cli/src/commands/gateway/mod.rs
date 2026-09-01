@@ -24,6 +24,7 @@
 //! `Failure`, a success payload, or a `Debug` impl — rule 6 of the plan's binding process rules.
 
 pub(super) mod credential;
+pub(super) mod keyring;
 pub(super) mod probe;
 pub(super) mod routes;
 
@@ -176,20 +177,32 @@ pub(super) fn require_keyring_directory(path: &Path) -> Result<(), Failure> {
 /// `Zeroizing` buffer, so the only remaining plaintext copy is the one std itself made — dropped
 /// and zeroized here as early as possible.
 pub(super) fn passphrase_from_env() -> Result<SecretBytes, Failure> {
-    let encoded = std::env::var(KEY_ENVIRONMENT).map_err(|_| {
+    key_from_env(KEY_ENVIRONMENT)
+}
+
+/// The same decoding, for a named variable.
+///
+/// Two variables carry a 32-byte key in this codebase and they are NOT interchangeable:
+/// `GRAPHHELM_GATEWAY_KEY` is the broker's passphrase, and `GRAPHHELM_EVENTS_KEY` is what
+/// `execution::signal`'s sealer opens a keyring with. A key written under one and opened under the
+/// other creates a keyring that exists, looks right, and cannot be opened — so the variable is a
+/// parameter here rather than a constant baked into the decoder, and the diagnostic names whichever
+/// one the caller actually asked for instead of always blaming the gateway's.
+pub(super) fn key_from_env(variable: &str) -> Result<SecretBytes, Failure> {
+    let encoded = std::env::var(variable).map_err(|_| {
         credential_error(
-            "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hexadecimal characters",
+            &format!("{variable} must supply 64 lowercase hexadecimal characters"),
             "/keyring",
         )
     })?;
     let encoded = zeroize::Zeroizing::new(encoded.into_bytes());
-    decode_key(&encoded)
+    decode_key(&encoded, variable)
 }
 
-fn decode_key(encoded: &[u8]) -> Result<SecretBytes, Failure> {
+fn decode_key(encoded: &[u8], variable: &str) -> Result<SecretBytes, Failure> {
     let invalid = || {
         credential_error(
-            "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hexadecimal characters",
+            &format!("{variable} must supply 64 lowercase hexadecimal characters"),
             "/keyring",
         )
     };

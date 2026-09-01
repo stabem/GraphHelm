@@ -13,6 +13,7 @@
 ## Experience
 
 - [Studio — screens and interaction](ux/STUDIO_SPEC.md)
+- [Local Studio MVP — what shipped](ux/STUDIO_MVP.md)
 - [Chat surface — host plugin and operator skills](ux/CHAT_SURFACE_SPEC.md)
 
 ## Architecture

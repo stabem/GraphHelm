@@ -80,7 +80,7 @@ fn run_from_file(
         events,
         execution,
         &raw,
-        evidence_out,
+        Some(evidence_out),
         owner_actor(),
         idempotency_key("signal-recorded"),
         Some(keyring),
@@ -131,15 +131,33 @@ fn open_sealer(keyring: &SignalKeyring) -> Result<EvidenceProtector<SealedKeyPro
 /// this function minting its own fresh one, so the API path can derive it deterministically from
 /// `Idempotency-Key` while the CLI (`run_from_file`, above) keeps minting a fresh one exactly as
 /// before. No other logic changed.
+/// `evidence_out` is OPTIONAL, and the condition on it is the whole point.
+///
+/// The envelope's raw bytes must be durable BEFORE the append - an event whose evidence was not
+/// preserved is a record with no backing, and that rule is fail-closed in both directions below.
+/// A path satisfies it. So does the Evidence store, when a keyring is configured: the seal happens
+/// before the append under the same rule, and `envelope_sha256` digests exactly those bytes.
+///
+/// So `None` is admissible only WITH sealing, and the check is the first thing this does - before
+/// the store is opened, before anything is read, because a caller who can preserve nothing must
+/// learn that before the work rather than after it. A browser is exactly that caller: it has no
+/// path on the Runtime's host, and until this it could not record a signal at all.
 pub(crate) fn execute(
     events: &Path,
     execution: Option<&str>,
     signal: &[u8],
-    evidence_out: &Path,
+    evidence_out: Option<&Path>,
     actor: PersistedActor,
     key: OpaqueId,
     sealing: Option<&SignalKeyring>,
 ) -> Result<serde_json::Value, Failure> {
+    if evidence_out.is_none() && sealing.is_none() {
+        return Err(argument(
+            "this Runtime has no keyring, so the signal envelope can only be preserved as a file; \
+             give \"evidenceOut\", or start the Runtime with --keyring and --key-id",
+            "/evidenceOut",
+        ));
+    }
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, projection) = load_projection(&store, execution)?;
 
@@ -158,6 +176,18 @@ pub(crate) fn execute(
         Err(GovernanceError::UnrecordableIdentity) => {
             // The record cannot go on the wire, but the envelope itself is still evidence: write
             // the original bytes before refusing, so nothing the operator submitted is lost.
+            //
+            // THIS BRANCH IS BEFORE THE SEAL, and it is reached because `admit_signal` refused -
+            // so there is no `externalize` to seal and a path is the only place these bytes can
+            // go. A caller without one is told exactly that, rather than being told the identity
+            // was the problem while their envelope evaporated.
+            let Some(evidence_out) = evidence_out else {
+                return Err(signal_unrecordable(
+                    "the signal's id or source id cannot be represented on the wire, and with no \
+                     \"evidenceOut\" there is nowhere to preserve the envelope; nothing was kept",
+                    "/signal",
+                ));
+            };
             std::fs::write(evidence_out, raw).map_err(|_| {
                 execution_state(
                     "the signal's identity cannot be recorded, and the evidence file could not \
@@ -198,12 +228,18 @@ pub(crate) fn execute(
 
     // Fail closed: the evidence write happens before the append, and if it fails nothing is
     // appended — an event whose evidence was not preserved would be a record with no backing.
-    std::fs::write(evidence_out, &admitted.externalize).map_err(|_| {
-        execution_state(
-            "the evidence could not be written; nothing was recorded",
-            "/evidenceOut",
-        )
-    })?;
+    //
+    // Skipped only when no path was given, which the guard at the top of this function has already
+    // established means a keyring is configured - so the seal below carries the same guarantee.
+    // The rule never relaxes; only which copy satisfies it.
+    if let Some(evidence_out) = evidence_out {
+        std::fs::write(evidence_out, &admitted.externalize).map_err(|_| {
+            execution_state(
+                "the evidence could not be written; nothing was recorded",
+                "/evidenceOut",
+            )
+        })?;
+    }
 
     // Milestone 05d Task 6: the envelope ALSO seals into the Evidence store, before the
     // append — the same fail-closed rule. `envelope_sha256` digests exactly these bytes, so

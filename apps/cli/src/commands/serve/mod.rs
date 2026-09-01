@@ -277,14 +277,16 @@ fn build_wiring(
         let manifest = RouteManifest::from_json(&text)
             .map_err(|error| serve_invalid(&error.to_string(), "/manifest"))?;
         let route_id = args.route.as_ref().expect("executor_all guarantees Some");
-        let route = manifest
-            .routes()
-            .iter()
-            .find(|route| route.id() == route_id)
-            .ok_or_else(|| {
-                serve_invalid("--route does not name a route in the manifest", "/route")
-            })?
-            .clone();
+        // Through `ports::find_route`, not an inline `find` here: a request can now name a route
+        // too, and the day these two lookups are written twice is the day they disagree. The
+        // lookup also filters `enabled` (PR #467 review), so a disabled route refuses at startup
+        // exactly as it does per request.
+        let route = ports::find_route(&manifest, route_id).ok_or_else(|| {
+            serve_invalid(
+                "--route does not name an enabled route in the manifest",
+                "/route",
+            )
+        })?;
         // Never empty: the argument check above refuses an executor run that declared none.
         let allow_programs = args.allow_program.clone();
         Some(RuntimeWiring {
@@ -392,8 +394,13 @@ async fn sweep_tick(events: Arc<Path>, seconds: u64) {
 fn build_router(state: ServeState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/v1/executions", get(routes::list_executions))
         .route("/v1/executions/{id}", get(routes::status))
         .route("/v1/executions/{id}/events", get(routes::events))
+        .route(
+            "/v1/executions/{id}/evidence/{evidenceId}",
+            get(routes::evidence),
+        )
         .route("/v1/executions/{id}/start", post(routes::start))
         .route("/v1/executions/{id}/signal", post(routes::signal))
         .route("/v1/executions/{id}/approve", post(routes::approve))
@@ -409,6 +416,7 @@ fn build_router(state: ServeState) -> Router {
             "/v1/executions/{id}/wake-lease",
             post(routes::wake_lease).get(routes::wake_lease_status),
         )
+        .route("/v1/graph/topology", post(routes::graph_topology))
         .route("/v1/gateway/routes", get(routes::gateway_routes))
         .route("/v1/gateway/probe", get(routes::gateway_probe))
         .route(
@@ -429,6 +437,12 @@ fn build_router(state: ServeState) -> Router {
             get(routes::development_accounting),
         )
         .fallback(not_found)
+        // BOUNDED ABOVE THE DOCUMENT LIMIT, NOT BELOW IT. Axum's default `Bytes` extractor caps
+        // bodies at 2 MiB, and `load_graph_json` advertises 4 MiB - so an inline graph between
+        // the two was refused by the extractor with Axum's own 413 before the schema loader ever
+        // saw a document it is explicitly prepared to accept (PR #467 review). 5 MiB admits the
+        // full supported graph plus its JSON request wrapper, and stays a hard bound.
+        .layer(axum::extract::DefaultBodyLimit::max(5 * 1024 * 1024))
         // `.layer` (not `.route_layer`) wraps the fallback too: an unauthenticated request to a
         // path with no route must still be refused 401, not fall through to a 404 that would
         // leak whether the path exists to an unauthenticated caller.
@@ -1850,9 +1864,30 @@ async fn record_read(
 
     // The body is recorded as a value when it parses as JSON and as a string otherwise, so a
     // reader can compare it against what a caller received without unquoting anything.
-    let recorded_body = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_else(|_| {
-        serde_json::Value::String(String::from_utf8_lossy(&bytes).into_owned())
-    });
+    let mut recorded_body =
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_else(|_| {
+            serde_json::Value::String(String::from_utf8_lossy(&bytes).into_owned())
+        });
+    // THE EVIDENCE ROUTE'S PLAINTEXT NEVER REACHES THE AUDIT. The repo spends real effort keeping
+    // evidence out of durable plaintext (#488's refusal payload carries {code, local, bytes} and
+    // deliberately no string field); an audit line transcribing the opened body would undo that
+    // for anyone who turns --read-audit on (PR #467 review: the route is new, the middleware is
+    // old, and the defect is the composition). The `content` field is replaced by its byte count;
+    // the envelope's own `contentSha256` stays, so the audit still proves WHAT was served.
+    if uri.path().contains("/evidence/") {
+        if let Some(content) = recorded_body
+            .get_mut("data")
+            .and_then(|data| data.get_mut("content"))
+        {
+            let served = content.as_str().map(str::len).unwrap_or(0);
+            *content = serde_json::json!({ "redacted": "evidence plaintext", "bytes": served });
+        } else if recorded_body.is_string() {
+            // A body that did not parse as JSON is recorded as one string - which on this route
+            // could still be the plaintext. Replace it wholesale rather than trusting the shape.
+            recorded_body =
+                serde_json::json!({ "redacted": "evidence response", "bytes": bytes.len() });
+        }
+    }
     let line = serde_json::json!({
         "method": method,
         "path": uri.path(),
@@ -2168,7 +2203,7 @@ mod tests {
                             &events_for_run,
                             Some(execution_id),
                             &signal,
-                            &evidence_out,
+                            Some(&evidence_out),
                             event_actor,
                             key,
                             None,

@@ -651,7 +651,15 @@ fn every_content_exemption_is_load_bearing_and_bounded() {
             }
         }
     }
-    assert_eq!(canonical_json, ["tests/schema_cli.rs:1298"]);
+    // The coordinate moved from :1298 to :1303 when this branch inserted five lines ABOVE the
+    // fixture in schema_cli.rs. Nothing about the exemption changed -- the same literal, the same
+    // file, the same single canonical-JSON site -- so this guard failed for a reason unrelated to
+    // what it guards, which costs a debugging session before it helps. A hand-written line number
+    // is a citation, and citations rot on any insertion above them. Filed rather than redesigned
+    // here: pinning by CONTENT (one exemption, in this file, at the canonical-JSON literal) is the
+    // durable shape, and rewriting another lane's guard inside a 59-commit branch is not this
+    // fix's job.
+    assert_eq!(canonical_json, ["tests/schema_cli.rs:1308"]);
     assert_eq!(detector_fixtures.len(), 6);
     assert!(
         detector_fixtures

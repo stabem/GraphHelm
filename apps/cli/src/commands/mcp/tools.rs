@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 21] = [
+const TOOLS: [ToolSpec; 24] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -40,6 +40,28 @@ const TOOLS: [ToolSpec; 21] = [
         schema: start_schema,
     },
     ToolSpec {
+        name: "list",
+        description: "List the executions this store holds (GET /v1/executions): one \
+                      summary row per stream - execution id, mode, status, attention, head \
+                      sequence, and the start/last-event instants - ordered by execution id. \
+                      \"after\" is an EXCLUSIVE cursor naming the last id already read; \
+                      \"limit\" is 1..=100 and defaults to 20. A larger limit is refused rather \
+                      than clamped, so a short page always means a short store. Read-only: it \
+                      appends nothing.",
+        schema: list_schema,
+    },
+    ToolSpec {
+        name: "topology",
+        description: "Read a graph file's shape (POST /v1/graph/topology): entrypoints, \
+                      nodes and edges, plus the semantic hash that says WHICH graph it is. The \
+                      hash is the point - an execution's log records its graph's hash and never \
+                      its topology, so before claiming these edges belong to a run, compare this \
+                      hash against the graphHash in that run's execution_started event. \
+                      \"file\" is a path on the RUNTIME's host, not yours. Nodes carry identity \
+                      only: no objectives, agents or completion controls. Read-only.",
+        schema: topology_schema,
+    },
+    ToolSpec {
         name: "status",
         description: "Read an execution's status (GET /v1/executions/{executionId}).",
         schema: execution_only_schema,
@@ -49,6 +71,11 @@ const TOOLS: [ToolSpec; 21] = [
         description: "Read an execution's event tail (GET /v1/executions/{executionId}/events \
                       with after/limit passed straight through; the API's bounds are the bounds).",
         schema: events_schema,
+    },
+    ToolSpec {
+        name: "evidence",
+        description: "Open the content behind an evidence reference (GET /v1/executions/{executionId}/evidence/{evidenceId}).",
+        schema: evidence_schema,
     },
     ToolSpec {
         name: "signal",
@@ -246,6 +273,33 @@ fn accounting_schema() -> serde_json::Value {
     object_schema(serde_json::json!({}), &[])
 }
 
+fn list_schema() -> serde_json::Value {
+    // No `executionId`: this is the tool a caller reaches for when it does not yet know one.
+    object_schema(
+        serde_json::json!({
+            "after": {
+                "type": "string",
+                "description": "Exclusive cursor: the last execution id already read.",
+            },
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        }),
+        &[],
+    )
+}
+
+fn topology_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "file": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Graph file path on the Runtime host.",
+            },
+        }),
+        &["file"],
+    )
+}
+
 fn execution_only_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({"executionId": {"type": "string"}}),
@@ -260,15 +314,41 @@ fn cancel_schema() -> serde_json::Value {
     )
 }
 
+/// `file` IS NO LONGER REQUIRED HERE, and the requirement did not move into this schema.
+///
+/// A start now takes its graph as `file` OR `graph` — exactly one — and JSON Schema can only say
+/// that with a `oneOf` across two required-lists, which this repository's closed-object schemas do
+/// not build. Declaring `file` required would lock every MCP client out of inline graphs; declaring
+/// neither required and stopping there would let a caller send both.
+///
+/// So the rule lives in ONE place, on the server: `graph_source`
+/// (`commands::serve::routes`) refuses "neither" and refuses "both", each with a message naming
+/// the field. That is the authority either way — an MCP client is not the only caller — and a
+/// second copy of the rule expressed in schema would be a copy that can disagree with it.
 fn start_schema() -> serde_json::Value {
     mutating_schema(
         serde_json::json!({
             "executionId": {"type": "string"},
             "file": {"type": "string"},
+            "graph": {"type": "object"},
             "fixtures": {"type": "string"},
             "mode": {"type": "string", "enum": ["autopilot", "supervised", "manual"]},
+            "route": {"type": "string"},
         }),
-        &["executionId", "file", "mode"],
+        &["executionId", "mode"],
+    )
+}
+
+/// Read-only and closed, like every other read schema here. Both ids are required: an evidence
+/// id without the execution that recorded it has no scope to be read in, and the route refuses a
+/// reference one execution holds when another asks for it.
+fn evidence_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "evidenceId": {"type": "string"},
+        }),
+        &["executionId", "evidenceId"],
     )
 }
 
@@ -283,6 +363,12 @@ fn events_schema() -> serde_json::Value {
     )
 }
 
+/// `evidenceOut` is NO LONGER REQUIRED. An agent recording a note through this surface has a path
+/// on the Runtime's host and could always supply one, but it should not have to: when the Runtime
+/// was started with a keyring the envelope seals into the Evidence store before the event appends,
+/// which is the durable copy, and an operator file is then a second copy of something already safe.
+/// A Runtime with no keyring still needs the path, and says so in a diagnostic rather than dropping
+/// the envelope.
 fn signal_schema() -> serde_json::Value {
     mutating_schema(
         serde_json::json!({
@@ -290,7 +376,7 @@ fn signal_schema() -> serde_json::Value {
             "signal": {"type": "object"},
             "evidenceOut": {"type": "string"},
         }),
-        &["executionId", "signal", "evidenceOut"],
+        &["executionId", "signal"],
     )
 }
 
@@ -314,14 +400,18 @@ fn pause_schema() -> serde_json::Value {
     )
 }
 
+/// Same shape as `start_schema`, for the same reason — see its comment for why `file` stopped
+/// being required here rather than the rule being restated in schema.
 fn resume_schema() -> serde_json::Value {
     mutating_schema(
         serde_json::json!({
             "executionId": {"type": "string"},
             "file": {"type": "string"},
+            "graph": {"type": "object"},
             "fixtures": {"type": "string"},
+            "route": {"type": "string"},
         }),
-        &["executionId", "file"],
+        &["executionId"],
     )
 }
 
@@ -538,6 +628,14 @@ fn str_arg<'a>(arguments: &'a serde_json::Value, name: &str) -> Option<&'a str> 
     arguments.get(name).and_then(serde_json::Value::as_str)
 }
 
+/// An argument that is a JSON OBJECT, for the one tool argument that carries a document rather
+/// than a scalar (`graph`). Returns `None` for a present-but-wrong-typed value exactly as
+/// `str_arg` does; the server refuses that case with a message naming the field, so forwarding a
+/// number as if it were a graph is not this layer's job to invent an error for.
+fn object_arg<'a>(arguments: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    arguments.get(name).filter(|value| value.is_object())
+}
+
 fn require<'a>(
     arguments: &'a serde_json::Value,
     name: &'static str,
@@ -583,6 +681,33 @@ pub(crate) fn call(
     let key = derive_key(nonce, rpc_id);
     let if_match = arguments.get("ifMatch").and_then(serde_json::Value::as_u64);
     let outcome = match name {
+        "topology" => require(arguments, "file").map(|file| {
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "graph", "topology"]),
+                Some(&serde_json::json!({ "file": file })),
+                None,
+                None,
+            )
+        }),
+        "list" => {
+            let mut query = String::new();
+            if let Some(after) = str_arg(arguments, "after") {
+                query.push_str(&format!("after={}", url::encode_component(after)));
+            }
+            if let Some(limit) = arguments.get("limit").and_then(serde_json::Value::as_u64) {
+                if !query.is_empty() {
+                    query.push('&');
+                }
+                query.push_str(&format!("limit={limit}"));
+            }
+            let path = if query.is_empty() {
+                url::segment_path(&["v1", "executions"])
+            } else {
+                format!("{}?{query}", url::segment_path(&["v1", "executions"]))
+            };
+            Ok(api.request("GET", &path, None, None, None))
+        }
         "status" => require(arguments, "executionId").map(|id| {
             api.request(
                 "GET",
@@ -591,6 +716,16 @@ pub(crate) fn call(
                 None,
                 None,
             )
+        }),
+        "evidence" => require(arguments, "executionId").and_then(|id| {
+            let evidence_id = require(arguments, "evidenceId")?;
+            Ok(api.request(
+                "GET",
+                &url::segment_path(&["v1", "executions", id, "evidence", evidence_id]),
+                None,
+                None,
+                None,
+            ))
         }),
         "events" => require(arguments, "executionId").map(|id| {
             let mut query = String::new();
@@ -615,11 +750,24 @@ pub(crate) fn call(
         }),
         "start" => require(arguments, "executionId").map(|id| {
             let mut body = serde_json::json!({
-                "file": str_arg(arguments, "file").unwrap_or_default(),
                 "mode": str_arg(arguments, "mode").unwrap_or_default(),
             });
+            // `file` IS COPIED ONLY WHEN GIVEN. It used to be built with `unwrap_or_default()`,
+            // which put `"file": ""` in the body whenever the argument was absent. That was
+            // invisible while the schema made `file` required, and becomes a lie the moment it is
+            // optional: an empty string is a PRESENT file, so the server would refuse it as an
+            // unreadable path instead of reading the `graph` the caller actually sent.
+            if let Some(file) = str_arg(arguments, "file") {
+                body["file"] = serde_json::json!(file);
+            }
+            if let Some(graph) = object_arg(arguments, "graph") {
+                body["graph"] = graph.clone();
+            }
             if let Some(fixtures) = str_arg(arguments, "fixtures") {
                 body["fixtures"] = serde_json::json!(fixtures);
+            }
+            if let Some(route) = str_arg(arguments, "route") {
+                body["route"] = serde_json::json!(route);
             }
             api.request(
                 "POST",
@@ -630,10 +778,17 @@ pub(crate) fn call(
             )
         }),
         "signal" => require(arguments, "executionId").map(|id| {
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "signal": arguments.get("signal").cloned().unwrap_or(serde_json::Value::Null),
-                "evidenceOut": str_arg(arguments, "evidenceOut").unwrap_or_default(),
             });
+            // COPIED ONLY WHEN GIVEN, for the reason `file` above is: `unwrap_or_default()` put
+            // `"evidenceOut": ""` in the body whenever the argument was absent, and an empty string
+            // is a PRESENT path. Harmless while the field was required and nobody omitted it; a lie
+            // the moment it is optional, because the server would take the empty string as a path
+            // it cannot write instead of sealing the envelope, which is what absence now means.
+            if let Some(evidence_out) = str_arg(arguments, "evidenceOut") {
+                body["evidenceOut"] = serde_json::json!(evidence_out);
+            }
             api.request(
                 "POST",
                 &url::segment_path(&["v1", "executions", id, "signal"]),
@@ -682,10 +837,19 @@ pub(crate) fn call(
             )
         }),
         "resume" => require(arguments, "executionId").map(|id| {
-            let mut body =
-                serde_json::json!({"file": str_arg(arguments, "file").unwrap_or_default()});
+            // See `start`'s branch for why `file` is conditional rather than defaulted.
+            let mut body = serde_json::json!({});
+            if let Some(file) = str_arg(arguments, "file") {
+                body["file"] = serde_json::json!(file);
+            }
+            if let Some(graph) = object_arg(arguments, "graph") {
+                body["graph"] = graph.clone();
+            }
             if let Some(fixtures) = str_arg(arguments, "fixtures") {
                 body["fixtures"] = serde_json::json!(fixtures);
+            }
+            if let Some(route) = str_arg(arguments, "route") {
+                body["route"] = serde_json::json!(route);
             }
             api.request(
                 "POST",

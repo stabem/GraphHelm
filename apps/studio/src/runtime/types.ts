@@ -1,0 +1,190 @@
+/**
+ * The Public Runtime API's wire shapes, as this client reads them.
+ *
+ * These are the fields the Studio depends on, not a mirror of everything the Runtime replies
+ * with. Every interface therefore carries an index signature: the Runtime is allowed to add
+ * fields, and a client that broke on an unknown key would turn forward compatibility into an
+ * outage. Nothing here is generated from the Rust types on purpose - Studio may use only public
+ * contracts, and a generated binding would be a second, silent coupling to internals.
+ */
+
+/** The four-key envelope every Runtime reply carries. */
+export interface Envelope<T> {
+  ok: boolean;
+  command: string;
+  data: T | null;
+  diagnostics: Diagnostic[];
+}
+
+export interface Diagnostic {
+  code: string;
+  severity: string;
+  message: string;
+  /** A JSON Pointer into the request, or an equivalent stable path. */
+  path: string;
+  source: string;
+}
+
+/** `needs_you` / `can_sleep` / `unknown`, kept open because the verdict vocabulary is the
+ * Runtime's to extend and an unknown tag must render as unknown, never crash the page. */
+export type Attention = "needs_you" | "can_sleep" | "unknown" | (string & {});
+
+export interface AttentionReason {
+  kind?: string;
+  node?: string;
+  [key: string]: unknown;
+}
+
+/** One row of `GET /v1/executions`. */
+export interface ExecutionSummary {
+  executionId: string;
+  mode: string | null;
+  status: string;
+  attention: Attention;
+  startedAt: string | null;
+  lastEventAt: string | null;
+  headSequence: number;
+  [key: string]: unknown;
+}
+
+export interface ExecutionPage {
+  executions: ExecutionSummary[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+/** `GET /v1/executions/{id}`.
+ *
+ * `status` is NULLABLE ON THE WIRE, and this type used to lie about it. The Runtime answers an
+ * execution id it has never seen with an EMPTY PROJECTION - HTTP 200, `status: null`, head 0
+ * (measured 2026-08-30) - not with a 404. The human interface could never reach that shape (the
+ * rail only lists executions that exist), so the lie held until the first caller selected an id
+ * before starting it, and then one `readable(null)` took the whole page down. The type telling
+ * the truth is what makes the compiler sweep every render site, instead of each one being found
+ * by a crash. */
+export interface ExecutionStatus {
+  executionId: string | null;
+  mode: string | null;
+  status: string | null;
+  attention: Attention;
+  attentionReasons: AttentionReason[];
+  nodeStateCounts: Record<string, number>;
+  untriagedInterruptions: unknown[];
+  silenceUnevaluated: unknown[];
+  startedAt: string | null;
+  lastEventAt: string | null;
+  nodeLastEventAt: Record<string, string>;
+  headSequence: number;
+  [key: string]: unknown;
+}
+
+/**
+ * One event, after normalisation.
+ *
+ * ON THE WIRE the discriminant and its payload are nested together as
+ * `kind: { type, data }` - a serde externally-tagged enum. Flattening them into `kind` and
+ * `payload` happens once, in the client, so no component has to know that shape. The raw
+ * envelope is NOT preserved here: everything the timeline renders is a named field, and keeping
+ * a second copy of the payload around would invite a component to reach past the normalisation.
+ */
+export interface RuntimeEvent {
+  sequence: number;
+  kind: string;
+  payload: unknown;
+  occurredAt: string | null;
+  actorId: string | null;
+  actorType: string | null;
+  idempotencyKey: string | null;
+  eventId: string | null;
+  /** The ids of whatever this event sealed, in the order the Runtime recorded them.
+   *
+   * This is the whole reason an event can be terse and still complete. D-036 keeps free-form
+   * content OUT of event payloads, so a model's reply, a tool's output and the words of a signal
+   * are not in `payload` and never will be - the event carries a REFERENCE and the content is
+   * sealed. An interface that reads only `payload` can therefore say that something was said and
+   * can never say what. These ids are how the words are fetched back (`readEvidence`). */
+  evidenceRefs: string[];
+}
+
+export interface EventPage {
+  events: RuntimeEvent[];
+  /** The stream's current last sequence; 0 for an empty stream. */
+  head: number;
+}
+
+/**
+ * `POST /v1/graph/topology`: a graph document's shape.
+ *
+ * `semanticHash` is the field that makes the rest usable. An execution's log records its graph's
+ * HASH and never its topology, so a client that wants to draw a run's graph must compare this
+ * hash against the `graphHash` in that run's `execution_started` event before believing the edges
+ * belong to it. `graph/topology.ts` does that comparison; nothing else may skip it.
+ */
+export interface GraphTopology {
+  graphId: string;
+  graphVersion: number;
+  executionId: string;
+  semanticHash: string;
+  entrypoints: string[];
+  /** Endpoint identities only. Labels and state come from the execution event stream. */
+  nodes: Array<{ id: string }>;
+  edges: Array<{ id: string; from: string; to: string; type: string }>;
+  [key: string]: unknown;
+}
+
+/** Who a mutation is recorded as. `owner` is the person at the keyboard; `agent` is the WebMCP
+ * adapter acting on the agent's behalf. The two are never conflated - a click by the operator
+ * that an agent asked for is still the AGENT's action, and the log must say so. */
+export interface Actor {
+  id: string;
+  type: "owner" | "agent";
+}
+
+/** What a write tool returns: enough to decide whether the journey actually happened, without
+ * the caller having to re-read anything. */
+export interface MutationEvidence {
+  action: "start" | "pause" | "approve" | "resume" | "signal";
+  executionId: string;
+  node: string | null;
+  actor: Actor;
+  /** The idempotency key this logical action used. Safe to publish: it is a caller-minted
+   * correlation id, never a credential, and it is what makes a retry auditable. */
+  idempotencyKey: string;
+  headBefore: number;
+  headAfter: number | null;
+  /** `succeeded` when the store moved and the re-read agrees; `refused` when the Runtime said
+   * no and nothing changed; `unknown` when the mutation was accepted but the verification read
+   * failed, so the caller must not treat it as done. */
+  result: "succeeded" | "refused" | "unknown";
+  statusAfter: ExecutionStatus | null;
+  newEvents: RuntimeEvent[];
+  diagnostics: Diagnostic[];
+}
+
+/** One route from the Runtime's gateway manifest, as `GET /v1/gateway/routes` reports it.
+ *
+ * `model` is what a person choosing is actually choosing; `id` is the deployer's own label for the
+ * wiring behind it. Both are shown, because a picker offering only ids asks someone to choose a
+ * model they cannot see, and one offering only models cannot say which of two identical models is
+ * billed how. `model` is nullable: the manifest need not declare one, and inventing a default here
+ * would answer a question the manifest did not. */
+export interface ModelRouteSummary {
+  id: string;
+  provider: string;
+  transport: string;
+  billingMode: string;
+  model: string | null;
+  profiles: string[];
+  enabled: boolean;
+}
+
+/** Sealed evidence, opened. `content` is the plaintext - a model's reply, a tool's output - and
+ * `sensitivity` names the class it belongs to so a reader knows what they are holding rather than
+ * having to infer it from where the id came from. */
+export interface EvidenceContent {
+  evidenceId: string;
+  mediaType: string;
+  sensitivity: string;
+  contentSha256: string;
+  content: string;
+}

@@ -16,12 +16,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical::{canonical_bytes, serialized_len_bounded, sha256_hex, wire_sha256};
 use crate::jsonl::{BatchChecksum, PhysicalBatch, StoredArtifactRegistration};
+use crate::key::RepositoryFuture;
 use crate::limits::{
     MAX_BATCH_BYTES, MAX_CURSOR_BYTES, MAX_EVENT_BYTES, MAX_JOURNAL_BYTES, MAX_READ_ALL,
     MAX_SAFE_INTEGER,
 };
 use crate::repository::{
-    ActiveVersion, EventPage, EventRepository, PreparedAppend, StreamHead, validate_page_limit,
+    ActiveVersion, EventPage, EventRepository, EvidenceRead, EvidenceRepository, PreparedAppend,
+    StreamHead, validate_page_limit,
 };
 use crate::{EventRepositoryError, SealedEvidence, WrappedKey, evidence::validate_sealed_metadata};
 
@@ -626,6 +628,17 @@ impl LocalEventRepository {
         evidence_id: &EvidenceId,
     ) -> Result<bool, EventRepositoryError> {
         <Self as EventRepository>::evidence_exists(self, scope, evidence_id)
+    }
+
+    /// The synchronous twin of `EvidenceRepository::get_sealed`, following `evidence_exists`
+    /// directly above: this store's work is blocking either way, and a caller that already runs
+    /// on a blocking thread should not have to drive a future to reach it.
+    pub fn sealed_evidence(
+        &self,
+        scope: &RepositoryScope,
+        evidence_id: &EvidenceId,
+    ) -> Result<EvidenceRead, EventRepositoryError> {
+        self.read_sealed_evidence(scope, evidence_id)
     }
 
     pub fn active_version(
@@ -2015,6 +2028,82 @@ impl LocalEventRepository {
         evidence_id: &EvidenceId,
     ) -> Result<String, EventRepositoryError> {
         Ok(format!("{}.json", object_key(scope, evidence_id.as_str())?))
+    }
+
+    /// Reads one sealed Evidence blob back, still sealed.
+    ///
+    /// The checks are `PostgresEventStore`'s, in its order
+    /// (`adapters/postgres-event-store/src/evidence.rs:26-36`), because two stores answering the
+    /// same trait with different rigour is how a caller learns to trust one and distrust the
+    /// other. What differs is only where the bytes come from.
+    ///
+    /// `evidence_exists` GATES THE READ, and that is the security property, not a convenience.
+    /// It answers from `reachable_evidence` — the set built from the events actually recorded —
+    /// so a caller can only name Evidence some event already references. A blob sitting in
+    /// `blobs/` that no event points at is refused exactly like an id that names nothing, which
+    /// means this read cannot be used to enumerate the directory.
+    fn read_sealed_evidence(
+        &self,
+        scope: &RepositoryScope,
+        evidence_id: &EvidenceId,
+    ) -> Result<EvidenceRead, EventRepositoryError> {
+        if !<Self as EventRepository>::evidence_exists(self, scope, evidence_id)? {
+            // `Invalid`, not `Integrity`: the caller named something this store does not have.
+            // `Integrity` is the store accusing ITSELF of damage, and spending that word on an
+            // ordinary wrong id would make a real corruption report unreadable.
+            return Err(EventRepositoryError::Invalid);
+        }
+        let path = self.blob_path(scope, evidence_id)?;
+        let name = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .ok_or(EventRepositoryError::UnsupportedFormat)?;
+        let mut file = open_child_file(
+            &self.blobs_handle,
+            &self.root.join("blobs"),
+            name,
+            false,
+            false,
+        )?;
+        let bytes = read_bounded_file(&mut file, MAX_STORED_EVIDENCE_BYTES)?;
+        let stored: StoredEvidence =
+            serde_json::from_slice(&bytes).map_err(|_| EventRepositoryError::Integrity)?;
+        if canonical_bytes(&stored)? != bytes || stored.format_version != FORMAT_VERSION {
+            return Err(EventRepositoryError::Integrity);
+        }
+        let sealed = stored.to_sealed()?;
+        // The blob's own idea of what it is must match what was asked for. Without this a blob
+        // moved or renamed under the store would be served as the Evidence whose name it wears.
+        if sealed.scope() != scope || sealed.reference().evidence_id() != evidence_id {
+            return Err(EventRepositoryError::Integrity);
+        }
+        validate_sealed_metadata(&sealed).map_err(|_| EventRepositoryError::Integrity)?;
+        Ok(EvidenceRead::Available(sealed))
+    }
+}
+
+/// Reading sealed Evidence out of the local store — the half of `EvidenceRepository` that only
+/// PostgreSQL implemented (`adapters/postgres-event-store/src/lib.rs:384`), while the store
+/// `serve` actually runs on could answer nothing.
+///
+/// NO `Unavailable` ARM HAS A LOCAL PRODUCER, and that is a statement about this store rather
+/// than an omission. `EvidenceUnavailableReason` describes an erasure/expiry lifecycle that
+/// PostgreSQL records in a state column; this store has no such column, no tombstone, and nothing
+/// outside a test that removes a blob. Returning `Available` or an error is the whole truth it
+/// can tell, and manufacturing a reason it cannot distinguish would be worse than the gap: a
+/// caller acting on `Erased` would be acting on a guess.
+impl EvidenceRepository for LocalEventRepository {
+    fn get_sealed<'a>(
+        &'a self,
+        scope: RepositoryScope,
+        evidence_id: EvidenceId,
+    ) -> RepositoryFuture<'a, Result<EvidenceRead, EventRepositoryError>> {
+        // Synchronous work in an async signature: this store is file-backed and every other read
+        // on it is blocking too. Wrapping it in `spawn_blocking` is the CALLER's decision, not
+        // something to bury here where it would spawn a task per lookup whether or not a reactor
+        // was ever involved — and a caller already on a blocking thread has `sealed_evidence`,
+        // which is this same read without a future to drive.
+        Box::pin(async move { self.read_sealed_evidence(&scope, &evidence_id) })
     }
 }
 

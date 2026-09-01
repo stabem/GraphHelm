@@ -73,6 +73,35 @@ struct RawSignal {
     #[serde(default)]
     recommendations: Vec<String>,
     emitted_at: String,
+    /// The actor this signal addresses, when it addresses one. Schema 1.1.0: with several agents
+    /// conversing on one execution, "who is this for" lived only as a convention inside the free
+    /// text, which nothing can thread on. Optional - every pre-1.1.0 emitter sends nothing here.
+    ///
+    /// PRESENT means a non-empty string, exactly as the schema says (`type: string, minLength:
+    /// 1`). A bare `Option<String>` admitted `null` (folded to absent) and `""` (kept), so the
+    /// Runtime could seal an envelope the checked-in schema rejects - persisted input diverging
+    /// from the wire contract (PR #467 review).
+    #[serde(default, deserialize_with = "present_nonempty")]
+    to: Option<String>,
+    /// The id of the signal this one answers, when it answers one. Same 1.1.0 rationale as `to`,
+    /// and the same present-means-non-empty rule.
+    #[serde(default, deserialize_with = "present_nonempty")]
+    reply_to: Option<String>,
+}
+
+/// A field that, WHEN PRESENT, must be a non-empty string - `null` and `""` are refused rather
+/// than normalized, because the schema refuses them and a sealed envelope must stay validatable.
+fn present_nonempty<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.is_empty() {
+        return Err(serde::de::Error::custom(
+            "an address field, when present, must be a non-empty string",
+        ));
+    }
+    Ok(Some(value))
 }
 
 /// A validated signal. Construction is the only way to obtain one, so an invalid signal cannot
@@ -145,6 +174,20 @@ impl TypedSignal {
         &self.raw.recommendations
     }
 
+    /// The actor this signal addresses, when it addresses one. Addressing is a reading aid for
+    /// whoever threads the conversation - nothing routes on it, and nothing here enforces that the
+    /// named actor exists.
+    #[must_use]
+    pub fn to(&self) -> Option<&str> {
+        self.raw.to.as_deref()
+    }
+
+    /// The id of the signal this one answers, when it answers one. Same trust posture as `to`.
+    #[must_use]
+    pub fn reply_to(&self) -> Option<&str> {
+        self.raw.reply_to.as_deref()
+    }
+
     /// Whether this signal may be turned into a draft by the Governor.
     ///
     /// An unrecognized kind never can. This is the fail-closed boundary: the record is kept as
@@ -204,6 +247,39 @@ mod tests {
         let signal = TypedSignal::parse(&sparse).expect("schema-valid signal must be recorded");
         assert_eq!(signal.id(), "");
         assert!(signal.can_propose_mutation());
+    }
+
+    /// A conversation needs an address. With several agents on one execution, "who is this for"
+    /// and "which message does it answer" lived only as conventions inside the free text, which no
+    /// tool can thread on. `to` names the addressed actor, `replyTo` names the answered signal id;
+    /// both OPTIONAL, because every existing emitter sends neither and must stay valid.
+    #[test]
+    fn a_reply_carries_its_addressee_and_the_message_it_answers() {
+        let mut reply = envelope("operator_note");
+        reply["to"] = serde_json::json!("codex");
+        reply["replyTo"] = serde_json::json!("signal-0");
+
+        let signal = TypedSignal::parse(&reply).expect("an addressed reply is schema-valid");
+        assert_eq!(signal.to(), Some("codex"));
+        assert_eq!(signal.reply_to(), Some("signal-0"));
+
+        // Absent stays absent - not empty-string, not defaulted.
+        let plain = TypedSignal::parse(&envelope("operator_note")).unwrap();
+        assert_eq!(plain.to(), None);
+        assert_eq!(plain.reply_to(), None);
+    }
+
+    /// The new fields must not have loosened the envelope: a field NOBODY defined is still
+    /// refused. Without this, "we added two optional fields" and "we opened the envelope to
+    /// anything" would look identical in every other test.
+    #[test]
+    fn an_undefined_field_is_still_rejected_after_the_addressing_fields() {
+        let mut smuggled = envelope("operator_note");
+        smuggled["forwardTo"] = serde_json::json!("someone");
+        assert_eq!(
+            TypedSignal::parse(&smuggled).unwrap_err(),
+            SignalError::Invalid
+        );
     }
 
     #[test]

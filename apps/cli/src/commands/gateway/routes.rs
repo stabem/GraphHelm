@@ -36,6 +36,13 @@ fn render_route(route: &ModelRoute) -> serde_json::Value {
         "provider": route.provider(),
         "transport": route.transport(),
         "billingMode": route.billing_mode(),
+        // The model NAME, which is what a person choosing a route is actually choosing. Without it
+        // this listing can only offer route ids - deployer-chosen strings like `fast_route` that
+        // say nothing about what would answer - and a picker built on ids alone asks an operator
+        // to pick a model they cannot see. `null` where the manifest declares none, rather than
+        // an invented default: the absence is the manifest's, and hiding it would be the listing
+        // answering a question the manifest did not.
+        "model": route.model(),
         "profiles": route.profiles(),
         "enabled": route.enabled(),
     })

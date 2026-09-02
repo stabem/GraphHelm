@@ -23,6 +23,7 @@ use graphhelm_protocols::{
     ActorId, Diagnostic, EventEnvelope, EventKind, OpaqueId, PersistedActor, PersistedActorType,
     RepositoryScope, SweepCaller,
 };
+use graphhelm_runtime::driver::ImmediateCancelRequest;
 
 use crate::args::ServeArgs;
 use crate::commands::events::runtime;
@@ -133,7 +134,11 @@ struct ServeState {
     /// One cancellation sender per in-flight async drive, keyed by execution id — registered
     /// before `drive_to_quiescence_async` starts and deregistered once it returns. `pause
     /// {"mode":"immediate"}` (STEP 5) looks a live execution up here to interrupt it.
-    cancels: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    cancels: Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::watch::Sender<Option<ImmediateCancelRequest>>>,
+        >,
+    >,
     /// The customs sweep tick's period in seconds, or `None` for no tick at all.
     ///
     /// It lives on the state rather than being passed to `serve_forever` separately because the
@@ -1568,6 +1573,33 @@ fn current_head(events: &Path, execution: &str) -> Option<u64> {
     let store = event_store(events).ok()?;
     let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
     Some(history.last().map_or(0, |event| event.sequence))
+}
+
+/// The idempotency key AND actor of the LAST committed `ExecutionPaused` event, or `None` if the
+/// store is unreadable or no such event exists yet.
+///
+/// #681, Codex P1's second finding: the immediate branch's success condition was "the execution
+/// is paused", which two concurrently racing immediate-pause requests against the same live
+/// execution can BOTH observe true for -- the driver commits only ONE request's payload
+/// (`ImmediateCancelRequest`, captured once at detection), and polling the aggregate status
+/// cannot tell a caller whether ITS OWN signal is what committed or a racing caller's did. This
+/// answers that: the caller compares its own derived (key, actor) against what's actually on the
+/// ledger before claiming success.
+///
+/// Actor is part of the comparison, not just the key (Codex P1, later review round):
+/// `request_digest16` folds in command, execution id and body -- never actor -- so two different
+/// actors racing with the SAME literal `Idempotency-Key` header and body derive the identical
+/// `signalled_key`. A key-only check would let both callers read their own key on the ledger and
+/// both claim success, even though only one of their (actor, key) pairs is what actually
+/// committed -- exactly the attribution gap `classify_existing_keys`'s own `ExpectedDecision`
+/// already guards against at the pre-flight, undone by checking the key alone after the fact.
+fn last_execution_paused_key(events: &Path, execution: &str) -> Option<(OpaqueId, PersistedActor)> {
+    let store = event_store(events).ok()?;
+    let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
+    history.iter().rev().find_map(|event| {
+        matches!(event.kind, EventKind::ExecutionPaused(_))
+            .then(|| (event.idempotency_key.clone(), event.actor.clone()))
+    })
 }
 
 /// #248: the three answers to "is any node in this execution parked in `waiting_input`", read

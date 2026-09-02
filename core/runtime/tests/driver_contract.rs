@@ -1147,7 +1147,7 @@ use graphhelm_execution::{ResumeError, resume_preconditions};
 use graphhelm_protocols::{
     EdgeType, GraphBudgets, GraphEdge, GraphNode, GraphSpec, NodeState, Optionality,
 };
-use graphhelm_runtime::driver::{StoreOpen, drive_to_quiescence_async};
+use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 
 fn agent_graph_node(objective: &str) -> GraphNode {
     let mut properties = std::collections::BTreeMap::new();
@@ -1507,7 +1507,7 @@ fn drive_tool_fixture(
         },
         actor: "agent-runtime".to_owned(),
     });
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     multi_thread_runtime()
         .block_on(drive_to_quiescence_async(
             opener(events),
@@ -1733,7 +1733,7 @@ fn conflicting_retry_policy_refuses_before_every_node_effect_and_settles_failed(
         },
         actor: "agent-runtime".to_owned(),
     });
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let projection = multi_thread_runtime()
         .block_on(drive_to_quiescence_async(
             opener(directory.path().to_path_buf()),
@@ -1830,7 +1830,7 @@ fn malformed_conflicting_retry_policy_fails_closed_before_every_node_effect() {
         },
         actor: "agent-runtime".to_owned(),
     });
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let projection = multi_thread_runtime()
         .block_on(drive_to_quiescence_async(
             opener(directory.path().to_path_buf()),
@@ -1954,7 +1954,7 @@ fn the_async_driver_reproduces_the_04f_sequencing_on_a_happy_chain() {
     ));
     let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
 
     let runtime = multi_thread_runtime();
     let projection = runtime
@@ -2053,7 +2053,7 @@ fn max_parallel_dispatches_concurrently_and_respects_the_bound() {
     ));
     let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
 
     let runtime = multi_thread_runtime();
     runtime.block_on(async {
@@ -2115,7 +2115,7 @@ fn immediate_stop_interrupts_in_flight_work_and_blocks_it() {
     ));
     let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
 
     let runtime = multi_thread_runtime();
     let projection = runtime.block_on(async {
@@ -2139,7 +2139,12 @@ fn immediate_stop_interrupts_in_flight_work_and_blocks_it() {
         while model.called.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
-        cancel_tx.send(true).unwrap();
+        cancel_tx
+            .send(Some(ImmediateCancelRequest {
+                actor: driver_actor(),
+                idempotency_key: OpaqueId::parse("driver-contract-test-cancel").unwrap(),
+            }))
+            .unwrap();
         driver.await.unwrap().unwrap()
     });
 
@@ -2205,7 +2210,7 @@ fn a_cancelled_tool_child_is_actually_dead() {
     ));
     let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
 
     let runtime = multi_thread_runtime();
     let projection = runtime.block_on(async {
@@ -2229,7 +2234,12 @@ fn a_cancelled_tool_child_is_actually_dead() {
         while tools.child.lock().unwrap().is_none() {
             tokio::task::yield_now().await;
         }
-        cancel_tx.send(true).unwrap();
+        cancel_tx
+            .send(Some(ImmediateCancelRequest {
+                actor: driver_actor(),
+                idempotency_key: OpaqueId::parse("driver-contract-test-cancel").unwrap(),
+            }))
+            .unwrap();
         driver.await.unwrap().unwrap()
     });
 
@@ -2350,7 +2360,7 @@ fn an_ordinary_pause_stops_the_drive_before_it_dispatches_more_work() {
     ));
     let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
 
     let runtime = multi_thread_runtime();
     let projection = runtime.block_on(async {

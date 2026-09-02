@@ -686,6 +686,725 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
 }
 
 // -------------------------------------------------------------------------------------------
+// Test 3b (#681): the immediate-pause branch's own precondition, idempotency, and attribution --
+// three absences a bypassed `run_idempotent_mutation` left on this one route, measured as three
+// cells against the SAME live execution (reusing the expensive hang-forever setup, since each
+// cell is a phase against the SAME run rather than an independent fixture).
+// -------------------------------------------------------------------------------------------
+
+/// A fixed instant, not `Utc::now()` (Codex P1, PR #695 review): this repository's own test
+/// contract requires a deterministic clock, and the fact that `last_ledger_event`'s open/read
+/// never actually stamps anything with it today does not make wall time the right choice -- a
+/// future change to `LocalEventRepository`'s open/read path that DID consult the clock would make
+/// this test's own timing non-deterministic in a way nobody would notice until it flaked.
+struct FixedClock;
+impl graphhelm_protocols::Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        use chrono::TimeZone;
+        chrono::Utc.with_ymd_and_hms(2026, 9, 2, 0, 0, 0).unwrap()
+    }
+}
+#[derive(Default)]
+struct Ids(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for Ids {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-681-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
+}
+
+/// The last committed event of `execution`'s stream whose kind satisfies `matches`, read directly
+/// off the ledger -- the HTTP response never carries the appending event's own raw `actor`, and
+/// this repository holds exactly one stream (this test's own), so the "unique stream" read applies.
+fn last_ledger_event(
+    events: &Path,
+    execution: &str,
+    matches: impl Fn(&graphhelm_protocols::EventKind) -> bool,
+) -> graphhelm_protocols::EventEnvelope {
+    let store = graphhelm_events::LocalEventRepository::open(
+        events,
+        std::sync::Arc::new(FixedClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let (_, history) = store.read_unique_replay_stream().unwrap();
+    history
+        .into_iter()
+        .rfind(|event| {
+            event
+                .scope
+                .execution_id()
+                .is_some_and(|id| id.as_str() == execution)
+                && matches(&event.kind)
+        })
+        .unwrap_or_else(|| panic!("no matching event on {execution}'s ledger"))
+}
+
+#[test]
+fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry() {
+    let deadline = Instant::now() + Duration::from_secs(60);
+
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-681-key";
+    let route_id = "hang_route_681";
+
+    let base_url = hang_forever_server();
+    credential_set(&broker, &keyring, key_id, "cred_hang_681", route_id);
+
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_hang_681",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 55
+            }]
+        }),
+    );
+
+    let execution = "exec-runtime-http-681";
+    let graph = agent_chain_graph(directory.path(), execution);
+
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let start_base = base.clone();
+    let start_token = token.clone();
+    let project = root();
+    let start_handle = std::thread::spawn(move || {
+        let url = format!("{start_base}/v1/executions/{execution}/start");
+        let body = serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        });
+        let headers = [
+            ("Idempotency-Key", "runtime-http-681-start"),
+            ("X-GraphHelm-Actor", "agent-runtime-http-681"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ];
+        post_request(&url, &start_token, &headers, &body, Duration::from_secs(50))
+    });
+
+    let status_url = format!("{base}/v1/executions/{execution}");
+    loop {
+        if let Ok(response) = raw_request(&status_url, Some(&token))
+            && response.status == 200
+        {
+            let value = json_body(&response);
+            if value["data"]["nodeStateCounts"]["running"] == 1 {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the node never reached running before the deadline"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let pause_url = format!("{base}/v1/executions/{execution}/pause");
+
+    // Each cell below collects its own `Result`/`Option`, never an `assert!` that would abort the
+    // function mid-way (H, PR #695 review, re-running the "restore the full bypass" sabotage): with
+    // three sequential `assert!`s, sabotaging ONLY cell 1's precondition panics at cell 1's own
+    // check and cells 2/3 never run at all -- "did not run" and "passed" are the same absence of a
+    // panic, so the PR's claim that the bypass reddens 1 and 2 together while leaving 3 unaffected
+    // was inferred, not measured. Collecting per-cell outcomes and asserting once at the end, named,
+    // makes every cell report its own colour regardless of what an earlier one did.
+    //
+    // Cell 3 is additionally GUARDED on the execution still genuinely running before it starts: if
+    // cell 1's own precondition was bypassed (sabotaged) and its stale-If-Match request wrongly
+    // succeeded, that call itself fully pauses the execution -- under cell 1's OWN actor and key,
+    // not cell 3's -- consuming the one live sender cell 3 needs. Attempting cell 3 on top of that
+    // would not observe THIS call's attribution; it would observe cell 1's, which is confounded
+    // evidence for cell 3's own claim, not a real pass or fail for it. `None` names that precisely
+    // instead of reporting a misleading colour either way.
+
+    // CELL 1 (#681): a stale `If-Match` must refuse, not interrupt. Real head is well past `0` by
+    // the time `running` is observed (`start` alone appends several events), so `0` is stale by
+    // construction -- no race needed to prove it. Always attempted; deterministic either way.
+    let cell1: Result<(), String> = (|| {
+        let (stale_status, stale_reply) = post_json(
+            &pause_url,
+            &token,
+            &[
+                ("Idempotency-Key", "runtime-http-681-cell1-stale"),
+                ("X-GraphHelm-Actor", "owner-681-cell1"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+                ("If-Match", "0"),
+            ],
+            &serde_json::json!({ "mode": "immediate" }),
+        );
+        if stale_status != 409 {
+            return Err(format!(
+                "expected 409, a stale If-Match on the immediate branch must be refused the \
+                 same way every other mutation refuses it: got {stale_status}: {stale_reply}"
+            ));
+        }
+        if stale_reply["diagnostics"][0]["code"] != "GHE001_SEQUENCE_CONFLICT" {
+            return Err(format!("wrong diagnostic code: {stale_reply}"));
+        }
+        let still_running = get_json(&status_url, Some(&token));
+        if still_running["data"]["nodeStateCounts"]["running"] != 1 {
+            return Err(format!(
+                "a REFUSED immediate-pause must not have interrupted the run: {still_running}"
+            ));
+        }
+        Ok(())
+    })();
+
+    // CELL 3 (#681): a real immediate-pause, with actor headers a genuine caller would send. The
+    // eventual ledger event must attribute to THIS actor, not the drive's own identity.
+    let cell3_key = "runtime-http-681-cell3-real";
+    let cell3: Option<Result<(), String>> = {
+        let status_before = get_json(&status_url, Some(&token));
+        if status_before["data"]["nodeStateCounts"]["running"] != 1 {
+            None
+        } else {
+            Some((|| {
+                let (real_status, real_reply) = post_json(
+                    &pause_url,
+                    &token,
+                    &[
+                        ("Idempotency-Key", cell3_key),
+                        ("X-GraphHelm-Actor", "owner-681-cell3"),
+                        ("X-GraphHelm-Actor-Type", "owner"),
+                    ],
+                    &serde_json::json!({ "mode": "immediate" }),
+                );
+                if real_status != 200 || real_reply["data"]["status"] != "paused" {
+                    return Err(format!(
+                        "the immediate-pause call itself did not succeed: {real_reply}"
+                    ));
+                }
+                let paused_event = last_ledger_event(&events, execution, |kind| {
+                    matches!(kind, graphhelm_protocols::EventKind::ExecutionPaused(_))
+                });
+                let expected = graphhelm_protocols::PersistedActor::new(
+                    graphhelm_protocols::PersistedActorType::Owner,
+                    graphhelm_protocols::ActorId::parse("owner-681-cell3").unwrap(),
+                );
+                if paused_event.actor != expected {
+                    return Err(format!(
+                        "the ledger's execution-paused event must attribute to the CALLER who \
+                         asked to pause, not the drive's own runtime identity: {:?}",
+                        paused_event.actor
+                    ));
+                }
+                Ok(())
+            })())
+        }
+    };
+
+    // `start`'s own handler removes the `state.cancels` entry only AFTER `drive_to_quiescence_async`
+    // returns, immediately before constructing its own response -- joining it here, before cell 2,
+    // guarantees no live sender remains for the retry below, so the retry deterministically falls
+    // through to the GRACEFUL wrapper rather than racing whether cleanup finished yet. Without this
+    // join in between, cell 2 is not a distinguishing measurement: a still-live sender would let the
+    // retry re-take the immediate branch and short-circuit through the (harmless, already-true)
+    // cancel signal regardless of whether the idempotency fix is present -- measured directly: the
+    // retry read 200 even against unfixed code when fired immediately after cell 3, for exactly this
+    // reason, before this join was added. Always joined regardless of the cells above: the drive
+    // reaches a terminal state (paused, one way or another) under every sabotage this file exercises.
+    let start_response = start_handle
+        .join()
+        .unwrap()
+        .unwrap_or_else(|error| panic!("the start request itself failed: {error}"));
+    assert_eq!(json_body(&start_response)["data"]["status"], "paused");
+
+    // CELL 2 (#681): retrying with the SAME actor and Idempotency-Key, now that the sender is
+    // gone (execution already paused, cancels entry removed, confirmed by the join above), falls
+    // through to the graceful wrapper's own pre-flight -- which must now recognise this as the SAME
+    // command already committed (cell 3's), not a fresh one against an execution that is no longer
+    // running. Only meaningful if cell 3 itself actually produced a successful pause to retry
+    // against -- if cell 3 was skipped or failed, there is nothing for cell 2 to test either.
+    let cell2: Option<Result<(), String>> = match &cell3 {
+        Some(Ok(())) => Some((|| {
+            let (retry_status, retry_reply) = post_json(
+                &pause_url,
+                &token,
+                &[
+                    ("Idempotency-Key", cell3_key),
+                    ("X-GraphHelm-Actor", "owner-681-cell3"),
+                    ("X-GraphHelm-Actor-Type", "owner"),
+                ],
+                &serde_json::json!({ "mode": "immediate" }),
+            );
+            if retry_status != 200 || retry_reply["data"]["status"] != "paused" {
+                return Err(format!(
+                    "a retry under the SAME actor and Idempotency-Key must be recognised as the \
+                     same command, not re-run against an execution that is no longer running: \
+                     {retry_reply}"
+                ));
+            }
+            Ok(())
+        })()),
+        _ => None,
+    };
+
+    let mut failures = Vec::new();
+    if let Err(message) = &cell1 {
+        failures.push(format!("CELL 1 (If-Match) FAILED: {message}"));
+    }
+    match &cell3 {
+        None => failures.push(
+            "CELL 3 (attribution) SKIPPED: the execution was no longer running before this \
+             cell's own attempt -- most likely cell 1's own (sabotage-exposed) request already \
+             succeeded and consumed the fixture under a DIFFERENT actor; not evidence for or \
+             against cell 3's own claim, but not a pass either"
+                .to_owned(),
+        ),
+        Some(Err(message)) => failures.push(format!("CELL 3 (attribution) FAILED: {message}")),
+        Some(Ok(())) => {}
+    }
+    match &cell2 {
+        None => failures.push(
+            "CELL 2 (retry) SKIPPED: cell 3 did not produce a successful pause to retry against"
+                .to_owned(),
+        ),
+        Some(Err(message)) => failures.push(format!("CELL 2 (retry) FAILED: {message}")),
+        Some(Ok(())) => {}
+    }
+    assert!(
+        failures.is_empty(),
+        "one or more of the three #681 cells did not pass:\n{}",
+        failures.join("\n")
+    );
+
+    assert!(
+        Instant::now() < deadline,
+        "immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry exceeded \
+         its 60s budget"
+    );
+}
+
+/// #681, Codex P1: graceful and immediate pause must not share a derived key. Before the fix,
+/// `pause`'s digest was always `Value::Null` regardless of mode, so a graceful pause under key K
+/// followed by an immediate pause reusing the SAME `Idempotency-Key` header classified `Complete`
+/// against the graceful commit -- 200, with no domain call and no cancellation ever attempted.
+///
+/// If the keys still collided, `classify_existing_keys` would find `Complete` (exact match) and
+/// return `200` without ever invoking `execution::pause::execute` at all. Measured instead (fixed):
+/// the SAME `Idempotency-Key` header now derives a DIFFERENT full key per mode, so the second
+/// request's prefix matches the graceful commit's but its digest does not -- `Divergent`, refused
+/// entirely at the wrapper's own pre-flight with `GHE003_IDEMPOTENCY_CONFLICT`, before the domain
+/// body (`execution::pause::execute`) is ever reached. That is a stronger proof than a domain
+/// refusal would have been: the reuse is caught as what it is -- the same header spent on two
+/// logically different requests -- not merely as "this specific attempt happened to fail".
+#[test]
+fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
+    let deadline = Instant::now() + Duration::from_secs(60);
+
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-681-key-modecoll";
+    let route_id = "hang_route_681_modecoll";
+
+    let base_url = hang_forever_server();
+    credential_set(
+        &broker,
+        &keyring,
+        key_id,
+        "cred_hang_681_modecoll",
+        route_id,
+    );
+
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_hang_681_modecoll",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 55
+            }]
+        }),
+    );
+
+    let execution = "exec-runtime-http-681-modecoll";
+    let graph = agent_chain_graph(directory.path(), execution);
+
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let start_base = base.clone();
+    let start_token = token.clone();
+    let project = root();
+    let start_handle = std::thread::spawn(move || {
+        let url = format!("{start_base}/v1/executions/{execution}/start");
+        let body = serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        });
+        let headers = [
+            ("Idempotency-Key", "runtime-http-681-modecoll-start"),
+            ("X-GraphHelm-Actor", "agent-681-modecoll"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ];
+        post_request(&url, &start_token, &headers, &body, Duration::from_secs(50))
+    });
+
+    let status_url = format!("{base}/v1/executions/{execution}");
+    loop {
+        if let Ok(response) = raw_request(&status_url, Some(&token))
+            && response.status == 200
+        {
+            let value = json_body(&response);
+            if value["data"]["nodeStateCounts"]["running"] == 1 {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the node never reached running before the deadline"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let pause_url = format!("{base}/v1/executions/{execution}/pause");
+    let shared_key = "runtime-http-681-modecoll-shared";
+
+    // A graceful pause: no `mode` field at all, matching the CLI's own shape.
+    let (graceful_status, graceful_reply) = post_json(
+        &pause_url,
+        &token,
+        &[
+            ("Idempotency-Key", shared_key),
+            ("X-GraphHelm-Actor", "owner-681-modecoll"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({}),
+    );
+    assert_eq!(graceful_status, 200, "{graceful_reply}");
+    assert_eq!(
+        graceful_reply["data"]["status"], "paused",
+        "{graceful_reply}"
+    );
+
+    // The SAME Idempotency-Key header, now with `mode: immediate`. Before the fix: 200, Complete,
+    // no domain call, immediate stop silently dropped. After: 409, refused at the pre-flight as a
+    // reused header spent on a logically different request (same prefix, different digest) --
+    // proof the derived keys differ.
+    let (reused_status, reused_reply) = post_json(
+        &pause_url,
+        &token,
+        &[
+            ("Idempotency-Key", shared_key),
+            ("X-GraphHelm-Actor", "owner-681-modecoll"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "mode": "immediate" }),
+    );
+    assert_eq!(
+        reused_status, 409,
+        "reusing the graceful pause's Idempotency-Key for an immediate pause must NOT classify \
+         as the same command -- a 200 here means the two modes still share a derived key and the \
+         immediate stop was silently dropped: {reused_reply}"
+    );
+    assert_eq!(
+        reused_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+        "expected the reused header to classify Divergent (same prefix, different digest -- the \
+         mode-aware key working as intended), not some other code: {reused_reply}"
+    );
+
+    // The claim under test ends here -- deliberately NOT joining `start_handle`. The Divergent
+    // refusal above happens entirely at the wrapper's own pre-flight, so `run` (and the cancel
+    // signal inside it) is never reached; the in-flight hanging node this fixture depends on stays
+    // uninterrupted by it, same as a graceful pause alone never touches the cancel channel either.
+    // A SECOND pause under a genuinely fresh key -- proving the immediate branch still completes
+    // once the collision is gone, on an execution that was already gracefully paused first -- is a
+    // real, different question about this system's own double-pause semantics, not about the
+    // mode-aware key this test exists to prove. `_guard`'s `Drop` kills the child `graphhelm serve`
+    // process (and with it, the still-blocked `start` request) when this function returns.
+    //
+    // What a SECOND `execution_paused` landing on an already-paused projection actually does was a
+    // disclosed gap here (this test does not exercise a fresh key); now measured directly by
+    // `graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_stream` below.
+    let _ = start_handle;
+
+    assert!(
+        Instant::now() < deadline,
+        "immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause exceeded its 60s budget"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// #695, Codex P1: a graceful pause commits `ExecutionPaused` immediately -- it holds only the
+// dispatchable (`Ready`/`Queued`) nodes and never waits for what is already in flight. If a node
+// is still draining when an IMMEDIATE pause follows, the driver's own cancel channel still has a
+// live sender (the drive task has not exited yet), so the immediate request reaches the driver
+// and, before this fix, unconditionally appended a SECOND `ExecutionPaused` -- which
+// `core/events/src/projection.rs`'s own fold refuses once the aggregate is already `Paused`
+// (`ReplayError::Corrupt`), corrupting every future replay of the stream.
+// -------------------------------------------------------------------------------------------
+
+/// Real repro, not inferred: graceful pause while a node is in flight (so it commits with the
+/// node still running), then immediate pause on the SAME execution while the drive is still
+/// draining that node. The claim: the stream stays replayable (`GET .../{id}` keeps returning
+/// `200` with real data, never `GHE005_INTEGRITY_FAILURE`) and the draining node still ends up
+/// interrupted -- immediate's own promise over graceful, kept without a second aggregate event.
+#[test]
+fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_stream() {
+    let deadline = Instant::now() + Duration::from_secs(60);
+
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-695-key-graceful-then-immediate";
+    let route_id = "hang_route_695_gti";
+
+    let base_url = hang_forever_server();
+    credential_set(&broker, &keyring, key_id, "cred_hang_695_gti", route_id);
+
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_hang_695_gti",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 55
+            }]
+        }),
+    );
+
+    let execution = "exec-runtime-http-695-graceful-then-immediate";
+    let graph = agent_chain_graph(directory.path(), execution);
+
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let start_base = base.clone();
+    let start_token = token.clone();
+    let project = root();
+    let start_handle = std::thread::spawn(move || {
+        let url = format!("{start_base}/v1/executions/{execution}/start");
+        let body = serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        });
+        let headers = [
+            ("Idempotency-Key", "runtime-http-695-gti-start"),
+            ("X-GraphHelm-Actor", "agent-runtime-http"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ];
+        post_request(&url, &start_token, &headers, &body, Duration::from_secs(50))
+    });
+
+    let status_url = format!("{base}/v1/executions/{execution}");
+    loop {
+        if let Ok(response) = raw_request(&status_url, Some(&token))
+            && response.status == 200
+        {
+            let value = json_body(&response);
+            if value["data"]["nodeStateCounts"]["running"] == 1 {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the node never reached running before the deadline"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Graceful pause while the node is running: `held` is empty (the running node is neither
+    // `Ready` nor `Queued`), and the aggregate commits `ExecutionPaused` right away regardless --
+    // the ledger says `paused` while the drive task is still alive, still draining that node.
+    let pause_url = format!("{base}/v1/executions/{execution}/pause");
+    let (graceful_status, graceful_reply) = post_json(
+        &pause_url,
+        &token,
+        &[
+            ("Idempotency-Key", "runtime-http-695-gti-graceful"),
+            ("X-GraphHelm-Actor", "owner-runtime-http"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({}),
+    );
+    assert_eq!(graceful_status, 200, "{graceful_reply}");
+    assert_eq!(
+        graceful_reply["data"]["status"], "paused",
+        "{graceful_reply}"
+    );
+
+    // Immediate pause on the same, still-draining execution. This request's own key never lands
+    // on the ledger (the driver skips its own append -- the aggregate is already `Paused`), so it
+    // runs out its full 10s budget and reads back the graceful pause's key instead of its own --
+    // the same "someone else's pause committed first" conflict a genuinely racing immediate
+    // request gets, which is an honest answer here too: the graceful pause did commit first.
+    let (immediate_status, immediate_reply) = post_json(
+        &pause_url,
+        &token,
+        &[
+            ("Idempotency-Key", "runtime-http-695-gti-immediate"),
+            ("X-GraphHelm-Actor", "owner-runtime-http"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "mode": "immediate" }),
+    );
+    assert_eq!(
+        immediate_status, 409,
+        "expected a typed conflict, not a crash or a silent success: {immediate_reply}"
+    );
+    assert_eq!(
+        immediate_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+        "{immediate_reply}"
+    );
+
+    // THE CLAIM: the stream is still replayable. Before the fix, the immediate branch above
+    // would have appended a second `ExecutionPaused` onto an already-`Paused` aggregate --
+    // `ReplayError::Corrupt` at the projection fold -- and every read of this execution from here
+    // on, including this one, would fail with `GHE005_INTEGRITY_FAILURE` instead of real data.
+    let (status_after, reply_after) = {
+        let response = raw_request(&status_url, Some(&token)).unwrap();
+        (response.status, json_body(&response))
+    };
+    assert_eq!(
+        status_after, 200,
+        "the stream did not survive the immediate pause readably: {reply_after}"
+    );
+    assert_eq!(reply_after["data"]["status"], "paused", "{reply_after}");
+
+    // The draining node still ends up interrupted -- immediate's own promise over graceful, kept
+    // without the second aggregate event: `start` itself returns once its own drive is cancelled.
+    let start_response = start_handle
+        .join()
+        .unwrap()
+        .unwrap_or_else(|error| panic!("the start request itself failed: {error}"));
+    let start_reply = json_body(&start_response);
+    assert_eq!(start_response.status, 200, "{start_reply}");
+    let interrupted = start_reply["data"]["untriagedInterruptions"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0);
+    assert_eq!(
+        interrupted, 1,
+        "expected the draining node interrupted despite the skipped second append: {start_reply}"
+    );
+
+    assert!(
+        Instant::now() < deadline,
+        "graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_stream \
+         exceeded its 60s budget"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
 // Test 2: the milestone's §8 acceptance sentence as one test — an agent node (fake Anthropic)
 // and a tool node (real git in an ephemeral worktree) run to completion over HTTP, every
 // outcome carries sealed evidence, and the finished stream replays byte-identically twice.

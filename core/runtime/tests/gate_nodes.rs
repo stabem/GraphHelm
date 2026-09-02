@@ -129,7 +129,7 @@ use graphhelm_protocols::{
     PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
     WireHash, WorkspaceId,
 };
-use graphhelm_runtime::driver::{StoreOpen, drive_to_quiescence_async};
+use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::PortExecutor;
 use graphhelm_tool_broker::lease::ToolLease;
 
@@ -420,7 +420,7 @@ fn drive(
 ) -> graphhelm_events::ExecutionProjection {
     let sealer = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()

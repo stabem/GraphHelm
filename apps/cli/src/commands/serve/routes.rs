@@ -13,7 +13,7 @@ use axum::response::Response;
 use graphhelm_events::{EventRepositoryError, EvidenceRead, EvidenceSealer};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
-use graphhelm_runtime::driver::{StoreOpen, drive_to_quiescence_async};
+use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{AsyncNodeExecutor, PortExecutor};
 use graphhelm_runtime::fixture::FixtureAsyncExecutor;
 use graphhelm_simulation::FixtureExecutor;
@@ -25,8 +25,8 @@ use super::ports::{
     RuntimeWiring, ServeModelPort, ServeToolPort, build_opener, build_sealer, find_route,
 };
 use super::{
-    ExecutorWiring, MutationError, ServeState, parse_mutation_headers, respond, respond_failure,
-    run_idempotent_mutation,
+    ExecutorWiring, MutationError, ServeState, last_execution_paused_key, parse_mutation_headers,
+    respond, respond_failure, run_idempotent_mutation,
 };
 use crate::commands::execution::PreparedDrive;
 use crate::commands::{event_store, execution, owner, publish_loaded, topology};
@@ -794,23 +794,35 @@ pub(super) async fn amend_budget(
     .await
 }
 
-/// `POST /v1/executions/{id}/pause`: no request body — mirrors the CLI's `execution pause`, which
-/// takes only `--events`/`--execution`. `pause` takes no meaningful parameters beyond the URL's own
-/// execution id, so a fixed `Value::Null` stands in for "no body" in the request digest
-/// (`parse_mutation_headers`): there is no field here that could make two `pause` calls under the
-/// same `Idempotency-Key` logically different requests, so this command's derived key never varies
-/// with whatever bytes, if any, a caller happens to send.
+/// `POST /v1/executions/{id}/pause`: mirrors the CLI's `execution pause`, which takes only
+/// `--events`/`--execution`, plus the optional `{"mode": "immediate"}` body Milestone 05d Task 9
+/// STEP 5 added — absent, or any other value, keeps the graceful behaviour below byte-identical.
 ///
-/// Milestone 05d Task 9 STEP 5: an optional body `{"mode": "immediate"}` — absent, or any other
-/// value, keeps the graceful behavior above byte-identical. `"immediate"` looks the execution up
-/// in `state.cancels`: a live async drive gets `send(true)` on its cancel channel, then this
-/// handler polls `execution::status::execute` (the same read `GET /v1/executions/{id}` uses)
-/// every 100ms for up to 10s until `execution_paused` has folded, and replies with that status.
-/// The route itself appends NOTHING in immediate mode — `drive_to_quiescence_async` appends
-/// `execution_paused` itself once every in-flight node is recorded `Interrupted` — so a caller's
-/// `Idempotency-Key` is still validated (header shape only) but never turned into an event here.
-/// No live sender (an idle execution, or a fixture drive with nothing in flight) falls through to
-/// the existing graceful `execute` below, the 04f pause.
+/// `immediate` (a plain boolean, not the raw body — unrelated body noise must still classify two
+/// otherwise-identical GRACEFUL calls as the same command) stands in for the request in the
+/// digest `parse_mutation_headers` derives the key from. **Not `Value::Null`, as it once was: the
+/// two modes are observably different commands sharing one field capable of telling them apart,
+/// and folding it in is what makes a graceful pause under key K and a later immediate pause reusing
+/// K conflict instead of the second one silently classifying `Complete` against the first's commit
+/// and returning 200 with no cancellation ever sent (#681, Codex P1).**
+///
+/// `"immediate"` looks the execution up in `state.cancels`: a live async drive gets `send(Some(..))`
+/// on its cancel channel, then this handler polls `execution::status::execute` (the same read
+/// `GET /v1/executions/{id}` uses) every 100ms for up to 10s until `execution_paused` has folded,
+/// and replies with that status. No live sender (an idle execution, or a fixture drive with
+/// nothing in flight) falls through to the existing graceful `execute` below, the 04f pause — that
+/// routing decision stays outside the wrapper, unchanged, since it decides WHICH command body runs,
+/// not whether this request is fresh.
+///
+/// **#681: everything past that routing decision now goes through `run_idempotent_mutation`, same
+/// as the graceful path.** Before this, the immediate branch skipped it entirely: `If-Match` was
+/// parsed and ignored, `Idempotency-Key` was validated for shape only and never classified against
+/// history, and the eventual `execution_paused` append (inside `drive_to_quiescence_async`, once
+/// every in-flight node is recorded `Interrupted`) carried the DRIVE's own actor rather than this
+/// request's caller. Wrapping closes the first two; the third needed the cancel channel itself to
+/// carry `actor`/`idempotency_key` through to that later, asynchronous append (see
+/// `ImmediateCancelRequest`) — this route no longer appends anything itself in either mode, exactly
+/// as before, it just hands the wrapper's parsed identity down the channel instead of discarding it.
 #[allow(clippy::result_large_err)] // see `start`'s doc comment
 pub(super) async fn pause(
     State(state): State<ServeState>,
@@ -828,62 +840,150 @@ pub(super) async fn pause(
     };
     let immediate = payload.get("mode").and_then(serde_json::Value::as_str) == Some("immediate");
 
+    // #681, Codex P1: graceful and immediate are OBSERVABLY DIFFERENT commands -- one holds every
+    // dispatchable node and lets in-flight work finish, the other interrupts it now -- so they
+    // must not share a derived key. Before #681 routed the immediate branch through this
+    // wrapper's own pre-flight, they harmlessly did share one (`Value::Null`): the immediate
+    // branch never consulted `classify_existing_keys` at all, so a reused key across modes was
+    // never actually compared. Now that it is, a caller who gracefully paused under key K and
+    // later retries with the SAME key but `{"mode":"immediate"}` would classify `Complete` against
+    // the graceful commit and get a silent 200 with NO cancellation sent -- the immediate stop
+    // dropped entirely. Immediate mode gets a distinct digest to close that.
+    //
+    // Graceful keeps the ORIGINAL `Value::Null` digest, not a `{"immediate":false}` one (Codex
+    // P1, later round): a graceful pause committed before this change carries a key derived from
+    // `Null`. Deriving graceful's digest differently now would make every already-committed
+    // graceful-pause event's key stop matching what a durable retry computes --
+    // `classify_existing_keys` would see the same key PREFIX (same header) but a different
+    // digest and return `Divergent` (409) for what is actually the same retried command. Only
+    // immediate needs a new digest: it never went through this digest path before #681, so there
+    // is no historical event whose key it could stop matching.
+    let digest_body = pause_digest_body(immediate);
     let identity = match parse_mutation_headers(
         &headers,
         PAUSE_COMMAND,
         &execution_id,
-        &serde_json::Value::Null,
+        &digest_body,
         &["paused"],
     ) {
         Ok(identity) => identity,
         Err(response) => return response,
     };
 
-    if immediate {
-        let sender = {
-            let cancels = state.cancels.lock().await;
-            cancels.get(&execution_id).cloned()
-        };
-        if let Some(sender) = sender {
-            let _ = sender.send(true);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            loop {
-                if let Ok(value) = execution::status::execute(&state.events, Some(&execution_id))
-                    && value.get("status") == Some(&serde_json::json!("paused"))
-                {
-                    return respond(
-                        StatusCode::OK,
-                        Outcome::success(PAUSE_COMMAND, value).output,
-                    );
-                }
-                if std::time::Instant::now() >= deadline {
-                    // #130, the third class — found while #96 split the other two, and
-                    // deliberately NOT split here. This is not a drive failure at all: it is
-                    // `pause` waiting for `execution_paused` and running out of budget, so the
-                    // operator's question is "did my pause take effect?" — and its remedy is a
-                    // third kind, an UNKNOWN rather than a failure, because the pause may still
-                    // record after the budget elapses. A failure says act; an unknown says look.
-                    //
-                    // NOT contradicted by #96: that change scopes `GHCLI016`'s narrowed meaning to
-                    // the start/resume path explicitly, so this site's use stays a pre-existing
-                    // approximation rather than becoming a false statement. Untidy and named, not
-                    // wrong — a distinction I got wrong in #130's own opening and corrected there
-                    // after a reviewer read this constant's doc instead of my summary of it.
-                    //
-                    // Left as-is because it belongs to a different command and a different
-                    // operator story than #96's split, and widening that change to cover it would
-                    // bundle two contracts in one diff. Named here so the next reader finds a
-                    // decision instead of an oversight.
-                    return respond_failure(
-                        PAUSE_COMMAND,
-                        driver_failure(
-                            "the execution did not record execution_paused within the immediate-stop budget",
-                        ),
-                    );
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
+    let sender = if immediate {
+        let cancels = state.cancels.lock().await;
+        cancels.get(&execution_id).cloned()
+    } else {
+        None
+    };
+
+    if let Some(sender) = sender {
+        let events = state.events.clone();
+        let drive_execution_id = execution_id.clone();
+        return run_idempotent_mutation(
+            &state.events,
+            &execution_id,
+            PAUSE_COMMAND,
+            identity,
+            ExecutorWiring::from_state(&state),
+            move |actor, key| {
+                Box::pin(async move {
+                    let signalled_key = key.clone();
+                    let signalled_actor = actor.clone();
+                    let _ = sender.send(Some(ImmediateCancelRequest {
+                        actor,
+                        idempotency_key: key,
+                    }));
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    loop {
+                        if let Ok(value) =
+                            execution::status::execute(&events, Some(drive_execution_id.as_str()))
+                            && value.get("status") == Some(&serde_json::json!("paused"))
+                            // #681, Codex P1: "paused" is the AGGREGATE status -- it can be true
+                            // because a DIFFERENT racing immediate-pause request's payload is what
+                            // the driver committed (only one payload survives when two race), OR
+                            // because an EARLIER graceful pause already landed while this request's
+                            // own signal is still in flight (the drive quiesces slowly with a node
+                            // still draining, per #681's own second-round review). Requiring THIS
+                            // request's own key on the paused event before reporting success
+                            // catches the first; looping instead of failing on a mismatch catches
+                            // the second -- a mismatched key is "not yet, keep checking", not "lost
+                            // the race", until the deadline below has actually given this request a
+                            // fair chance to land.
+                            //
+                            // Key alone is not enough (Codex P1, later round): `request_digest16`
+                            // never folds in actor, so two DIFFERENT actors racing with the same
+                            // literal Idempotency-Key header and body derive the identical
+                            // `signalled_key`. Comparing actor too closes that gap -- the same
+                            // attribution `classify_existing_keys`'s pre-flight already enforces,
+                            // now also enforced on the post-append read.
+                            && last_execution_paused_key(&events, &drive_execution_id)
+                                == Some((signalled_key.clone(), signalled_actor.clone()))
+                        {
+                            return Ok(value);
+                        }
+                        if std::time::Instant::now() >= deadline {
+                            // Two distinct timeout outcomes, not one: a paused event under a
+                            // DIFFERENT key at the deadline means SOME OTHER request's own pause
+                            // committed first -- a racing immediate request that won the driver's
+                            // single-payload capture, OR a graceful pause that landed while this
+                            // one's own signal was still draining a node (#695, Codex P1: the
+                            // driver deliberately skips its own append rather than double-commit
+                            // `ExecutionPaused` in that second case, so this request's own key
+                            // never lands either way) -- the same post-append reconciliation every
+                            // other mutation's genuine two-writer race already uses. No paused
+                            // event that matches at all is the pre-existing #96/#130 case below:
+                            // an unknown, because this request's own pause may still record after
+                            // the budget elapses.
+                            if execution::status::execute(
+                                &events,
+                                Some(drive_execution_id.as_str()),
+                            )
+                            .is_ok_and(|value| {
+                                value.get("status") == Some(&serde_json::json!("paused"))
+                            }) {
+                                return Err(execution::Failure {
+                                    code: "GHE003_IDEMPOTENCY_CONFLICT",
+                                    message: "the execution is already paused under a different \
+                                              idempotency key -- a concurrent pause request, \
+                                              graceful or racing immediate, committed it first"
+                                        .to_owned(),
+                                    pointer: "/idempotencyKey".to_owned(),
+                                }
+                                .into());
+                            }
+                            // #130, the third class — found while #96 split the other two, and
+                            // deliberately NOT split here. This is not a drive failure at all: it
+                            // is `pause` waiting for `execution_paused` and running out of budget,
+                            // so the operator's question is "did my pause take effect?" — and its
+                            // remedy is a third kind, an UNKNOWN rather than a failure, because the
+                            // pause may still record after the budget elapses. A failure says act;
+                            // an unknown says look.
+                            //
+                            // NOT contradicted by #96: that change scopes `GHCLI016`'s narrowed
+                            // meaning to the start/resume path explicitly, so this site's use stays
+                            // a pre-existing approximation rather than becoming a false statement.
+                            // Untidy and named, not wrong — a distinction I got wrong in #130's own
+                            // opening and corrected there after a reviewer read this constant's doc
+                            // instead of my summary of it.
+                            //
+                            // Left as-is because it belongs to a different command and a different
+                            // operator story than #96's split, and widening that change to cover it
+                            // would bundle two contracts in one diff. Named here so the next reader
+                            // finds a decision instead of an oversight. Reached through the wrapper
+                            // now (#681) rather than inline, but the reasoning is unmoved.
+                            return Err(driver_failure(
+                                "the execution did not record execution_paused within the \
+                                 immediate-stop budget",
+                            )
+                            .into());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                })
+            },
+        )
+        .await;
     }
 
     let events = state.events.clone();
@@ -906,6 +1006,25 @@ pub(super) async fn pause(
         },
     )
     .await
+}
+
+/// The pause command's idempotency digest body, pulled out of `pause` so its contract can be
+/// pinned directly (below) rather than only through the full HTTP handler.
+///
+/// Graceful MUST stay `Value::Null` -- the digest every already-committed graceful-pause event on
+/// a real, durable ledger carries, before this PR existed and unchanged by it. Deriving it any
+/// other way (this PR shipped `{"immediate":false}` for one round, Codex P1 caught it) makes every
+/// pre-existing graceful-pause event's key stop matching what a durable retry computes post-
+/// deploy: `classify_existing_keys` reads the same key PREFIX but a different digest and returns
+/// `Divergent` for what is actually the same retried command. Immediate is free to pick anything
+/// distinct from `Null` -- it never went through this digest path before #681, so there is no
+/// historical event for it to stop matching.
+fn pause_digest_body(immediate: bool) -> serde_json::Value {
+    if immediate {
+        serde_json::json!({ "immediate": true })
+    } else {
+        serde_json::Value::Null
+    }
 }
 
 /// `POST /v1/executions/{id}/resume`: body `{"file": "<path>", "fixtures": "<path, omitted for
@@ -1369,7 +1488,7 @@ async fn drive(
         }
     };
 
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     state
         .cancels
         .lock()
@@ -1962,4 +2081,29 @@ fn evidence_refusal(message: &str) -> Response {
         )
         .output,
     )
+}
+
+#[cfg(test)]
+mod pause_digest_body_tests {
+    use super::pause_digest_body;
+
+    /// Pinned, not inferred: this is the one fact the backward-compatibility claim in
+    /// `pause_digest_body`'s own doc comment depends on. A real end-to-end proof (commit a
+    /// graceful-pause event under the pre-#681 digest, retry it against this code, confirm
+    /// `Complete` rather than `Divergent`) needs a durable ledger event that predates this code by
+    /// construction -- not reproducible inside one process running one build. This pins the
+    /// narrower, checkable fact instead: change graceful's digest body away from `Null` and this
+    /// goes red before it ever reaches a real deploy's retries.
+    #[test]
+    fn graceful_digest_body_is_pinned_to_null() {
+        assert_eq!(pause_digest_body(false), serde_json::Value::Null);
+    }
+
+    /// Immediate's digest must differ from graceful's -- the whole point of #681's mode-aware fix
+    /// (a shared digest let a graceful-then-immediate retry classify `Complete` against the
+    /// graceful commit and silently drop the immediate stop).
+    #[test]
+    fn immediate_digest_body_differs_from_graceful() {
+        assert_ne!(pause_digest_body(true), pause_digest_body(false));
+    }
 }

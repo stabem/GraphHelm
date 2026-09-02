@@ -330,6 +330,12 @@ fn bare(outcome: NodeOutcome) -> WorkOutcome {
 }
 
 /// One serialized plain append (completion, pause) through `spawn_blocking`.
+///
+/// `idempotency_key`, when supplied, is used verbatim instead of minting a fresh one (#681: the
+/// immediate-stop caller's own derived key, so a retried request can be recognised as a retry by
+/// `serve`'s idempotency layer). `None` keeps the original behavior -- `mint_key(ids, prefix)` --
+/// for the other caller of this function, which has no caller-supplied key to attribute to.
+#[allow(clippy::too_many_arguments)] // one caller-supplied key, added to an already-wide append surface (#681)
 async fn append_plain(
     store_open: &StoreOpen,
     ids: &Arc<dyn IdGenerator>,
@@ -337,6 +343,7 @@ async fn append_plain(
     stream: &OpaqueId,
     actor: &PersistedActor,
     prefix: &'static str,
+    idempotency_key: Option<OpaqueId>,
     kind: WireEventKind,
 ) -> Result<(), DriverError> {
     let store_open = store_open.clone();
@@ -347,12 +354,16 @@ async fn append_plain(
     tokio::task::spawn_blocking(move || {
         let store = store_open()?;
         let next_sequence = store.next_sequence(&scope, stream.as_str())?;
+        let key = match idempotency_key {
+            Some(key) => key,
+            None => mint_key(ids.as_ref(), prefix)?,
+        };
         let request = PreparedAppend::new(
             scope.clone(),
             stream.clone(),
             next_sequence,
             vec![NewEvent::new(
-                mint_key(ids.as_ref(), prefix)?,
+                key,
                 actor,
                 Sensitivity::Internal,
                 kind,
@@ -655,6 +666,19 @@ struct GateContext<'a> {
     current_suite_digest: Option<&'a str>,
 }
 
+/// Who asked for an immediate stop, and under what idempotency key — carried ON the cancel
+/// channel itself rather than read from `actor` above, so the `execution-paused` this loop
+/// appends on cancel attributes to the REQUESTING caller and carries THEIR idempotency key, not
+/// the drive's own identity (#681: before this, the append always used `actor`, so the ledger
+/// recorded the drive's own actor — usually `system-runtime` — for a stop a named caller asked
+/// for, and a retried immediate-pause request could never be recognised as a retry because no
+/// committed event ever carried its key).
+#[derive(Clone)]
+pub struct ImmediateCancelRequest {
+    pub actor: PersistedActor,
+    pub idempotency_key: OpaqueId,
+}
+
 /// Drives a started execution to quiescence — the 04f loop, async: concurrent executor
 /// futures up to `max_parallel_model_calls`, every write serialized through this task (the
 /// single writer that keeps `next_sequence` race-free), `tokio::select!` between completions
@@ -684,7 +708,7 @@ pub async fn drive_to_quiescence_async(
     // owner paused is the owner's act, while every ordinary hop below stays machinery.
     release: BTreeSet<String>,
     release_actor: PersistedActor,
-    mut cancel: tokio::sync::watch::Receiver<bool>,
+    mut cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
     current_suite_digest: Option<String>,
 ) -> Result<ExecutionProjection, DriverError> {
     let retry_policy_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
@@ -719,9 +743,16 @@ pub async fn drive_to_quiescence_async(
     let mut refused: BTreeSet<String> = BTreeSet::new();
     let max_parallel = graphhelm_execution::parallel_limit(&spec.budgets);
 
-    let cancelled = loop {
-        if *cancel.borrow() {
-            break true;
+    // The `Option<ImmediateCancelRequest>` is CAPTURED at the point cancellation is detected, not
+    // re-read later at the append site (Codex P1, PR #695 review). Two immediate-pause requests
+    // racing the same execution could otherwise let a SECOND `send` overwrite the channel's
+    // payload between "cancellation observed" and "payload fetched to attribute the append" --
+    // the loop would still correctly detect a request happened, but attribute it to whichever
+    // request happened to be sitting in the channel at the LATER read, not the one that actually
+    // triggered this stop.
+    let cancelled_request: Option<ImmediateCancelRequest> = loop {
+        if let Some(request) = cancel.borrow().clone() {
+            break Some(request);
         }
 
         // Approve every untouched node — the legal Draft -> Ready route, as 04f does.
@@ -845,7 +876,7 @@ pub async fn drive_to_quiescence_async(
         };
 
         if plan.is_empty() && in_flight.is_empty() {
-            break false;
+            break None;
         }
 
         for node in &plan {
@@ -949,14 +980,16 @@ pub async fn drive_to_quiescence_async(
                 }
             }
             changed = cancel.changed() => {
-                if changed.is_ok() && *cancel.borrow() {
-                    break true;
+                if changed.is_ok()
+                    && let Some(request) = cancel.borrow().clone()
+                {
+                    break Some(request);
                 }
             }
         }
     };
 
-    if cancelled {
+    if let Some(request) = cancelled_request {
         // §12 immediate stop: hooks first (blocking work dies for real), then abort the
         // futures, then record the truth — Interrupted, never a silent retry.
         executor.cancel_all();
@@ -976,18 +1009,47 @@ pub async fn drive_to_quiescence_async(
             )
             .await?;
         }
-        append_plain(
-            &store_open,
-            &ids,
-            &scope,
-            &stream,
-            &actor,
-            "execution-paused",
-            WireEventKind::ExecutionPaused(ExecutionPaused {
-                execution_id: execution_id.clone(),
-            }),
-        )
-        .await?;
+        // `request` is the SAME value that triggered this branch above -- captured once, at
+        // detection, never re-read (#681: attribute and key both come from the caller who asked
+        // to pause, not from the drive's own `actor`; the earlier re-read was Codex's P1 finding
+        // on this PR -- a second racing request could overwrite the channel between detection
+        // and a later fetch).
+        //
+        // #695, Codex P1: a GRACEFUL pause can commit `execution-paused` while THIS drive is
+        // still draining the very node this immediate request is about to interrupt -- graceful
+        // holds only `Ready`/`Queued` nodes and appends its own `ExecutionPaused` immediately
+        // (`apps/cli/src/commands/execution/pause.rs`), never waiting for what's in flight. The
+        // projection's own fold for `ExecutionPaused` accepts the `None`/`Running` -> `Paused`
+        // transition exactly once (`core/events/src/projection.rs`); a second one while already
+        // `Paused` is `ReplayError::Corrupt`, and every future replay of this stream -- including
+        // this very append's own `reread_async` below -- would fail from that point on. Re-read
+        // fresh, right before the append, rather than trust the projection this function loaded
+        // earlier: that read predates the abort/join work above, which is exactly where a
+        // concurrent graceful append has room to land. If it already landed, this request's own
+        // escalation is fully expressed by the `Interrupted` outcomes already written above --
+        // interrupting the node now, instead of letting it drain, is the whole difference
+        // immediate mode promises over graceful, and neither half of that needs a second
+        // aggregate event to be true. Skipping the append here, not skipping the abort above, is
+        // what keeps the promise without touching the guard that makes a duplicate corrupt.
+        let already_paused = reread_async(&store_open, &scope, &stream)
+            .await?
+            .simulation_status
+            == Some(SimulationStatus::Paused);
+        if !already_paused {
+            append_plain(
+                &store_open,
+                &ids,
+                &scope,
+                &stream,
+                &request.actor,
+                "execution-paused",
+                Some(request.idempotency_key),
+                WireEventKind::ExecutionPaused(ExecutionPaused {
+                    execution_id: execution_id.clone(),
+                }),
+            )
+            .await?;
+        }
         return reread_async(&store_open, &scope, &stream).await;
     }
 
@@ -1024,6 +1086,7 @@ pub async fn drive_to_quiescence_async(
             &stream,
             &actor,
             "execution-completed",
+            None,
             WireEventKind::ExecutionCompleted(ExecutionCompleted {
                 execution_id: execution_id.clone(),
                 status: if all_success {

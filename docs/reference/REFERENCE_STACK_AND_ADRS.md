@@ -630,7 +630,7 @@ refusal evidence and terminal settlement across replay. This makes D-044 normati
 and ADR-005, and does not change GateCheck semantics, schemas, or any public Studio surface.
 ## 36. ADR-031 — Immutable retrieval coverage sidecar and fake provider boundary
 
-**Status:** accepted.
+**Status:** accepted; superseded on the source-fallback clause by ADR-035 (accepted 2026-09-02) — the "source fallback unavailable" statement below is no longer the standing decision on that one axis.
 
 **Context:** `RetrievalPlan` is immutable pre-execution intent. The first #219 implementation
 classified a caller-constructed `IndexResponse`, so no producer path emitted durable evidence that
@@ -1084,7 +1084,7 @@ does not modify it. Pairs with D-048.
 
 ## 40. ADR-035 — Bounded source fallback becomes available at the compile layer, its real producer being the workspace channel itself
 
-**Status:** proposed.
+**Status:** accepted 2026-09-02 by the Orchestrator on the owner's delegated authority; technical gate: K's review of #608 (pin on `29ded95b`); the composed path's production consumer arrives with #223/#224.
 
 **Context:** ADR-031 and D-045 both declared source fallback `unavailable`, each with the same
 condition: *"there is no successful fallback spelling until a real producer exists."* #219's

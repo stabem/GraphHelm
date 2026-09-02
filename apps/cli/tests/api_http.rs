@@ -501,6 +501,14 @@ fn read_token(path: &Path) -> String {
     }
 }
 
+/// `RETRY_LOOP_DEADLINE`'s "several genuine passes" guarantee (`budget_leaves_room_for_the_
+/// retry_loop_to_actually_loop`) covers `CONNECT_BUDGET`, not `CLIENT_IO_HANG_GUARD` (#716): a
+/// connect that never succeeds is retried several times inside 5s as designed, but a connect that
+/// SUCCEEDS and then a read that stalls can now take this loop up to `CLIENT_IO_HANG_GUARD` (30s)
+/// for that one pass, same as `raw_request`'s every other caller. Accepted rather than layering a
+/// second timeout on top: `/health` is asked once per server start, not per storm round, and a
+/// bounded 30s worst case here is still the doctrine this whole ticket is about -- a red that
+/// hangs is not a red -- just a looser bound than 5s on this one, rarely-hit path.
 fn wait_for_health(base: &str) {
     let deadline = Instant::now() + RETRY_LOOP_DEADLINE;
     loop {
@@ -541,6 +549,295 @@ const RETRY_LOOP_DEADLINE: Duration = Duration::from_secs(5);
 /// a 5s caller gets roughly five genuine passes, and the retry lives in both places on purpose.
 const CONNECT_BUDGET: Duration = Duration::from_secs(1);
 
+/// A HANG GUARD on the read/write side of an already-open connection, not a claim about how fast
+/// the server should answer (#716). Measured, not guessed: `cargo test -p graphhelm-cli --test
+/// api_http -- --test-threads=4`, whole suite, n=20 per arm, isolated `CARGO_TARGET_DIR`.
+///
+/// ```text
+/// 1s   20/20  100%   Wilson 95% [83.9%..100%]   -- every failure `os error 10060 TimedOut`
+/// 5s    3/20   15%   Wilson 95% [ 5.2%.. 36.1%]  -- the value this replaces
+/// 30s   0/20    0%   Wilson 95% [ 0.0%.. 16.1%]
+/// ```
+///
+/// **Re-verified at `ci/gate.ps1`'s own invocation** (no `--test-threads` flag at all -- the
+/// machine's default parallelism, 32 on the one this was measured on, not the 4 above): the
+/// guard's own verbatim gate line, n=20, machine quiet, isolated `CARGO_TARGET_DIR` -- 0/20
+/// failures. `--test-threads=4` was this ticket's own controlled arrangement; the gate decides
+/// mergeability at whatever concurrency the machine running it has, which is why nothing in this
+/// file or its messages names a fixed thread count any more (`harness_broke_error` below reads it
+/// from the process instead) -- see #737 for the gate not naming its own concurrency, tracked
+/// separately rather than fixed here.
+///
+/// Monotonic in the predicted direction at both ends: this is not "the server is slow", it is
+/// "reading the whole event stream back on a single-threaded reactor, growing every storm round,
+/// under whatever load four concurrent test suites add, sometimes takes longer than 5s" -- a
+/// harness assumption crossing its own budget, not a defect in the thing being tested. `30s` is
+/// the smallest value this ticket actually measured at zero failures; not tuned finer than that,
+/// and not raised further just because a bigger number is available -- a longer number that still
+/// moves the rate is the same "sleep longer" shape #641 already rejected, one layer up.
+///
+/// **Bounds each individual read or write, not the request as a whole** (Codex, #736 review; the
+/// property carries over unchanged from the 5s value this replaces -- widening the number never
+/// touched this shape). `set_read_timeout`/`set_write_timeout` reset their own clock on every
+/// successful call, so a server that keeps a connection open while trickling data slower than
+/// this guard but never fully silent -- one byte every 10 seconds, say -- never trips it at all,
+/// however long the whole response takes; `read_to_end` would keep accepting those partial reads
+/// indefinitely. That gap is real, not this PR's to close (#738: a per-request TOTAL deadline is
+/// a different property needing its own implementation and its own red-first measurement, not a
+/// widened number). See `harness_broke_error` for why a fired timeout reads as the harness's own
+/// limit, not the subject's -- true for what this guard DOES catch (a stalled or fully silent
+/// connection), not a claim about the drip-fed case #738 names.
+const CLIENT_IO_HANG_GUARD: Duration = Duration::from_secs(30);
+
+/// The libtest thread-count policy this PROCESS is running under -- a MIRROR of libtest's own
+/// three-way precedence, not an observation of a decision already made (H, #736 review: the
+/// earlier name and doc here claimed more than this function does). libtest picks, in order:
+/// 1. `--test-threads=N` or `--test-threads N` on its own command line (`args`, everything after
+///    `cargo test`'s own `--`);
+/// 2. `RUST_TEST_THREADS`, if set;
+/// 3. `std::thread::available_parallelism()`, otherwise.
+///
+/// The first version here only implemented steps 2 and 3 -- so `cargo test -- --test-threads=4`
+/// (this ticket's OWN original study, `:554` above) would have had this function report the
+/// machine's default (32) while libtest itself ran at 4, the CLI argument never inspected at all.
+/// Caught by H probing the running process directly and finding the mismatch, not by reasoning
+/// about the code.
+///
+/// `args`/`env` are parameters, not read from `std::env` inside this function, so a test can feed
+/// it a value it built by hand and assert a literal against it -- the cure this file's own
+/// `budget_leaves_room_for_the_retry_loop_to_actually_loop` and `connect_with_retry` doc comments
+/// already apply elsewhere: two independent constructions agreeing is a test, one function
+/// checked against itself calling it again is not (H's own second finding on this same function:
+/// the message and the original assertion both called it, so a systematically wrong answer read
+/// as agreement).
+fn test_concurrency(
+    mut args: impl Iterator<Item = String>,
+    rust_test_threads: Option<String>,
+) -> (usize, &'static str) {
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--test-threads=") {
+            if let Ok(n) = value.parse() {
+                return (n, "cli");
+            }
+        } else if arg == "--test-threads"
+            && let Some(value) = args.next()
+            && let Ok(n) = value.parse()
+        {
+            return (n, "cli");
+        }
+    }
+    if let Some(value) = rust_test_threads
+        && let Ok(n) = value.parse()
+    {
+        return (n, "env");
+    }
+    (
+        std::thread::available_parallelism().map_or(0, std::num::NonZero::get),
+        "default",
+    )
+}
+
+/// `test_concurrency`, fed this process's own real `args`/`RUST_TEST_THREADS`, formatted for the
+/// `HARNESS-BROKE` message (#716): named by source so a reader does not have to guess which of
+/// the three policy steps produced the number.
+fn this_process_test_concurrency() -> String {
+    let (n, source) = test_concurrency(std::env::args(), std::env::var("RUST_TEST_THREADS").ok());
+    format!("test-threads={n} (from {source})")
+}
+
+/// Turns a raw/write timeout into a message that flags the harness's own budget as ONE possible
+/// cause, not the only one (#716) -- the same `HARNESS-BROKE` marker
+/// `server_guard_sabotage_ignored` uses, but not the same certainty. Every other `io::Error` kind
+/// (refused, reset, a genuine protocol error) passes through unchanged: only a timeout is
+/// ambiguous between "the harness's own guard was too tight" and "the subject actually hung", and
+/// only a timeout gets re-coloured here.
+///
+/// **Genuinely ambiguous, and the message says so** (Codex, #736 review): a server that accepts
+/// the connection and then truly deadlocks produces the identical `TimedOut`/`WouldBlock` this
+/// function also recolours for "the harness's own budget was too tight under load" -- nothing in
+/// this function, or in the `io::Error` it's given, can tell the two apart. The earlier wording
+/// ("not evidence the server hung") stated the harness-budget half as settled fact, which
+/// overclaims exactly the case a genuine deadlock produces. Naming this `HARNESS-BROKE` (rather
+/// than a plain, uncoloured timeout) is still the right call -- the measured base rate under this
+/// suite's own load is the harness's budget, not the subject, per #716's own arms -- but the
+/// message itself no longer asserts a certainty this function cannot have.
+///
+/// Both `TimedOut` AND `WouldBlock` count as that timeout (Codex, #736 review): the SAME
+/// `set_read_timeout`/`set_write_timeout` condition -- the guard's budget elapsed before the
+/// syscall returned -- surfaces as `WSAETIMEDOUT` / `ErrorKind::TimedOut` on Windows, but as
+/// `EAGAIN`/`EWOULDBLOCK` / `ErrorKind::WouldBlock` on Unix (documented on
+/// `TcpStream::set_read_timeout`, not a guess). Checking only `TimedOut` would leave a Unix-side
+/// timeout un-recoloured -- reading as a genuine subject failure, the exact opposite of what this
+/// fix exists to prevent -- while every OTHER kind (`ConnectionRefused` included) still passes
+/// through untouched; the two-arm split below stays exactly what the tests prove.
+fn harness_broke_error(error: std::io::Error, what: &str, started: Instant) -> std::io::Error {
+    if !matches!(
+        error.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    ) {
+        return error;
+    }
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!(
+            "HARNESS-BROKE: {what} did not complete within its {CLIENT_IO_HANG_GUARD:?} hang \
+             guard (elapsed {:?}) at {}. The harness budget was exhausted -- either the client \
+             was starved under this suite's own load (#716, the measured common case), or the \
+             server stopped answering; not distinguishable from the client side. If this fires \
+             reliably rather than occasionally, the guard itself needs re-measuring, not a bigger \
+             number guessed on top.",
+            started.elapsed(),
+            this_process_test_concurrency()
+        ),
+    )
+}
+
+/// `harness_broke_error` for `post_request`'s own panic-not-Result style (see that function's
+/// doc comment for why it panics directly rather than threading a `Result` through its 59
+/// callers): unwraps `result`, panicking with the re-coloured message on a timeout and the
+/// original `{error}` for anything else, same split as the `Result`-returning path.
+fn unwrap_or_harness_broke<T>(result: std::io::Result<T>, what: &str, started: Instant) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => panic!("{}", harness_broke_error(error, what, started)),
+    }
+}
+
+/// H review, #729: the doc comment above claims `harness_broke_error` is a DISCRIMINATOR --
+/// timeouts get re-coloured, every other `io::Error` kind passes through intact -- but nothing
+/// exercised the second half. A guard that re-coloured every kind would have passed this whole
+/// suite, because every failure the suite actually produces already is a timeout. These two
+/// assertions are that missing half, on the pure function directly rather than through a live
+/// socket.
+#[test]
+fn harness_broke_error_recolours_only_timed_out() {
+    let started = Instant::now();
+    let timed_out = std::io::Error::new(std::io::ErrorKind::TimedOut, "the underlying wait");
+    let recoloured = harness_broke_error(timed_out, "reading the response from http://x", started);
+    assert_eq!(recoloured.kind(), std::io::ErrorKind::TimedOut);
+    let message = recoloured.to_string();
+    assert!(
+        message.starts_with("HARNESS-BROKE:"),
+        "a timeout must be re-coloured: {message}"
+    );
+    assert!(
+        message.contains("reading the response from http://x"),
+        "{message}"
+    );
+    // The old assertion pinned a false description of the gate: a literal "--test-threads=4"
+    // that `ci/gate.ps1`'s own invocation never passes (#736, H + Codex both caught it -- H found
+    // it as a guard that would teach the wrong edit: "fixing" the message to tell the truth would
+    // have reddened this exact line). Structural only, on purpose: the VALUE is
+    // `test_concurrency`'s own claim to prove, with hand-built inputs, in the tests below -- this
+    // one stays about the message's own shape, not a second copy of that proof (H's own second
+    // finding on this function: the message and the assertion calling the SAME live function is
+    // an oracle certifying itself, which is how it stayed green while the function was wrong).
+    assert!(message.contains("test-threads="), "{message}");
+    // Codex, #736 review: the message must not claim certainty this function cannot have. A
+    // genuine server deadlock produces the identical TimedOut/WouldBlock this recolours for "the
+    // harness's own budget was too tight" -- nothing here can tell the two apart, so the message
+    // must say so rather than assert one cause as settled fact.
+    assert!(
+        message.contains("not distinguishable from the client side"),
+        "the message must preserve the ambiguity between a starved client and a genuinely \
+         deadlocked server: {message}"
+    );
+    assert!(
+        !message.contains("not evidence the server hung"),
+        "the old, overclaiming wording must not survive: {message}"
+    );
+}
+
+/// `test_concurrency`, proved with hand-built `args`/`env`, not by calling the function twice and
+/// checking it agrees with itself (#736, H's second finding on the predecessor of this function --
+/// the message and the message-content test both called the same live function, so a
+/// systematically wrong answer read as agreement. Caught by H probing the actual running process,
+/// not by code review).
+#[test]
+fn test_concurrency_prefers_the_cli_flag_over_everything() {
+    let args = ["graphhelm-cli-test-binary", "--test-threads=4"]
+        .into_iter()
+        .map(str::to_owned);
+    // env carries a DIFFERENT value than the CLI flag on purpose: proves the CLI flag wins the
+    // precedence, not merely that it's read when nothing else is present.
+    assert_eq!(
+        test_concurrency(args, Some("9".to_owned())),
+        (4, "cli"),
+        "the `--test-threads=N` CLI flag must outrank RUST_TEST_THREADS, matching libtest's own \
+         precedence"
+    );
+}
+
+/// The space-separated CLI form (`--test-threads 4`, two argv entries), not only `--test-threads=4`
+/// -- libtest accepts both, and a parser that only handled the `=` form would silently fall
+/// through to the wrong policy step for the other one.
+#[test]
+fn test_concurrency_reads_the_space_separated_cli_form_too() {
+    let args = ["graphhelm-cli-test-binary", "--test-threads", "6"]
+        .into_iter()
+        .map(str::to_owned);
+    assert_eq!(test_concurrency(args, None), (6, "cli"));
+}
+
+#[test]
+fn test_concurrency_falls_back_to_the_env_var_with_no_cli_flag() {
+    let args = std::iter::empty();
+    assert_eq!(test_concurrency(args, Some("8".to_owned())), (8, "env"));
+}
+
+/// The genuine fallback: neither the CLI flag nor the env var present, same as `ci/gate.ps1`'s own
+/// invocation (#716/#737) -- `available_parallelism()` is the real source of truth for this arm,
+/// so checking against it here is proving the "default" arm delegates correctly, not re-deriving
+/// the function under test.
+#[test]
+fn test_concurrency_falls_back_to_available_parallelism_with_neither() {
+    let args = std::iter::empty();
+    let expected = std::thread::available_parallelism().map_or(0, std::num::NonZero::get);
+    assert_eq!(test_concurrency(args, None), (expected, "default"));
+}
+
+/// The Unix half of the same claim (#736, Codex): `WouldBlock` is what an expired socket timeout
+/// surfaces as on Unix, not a real "try again" signal from a non-blocking read this suite never
+/// uses -- and it must be re-coloured exactly like `TimedOut` is, or a Unix run of this suite would
+/// read every one of these timeouts as a genuine subject failure.
+#[test]
+fn harness_broke_error_recolours_would_block_too() {
+    let started = Instant::now();
+    let would_block = std::io::Error::new(std::io::ErrorKind::WouldBlock, "the underlying wait");
+    let recoloured =
+        harness_broke_error(would_block, "reading the response from http://x", started);
+    assert_eq!(
+        recoloured.kind(),
+        std::io::ErrorKind::TimedOut,
+        "{recoloured}"
+    );
+    let message = recoloured.to_string();
+    assert!(
+        message.starts_with("HARNESS-BROKE:"),
+        "a Unix-shaped timeout must be re-coloured exactly like a Windows one: {message}"
+    );
+    assert!(
+        message.contains("reading the response from http://x"),
+        "{message}"
+    );
+}
+
+/// The other half of the same claim: a kind the harness did not cause (the server genuinely
+/// refused the connection) must come back byte-identical, not re-coloured as if the harness were
+/// at fault.
+#[test]
+fn harness_broke_error_leaves_other_kinds_untouched() {
+    let started = Instant::now();
+    let refused = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "no listener there");
+    let result = harness_broke_error(refused, "connecting to http://x", started);
+    assert_eq!(result.kind(), std::io::ErrorKind::ConnectionRefused);
+    assert_eq!(
+        result.to_string(),
+        "no listener there",
+        "a non-timeout kind must pass through unchanged, not read as a harness failure"
+    );
+}
+
 /// Connects with a bounded attempt, retried until [`CONNECT_BUDGET`] is spent.
 ///
 /// Both halves are load-bearing and neither works alone. **Bounding without retrying** turns the
@@ -564,6 +861,7 @@ fn connect_with_retry(address: &std::net::SocketAddr) -> std::io::Result<TcpStre
 }
 
 fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
+    let started = Instant::now();
     let (host, port, path) = split_url(url);
     // A connect with no timeout cannot be retried. When the listener's accept backlog is full --
     // which is the normal state under the eight-agent storm -- the OS does not refuse the
@@ -576,18 +874,22 @@ fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
         .next()
         .ok_or_else(|| std::io::Error::other(format!("no address for {host}:{port}")))?;
     let mut stream = connect_with_retry(&address)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(CLIENT_IO_HANG_GUARD))?;
+    stream.set_write_timeout(Some(CLIENT_IO_HANG_GUARD))?;
 
     let mut request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
     if let Some(token) = token {
         request.push_str(&format!("Authorization: Bearer {token}\r\n"));
     }
     request.push_str("\r\n");
-    stream.write_all(request.as_bytes())?;
+    stream.write_all(request.as_bytes()).map_err(|error| {
+        harness_broke_error(error, &format!("writing the request to {url}"), started)
+    })?;
 
     let mut raw = Vec::new();
-    stream.read_to_end(&mut raw)?;
+    stream.read_to_end(&mut raw).map_err(|error| {
+        harness_broke_error(error, &format!("reading the response from {url}"), started)
+    })?;
     parse_response(&String::from_utf8_lossy(&raw))
 }
 
@@ -906,6 +1208,7 @@ fn post_request(
     extra_headers: &[(&str, &str)],
     body: &Value,
 ) -> RawResponse {
+    let started = Instant::now();
     let (host, port, path) = split_url(url);
     // The second connect site, and the one the storm actually leans on: three of its four
     // operations are POSTs. It was unbounded AND it panics, so under a full accept backlog it
@@ -925,11 +1228,9 @@ fn post_request(
              server being saturated, not absent"
         )
     });
+    stream.set_read_timeout(Some(CLIENT_IO_HANG_GUARD)).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
+        .set_write_timeout(Some(CLIENT_IO_HANG_GUARD))
         .unwrap();
 
     let payload = serde_json::to_vec(body).unwrap();
@@ -941,11 +1242,23 @@ fn post_request(
         request.push_str(&format!("{name}: {value}\r\n"));
     }
     request.push_str("\r\n");
-    stream.write_all(request.as_bytes()).unwrap();
-    stream.write_all(&payload).unwrap();
+    unwrap_or_harness_broke(
+        stream.write_all(request.as_bytes()),
+        &format!("writing the request headers to {url}"),
+        started,
+    );
+    unwrap_or_harness_broke(
+        stream.write_all(&payload),
+        &format!("writing the request body to {url}"),
+        started,
+    );
 
     let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).unwrap();
+    unwrap_or_harness_broke(
+        stream.read_to_end(&mut raw),
+        &format!("reading the response from {url}"),
+        started,
+    );
     parse_response(&String::from_utf8_lossy(&raw)).unwrap()
 }
 

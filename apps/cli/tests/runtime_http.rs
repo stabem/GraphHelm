@@ -1404,6 +1404,184 @@ fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_str
     );
 }
 
+/// #695, L review: proposed as a witness for `last_execution_paused_key` returning `(key, actor)`
+/// rather than just `key` (`apps/cli/src/commands/serve/mod.rs`) with no concurrency needed --
+/// measured, and it is NOT that witness. Actor A's immediate pause commits and returns `200`;
+/// actor B then requests, sequentially AFTER that, with the SAME literal `Idempotency-Key` header
+/// and the SAME body (byte-identical derived key, since `request_digest16` never folds in actor).
+/// B does read `409`, but sabotaging THIS FILE's own key+actor comparison at `routes.rs`'s
+/// post-append check (widening it back to key-only) left this test green -- B's request is caught
+/// earlier, at `mod.rs`'s pre-flight `classify_one_key`/`ExpectedDecision::matches`, which has
+/// compared actor on an EXACT key match since before #681 existed. That pre-flight refuses B
+/// before `run_idempotent_mutation`'s `run` closure -- and this post-append comparison inside it
+/// -- ever execute. Kept as a real, valuable regression on its own (a sequential key reuse across
+/// actors must never grant the second actor success), with its claim corrected to what sabotage
+/// actually showed: the `(key, actor)` post-append comparison's own witness stays the genuine
+/// concurrent race in #704 -- two requests racing BEFORE either's key exists on the ledger, so
+/// neither is caught by this pre-flight at all.
+///
+/// This test's OWN subject is confirmed by the opposite sabotage: dropping the actor half of
+/// `ExpectedDecision::matches` (`event.actor == *self.actor` -> `true`) in `mod.rs` reddens this
+/// test at its own `assert_eq!(b_status, 409, ...)` -- B reads `200` with `recognizedRetry: true`,
+/// a false positive. `cargo test -p graphhelm-cli --test runtime_http
+/// a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_granted_success`.
+/// Reverted before this commit.
+#[test]
+fn a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_granted_success() {
+    let deadline = Instant::now() + Duration::from_secs(60);
+
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-695-key-seq-actor";
+    let route_id = "hang_route_695_seq_actor";
+
+    let base_url = hang_forever_server();
+    credential_set(
+        &broker,
+        &keyring,
+        key_id,
+        "cred_hang_695_seq_actor",
+        route_id,
+    );
+
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_hang_695_seq_actor",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 55
+            }]
+        }),
+    );
+
+    let execution = "exec-runtime-http-695-seq-actor";
+    let graph = agent_chain_graph(directory.path(), execution);
+
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let start_base = base.clone();
+    let start_token = token.clone();
+    let project = root();
+    let start_handle = std::thread::spawn(move || {
+        let url = format!("{start_base}/v1/executions/{execution}/start");
+        let body = serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        });
+        let headers = [
+            ("Idempotency-Key", "runtime-http-695-seq-actor-start"),
+            ("X-GraphHelm-Actor", "agent-runtime-http"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ];
+        post_request(&url, &start_token, &headers, &body, Duration::from_secs(50))
+    });
+
+    let status_url = format!("{base}/v1/executions/{execution}");
+    loop {
+        if let Ok(response) = raw_request(&status_url, Some(&token))
+            && response.status == 200
+        {
+            let value = json_body(&response);
+            if value["data"]["nodeStateCounts"]["running"] == 1 {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the node never reached running before the deadline"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let pause_url = format!("{base}/v1/executions/{execution}/pause");
+    let shared_key = "runtime-http-695-seq-actor-shared";
+    let shared_body = serde_json::json!({ "mode": "immediate" });
+
+    // Actor A: commits.
+    let (a_status, a_reply) = post_json(
+        &pause_url,
+        &token,
+        &[
+            ("Idempotency-Key", shared_key),
+            ("X-GraphHelm-Actor", "owner-695-seq-actor-a"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &shared_body,
+    );
+    assert_eq!(a_status, 200, "{a_reply}");
+    assert_eq!(a_reply["data"]["status"], "paused", "{a_reply}");
+
+    // Actor B: SAME literal header, SAME body, sent strictly after A's own response landed --
+    // no race. B's derived key is byte-identical to A's already-committed one; only the actor
+    // differs.
+    let (b_status, b_reply) = post_json(
+        &pause_url,
+        &token,
+        &[
+            ("Idempotency-Key", shared_key),
+            ("X-GraphHelm-Actor", "owner-695-seq-actor-b"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &shared_body,
+    );
+    assert_eq!(
+        b_status, 409,
+        "actor B must not be granted success on actor A's committed key: {b_reply}"
+    );
+    assert_eq!(
+        b_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+        "{b_reply}"
+    );
+
+    let _ = start_handle;
+
+    assert!(
+        Instant::now() < deadline,
+        "a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_granted_success \
+         exceeded its 60s budget"
+    );
+}
+
 // -------------------------------------------------------------------------------------------
 // Test 2: the milestone's §8 acceptance sentence as one test — an agent node (fake Anthropic)
 // and a tool node (real git in an ephemeral worktree) run to completion over HTTP, every

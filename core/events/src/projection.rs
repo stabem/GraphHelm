@@ -1712,6 +1712,23 @@ fn apply_projection_event(
             // `execution_completed` folds. A fresh, not-yet-simulating execution is therefore
             // `None`, and pausing it is coherent history exactly like pausing one already
             // `Running`.
+            //
+            // This transition is accepted exactly once (`None`/`Running` -> `Paused`); a second
+            // `ExecutionPaused` while already `Paused` is `Corrupt`, below. The event's own
+            // `execution_id`-only payload cannot carry a graceful/immediate distinction by
+            // construction -- there is no field for it -- so a graceful pause and an immediate
+            // escalation over an already-draining graceful pause produce the SAME event (#695).
+            //
+            // The distinction is NOT recoverable from the aggregate stream alone, and not from a
+            // correlation either -- there isn't one. The escalation writes a per-node
+            // `Interrupted` outcome (`core/runtime/src/driver.rs`'s cancelled branch,
+            // `write_outcome(..., Interrupted)`), but nothing on that event or this one names the
+            // other: no shared key, no `caused_by`, nothing but append order in a store other
+            // concurrent writers can also append to. `Interrupted` has other, unrelated producers
+            // too: crash-triage on `resume` marks every node still `Running` when the process
+            // stopped `Interrupted` (`apps/cli/src/commands/execution/resume.rs`), with no pause
+            // involved at all. A consumer wanting "stopped now" versus "let finish" has no field
+            // to read for it today -- this comment names the fact so nobody assumes one exists.
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
                 || !matches!(
                     projection.simulation_status,

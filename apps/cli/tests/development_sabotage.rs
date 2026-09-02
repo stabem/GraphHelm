@@ -688,10 +688,13 @@ struct UnreachedCitation {
     context: String,
 }
 
-fn doc_citations(text: &str) -> (Vec<Citation>, Vec<UnreachedCitation>, usize) {
+fn doc_citations(
+    text: &str,
+    verify: &impl Fn(&str, usize, &str) -> bool,
+) -> (Vec<Citation>, Vec<UnreachedCitation>, usize) {
     let lines = text.lines().collect::<Vec<_>>();
     let mut found = Vec::new();
-    let mut unreached = Vec::new();
+    let mut unreached_at: Vec<(usize, UnreachedCitation)> = Vec::new();
     // COORDINATES, matched to what `count_coordinates_in_line` spells: a range contributes TWO (its
     // endpoints), a comma list one per member, a single line one. The control compares this against
     // raw syntax, so a suffix the extractor consumes only in PART -- `574 - 576` yielding one where
@@ -751,17 +754,121 @@ fn doc_citations(text: &str) -> (Vec<Citation>, Vec<UnreachedCitation>, usize) {
                         .iter()
                         .map(|(first, last)| if first == last { 1 } else { 2 })
                         .sum::<usize>();
-                    unreached.extend(site.regions.iter().map(|(first, last)| UnreachedCitation {
-                        path: path.clone(),
-                        first_line: *first,
-                        last_line: *last,
-                        context: context.clone(),
+                    unreached_at.extend(site.regions.iter().map(|(first, last)| {
+                        (
+                            index,
+                            UnreachedCitation {
+                                path: path.clone(),
+                                first_line: *first,
+                                last_line: *last,
+                                context: context.clone(),
+                            },
+                        )
                     }));
                 }
             }
         }
     }
+
+    // SECTION-SCOPED backfill: a gap closes when some OTHER word inside the same `---`-bounded
+    // section of THIS source (the doc's own boundary for one protection's entry) is both
+    // identifier-shaped and verified present on the gap's exact cited line. The candidate always
+    // comes from the section's TEXT, never from scanning the target file for a plausible word --
+    // `verify` only ever confirms a doc-sourced hypothesis, it never proposes one. Restricted to
+    // single-line gaps: a range's own rot check only proves a token sits SOMEWHERE across the
+    // range, never on one line within it, so a range gap is left for `backfill_same_line_gaps`'s
+    // exact-coordinate rule (or stays pinned) rather than risking that ambiguity here too.
+    //
+    // **AMBIGUITY REFUSES, it does not pick one (M, PR #682 review).** A section can verify MORE
+    // THAN ONE candidate against the same line -- `tests/memory.rs:63`'s section verifies both
+    // `MemoryRefusalCode` and `SecretDetected` against that one assertion. Closing on the first
+    // match found would let the choice be made BY THE FILE (whichever candidate a scan happens to
+    // reach first), and a future edit that drops one of the two while keeping the other would
+    // re-verify against whichever survived and stay green -- coverage that looks stable while the
+    // specific claim it once confirmed quietly changed underneath it. A pin that stays pinned
+    // when the doc names two plausible symbols and never says which one is the real citation is
+    // honest about that; a guard that silently picks is not. Only a UNIQUE verified candidate
+    // closes a gap.
+    let sections = doc_sections(&lines);
+    let mut unreached = Vec::new();
+    'gap: for (doc_line, gap) in unreached_at {
+        let own_section = (gap.first_line == gap.last_line)
+            .then(|| {
+                sections
+                    .iter()
+                    .find(|(f, l)| *f <= doc_line && doc_line <= *l)
+            })
+            .flatten();
+        if let Some(&(first, last)) = own_section {
+            let mut verified: Vec<String> = lines[first..=last]
+                .iter()
+                .flat_map(|line| all_identifiers_in(&mask_citation_regions(line)))
+                .filter(|candidate| verify(&gap.path, gap.first_line, candidate))
+                .collect();
+            verified.sort();
+            verified.dedup();
+            if let [token] = verified.as_slice() {
+                found.push(Citation {
+                    path: gap.path.clone(),
+                    first: gap.first_line,
+                    last: gap.last_line,
+                    token: token.clone(),
+                });
+                continue 'gap;
+            }
+        }
+        unreached.push(gap);
+    }
+
     (found, unreached, coordinates)
+}
+
+/// `path.rs:LINE`'s own path and coordinate text, replaced with spaces so a path segment (which
+/// may itself contain `_` -- `development_contract_schemas`, say) can never masquerade as an
+/// identifier-shaped candidate. Byte-for-byte, not char-for-char: every boundary this touches was
+/// already proven to sit on a UTF-8 char boundary by `citation_sites`' own ASCII-only stepping.
+fn mask_citation_regions(line: &str) -> String {
+    let mut masked = line.as_bytes().to_vec();
+    for site in citation_sites(line) {
+        let mut start = site.path_end;
+        while start > 0 {
+            let candidate = masked[start - 1];
+            let ok = candidate.is_ascii_alphanumeric()
+                || candidate == b'_'
+                || candidate == b'/'
+                || candidate == b'.'
+                || candidate == b'-';
+            if !ok {
+                break;
+            }
+            start -= 1;
+        }
+        for byte in &mut masked[start..site.tail_start] {
+            *byte = b' ';
+        }
+    }
+    String::from_utf8(masked)
+        .expect("masking only ever substitutes ASCII spaces at char boundaries")
+}
+
+/// Doc lines grouped into `---`-bounded sections, as `[first, last]` INCLUSIVE 0-based ranges.
+/// A source with no `---` at all (a JSON fixture's collected provenance strings) is one section --
+/// the same "whole source is the unit" default `backfill_same_line_gaps` already relies on.
+fn doc_sections(lines: &[&str]) -> Vec<(usize, usize)> {
+    let mut sections = Vec::new();
+    let mut start = 0usize;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() == "---" {
+            if index > start {
+                sections.push((start, index - 1));
+            }
+            start = index + 1;
+        }
+    }
+    if start < lines.len() {
+        sections.push((start, lines.len() - 1));
+    }
+    sections
 }
 
 /// `doc_citations`, combined across MULTIPLE independent sources without letting one source's
@@ -775,21 +882,85 @@ fn doc_citations(text: &str) -> (Vec<Citation>, Vec<UnreachedCitation>, usize) {
 /// after it decided whether that citation stayed pinned or silently borrowed a neighbour's
 /// token -- a test outcome that depended on filesystem traversal order, not on content. (Codex
 /// P2 on this commit.)
+///
+/// `verify(path, line, candidate)` answers whether the real file's exact line contains a
+/// doc-sourced candidate -- the ONLY place either backfill pass is allowed to look at the target
+/// file, and only ever to confirm a hypothesis the doc already made, never to propose one.
 fn doc_citations_across_sources(
     sources: &[String],
+    verify: &impl Fn(&str, usize, &str) -> bool,
 ) -> (Vec<Citation>, Vec<UnreachedCitation>, usize, usize) {
     let mut citations = Vec::new();
     let mut unreached = Vec::new();
     let mut consumed = 0;
     let mut present = 0;
     for source in sources {
-        let (mut source_citations, mut source_unreached, source_consumed) = doc_citations(source);
+        let (mut source_citations, mut source_unreached, source_consumed) =
+            doc_citations(source, verify);
         present += count_citation_sites(source);
         consumed += source_consumed;
         citations.append(&mut source_citations);
         unreached.append(&mut source_unreached);
     }
+    backfill_same_line_gaps(&mut citations, &mut unreached);
     (citations, unreached, consumed, present)
+}
+
+/// Close a gap by REUSE, never by guessing: a citation `identifier_in` could not reach at its own
+/// coordinate is resolved anyway when some OTHER citation, anywhere in the corpus, already named a
+/// token for that *exact same* `path:line` -- the same fact, stated twice, where one statement
+/// happened to sit next to prose and the other next to code.
+///
+/// **Why this cannot reopen the borrow-wrong-symbol bug (`memory.rs:512` borrowing `jpd_plugin.rs`'s
+/// token, Codex P2 on #606).** That bug borrowed a NEIGHBOUR's token across an ADJACENT line. This
+/// only ever borrows a donor whose own resolved coordinate is `first == last == gap.first_line ==
+/// gap.last_line` on the SAME path -- not a nearby line, not a containing range. A donor that spans
+/// `620-622` does not backfill a gap pinned at `622` alone through THIS mechanism: the donor's own
+/// rot check only proves its token sits SOMEWHERE in `620..=622`, never that it sits on `622`
+/// specifically, and accepting it here would trade a real pin for a rot check that could go
+/// silently wrong -- proved by `a_range_donor_does_not_backfill_a_narrower_point_inside_it`. (That
+/// particular gap, Section 7's "Would fall at" line, still closes -- through the SEPARATE
+/// section-scoped pass below, which finds a different, single-line donor word and has the real
+/// file confirm it before trusting it, rather than trusting a range's rot check by proxy.)
+///
+/// **Why this is not the tautology `identifier_in`'s own widening has to avoid.** The token still
+/// comes from a citation's own text -- never from scanning the target file for a plausible word. This
+/// only reuses a token some OTHER sentence in the doc or corpus already committed to, in writing, for
+/// the identical coordinate.
+fn backfill_same_line_gaps(citations: &mut Vec<Citation>, unreached: &mut Vec<UnreachedCitation>) {
+    let donors: Vec<(String, usize, String)> = citations
+        .iter()
+        .filter(|citation| citation.first == citation.last)
+        .map(|citation| {
+            (
+                citation.path.clone(),
+                citation.first,
+                citation.token.clone(),
+            )
+        })
+        .collect();
+    let mut resolved = Vec::new();
+    unreached.retain(|gap| {
+        if gap.first_line != gap.last_line {
+            return true;
+        }
+        match donors
+            .iter()
+            .find(|(path, line, _)| *path == gap.path && *line == gap.first_line)
+        {
+            Some((path, line, token)) => {
+                resolved.push(Citation {
+                    path: path.clone(),
+                    first: *line,
+                    last: *line,
+                    token: token.clone(),
+                });
+                false
+            }
+            None => true,
+        }
+    });
+    citations.extend(resolved);
 }
 
 /// A citation's lookahead stays inside its own source and never borrows a neighbour's token.
@@ -803,12 +974,155 @@ fn doc_citations_across_sources(
 fn citation_lookahead_does_not_cross_a_source_boundary() {
     let source_a = "core/runtime/src/retrieval.rs:12-26\n".to_owned();
     let source_b = "Synthetic borrowed_token from an unrelated fixture\n".to_owned();
-    let (_, unreached, _, _) = doc_citations_across_sources(&[source_a, source_b]);
+    let (_, unreached, _, _) = doc_citations_across_sources(&[source_a, source_b], &never_verifies);
     assert_eq!(
         unreached.len(),
         1,
         "the trailing citation in source_a has no next line WITHIN its own source and must stay \
          pinned unreachable, not borrow source_b's token"
+    );
+}
+
+/// A `verify` that never confirms a candidate -- for tests exercising `backfill_same_line_gaps`
+/// alone, where the section-scoped pass must contribute nothing.
+fn never_verifies(_path: &str, _line: usize, _candidate: &str) -> bool {
+    false
+}
+
+/// A gap closes when the SAME `---`-bounded section names an identifier-shaped word elsewhere
+/// that a (fake, in-test) file check confirms sits on the gap's own cited line -- the mechanism
+/// that closes `development_contract_schemas.rs:622` for real, where the token
+/// (`is_fresh`) sits in an earlier one-line paragraph of the SAME entry, not next to the citation
+/// itself.
+#[test]
+fn a_gap_closes_when_its_own_section_names_a_verified_word() {
+    let source = "**Trigger.** Invert the comparison in `is_fresh()`.\n\n\
+                  **Would fall at.** `apps/cli/tests/development_contract_schemas.rs:622`.\n"
+        .to_owned();
+    let verify = |path: &str, line: usize, candidate: &str| {
+        path == "apps/cli/tests/development_contract_schemas.rs"
+            && line == 622
+            && candidate == "is_fresh"
+    };
+    let (citations, unreached, _, _) = doc_citations_across_sources(&[source], &verify);
+    assert!(
+        unreached.is_empty(),
+        "the section's own earlier paragraph names is_fresh, and the (fake) file check confirms \
+         it sits on line 622 -- this gap should have closed: {unreached:?}"
+    );
+    assert!(
+        citations
+            .iter()
+            .any(|citation| citation.token == "is_fresh" && citation.first == 622),
+        "the backfilled citation should carry the section's verified word: {citations:?}"
+    );
+}
+
+/// A gap must NOT close from a word in a DIFFERENT `---`-bounded section, even one that a (fake)
+/// file check would confirm -- crossing a section boundary to answer for a citation is the same
+/// shape as crossing to a neighbouring citation, the #610 regression this file exists to keep
+/// closed. `verify` here would say yes to everything; only the section boundary must refuse it.
+#[test]
+fn a_gap_does_not_backfill_across_a_section_boundary_even_if_verify_would_allow_it() {
+    let source = "unrelated_neighbour_word one section over\n\n\
+                  ---\n\n\
+                  `core/graph/src/persistence.rs:736` names nothing identifier-shaped here.\n"
+        .to_owned();
+    let always_verifies = |_: &str, _: usize, _: &str| true;
+    let (_, unreached, _, _) = doc_citations_across_sources(&[source], &always_verifies);
+    assert_eq!(
+        unreached.len(),
+        1,
+        "a word from the PRIOR section must not backfill a gap in the NEXT section, even when \
+         every candidate would verify true: {unreached:?}"
+    );
+}
+
+/// A gap must NOT close when its section's text verifies MORE THAN ONE candidate against the
+/// gap's own cited line (M, PR #682 review). Picking the first match found would let the FILE
+/// decide which of two doc-named symbols is "the" citation; a later edit that keeps one and drops
+/// the other would then re-verify against whichever survived and stay green, silently -- coverage
+/// that outlives the specific claim it once confirmed. Mirrors the real shape:
+/// `tests/memory.rs:63`'s section names both `MemoryRefusalCode` and `SecretDetected`, and the
+/// cited line contains both.
+#[test]
+fn a_gap_does_not_close_when_its_section_verifies_more_than_one_candidate() {
+    let source = "`core/governor/src/memory.rs:256`   code: MemoryRefusalCode::SecretDetected\n\
+         `core/governor/tests/memory.rs:63` names nothing identifier-shaped on its own line.\n"
+        .to_owned();
+    let verify = |path: &str, line: usize, candidate: &str| {
+        path == "core/governor/tests/memory.rs"
+            && line == 63
+            && (candidate == "MemoryRefusalCode" || candidate == "SecretDetected")
+    };
+    let (citations, unreached, _, _) = doc_citations_across_sources(&[source], &verify);
+    assert_eq!(
+        unreached.len(),
+        1,
+        "two candidates both verify against the same line -- ambiguous, must stay pinned rather \
+         than silently picking one: {unreached:?}"
+    );
+    assert!(
+        !citations.iter().any(|citation| citation.first == 63),
+        "no citation should have been backfilled for the ambiguous line: {citations:?}"
+    );
+}
+
+/// A gap closes when a SIBLING citation, anywhere in the corpus, already named a token for the
+/// exact same `path:line` -- the #625 widening this file exists to prove.
+#[test]
+fn a_gap_closes_when_a_sibling_citation_names_the_same_exact_line() {
+    let prose_only =
+        "core/governor/src/memory.rs:296 screens with\nno symbol on this line\n".to_owned();
+    let code_shaped =
+        "core/governor/src/memory.rs:296   fn content_is_secret_shaped -> bool\n".to_owned();
+    let (citations, unreached, _, _) =
+        doc_citations_across_sources(&[prose_only, code_shaped], &never_verifies);
+    assert!(
+        unreached.is_empty(),
+        "the prose-only mention of memory.rs:296 should have borrowed the token the code-shaped \
+         mention already resolved for the SAME line: {unreached:?}"
+    );
+    assert!(
+        citations
+            .iter()
+            .any(|citation| citation.path == "core/governor/src/memory.rs"
+                && citation.first == 296
+                && citation.token == "content_is_secret_shaped"),
+        "the backfilled citation should carry the sibling's token: {citations:?}"
+    );
+}
+
+/// A gap must NOT close when the only sibling is a RANGE that merely contains the gap's line: the
+/// range's own rot check proves its token sits somewhere across the range, never on the gap's
+/// single line specifically, and accepting it there is exactly the over-reach `backfill_same_line_gaps`
+/// exists to refuse -- the shape of the #610 regression (`memory.rs:512` borrowing
+/// `jpd_plugin.rs`'s token), reproduced deliberately here to prove the widening does not reopen it.
+#[test]
+fn a_range_donor_does_not_backfill_a_narrower_point_inside_it() {
+    let ranged = "core/graph/src/persistence.rs:730-732\n    real_token_lives_here\n".to_owned();
+    let point = "core/graph/src/persistence.rs:731 nothing identifier-shaped follows\n".to_owned();
+    let (_, unreached, _, _) = doc_citations_across_sources(&[ranged, point], &never_verifies);
+    assert_eq!(
+        unreached.len(),
+        1,
+        "a point citation inside an unrelated range's span must stay pinned, not borrow the \
+         range's token for a line the range never verified on its own: {unreached:?}"
+    );
+}
+
+/// A gap must NOT close from a sibling at the same line number in a DIFFERENT file: path is part
+/// of the coordinate, and matching on line alone would let one file's symbol answer for another's.
+#[test]
+fn a_gap_does_not_backfill_across_a_different_path_at_the_same_line() {
+    let resolved = "core/graph/src/persistence.rs:296   fn unrelated_token -> bool\n".to_owned();
+    let gap = "core/governor/src/memory.rs:296 screens with\nno symbol on this line\n".to_owned();
+    let (_, unreached, _, _) = doc_citations_across_sources(&[resolved, gap], &never_verifies);
+    assert_eq!(
+        unreached.len(),
+        1,
+        "a resolved citation at persistence.rs:296 must not backfill an unrelated gap at \
+         memory.rs:296 -- same line number, different file: {unreached:?}"
     );
 }
 
@@ -1082,66 +1396,59 @@ fn count_coordinates_in_line(line: &str) -> usize {
 /// `doc_citations`'s real output, not paraphrased (Codex P2 on 888d07e9, and the finding this pin
 /// exists to answer without either a false alarm or a silent gap).
 ///
-/// **Widening `identifier_in` to close these for real is deliberate follow-up work, not a quick
-/// patch here.** It risks reopening the exact failure this file already fought to close: a token
-/// search that reaches too far borrows the WRONG citation's symbol and accuses the right file of
-/// missing it (`memory.rs:512` borrowing `jpd_plugin.rs`'s token, Codex P2 on #606). Tracked as
-/// #625, citing this pin as its starting population.
+/// **#625 widened the search two ways, and five of the original ten pins closed for real.**
+///
+/// `backfill_same_line_gaps` closes a gap when some OTHER citation, anywhere in the doc or
+/// corpus, already resolved a token for the EXACT same `path:line` -- closes both `memory.rs:296`
+/// mentions (donor: the same-line spelling two sections later) and both `persistence.rs:736`
+/// mentions (donor: `markers.json`'s own `_detectors.durable` provenance string, not in the doc at
+/// all).
+///
+/// `doc_citations`'s section-scoped backfill closes a gap when its own `---`-bounded section (the
+/// doc's structural boundary for one protection's entry) names an identifier-shaped word ELSEWHERE
+/// in that same section, and the real file confirms the word sits on the gap's own cited line,
+/// AND that word is the ONLY candidate the section verifies for that line -- closes
+/// `development_contract_schemas.rs:622` (donor word `is_fresh`, from the "Trigger it would catch"
+/// paragraph two above it in the SAME S3 entry; the section's only verified candidate).
+///
+/// **`tests/memory.rs:63` does NOT close, though its section verifies a real doc-sourced word too
+/// (M, PR #682 review).** Its section verifies TWO candidates against that line --
+/// `MemoryRefusalCode` and `SecretDetected`, both from the same S5b code fence two lines above the
+/// citation. Picking the first one found would let the FILE decide which of two doc-named symbols
+/// is "the" citation, and a later edit that keeps one while dropping the other would then
+/// re-verify against whichever survived and stay green -- coverage that outlives the specific
+/// claim it once confirmed. `backfill_same_line_gaps`' section-scoped pass therefore requires the
+/// verified candidate set to have exactly one member; two or more refuses, same as zero. Proved by
+/// `a_gap_does_not_close_when_its_section_verifies_more_than_one_candidate`.
+///
+/// The five left below have no donor of either shape, or an ambiguous one -- each comment says
+/// which -- and none of the kinds of blindness that remain is the one #610 already fixed (a token
+/// search that reaches too far and borrows the WRONG citation's symbol, `memory.rs:512` borrowing
+/// `jpd_plugin.rs`'s, Codex P2 on #606). Neither mechanism can reopen that: `backfill_same_line_gaps`
+/// only reuses a donor pinned at the identical `path:line`, and the section-scoped pass never
+/// crosses a `---` boundary, so a donor two sections away (the actual shape of the #610 regression)
+/// is refused by construction, not by luck -- proved by
+/// `a_gap_does_not_backfill_across_a_section_boundary_even_if_verify_would_allow_it`, which uses a
+/// `verify` that says yes to everything and still stays pinned.
 fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
     vec![
+        // No sibling citation anywhere names `memory.rs:764`, and its own `## 4. What was
+        // measured` section has no word that lands on line 764 either (it is a lone closing
+        // brace). The nearest resolved token in that section (`identityDistinctValidation`)
+        // belongs to the very next line's OWN citation, `jpd_plugin.rs:1560` -- borrowing it
+        // across the path boundary is the #610 regression by name, not a gap either widening may
+        // close.
         UnreachedCitation {
             path: "core/governor/src/memory.rs".to_owned(),
             first_line: 764,
             last_line: 764,
             context: "` (a validator roster may not be the producer) and".to_owned(),
         },
-        UnreachedCitation {
-            path: "core/governor/src/memory.rs".to_owned(),
-            first_line: 296,
-            last_line: 296,
-            context: "` screens with".to_owned(),
-        },
-        UnreachedCitation {
-            path: "core/graph/src/persistence.rs".to_owned(),
-            first_line: 736,
-            last_line: 736,
-            context: "` requires a prefix **and** a tail of".to_owned(),
-        },
-        UnreachedCitation {
-            path: "core/governor/src/memory.rs".to_owned(),
-            first_line: 296,
-            last_line: 296,
-            context: "` | `content.contains(\"ghp_\")` — one prefix, no tail requirement |"
-                .to_owned(),
-        },
-        UnreachedCitation {
-            path: "core/graph/src/persistence.rs".to_owned(),
-            first_line: 736,
-            last_line: 736,
-            context: "` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, \
-                      authorization, environment-URI and reference-name forms |"
-                .to_owned(),
-        },
-        // Section 7's "Would fall at" line. It was written with a BARE filename
-        // (`development_contract_schemas.rs:622`), which resolved to nothing, so both the extractor
-        // and the old counter dropped it in silence -- a citation nobody could follow and nothing
-        // could check. The path is now written in full, which makes it resolvable and lands it
-        // here: the tail after it is `.`, so no symbol is reachable and this is a real gap, named
-        // rather than hidden. (Codex P2 on #610.)
-        //
-        // The line number moved from `576` to `622` while merging origin/main into this branch:
-        // the merge conflict carried two different numbers on its two sides (a stale one from this
-        // branch's own history, a stale one from main's), and `622` is the one that matches
-        // `freshness_is_the_relation_between_the_two_snapshot_identities`'s actual assertion today.
-        UnreachedCitation {
-            path: "apps/cli/tests/development_contract_schemas.rs".to_owned(),
-            first_line: 622,
-            last_line: 622,
-            context: "`.".to_owned(),
-        },
-        // THREE entries for one citation, because `tests/memory.rs:63, 858, 887` names three lines.
-        // Each is pinned separately: a comma list that loses its tail loses it in silence otherwise,
-        // and this list is the only place those coordinates are written down at all.
+        // THREE entries for one citation, because `tests/memory.rs:63, 858, 887` names three
+        // lines. `:63`'s section verifies TWO candidates (`MemoryRefusalCode`, `SecretDetected`)
+        // against its line -- ambiguous, refused rather than picked, see the doc comment above.
+        // `:858` and `:887` verify ZERO: line 858 is a `///` doc-comment line, line 887 is
+        // `#[test]`, and neither word from the same fence is on either line.
         UnreachedCitation {
             path: "core/governor/tests/memory.rs".to_owned(),
             first_line: 63,
@@ -1160,6 +1467,15 @@ fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
             last_line: 887,
             context: "```".to_owned(),
         },
+        // The only source that cites this range at all is `producer-record.json`'s own trailing
+        // `_shape` string, and it has no next line WITHIN that source -- `identifier_in` never had
+        // text to search, and the section-scoped pass skips ranges by design (a range's own rot
+        // check only proves a token sits SOMEWHERE across it, never on one line within it, so
+        // trusting a range-donor for a narrower point is the false-positive trap
+        // `a_range_donor_does_not_backfill_a_narrower_point_inside_it` guards against; this gap has
+        // no point-donor either). `citation_lookahead_does_not_cross_a_source_boundary` pins the
+        // same property from the other direction: this exact citation must stay unreached rather
+        // than borrow a neighbouring source's token.
         UnreachedCitation {
             path: "core/runtime/src/retrieval.rs".to_owned(),
             first_line: 12,
@@ -1171,13 +1487,21 @@ fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
 
 /// The first word long enough to be a symbol rather than prose punctuation.
 fn identifier_in(text: &str) -> Option<String> {
+    all_identifiers_in(text).into_iter().next()
+}
+
+/// Every word long enough to be a symbol rather than prose punctuation -- `identifier_in`'s own
+/// rule, applied exhaustively instead of stopping at the first match. `doc_citations`'s
+/// section-scoped backfill needs every candidate a section offers, not just the earliest one.
+fn all_identifiers_in(text: &str) -> Vec<String> {
     text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .find(|word| {
+        .filter(|word| {
             word.len() >= 5
                 && word.starts_with(|c: char| c.is_alphabetic() || c == '_')
                 && word.chars().any(|c| c == '_' || c.is_uppercase())
         })
         .map(str::to_owned)
+        .collect()
 }
 
 /// Every JSON fixture in the sabotage corpus, where provenance fields live beside the attacks.
@@ -1295,7 +1619,21 @@ fn every_cited_line_in_the_harness_doc_still_holds_its_symbol() {
         collect_underscore_strings(&load_json(&path), &mut buffer);
         sources.push(buffer);
     }
-    let (citations, mut unreached, consumed, present) = doc_citations_across_sources(&sources);
+    // The ONLY place either backfill pass may look at the real repository: confirming a
+    // doc-sourced candidate against the file it names, never proposing one from the file itself.
+    let verify_against_the_real_repository = |path: &str, line: usize, candidate: &str| {
+        fs::read_to_string(repository_root().join(path))
+            .ok()
+            .and_then(|source| {
+                source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(str::to_owned)
+            })
+            .is_some_and(|cited_line| cited_line.contains(candidate))
+    };
+    let (citations, mut unreached, consumed, present) =
+        doc_citations_across_sources(&sources, &verify_against_the_real_repository);
 
     // COMPLETENESS CONTROL, and it is what the fixed floor below could never be. Three coordinate
     // formats were read by this collector only after somebody pointed at each one. This asserts

@@ -40,8 +40,18 @@ struct ServerGuard {
 
 impl Drop for ServerGuard {
     fn drop(&mut self) {
+        // ASKED BEFORE KILLING, and that ordering is the whole point (#641). An empty capture has
+        // two opposite causes -- the child ran and printed nothing, or the child had not printed
+        // YET and this kill cut it off -- and after `kill()` the two are indistinguishable forever.
+        // `try_wait()` here is the only moment the difference still exists.
+        let exited_on_its_own = matches!(self.child.try_wait(), Ok(Some(_)));
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        // The FINAL status, reported rather than inferred. `try_wait()` above reads the state and
+        // `kill()` acts on it, and a child can exit naturally in the gap between the two -- so
+        // "still running" can be stale by the time the kill lands. The gap cannot be closed by
+        // looking harder (only by sleeping, which is the anti-pattern this fix removes), so the
+        // observed status travels into the message and the reader judges it.
+        let final_status = self.child.wait().ok();
         // NOT `JoinHandle::join()` — that has no timeout, and `Drop` running mid-panic-unwind is
         // the single worst place to newly introduce an unbounded wait: a stuck drain thread would
         // turn a clean, reportable test failure into a hung suite instead, silently, on whichever
@@ -97,6 +107,39 @@ impl Drop for ServerGuard {
             } else {
                 " (capture may be truncated: drain deadline reached)"
             };
+            // The empty capture is the one that cost a day (#641). Before this, "the child ran
+            // and said nothing" and "the child was killed before it could speak" printed
+            // identically: two empty sections, no note, and a reader with no way to tell a silent
+            // server from a race the harness lost.
+            //
+            // THREE states, not two. The first version of this note had two and was wrong in the
+            // same way the original was: it read `exited_on_its_own` alone and called an empty
+            // capture the child's "real output" even when the drain had missed its 200ms deadline.
+            // A child that exited while its output was still in flight produces an empty capture
+            // that is INCOMPLETE, not silent -- and labelling incomplete as real is the exact
+            // mistake this note exists to stop, one state further in.
+            let emptiness_note = if !stdout.is_empty() || !stderr.is_empty() {
+                String::new()
+            } else if !drained_fully {
+                "
+---- the capture is EMPTY and the drain did not finish; this says nothing about whether the child printed -- its output may still have been in flight (#641) ----"
+                    .to_owned()
+            } else if exited_on_its_own {
+                "
+---- the child had already exited and the drain finished; the empty capture above is its real output ----"
+                    .to_owned()
+            } else {
+                // ONE-DIRECTIONAL, and it lands on the safe side. Claiming "the child had already
+                // exited, this IS its output" requires try_wait() to have returned Some BEFORE any
+                // kill -- a positive observation, never an inference, so the dangerous direction is
+                // structurally unreachable. The read-to-act gap can only produce the opposite
+                // error: a child that exited in the gap reported as killed. That makes this guard
+                // claim LESS about the subject, which is the direction to be wrong in.
+                format!(
+                    "
+---- the child was still running when this guard looked, and it killed it; the empty capture is most likely this harness cutting it off, NOT evidence about the child. Observed final status: {final_status:?} -- if that looks like a natural exit, the child finished in the gap between the look and the kill (#641) ----"
+                )
+            };
             eprintln!(
                 "\n---- graphhelm serve stdout, captured (printed because this test panicked){truncation_note} ----\n\
                  {stdout}\n\
@@ -104,6 +147,9 @@ impl Drop for ServerGuard {
                  {stderr}\n\
                  ----"
             );
+            if !emptiness_note.is_empty() {
+                eprintln!("{emptiness_note}");
+            }
         }
     }
 }
@@ -393,6 +439,39 @@ fn server_guard_sabotage_ignored() {
     let stderr_lines = Arc::new(Mutex::new(Vec::new()));
     let stdout_thread = drain_lines(child.stdout.take().unwrap(), Arc::clone(&stdout_lines));
     let stderr_thread = drain_lines(child.stderr.take().unwrap(), Arc::clone(&stderr_lines));
+    // Wait for the EVENT the assertions depend on, not for a number. The markers are this child's
+    // entire job, so its exit is when they exist or never will. A 300ms sleep here was a
+    // synchronisation primitive against a process START: measured under four concurrent suites it
+    // was sometimes not enough, the guard's kill then cut the child off before `cmd` echoed, and
+    // the assertions failed on markers that were never produced (#641 -- 3 of 3 failing runs, and
+    // 40 of 40 with the sleep set to zero).
+    // BOUNDED, with the deadline named and its expiry coloured. An unbounded `wait()` here would
+    // contradict the doctrine this fix is built on -- a red that hangs is not a red -- and it would
+    // do it in the sabotage cell, where a stuck child would take the suite with it instead of
+    // failing. Two seconds is ~7x the 300ms this replaces and orders of magnitude over `cmd /C echo`
+    // on a loaded machine; the point is that it EXPIRES rather than that the number is exactly right.
+    let child_exit_budget = Duration::from_secs(2);
+    let child_deadline = Instant::now() + child_exit_budget;
+    loop {
+        match child.try_wait() {
+            // "Exited" is not "ran". A `cmd` that fails before writing -- a bad command, quoting
+            // that stopped parsing -- exits too, and breaking on any exit would hand the guard a
+            // child that never spoke and let the empty capture be reported as its real output.
+            // That is the same collapse this whole fix is about, one state further out: the
+            // question is not whether it finished, it is whether it finished HAVING DONE ITS JOB.
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(status)) => panic!(
+                "HARNESS-BROKE: the sabotage child exited {status:?} without succeeding, so it failed before it could write its markers. That is the harness or the environment, not the drain/print path this cell exists to prove (#641)"
+            ),
+            Ok(None) if Instant::now() < child_deadline => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Ok(None) => panic!(
+                "HARNESS-BROKE: the sabotage child did not exit within {child_exit_budget:?}. It prints two markers and exits, so this is the harness or the machine, not the drain/print path this cell exists to prove (#641)"
+            ),
+            Err(error) => panic!("HARNESS-BROKE: could not wait for the sabotage child: {error}"),
+        }
+    }
     let _guard = ServerGuard {
         child,
         stdout_lines,
@@ -400,7 +479,6 @@ fn server_guard_sabotage_ignored() {
         stdout_thread: Some(stdout_thread),
         stderr_thread: Some(stderr_thread),
     };
-    std::thread::sleep(Duration::from_millis(300));
     panic!("{CHILD_REACHED_ITS_OWN_SABOTAGE} in the failure report");
 }
 

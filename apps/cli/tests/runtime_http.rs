@@ -2106,6 +2106,9 @@ fn a_runtime_can_seal_a_message_with_a_keyring_and_no_credential_at_all() {
     let key_id = "runtime-http-keyring-only";
     keyring_init(&keyring, key_id);
 
+    // No `--allow-program` here, and none is missing: the allowlist is demanded only when the
+    // real-executor group (`--manifest`/`--broker`/`--route`/`--staging`) is present, and this
+    // server takes the keyring flags alone, so it spawns nothing (#705).
     let extra = ServeExtra {
         args: vec![
             "--keyring".into(),
@@ -2269,6 +2272,9 @@ fn a_sealed_runtime_records_a_signal_that_also_names_a_path() {
         "unused_route",
     );
 
+    // No `--allow-program` here, and none is missing: the allowlist is demanded only when the
+    // real-executor group (`--manifest`/`--broker`/`--route`/`--staging`) is present, and this
+    // server takes the keyring flags alone, so it spawns nothing (#705).
     let extra = ServeExtra {
         args: vec![
             "--keyring".into(),
@@ -2356,6 +2362,9 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
     // Initialises the keyring the same way every other sealed test here does.
     credential_set(&broker, &keyring, key_id, "cred_signal", "unused_route");
 
+    // No `--allow-program` here, and none is missing: the allowlist is demanded only when the
+    // real-executor group (`--manifest`/`--broker`/`--route`/`--staging`) is present, and this
+    // server takes the keyring flags alone, so it spawns nothing (#705).
     let extra = ServeExtra {
         args: vec![
             "--keyring".into(),

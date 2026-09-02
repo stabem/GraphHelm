@@ -23,6 +23,55 @@ Set-StrictMode -Version Latest
 # message against a private copy of itself.
 $script:FinalisedManifestSurvivedKey = 'GraphHelm.FinalisedManifestSurvived'
 
+function Test-IOExceptionIsNameTaken {
+    <#
+      Was this IOException 'the name is already taken', or something else?
+
+      The runtime answers directly: inside `catch [System.IO.IOException]`, $_.Exception is the
+      IOException itself and its HResult is the Win32 code. Measured on this machine --
+      CreateNew over an existing file gives 0x80070050 (ERROR_FILE_EXISTS); a missing directory
+      gives DirectoryNotFoundException with 0x80070003, which is an IOException too and must NOT
+      be read as a collision.
+
+      NOT the message. `"The file '...' already exists."` is a .NET resource string selected by
+      CurrentUICulture and rewritable in a servicing update, so matching it is an inference about
+      what the runtime MEANT. The HResult is what the runtime SAID.
+
+      NOT Test-Path either, which is what this replaces. Re-observing the filesystem after the
+      failure asks a different question at a later instant: between the failed open and the check,
+      another run can remove the file and turn a real collision into a rethrown fault, or create
+      one and turn a fault into a collision. The exception describes THIS failure; the directory
+      describes the world now.
+
+      WHAT IT DOES WITH EVERY OTHER CODE, said because the rest of this comment only says what the
+      predicate is NOT. Anything it does not name is FALSE, and the callers rethrow: the run fails
+      loudly with the operating system's own error rather than quietly trying another name.
+
+      That is a WHITELIST on purpose, and it is where the boundary lives. A blacklist -- "anything
+      that is not ERROR_PATH_NOT_FOUND is a collision" -- agrees with this list on every code the
+      cells below happened to name, and differs on exactly one: ERROR_SHARING_VIOLATION
+      (0x80070020), an existing-but-unopenable file. There is a cell for it.
+
+      The consequence, declared rather than left as a side effect: a file that exists but cannot be
+      opened NO LONGER causes a new name to be taken; it fails the run. The window is narrow --
+      CreateNew over an existing file reports ERROR_FILE_EXISTS even when the file is locked -- and
+      the argument for it is NOT the one from #669. There, a write that failed after CreateNew had
+      to rethrow because retrying under a new name would leave a truncated file behind; a FAILED
+      CreateNew leaves nothing at all, so that reasoning does not carry here.
+
+      The argument that does: a non-exists failure is not evidence about the NAME. It is almost
+      always about the directory -- permissions, a lock, a vanished path -- and retrying under a
+      fresh name would fail the same way three times and then report "the name source is not
+      producing distinct names", which points the reader at the wrong subsystem. A narrow list
+      makes an environment fault surface as itself.
+    #>
+    param([AllowNull()] $Exception)
+
+    if ($null -eq $Exception) { return $false }
+    # ERROR_FILE_EXISTS, and ERROR_ALREADY_EXISTS which some paths report instead.
+    return ($Exception.HResult -eq -2147024816) -or ($Exception.HResult -eq -2147024713)
+}
+
 function Test-ManifestRollbackLeftFinalised {
     <#
       The DECISION, extracted so it can be tested even though its ARMING cannot be.
@@ -156,7 +205,7 @@ function Write-GateManifestPair {
                 try {
                     $stream = [System.IO.File]::Open($temp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
                 } catch [System.IO.IOException] {
-                    if (Test-Path -LiteralPath $temp) { $nameLost = $true; break }
+                    if (Test-IOExceptionIsNameTaken -Exception $_.Exception) { $nameLost = $true; break }
                     throw
                 }
 
@@ -282,7 +331,7 @@ function Write-GateManifestCreateNew {
         try {
             $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
         } catch [System.IO.IOException] {
-            if (-not (Test-Path -LiteralPath $path)) { throw }
+            if (-not (Test-IOExceptionIsNameTaken -Exception $_.Exception)) { throw }
             if ($NoRetry) {
                 throw "the manifest name $attempt is already taken in $Directory; renaming here would break the pairing both stores depend on"
             }

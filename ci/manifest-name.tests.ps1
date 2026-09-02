@@ -13,12 +13,12 @@
 # ci/slot-lock.tests.ps1. The declared total is the point: on the sibling suite for #638 I declared
 # 25 and 23 ran, and the harness refused rather than reporting 23 green ones quietly.
 #
-# 50 runtime assertions: 50 Assert-* CALLS below. (13 before the review round added six.
+# 55 runtime assertions: 55 Assert-* CALLS below. (13 before the review round added six.
 # Declared 12 on the first pass and 13 ran -- the second
 # time in one day the declared count caught my own miscount instead of reporting the green ones
 # quietly. That is the mechanism working, not a nuisance.) The two function DEFINITIONS are not calls, and
 # Assert-Equal's delegation to Assert-True fires once per call rather than as its own assertion.
-$ExpectedAssertionCount = 50
+$ExpectedAssertionCount = 55
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -34,6 +34,19 @@ function Assert-True {
 function Assert-Equal {
     param([Parameter(Mandatory)][AllowNull()] $Expected, [Parameter(Mandatory)][AllowNull()] $Actual, [Parameter(Mandatory)][string] $Label)
     Assert-True -Condition ("$Expected" -eq "$Actual") -Label "$Label (expected '$Expected', got '$Actual')"
+}
+
+function New-IOExceptionWithCode {
+    # HResult has no public setter in .NET Framework, so the field is set by reflection. That is
+    # the only way to arrange the case that DISCRIMINATES -- the exact English phrase carrying a
+    # DIFFERENT code -- and arranging it is the whole point: a cell that cannot separate the two
+    # candidates proves nothing about which one the predicate reads.
+    param([string] $Message, [int] $Code)
+    $exception = New-Object System.IO.IOException($Message)
+    $field = [System.Exception].GetField('_HResult', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Instance)
+    if ($null -eq $field) { throw 'HARNESS-BROKE: no _HResult field to set; this fixture cannot arrange its case' }
+    $field.SetValue($exception, $Code)
+    return $exception
 }
 
 . "$PSScriptRoot/manifest-name.ps1"
@@ -76,6 +89,33 @@ try {
     Assert-True -Condition ($first.StartsWith('aaaaaaaaaaaa-')) -Label 'the name still leads with head12, so it stays sortable by run'
     Assert-True -Condition ($first -like '*20260828T070149.123Z*') -Label 'the stamp keeps sub-second precision and is human-readable'
     Assert-True -Condition ($first.EndsWith('.json')) -Label 'the name is still a .json file the glob will find'
+
+    # ---- 'name taken' is decided by the runtime's code, not by its prose --------------------
+    # The message `"The file '...' already exists."` is a .NET resource string chosen by
+    # CurrentUICulture and rewritable in a servicing update; matching it infers what the runtime
+    # MEANT. The HResult is what it SAID. No cell here asserts a failure under another culture:
+    # this machine has no localised satellites, so that failure is not demonstrable and a cell
+    # claiming it would assert what cannot be shown.
+    $taken = New-IOExceptionWithCode -Message '' -Code -2147024816   # 0x80070050 ERROR_FILE_EXISTS
+    Assert-True -Condition (Test-IOExceptionIsNameTaken -Exception $taken) -Label 'an EMPTY message with the exists HResult still decides name-taken'
+
+    $german = New-IOExceptionWithCode -Message 'Die Datei existiert bereits.' -Code -2147024713   # 0x800700B7 ERROR_ALREADY_EXISTS
+    Assert-True -Condition (Test-IOExceptionIsNameTaken -Exception $german) -Label 'a non-English message with an exists HResult decides name-taken'
+
+    $englishButNotExists = New-IOExceptionWithCode -Message 'The file already exists.' -Code -2147024893   # 0x80070003 ERROR_PATH_NOT_FOUND
+    Assert-True -Condition (-not (Test-IOExceptionIsNameTaken -Exception $englishButNotExists)) -Label 'the exact English phrase with a different HResult is NOT name-taken'
+
+    Assert-True -Condition (-not (Test-IOExceptionIsNameTaken -Exception $null)) -Label 'a null exception is not name-taken'
+
+    # THE POPULATION CELL, and it is the one that pins the boundary rather than the form. The three
+    # cells above kill a decider that ignores the HResult, one that reads the message, and one that
+    # accepts any 0x8007 code -- but a BLACKLIST ("anything that is not ERROR_PATH_NOT_FOUND is a
+    # collision") agrees with the real predicate on every code they name. Measured: whitelist and
+    # blacklist differ on exactly ONE input, ERROR_SHARING_VIOLATION -- an existing file that cannot
+    # be opened. Without this cell the suite fixes the shape of the answer and leaves the edge of it
+    # unspecified.
+    $sharing = New-IOExceptionWithCode -Message 'The process cannot access the file because it is being used by another process.' -Code -2147024864   # 0x80070020 ERROR_SHARING_VIOLATION
+    Assert-True -Condition (-not (Test-IOExceptionIsNameTaken -Exception $sharing)) -Label 'an existing-but-unopenable file is NOT name-taken, so a blacklist decider dies here'
 
     # ---- the stamp does not move with the machine's calendar --------------------------------
     # Under a non-Gregorian calendar (th-TH is Buddhist) `ToString` formats the YEAR in that

@@ -304,6 +304,17 @@ fn budget_leaves_room_for_the_retry_loop_to_actually_loop() {
     );
 }
 
+/// The child's own deliberate panic message, verbatim from `server_guard_sabotage_ignored` below.
+/// Its PRESENCE in the child's combined output is the precondition this cell's real assertions
+/// depend on: it is what tells the two failure shapes apart (#641). ABSENT, the child died before
+/// reaching its own controlled sabotage — spawn contention under a loaded machine, a resource
+/// limit, anything upstream of the code this cell exists to prove — and the marker assertions
+/// below would fail for a reason that has nothing to do with the drain/print path. PRESENT, the
+/// child reached its own panic and the marker assertions are a real claim about this repository's
+/// code.
+const CHILD_REACHED_ITS_OWN_SABOTAGE: &str =
+    "deliberate failure: proves ServerGuard surfaces a panicking child's captured output";
+
 #[test]
 fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     let this_binary = std::env::current_exe().unwrap();
@@ -321,6 +332,17 @@ fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    // The precondition check, ahead of the real assertions (#641): a loaded machine can make the
+    // CHILD fail before it ever reaches its own deliberate panic -- a resource-exhausted
+    // `child.spawn()`, for one, panics with an OS error instead. That is not evidence about the
+    // drain/print path this cell exists to prove, and reporting it as a marker-content failure
+    // would misname an environment condition as a code regression.
+    assert!(
+        combined.contains(CHILD_REACHED_ITS_OWN_SABOTAGE),
+        "HARNESS-BROKE: the child never reached its own deliberate sabotage, so this run proves \
+         nothing about the drain/print path -- it failed for an unrelated reason (a loaded \
+         machine is the known cause; see #641). Full captured output:\n{combined}"
     );
     assert!(
         combined.contains("SERVER-GUARD-140-STDOUT-MARKER"),
@@ -379,10 +401,7 @@ fn server_guard_sabotage_ignored() {
         stderr_thread: Some(stderr_thread),
     };
     std::thread::sleep(Duration::from_millis(300));
-    panic!(
-        "deliberate failure: proves ServerGuard surfaces a panicking child's captured output \
-         in the failure report"
-    );
+    panic!("{CHILD_REACHED_ITS_OWN_SABOTAGE} in the failure report");
 }
 
 /// The token file is written by the server before it prints the startup line, so by the time

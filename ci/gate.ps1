@@ -319,6 +319,7 @@ function Write-SlotEvent {
 # `present` field could not tell "genuinely no lock" apart from "looked in the wrong place", and why
 # that distinction is now a `status` tag with three states instead of two.
 . (Join-Path $PSScriptRoot 'slot-lock.ps1')
+. (Join-Path $PSScriptRoot 'manifest-name.ps1')
 . (Join-Path $PSScriptRoot 'run-class.ps1')
 
 # #152: one `--no-run --message-format=json` pass over the whole workspace enumerates every test
@@ -510,34 +511,70 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         overallPassed      = $passedEverything
     }
 
-    $fileName = "$($headSha.Substring(0, 12))-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')).json"
-    $path = Join-Path $manifestDir $fileName
+    # #667: sub-second stamp plus a random suffix, and a CREATE-ONLY write. The old name was
+    # head12 + whole second with WriteAllText, so two runs sharing both silently overwrote each
+    # other -- and the pairs most likely to collide are the most concurrent ones in the store, so
+    # the loss erased exactly the overlap the manifests exist to prove (#638).
+
     # No BOM: caught live, third instance of the same Set-Content -Encoding utf8 hazard in this
     # file - a manifest read back with a strict JSON parser (Python's json.load, no -sig) rejects
     # a leading BOM outright, and this manifest exists specifically to be machine-read later.
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $json = $manifest | ConvertTo-Json -Depth 8
-    [System.IO.File]::WriteAllText($path, $json, $utf8NoBom)
-
-    # #199: the SAME bytes, outside the repository.
-    #
-    # The in-repo copy is the committable evidence and stays. It is also only visible to anyone if
-    # a human chooses to commit it, and it dies with its branch - so "how many runs happened today"
-    # was answerable today only as a LOWER BOUND. This copy is written unconditionally, outside any
-    # worktree and outside any target dir, so a run leaves a trace whether or not anybody decides
-    # it is worth keeping.
-    #
-    # Best-effort, and REPORTED on failure: a durable-copy problem must not fail a gate run, and
-    # must not be silent either.
+    # #667: one name, free in BOTH stores before either is finalised, content staged in a .tmp and
+    # moved into place only when complete. Writing the stores independently let the durable copy
+    # rename itself (orphaning the twin) or collide and warn (leaving the PREVIOUS run's manifest
+    # exactly where classify-run.ps1:267-273 looks for this run's, so the later classification
+    # overwrote the earlier record).
+    $durableDir = $null
     try {
-        # .NET APIs for the same reason as Write-SlotEvent: a cmdlet that fails non-terminatingly
-        # prints its own error and hands the catch a misleading one.
         $durableDir = [System.IO.Path]::Combine((Get-SlotDir), 'gate-runs')
         [System.IO.Directory]::CreateDirectory($durableDir) | Out-Null
-        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($durableDir, $fileName), $json, $utf8NoBom)
     } catch {
-        Write-Host "[gate] WARNING: could not write the durable manifest copy: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "[gate] WARNING: durable manifest directory unavailable: $($_.Exception.Message)" -ForegroundColor Yellow
+        $durableDir = $null
     }
+
+    # The invariant is "never HALF a pair", not "both or the gate fails". Those read alike and are
+    # not: the durable store can exist and still refuse a file (ACLs, quota, an IO fault), and
+    # making that fail this stage would turn an environment problem into a blocked gate for every
+    # otherwise-green change -- on the repository's authoritative gate, with no hosted CI behind it.
+    # #199 wrote that copy best-effort AND REPORTED for exactly this reason; strengthening the
+    # pairing quietly took the fallback away with it.
+    #
+    # So: attempt the pair, and on ANY durable-side failure warn loudly and write the committable
+    # copy alone. Write-GateManifestPair already guarantees the half-pair cannot survive -- it rolls
+    # a finalised primary back out before throwing -- so the retry starts from a clean directory.
+    $written = $null
+    if ($durableDir) {
+        try {
+            $written = Write-GateManifestPair -PrimaryDirectory $manifestDir -SecondaryDirectory $durableDir -Json $json -HeadSha $headSha
+        } catch {
+            # NOT every durable failure is safe to retry. The helper reports one case specially:
+            # the secondary move failed AND the already-finalised primary could not be withdrawn.
+            # Falling back there would write a SECOND complete-looking manifest while RUN-END names
+            # only one -- two records of one run, corrupting the counts and the overlap evidence
+            # this store exists to provide. A blocked gate is recoverable; a corrupted record is
+            # believed. The marker comes from manifest-name.ps1 so there is one producer of it.
+            if (Test-ManifestRollbackLeftFinalised -Exception $_.Exception) { throw }
+            Write-Host "[gate] WARNING: durable manifest copy failed, keeping the committable one only: $($_.Exception.Message)" -ForegroundColor Yellow
+            $written = $null
+        }
+    }
+    if (-not $written) {
+        $written = Write-GateManifestPair -PrimaryDirectory $manifestDir -Json $json -HeadSha $headSha
+    }
+    # @() around the result. PowerShell UNROLLS a single-element array, so when the durable store
+    # is unavailable and only the primary copy is written, `$written[0]` indexed into the STRING and
+    # returned its first character -- the manifest written correctly, and $path, the return value
+    # and the basename in RUN-END all one letter long, so nothing downstream could link the run to
+    # its file. The tests already wrap; the production caller did not.
+    $path = @($written)[0]
+    $fileName = [System.IO.Path]::GetFileName($path)
+
+    # #199's durable copy is now written by Write-GateManifestPair above, in the same reservation
+    # as the committable one, so the two cannot end up under different names or with one store
+    # holding a previous run's file where this run's twin belongs.
 
     Write-SlotEvent -Event 'RUN-END' -Detail "status=$Status class=$runClass head=$($headSha.Substring(0, 12)) manifest=$fileName"
     return $path

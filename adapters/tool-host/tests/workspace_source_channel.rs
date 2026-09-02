@@ -536,13 +536,15 @@ fn a_file_exactly_at_the_byte_ceiling_refuses_without_a_sentinel_read() {
     assert_eq!(hits, vec!["only.rs".to_owned()]);
 }
 
-/// Codex #622: a symlink/junction in an INTERMEDIATE component of the root (not the final one).
-/// `symlink_metadata` spares only the final component, so `holder/link/inner` with `link` pointing
-/// outside was admitted under the link-relative spelling. `open` canonicalizes now, so the root is
-/// the real location and hits are repo-relative to it. This is a consistency hardening — a search
-/// through the ancestor succeeds and its hits do not leak the link path — rather than a refusal.
+/// Codex #622: a symlink/junction in an INTERMEDIATE component of the root is resolved by `open`'s
+/// canonicalize, and the search through it still works with repo-relative hits.
+///
+/// This is the BEHAVIOURAL half only. The stored root being the canonical spelling rather than the
+/// link spelling cannot be witnessed from out here — the hit strings strip either prefix to the
+/// same `evidence.rs` — so that assertion lives in the unit test beside the module, reading the
+/// private field directly (K on #707: no production accessor is added for a test's sake).
 #[test]
-fn a_symlinked_ancestor_of_the_root_is_canonicalized_not_served_under_the_link() {
+fn a_workspace_reached_through_a_symlinked_ancestor_is_searchable() {
     let target = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(target.path().join("inner")).unwrap();
     std::fs::write(target.path().join("inner/evidence.rs"), "verdict ceiling\n").unwrap();
@@ -565,12 +567,11 @@ fn a_symlinked_ancestor_of_the_root_is_canonicalized_not_served_under_the_link()
 
     // Open THROUGH the link: `link` is an intermediate component, `inner` the real final one.
     let channel = WorkspaceSourceChannel::open(&link.join("inner")).unwrap();
+
+    // The search works through the ancestor and the hit is repo-relative — canonicalize did not
+    // break it.
     let hits = channel
         .search(&["verdict".to_owned(), "ceiling".to_owned()], &generous())
         .expect("a workspace reached through a linked ancestor is searchable");
-    assert_eq!(
-        hits,
-        vec!["evidence.rs".to_owned()],
-        "the hit is repo-relative to the canonical root, not under the link spelling: {hits:?}"
-    );
+    assert_eq!(hits, vec!["evidence.rs".to_owned()], "{hits:?}");
 }

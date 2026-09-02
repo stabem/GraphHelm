@@ -459,3 +459,49 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
         Ok(scored.into_iter().map(|(_, path)| path).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::WorkspaceSourceChannel;
+
+    /// Codex #622/#707: the stored root is the CANONICAL location when the supplied path reaches
+    /// the workspace through a symlinked ANCESTOR — `symlink_metadata` spares only the final
+    /// component, so without `open`'s canonicalize the link-relative spelling would be stored and
+    /// later served under it. The hit strings cannot witness this (they strip either prefix to the
+    /// same value); the stored root can, and this test reads it DIRECTLY — the field is private and
+    /// stays private, so no accessor is added to the production API for a test's sake.
+    #[test]
+    fn a_symlinked_ancestor_root_is_stored_canonical_not_under_the_link() {
+        let target = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(target.path().join("inner")).unwrap();
+        let holder = tempfile::tempdir().unwrap();
+        let link = holder.path().join("link");
+
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(target.path())
+            .output()
+            .is_ok_and(|output| output.status.success());
+        #[cfg(not(windows))]
+        let made = std::os::unix::fs::symlink(target.path(), &link).is_ok();
+        assert!(
+            made,
+            "arrangement: could not create the ancestor link under test"
+        );
+
+        let link_path = link.join("inner");
+        let channel = WorkspaceSourceChannel::open(&link_path).unwrap();
+        let canonical = std::fs::canonicalize(&link_path).unwrap();
+
+        assert_eq!(
+            channel.root, canonical,
+            "a root reached through a linked ancestor must be stored canonical"
+        );
+        assert_ne!(
+            channel.root, link_path,
+            "the stored root is the real location, not the link-relative path"
+        );
+    }
+}

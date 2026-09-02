@@ -7,18 +7,29 @@
 # real lock. A sourceable resolver is the seam that makes the decision testable without touching
 # the slot.
 #
-# Sets HOLDER_PID, HOLDER_START, HOLDER_SOURCE (parent|override), HOLDER_VALID (0|1).
+# Sets HOLDER_PID, HOLDER_START, HOLDER_SOURCE (always "supplied"), HOLDER_VALID (0|1).
 # Decides nothing: the caller owns the exit codes, because those belong to the claim, not to a
 # lookup.
 #
-# MEASURED LIMIT of the default, and it is why the consumer is not wired yet. In the shell path the
-# parent is this script's own bash, which exits when the script does:
+# THE DEFAULT IS GONE. This block is the measurement that forbids bringing it back, not a
+# description of shipping behaviour. An earlier revision derived the pair from the parent process;
+# in the shell path the parent is this script's own bash, which exits when the script does:
 #
 #   derived pid 34656 is ALREADY GONE
 #
-# So the default can record a process that is already gone, and liveness would answer 'dead' for a
-# live holder -- the ED-1 substitution inverted. It is inert ONLY because nothing consumes
-# Test-SlotHolderLiveness yet. Whoever wires the consumer fixes this first.
+# A holder recorded as already-dead makes liveness answer 'dead' for a live holder -- the ED-1
+# substitution inverted, arriving through the convenience door.
+#
+# THE SAME TRAP CATCHES A SUPPLIED PAIR (K, 2026-09-02; re-measured by J before this was written):
+# an agent's tool call is a fresh PowerShell that exits with the call, so exporting $PID there
+# records a holder that is dead seconds later. Supplying a transient pid is worse than being
+# refused -- a refusal fails closed and loud, a lying holder fails open and in silence. The
+# producer must OUTLIVE the claim: ci/gate.ps1 does, a tool-call shell does not.
+#
+# Still inert: nothing consumes Test-SlotHolderLiveness. Whoever wires it (#700) picks the
+# long-lived producer FIRST. One measured candidate, recorded there and not acted on here: from a
+# tool-call PowerShell the PARENT is the claude process, which does survive across calls. That is
+# an observation for #700, not a licence to re-derive in this function.
 resolve_slot_holder() {
   # NO DERIVATION. An earlier revision defaulted to the parent process; it is retracted, and both
   # measurements that killed it are worth keeping because they are different:

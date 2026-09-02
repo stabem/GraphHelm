@@ -94,12 +94,12 @@ STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 #   2  the write did not land: the lock exists and is NOT yours   <- never retry blindly
 #   3  path or permission fault: nobody holds the slot
 #   4  the holder cannot be identified at all
-#   5  a holder pair was supplied or derived, and it is unusable
+#   5  a holder pair was supplied, and it is unusable
 #
-# The pair has a DEFAULT and the env vars are an OVERRIDE (K's review of #686). Requiring the env
-# vars made every claim fail-closed on a value the script can derive, and nothing in the tree sets
-# them -- ten lanes running gates would have stopped at once. Fail-closed is right when a value is
-# unknowable and wrong when it is derivable.
+# THE PAIR IS ALWAYS SUPPLIED; there is no default and nothing here derives one. An earlier
+# revision defaulted to the parent process and it was retracted under measurement -- slot-holder.sh
+# carries the readings that forbid bringing it back. Fail-closed is right when the value is
+# unknowable HERE, and a pid this script could derive is not the pid that owns the claim.
 . "$(dirname "$0")/slot-holder.sh"
 resolve_slot_holder
 
@@ -114,16 +114,26 @@ if [ "$HOLDER_VALID" -ne 1 ]; then
     echo "identity Test-SlotHolderLiveness could only answer 'indeterminate' about." >&2
     exit 5
   fi
-  echo "slot-claim: REFUSED - the claim cannot identify its holder." >&2
-  echo "The parent process could not be consulted and no override was given. Set both:" >&2
+  echo "slot-claim: REFUSED - no holder pair was supplied." >&2
+  echo "" >&2
+  echo "The pair is never derived here (see slot-holder.sh); it is supplied by the process that" >&2
+  echo "owns the claim. ANSWER THIS FIRST, because it decides whether you should supply one at all:" >&2
+  echo "" >&2
+  echo "  Does the shell you would type it into outlive this claim?" >&2
+  echo "" >&2
+  echo "A persistent terminal does. AN AGENT'S TOOL-CALL SHELL DOES NOT -- each call is a fresh" >&2
+  echo "PowerShell that exits with the call (measured: pid 69756 in one call, NO SUCH PROCESS in" >&2
+  echo "the next). Recording a pid that dies seconds later is WORSE than this refusal: liveness" >&2
+  echo "then answers 'dead' for a working owner and the slot is reaped out from under them --" >&2
+  echo "fail-open and silent, where a refusal fails closed and loud." >&2
+  echo "" >&2
+  echo "NO  -- then the claim is not yours to make. It belongs to a long-lived producer" >&2
+  echo "       (ci/gate.ps1), and this refusal is the correct answer, not an obstacle. See #700." >&2
+  echo "" >&2
+  echo "YES -- then \$PID is your session, and these are the two values to export:" >&2
   echo "" >&2
   echo '  $env:GRAPHHELM_HOLDER_PID   = $PID' >&2
   echo '  $env:GRAPHHELM_HOLDER_START = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o")' >&2
-  echo "" >&2
-  echo "That is YOUR session, and it is the process that owns the claim. An earlier version of" >&2
-  echo "this message said to record the PARENT -- correct for a transient tool-call shell, wrong" >&2
-  echo "here: from a persistent PowerShell the parent is the terminal host, which outlives the tab." >&2
-  echo "The lock would keep reading 'live' after you closed it and could never be recovered." >&2
   exit 4
 fi
 

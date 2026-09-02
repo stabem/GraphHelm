@@ -24,7 +24,7 @@
 # same pattern matches once, but which fires once per Assert-Equal CALL at runtime, not as an
 # independent assertion beyond the call that triggers it. 13 direct Assert-True calls + 11
 # Assert-Equal calls = 24 actual runtime assertions; that's the number this harness itself counts.
-$ExpectedAssertionCount = 24
+$ExpectedAssertionCount = 33
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -194,6 +194,85 @@ try {
         $env:GRAPHHELM_SLOT_LOCK_PATH = $prevLockPath
     }
 }
+
+    # THE WRITER'S CELLS LIVE IN BASH, NOT HERE, and that is measured rather than preferred.
+    # They shelled out to bash from this suite and passed for me -- because I ran them from an MSYS
+    # shell, where `bash` is Git's. From PowerShell, which is how the authoritative gate runs, the
+    # name resolves to C:\WINDOWS\system32ash.exe: WSL's bash, a different filesystem mapping
+    # (/mnt/c, not /c) and not necessarily installed. The cells were green for an environment-
+    # specific reason and would have failed in the gate. (Codex on #686 raised presence; the
+    # measurement found identity, which is worse.)
+    #
+    # So the gate stays PowerShell-only and the writer is covered by
+    # .factory/tools/slot-holder.tests.sh, run by hand. That coverage is NOT GATED, and #700
+    # carries it alongside the reader's missing consumer.
+
+    # --- #624: the query-failure classification, extracted so it can be reached at all ----------
+    Write-Host ""
+    Write-Host "=== #624: Test-SlotHolderQueryIdMeansAbsent ==="
+    # Only this id is a STATE. A sabotage making every failure read 'dead' passed every liveness
+    # cell before this pair existed - the branch was uncovered while appearing covered.
+    Assert-True -Condition (Test-SlotHolderQueryIdMeansAbsent -ErrorId 'NoProcessFoundForGivenId,Microsoft.PowerShell.Commands.GetProcessCommand') -Message '#624 NoProcessFoundForGivenId states the process is absent'
+    Assert-True -Condition (-not (Test-SlotHolderQueryIdMeansAbsent -ErrorId 'PermissionDenied,Microsoft.PowerShell.Commands.GetProcessCommand')) -Message '#624 a permission failure is the QUERY failing, never a dead holder'
+
+    # --- #624: holder liveness is a PAIR, and the third state is not "dead" -----------------------
+    Write-Host ""
+    Write-Host "=== #624: Test-SlotHolderLiveness ==="
+    $self = Get-Process -Id $PID
+    $selfStart = $self.StartTime.ToUniversalTime().ToString('o')
+
+    # (1) LIVE: the same pair. Taking a slot whose holder is alive must be forbidden, so this
+    # must read 'live' - not merely "did not crash".
+    Assert-Equal -Expected 'live' -Actual (Test-SlotHolderLiveness -HolderPid $PID -HolderStartUtc $selfStart) -Message '#624 same pid AND same start time reads live'
+
+    # (2) DEAD by recycled pid: same pid, DIFFERENT start time. This is the cell that proves the
+    # pair identifies and the pid alone does not. Without it a recycled pid would hold the slot
+    # hostage forever - the deadlock side of the question.
+    $shifted = $self.StartTime.ToUniversalTime().AddHours(-1).ToString('o')
+    Assert-Equal -Expected 'dead' -Actual (Test-SlotHolderLiveness -HolderPid $PID -HolderStartUtc $shifted) -Message '#624 same pid but a different start time reads dead (pid recycled)'
+
+    # (3) DEAD by absence: no such process. Get-Process THROWS here rather than returning empty,
+    # and the error id NoProcessFoundForGivenId is what makes this a STATE and not a query failure.
+    # A pid that genuinely existed and is gone, obtained by RETRY rather than by hoping.
+    #
+    # Three attempts at this cell, and each failed differently -- worth recording because the shape
+    # repeats: 999999 can be live on a busy host (green via the mismatched-start-time branch, never
+    # touching absence); a spawned-then-reaped pid can be REASSIGNED during the wait (same wrong
+    # branch, narrower window); and -1, which I reached for next, returns 'indeterminate' because
+    # this reader's own guard rejects non-positive pids before Get-Process is called. My own
+    # validation blocked the shortcut. (Codex on #686, twice on this cell.)
+    #
+    # So: reap, then VERIFY absence, and retry if the pid came back. Bounded, and it declares
+    # HARNESS-BROKE rather than measuring the wrong branch if it never gets a free pid.
+    # Representativeness lives in Test-SlotHolderQueryIdMeansAbsent, which asserts on the real
+    # error id; determinism lives here. One cell carrying both is what made this flaky.
+    $absentPid = 0
+    foreach ($attempt in 1..8) {
+        $spawn = Start-Process -FilePath cmd -ArgumentList '/c', 'exit' -PassThru -WindowStyle Hidden
+        $candidate = $spawn.Id
+        $spawn.WaitForExit()
+        Start-Sleep -Milliseconds 120
+        if (-not (Get-Process -Id $candidate -ErrorAction SilentlyContinue)) { $absentPid = $candidate; break }
+    }
+    Assert-True -Condition ($absentPid -gt 0) `
+        -Message '#624 ARRANGEMENT: a reaped pid stayed free long enough to measure, or this cell measures nothing'
+    Assert-Equal -Expected 'dead' -Actual (Test-SlotHolderLiveness -HolderPid "$absentPid" -HolderStartUtc $selfStart) -Message '#624 a pid whose process has exited reads dead'
+
+    # (4c) A pid that is not a pid must still answer one of the three states, never throw. It was
+    # typed [int], so a malformed record failed at PARAMETER BINDING - a fourth outcome from a
+    # three-state contract (Codex on #686).
+    Assert-Equal -Expected 'indeterminate' -Actual (Test-SlotHolderLiveness -HolderPid 'abc' -HolderStartUtc $selfStart) -Message '#624 a non-numeric recorded pid is indeterminate, never a thrown binding error'
+
+    # (4d) A zone-less record is a timestamp plus an ASSUMPTION: RoundtripKind leaves
+    # Kind=Unspecified and ToUniversalTime() applies whatever offset the machine has today, so the
+    # same stored text means different instants across a DST change and a live holder would read
+    # 'dead' after the clock shifted. Uninterpretable, never dead. (Codex on #686.)
+    $zoneless = (Get-Process -Id $PID).StartTime.ToString('yyyy-MM-ddTHH:mm:ss.fffffff')
+    Assert-Equal -Expected 'indeterminate' -Actual (Test-SlotHolderLiveness -HolderPid "$PID" -HolderStartUtc $zoneless) -Message '#686 a start time with no UTC offset is indeterminate, never dead'
+
+    # (5) INDETERMINATE on a malformed record: an unparseable stored start time is a query the
+    # instrument cannot answer, not evidence the holder died.
+    Assert-Equal -Expected 'indeterminate' -Actual (Test-SlotHolderLiveness -HolderPid $PID -HolderStartUtc 'not-a-timestamp') -Message '#624 an unparseable recorded start time is indeterminate, NEVER dead'
 
 Write-Host ''
 

@@ -64,11 +64,75 @@ CR=$'\r'
 # because stale-lock recovery is undefined by design (#619) and an unattributable lock gives whoever
 # finds it nothing to act on (Codex on #635).
 STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+# #624: the LIVENESS SIGNAL, taken from the environment rather than discovered here.
+#
+# WHY NOT DISCOVERED HERE, and this is measured rather than preferred. The first version walked the
+# process ancestry looking for the session that spawned this script. It works when run directly and
+# BREAKS when run the way a claim actually runs -- the tool spawns transient shells that exit, so
+# the chain is orphaned before it reaches the session:
+#
+#   hop0 powershell.exe pid=14076 parent=65812
+#   hop1 bash.exe       pid=65812 parent=64800
+#   hop2 bash.exe       pid=64800 parent=12868
+#   hop3 NO SUCH PROCESS 12868 - chain broken
+#
+# A walk that depends on every intermediate still being alive is not an instrument, and it fails
+# SILENTLY: an empty result is indistinguishable from "no session found". So the identity is
+# captured where it is reliable -- by the caller, which can see its own process -- and passed in.
+#
+# THE PAIR, not the pid: pids recycle, and the start time is what makes this an identity.
+#
+# DEGRADES SAFELY: unset -> written empty -> Test-SlotHolderLiveness reads 'indeterminate', never
+# 'dead'. An unidentifiable holder must never be declared dead, so a caller that forgets this loses
+# stale-lock recovery for that claim and takes nothing else with it.
+# EXIT CODES, and they are distinct because a caller cannot branch on a code that means two things.
+# `exit 2` previously covered BOTH a missing holder pair and "the write did not land" -- and the
+# second is the dangerous one: the slot file exists and does not carry your claim, so a caller
+# retrying on a shared code would retry into a lock it does not own.
+#
+#   1  contention: the slot is held by someone else
+#   2  the write did not land: the lock exists and is NOT yours   <- never retry blindly
+#   3  path or permission fault: nobody holds the slot
+#   4  the holder cannot be identified at all
+#   5  a holder pair was supplied or derived, and it is unusable
+#
+# The pair has a DEFAULT and the env vars are an OVERRIDE (K's review of #686). Requiring the env
+# vars made every claim fail-closed on a value the script can derive, and nothing in the tree sets
+# them -- ten lanes running gates would have stopped at once. Fail-closed is right when a value is
+# unknowable and wrong when it is derivable.
+. "$(dirname "$0")/slot-holder.sh"
+resolve_slot_holder
+
+if [ "$HOLDER_VALID" -ne 1 ]; then
+  if [ -n "$HOLDER_PID$HOLDER_START" ]; then
+    # INVALID is not MISSING. Telling someone to supply what they already supplied sends them back
+    # to the step that is not the problem.
+    echo "slot-claim: REFUSED - the holder pair is present but unusable." >&2
+    echo "  source: $HOLDER_SOURCE   pid: [$HOLDER_PID]   start: [$HOLDER_START]" >&2
+    echo "The pid must parse as a positive Int32 and the start time must round-trip as a UTC" >&2
+    echo "timestamp. These are the READER's own parses, so a value failing here would record an" >&2
+    echo "identity Test-SlotHolderLiveness could only answer 'indeterminate' about." >&2
+    exit 5
+  fi
+  echo "slot-claim: REFUSED - the claim cannot identify its holder." >&2
+  echo "The parent process could not be consulted and no override was given. Set both:" >&2
+  echo "" >&2
+  echo '  $env:GRAPHHELM_HOLDER_PID   = $PID' >&2
+  echo '  $env:GRAPHHELM_HOLDER_START = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o")' >&2
+  echo "" >&2
+  echo "That is YOUR session, and it is the process that owns the claim. An earlier version of" >&2
+  echo "this message said to record the PARENT -- correct for a transient tool-call shell, wrong" >&2
+  echo "here: from a persistent PowerShell the parent is the terminal host, which outlives the tab." >&2
+  echo "The lock would keep reading 'live' after you closed it and could never be recovered." >&2
+  exit 4
+fi
+
 PROCS="$(tasklist 2>/dev/null | grep -ci 'cargo.exe\|rustc.exe\|link.exe')"
 CLAIM="HELD by $AGENT | $STAMP | $LANE | STATUS: $STATUS
 Claimed through create-or-fail: the kernel refused every other claimant, and this write is
 read back below rather than assumed.
-cargo/rustc alive at claim: $PROCS"
+cargo/rustc alive at claim: $PROCS
+holder: pid=$HOLDER_PID start=$HOLDER_START"
 
 # THE GATE IS THE CLAIM. There is no read before it, because a read before a write is the window
 # this script exists to close. The kernel decides, once, and tells us which way it went -- and the

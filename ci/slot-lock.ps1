@@ -158,3 +158,131 @@ function Test-SlotLockSnapshotsIdentical {
 
     return (($a | ConvertTo-Json -Depth 8 -Compress) -eq ($b | ConvertTo-Json -Depth 8 -Compress))
 }
+
+# #624: the verdict, given a recorded start and whatever the OS reported.
+#
+# EXTRACTED so the "process exists but its start time is unreadable" case can be tested WITHOUT
+# depending on host privilege. The first version of this cell used pid 4 (System), whose StartTime
+# is empty for an unprivileged caller -- but readable for a privileged one, so the suite's result
+# depended on the account the gate happened to run under. That is a fixture measuring the host, not
+# the code. Passing $null directly asks the question the code actually answers. (Codex on #686.)
+#
+# THE CLOCK HAZARD IS CLOSED BY THE SAME EXACTNESS, and it is worth naming because it is the one
+# member of this family that fails toward DEADLOCK rather than toward a wrong FREE. A backward
+# clock step could in principle give a NEW process the start time of an old one, so a recycled pid
+# would read 'live' and hold the slot forever. At tick precision that requires the clock to land
+# within 100 nanoseconds of the recorded instant -- measured, StartTime carries seven decimal
+# places. A one-second window would have made this reachable; exact ticks make it not worth a
+# guard. Recorded rather than left unexamined, because 'unlikely' and 'considered' are different
+# claims and only one of them survives review.
+#
+# EXACT TICKS, no tolerance window. The recorded value is persisted with 'o' and read back with
+# RoundtripKind, which is exact to the tick -- measured: ticks equal after round-trip. A one-second
+# window would MERGE two distinct processes whose starts fall inside it, so a recycled pid could
+# read 'live' and wedge the stale lock forever: the deadlock direction this issue exists to keep
+# open. Tolerance bought nothing and cost the property. (Codex on #686.)
+function Get-SlotHolderVerdict {
+    param(
+        [Parameter(Mandatory)] [datetime] $RecordedUtc,
+        [AllowNull()] [object] $ObservedStart
+    )
+    if ($null -eq $ObservedStart) { return 'indeterminate' }
+    $observed = ([datetime] $ObservedStart)
+    if ($observed -eq [datetime]::MinValue) { return 'indeterminate' }
+    if ($observed.ToUniversalTime().Ticks -eq $RecordedUtc.ToUniversalTime().Ticks) { return 'live' }
+    return 'dead'
+}
+
+# NOT WIRED YET, and dated so the gap has an age (2026-09-02, K's review of #686). Measured on
+# that branch: this function has ZERO non-test callers, and .factory/tools/slot-claim.sh has zero
+# callers of its own. Stale-lock recovery is DEFINED, not connected -- the reader can answer, and
+# nothing asks it, because nothing writes a pair either. A reader with no writer and a writer with
+# no caller are the same gap from opposite ends, and #700 carries both. The recovery rule itself is
+# #619's and deliberately not here.
+#
+# #624: is the recorded slot holder still alive?
+#
+# THREE states, matching this file's existing vocabulary rather than inventing a second one:
+# 'live', 'dead', 'indeterminate'. The third is load-bearing - a query this instrument cannot
+# answer must never read as death, because a wrong 'dead' frees a slot someone is holding, which
+# is the exact substitution ED-1 exists to prevent.
+#
+# THE PAIR IDENTIFIES, THE PID ALONE DOES NOT. Pids recycle; a recycled pid carries a different
+# process start time, so the pair is what makes this an identity instead of a guess.
+#
+# WHY NOT A HEARTBEAT (the design this replaces, #624's own proposal): gate runs here are 22-39
+# minutes and blocking, and no daemon is permitted, so nothing would write the beat during
+# legitimate long work - the cadence would lapse exactly when the holder is busiest and recovery
+# would declare a live holder dead. This asks the OS instead, so there is no cadence to defend and
+# no absence to interpret.
+#
+# WHAT IT DOES NOT MEASURE: progress. A holder that is alive but wedged reads 'live' forever. That
+# direction is deliberate - this instrument can never falsely declare death, and a wedge is cleared
+# by killing the process, after which the pair reads dead with no rule change.
+#
+# SINGLE MACHINE ONLY. Get-Process cannot see a holder on another host, where 'not found' would
+# read as dead - the dangerous direction. Stated as a precondition, not discovered later.
+# #624: does a Get-Process failure STATE that the process is absent, or did the query merely fail?
+#
+# Extracted so it can be exercised at all. Inline, this branch was unreachable by any cell: the
+# tests cannot conjure an access-denied or provider failure on demand, so a sabotage that made
+# EVERY query failure read as 'dead' changed no result and the discrimination was uncovered while
+# looking covered. A pure function over the error id is the seam that makes it a decision anyone
+# can test.
+#
+# Exactly one id is a statement about the world. Everything else is the instrument failing, and an
+# instrument that cannot answer must not answer 'dead'.
+function Test-SlotHolderQueryIdMeansAbsent {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $ErrorId)
+    return $ErrorId -like 'NoProcessFoundForGivenId*'
+}
+
+function Test-SlotHolderLiveness {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $HolderPid,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $HolderStartUtc
+    )
+
+    # A record we cannot parse is a question we cannot ask - never evidence of death.
+    # A pid that is not a pid is a question this cannot ask. It was typed [int], so a malformed
+    # record failed at PARAMETER BINDING - a fourth outcome, thrown, from a function whose whole
+    # contract is three states. The promise has to hold for every input, including the ones a stale
+    # or hand-edited lock can carry. (Codex on #686.)
+    $pidValue = 0
+    if (-not [int]::TryParse($HolderPid, [ref] $pidValue)) { return 'indeterminate' }
+    if ($pidValue -le 0) { return 'indeterminate' }
+
+    $recorded = [datetime]::MinValue
+    $parsed = [datetime]::TryParse(
+        $HolderStartUtc,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::RoundtripKind,
+        [ref] $recorded)
+    if (-not $parsed) { return 'indeterminate' }
+    # A zone-less record is a timestamp plus an assumption: RoundtripKind leaves Kind=Unspecified
+    # and ToUniversalTime() would apply whatever offset the machine has TODAY, so the same stored
+    # text means different instants across a DST change. The writer refuses these, and the reader
+    # refuses them too, because a lock outlives the script that wrote it and may have been written
+    # by an older one. Uninterpretable, never 'dead'. (Codex on #686.)
+    if ($recorded.Kind -eq [System.DateTimeKind]::Unspecified) { return 'indeterminate' }
+
+    try {
+        $process = Get-Process -Id $pidValue -ErrorAction Stop
+    }
+    catch {
+        # MEASURED, and the distinction is the whole point: Get-Process THROWS on an absent pid
+        # rather than returning empty. Exactly ONE error id is a statement about the world -
+        # NoProcessFoundForGivenId means there is no such process. Every other failure (access
+        # denied, provider error) is the QUERY failing, not the holder dying. Catching them all
+        # and calling it 'dead' is how an instrument fails into the wrong colour.
+        if (Test-SlotHolderQueryIdMeansAbsent -ErrorId $_.FullyQualifiedErrorId) { return 'dead' }
+        return 'indeterminate'
+    }
+
+    # MEASURED: a process can EXIST while its StartTime is unreadable - pid 4 (System) returns an
+    # empty StartTime WITHOUT throwing. Both shapes have to be caught, and neither is death.
+    $started = $null
+    try { $started = $process.StartTime } catch { $started = $null }
+
+    return Get-SlotHolderVerdict -RecordedUtc $recorded -ObservedStart $started
+}

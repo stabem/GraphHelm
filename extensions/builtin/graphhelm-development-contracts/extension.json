@@ -256,7 +256,7 @@
           "id": "policy/retrieval-admission",
           "kind": "policy",
           "path": "policies/retrieval-admission.yaml",
-          "sha256": "sha256:119bffb1d4c969d8d8a648c4813fafc681bcbbd909524d836961a4e89a637ab3",
+          "sha256": "sha256:f841ea884531eb84c9ea5a5c372e125bd6a6e70e17326b93f0e2e05946ca8884",
           "effects": [],
           "permissions": [],
           "requires": {

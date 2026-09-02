@@ -1059,7 +1059,7 @@ pub fn compile_plan_within(
 /// which takes the `BoundedSourceSearch` channel as an INJECTED parameter; no variant constructs a
 /// producer internally. So "true" is correct on this branch: the path is real and the caller
 /// supplies the channel. #622 adds a workspace-backed IMPLEMENTATION of the port, not the path; the
-/// production CONSUMER that calls this in production arrives with #223/#224 (plan Tasks 007/008). A
+/// production CONSUMER is tracked in #724 (#223/#224 closed without it, see #722). A
 /// presence-of-producer signal, if ever wanted, is a DIFFERENT symbol derived from the injected
 /// channel — not this `const fn`.
 ///

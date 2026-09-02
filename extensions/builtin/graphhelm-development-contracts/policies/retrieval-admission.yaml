@@ -68,10 +68,10 @@ providerSummary:
 #     bounded source fallback OR negative_claim_unverified. The fallback PATH now exists:
 #     `compile_plan_composed_against` consults a `BoundedSourceSearch` channel SUPPLIED BY THE
 #     CALLER (the channel is injected), and `source_fallback_available()` returns `true` to state
-#     that the path exists in the runtime — NOT that a producer is wired. What is not on the main
-#     branch yet: the workspace-backed implementation of the port (`WorkspaceSourceChannel`,
-#     delivered by #622) and the production CONSUMER that calls `compile_plan*` (delivered by
-#     #223/#224, plan Tasks 007/008). Until those land, non-complete states still refuse in
+#     that the path exists in the runtime — NOT that a producer is wired. The workspace-backed
+#     implementation of the port (`WorkspaceSourceChannel`) LANDED with #622. What is still not on
+#     the main branch: the production CONSUMER that calls `compile_plan*`, tracked in #724
+#     (#223/#224 closed without it, see #722). Until it lands, non-complete states still refuse in
 #     practice because no production caller injects a channel — `extractionGap` is where it matters
 #     most, its repair being to read the source. A ZERO-hit non-complete response never reaches the
 #     channel regardless: `compile_plan` maps empty+non-complete to `negative_claim_unverified`

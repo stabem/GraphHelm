@@ -1084,7 +1084,7 @@ does not modify it. Pairs with D-048.
 
 ## 40. ADR-035 — Bounded source fallback becomes available at the compile layer, its real producer being the workspace channel itself
 
-**Status:** accepted 2026-09-02 by the Orchestrator on the owner's delegated authority; technical gate: K's review of #608 (pin on `29ded95b`); the composed path's production consumer arrives with #223/#224.
+**Status:** accepted 2026-09-02 by the Orchestrator on the owner's delegated authority; technical gate: K's review of #608 (pin on `29ded95b`); the composed path's production consumer is tracked in #724 (#223/#224 closed without it, see #722).
 
 **Context:** ADR-031 and D-045 both declared source fallback `unavailable`, each with the same
 condition: *"there is no successful fallback spelling until a real producer exists."* #219's
@@ -1094,10 +1094,10 @@ paths join the claim — the only entry point, `compile_plan_composed_against<R:
 the channel as an INJECTED parameter, so `source_fallback_available()` is `true` here because the
 PATH exists in the runtime, not because a producer is present. The workspace-backed implementation
 of the port (`WorkspaceSourceChannel`) is delivered by #622; the production CONSUMER that calls
-`compile_plan*` in production arrives with #223/#224 (plan Tasks 007/008). The base plan compiler
+`compile_plan*` in production is tracked in #724 (#223/#224 closed without it, see #722). The base plan compiler
 (`compile_plan`/`compile_plan_within`) already has a non-test consumer — `tools/development-benchmark`
 (`src/lib.rs:845`); it is only the COMPOSED/fallback path (`compile_plan_composed_against`) and its
-production channel that await #223/#224. The register row for D-045 records this. Codex was right
+production channel that await #724. The register row for D-045 records this. Codex was right
 that an
 amendment to the register that contradicts an accepted ADR is procedurally incomplete without an
 ADR/RFC recording the alternatives and the recommendation — AGENTS.md requires exactly that, and
@@ -1118,7 +1118,7 @@ So the compiler grew a second bounded channel rather than the corpus getting eas
 deterministic, in-process, bounded producer of source-file candidates — not a fake, and not an MCP
 client. Its workspace-backed implementation is **delivered by #622**
 (`adapters/tool-host/src/source_channel.rs`, `impl BoundedSourceSearch`), and the production
-CONSUMER that calls `compile_plan*` in production arrives with **#223/#224** (plan Tasks 007/008).
+CONSUMER that calls `compile_plan*` in production is tracked in **#724** (#223/#224 closed without it, see #722).
 #219 delivers the compile-layer path and the port; the flag is `true` because that path exists and
 the caller injects the channel — no code between the merges claims a producer that is not there.
 

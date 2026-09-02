@@ -13,12 +13,18 @@
 # ci/slot-lock.tests.ps1. The declared total is the point: on the sibling suite for #638 I declared
 # 25 and 23 ran, and the harness refused rather than reporting 23 green ones quietly.
 #
-# 55 runtime assertions: 55 Assert-* CALLS below. (13 before the review round added six.
-# Declared 12 on the first pass and 13 ran -- the second
-# time in one day the declared count caught my own miscount instead of reporting the green ones
-# quietly. That is the mechanism working, not a nuisance.) The two function DEFINITIONS are not calls, and
-# Assert-Equal's delegation to Assert-True fires once per call rather than as its own assertion.
-$ExpectedAssertionCount = 55
+# THE NUMBER IS NOT REPEATED IN THIS COMMENT, deliberately. It used to be: the prose named a count
+# beside the constant that named the same count, and the two drifted apart every time a cell was
+# added or removed -- the constant moved with the code and the sentence did not, so the sentence
+# taught a number nobody was using. (#686's sibling suite has the same shape and was still arguing
+# for 24 while its constant went 35, 36, 33.) One place holds the value; this comment holds only
+# what the value MEANS.
+#
+# What it means: the count is Assert-* CALLS reached at runtime. The two function DEFINITIONS are
+# not calls, and Assert-Equal's delegation to Assert-True fires once per call rather than as an
+# assertion of its own. A miscount here has twice caught a cell that stopped running while its
+# neighbours stayed green -- which is the mechanism working, not a nuisance.
+$ExpectedAssertionCount = 42
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -136,38 +142,16 @@ try {
     # `Substring(0, 12)` on a shorter string throws; the old line would have died on a test double.
     Assert-True -Condition ((New-GateManifestFileName -HeadSha 'abc' -Now $instant).StartsWith('abc-')) -Label 'a head shorter than 12 characters is used whole rather than throwing'
 
-    # ---- THE POINT OF THE FIX: the second writer does not overwrite -------------------------
-    $case = Join-Path $root 'createnew'; New-Item -ItemType Directory -Path $case | Out-Null
-    $name = New-GateManifestFileName -HeadSha $head -Now $instant
-    $pathA = Write-GateManifestCreateNew -Directory $case -FileName $name -Json '{"run":"first"}' -HeadSha $head
-    $pathB = Write-GateManifestCreateNew -Directory $case -FileName $name -Json '{"run":"second"}' -HeadSha $head
-    Assert-True -Condition ($pathA -ne $pathB) -Label 'a colliding name is refused and the retry takes a fresh one'
-    Assert-Equal 2 @(Get-ChildItem -LiteralPath $case -Filter '*.json').Count 'BOTH runs are on disk; neither overwrote the other'
-    Assert-Equal '{"run":"first"}' ([System.IO.File]::ReadAllText($pathA)) 'the first run''s bytes are intact'
-    Assert-Equal '{"run":"second"}' ([System.IO.File]::ReadAllText($pathB)) 'the second run wrote its own file'
-
     # ---- no BOM: the manifest is machine-read by a strict parser ----------------------------
-    $bytes = [System.IO.File]::ReadAllBytes($pathA)
-    Assert-True -Condition (-not ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) -Label 'the file carries no UTF-8 BOM'
-
-    # ---- a write failure after CreateNew is NOT a collision --------------------------------
-    # Retrying it under a new name would leave the first, truncated file behind while reporting a
-    # healthy manifest -- a half-written record parses as far as it got and reads as complete.
-    $case = Join-Path $root 'writefail'; New-Item -ItemType Directory -Path $case | Out-Null
-    $name = New-GateManifestFileName -HeadSha $head -Now $instant -Suffix 'wf'
-    $threw = $false
-    $message = ''
-    try {
-        # A directory that does not exist: DirectoryNotFoundException IS an IOException, so without
-        # the Test-Path check the catch would read it as a name clash.
-        Write-GateManifestCreateNew -Directory (Join-Path $case 'no-such-dir') -FileName $name -Json '{}' -HeadSha $head | Out-Null
-    } catch { $threw = $true; $message = $_.Exception.Message }
-    Assert-True -Condition $threw -Label 'a missing directory fails rather than succeeding quietly'
-    # ASSERTING ONLY "it threw" IS VACUOUS: with the not-a-collision check removed it still throws,
-    # just with the wrong diagnosis after two pointless retries. Caught by sabotaging the check and
-    # watching this cell stay green. The finest grain here is WHICH error, not whether there was one.
-    Assert-True -Condition ($message -notlike '*collided*') -Label 'the IO fault keeps its own diagnosis instead of being reported as a collision'
-    Assert-Equal 0 @(Get-ChildItem -LiteralPath $case -Filter '*.json' -Recurse).Count 'nothing was left behind by the failed write'
+    # This used to read a file left behind by a `Write-GateManifestCreateNew` cell, so the property
+    # was asserted about a writer the gate never runs (#692). It writes through the production path
+    # now: a BOM here is only a defect if the bytes the gate actually produces carry one.
+    $bomCase = Join-Path $root 'bom'; New-Item -ItemType Directory -Path $bomCase | Out-Null
+    # @() because PowerShell UNROLLS a single-element array -- the same trap the concurrent-run cell
+    # below documents, and indexing a bare string would compare its first character.
+    $bomPath = @(Write-GateManifestPair -PrimaryDirectory $bomCase -Json '{"run":"bom"}' -HeadSha $head -Now $instant -SuffixSource { 'bom' })[0]
+    $bytes = [System.IO.File]::ReadAllBytes($bomPath)
+    Assert-True -Condition (-not ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) -Label 'the file the gate writes carries no UTF-8 BOM'
 
     # ---- THE POST-CREATE FAILURE PATH, now actually reachable -------------------------------
     # The previous cell here was VACUOUS and the review caught it: it passed $null for a mandatory
@@ -365,40 +349,6 @@ try {
     Assert-Equal 0 @(Get-ChildItem -LiteralPath $primary -Filter '*.json').Count 'the FIRST store is never finalised under a name the second cannot accept'
     Assert-Equal '{"run":"incumbent"}' ([System.IO.File]::ReadAllText((Join-Path $secondary $incumbentName))) 'the incumbent in the second store is untouched'
 
-    # ---- the SECOND store never renames: both stores share one name ------------------------
-    # classify-run.ps1 finds the durable twin by the committable name, so a rename here would
-    # orphan the copy instead of pairing it -- divergence is worse than a missing second copy.
-    $case = Join-Path $root 'noretry'; New-Item -ItemType Directory -Path $case | Out-Null
-    $name = New-GateManifestFileName -HeadSha $head -Now $instant -Suffix 'pair'
-    Write-GateManifestCreateNew -Directory $case -FileName $name -Json '{"run":"incumbent"}' -HeadSha $head | Out-Null
-    $threw = $false
-    $message = ''
-    try {
-        Write-GateManifestCreateNew -Directory $case -FileName $name -Json '{"run":"second store"}' -HeadSha $head -NoRetry | Out-Null
-    } catch { $threw = $true; $message = $_.Exception.Message }
-    Assert-True -Condition $threw -Label 'the second store refuses a taken name instead of renaming'
-    Assert-True -Condition ($message -like '*pairing*') -Label 'the refusal says the pairing is what would break'
-    Assert-Equal 1 @(Get-ChildItem -LiteralPath $case -Filter '*.json').Count 'no second file was created under a different name'
-
-    # ---- a name source that cannot produce distinct names is an ERROR, not a silent loss ----
-    # Two collisions in a row cannot come from two runs racing once the suffix is random; it means
-    # the name source itself is broken, and swallowing that would restore the original defect.
-    $case = Join-Path $root 'exhausted'; New-Item -ItemType Directory -Path $case | Out-Null
-    $fixed = 'fixed-name.json'
-    [System.IO.File]::WriteAllText((Join-Path $case $fixed), '{"run":"incumbent"}', (New-Object System.Text.UTF8Encoding($false)))
-    $threw = $false
-    $message = ''
-    try {
-        # Shadow the generator so its retry returns the SAME occupied name, forcing the second pass.
-        function New-GateManifestFileName { param([string] $HeadSha, [datetime] $Now, [string] $Suffix, [scriptblock] $SuffixSource) return 'fixed-name.json' }
-        Write-GateManifestCreateNew -Directory $case -FileName $fixed -Json '{"run":"loser"}' -HeadSha $head | Out-Null
-    } catch {
-        $threw = $true
-        $message = $_.Exception.Message
-    }
-    Assert-True -Condition $threw -Label 'two collisions in a row throw rather than overwrite'
-    Assert-True -Condition ($message -like '*collided*') -Label 'the error names the collision instead of a generic IO failure'
-    Assert-Equal '{"run":"incumbent"}' ([System.IO.File]::ReadAllText((Join-Path $case $fixed))) 'the incumbent manifest survived the refused write'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -160,6 +160,18 @@ pub fn terminate(process_id: u32, _group: ProcessGroup) {
     }
 }
 
+/// Start the child suspended, so that `create` can put it in a job before it runs.
+///
+/// **The suspension is load-bearing, not a tidiness flag.** A job can only be assigned to a process
+/// that already exists, so there is necessarily a window between spawn and
+/// `AssignProcessToJobObject`. A child that runs during that window can spawn descendants of its
+/// own, and those descendants are **outside** the job: `terminate` will not reach them, which is
+/// the entire property this crate exists to provide. `CREATE_SUSPENDED` closes the window, and
+/// `create` reopens it deliberately by resuming the process only after the assignment succeeds.
+///
+/// Removing this flag looks harmless — the child still starts, the tests that count processes still
+/// pass — and leaves the job with silent holes. (Mechanism named by D while working #618, which
+/// consumes this crate from the tool host.)
 #[cfg(windows)]
 pub fn configure(command: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
@@ -167,6 +179,53 @@ pub fn configure(command: &mut std::process::Command) {
     command.creation_flags(CREATE_SUSPENDED);
 }
 
+/// Put the suspended child in a kill-on-close job object, then resume it.
+///
+/// # Handle ownership, which is only visible by tracing control flow
+///
+/// Two handles are opened here and they are owned differently. Neither is an RAII type, so the
+/// discipline lives in the exits rather than in a `Drop`.
+///
+/// **`job` — owned by this function until, and only until, the `Ok`.** There are four ways out
+/// after `CreateJobObjectW` is called:
+///
+/// | exit | `job` |
+/// |---|---|
+/// | the create returned null | never existed; nothing to close |
+/// | `SetInformationJobObject` or `AssignProcessToJobObject` failed | closed here |
+/// | `resume_suspended_process` failed | closed here |
+/// | success | **NOT closed** — it is handed to the caller inside `ProcessGroup` |
+///
+/// **The handing over is not RAII, and the difference is the caller's problem.** `ProcessGroup` is
+/// `Copy` and has no `Drop`: dropping one closes nothing, and copying one does not track anything.
+/// The handle is released only when the caller calls [`close`], which is why that function exists.
+/// A caller that drops the value and moves on leaks the job handle — and because of the flag below,
+/// leaking it means the process tree it was meant to bound **stays alive**, which is the opposite
+/// failure from the one this crate is for.
+///
+/// So the success path is the one that looks like a leak and is not: closing `job` there would
+/// *kill the process tree immediately*, at the exact moment the caller was told the group was
+/// ready, and leave the caller's later [`close`] closing a handle that is no longer theirs.
+///
+/// **`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` makes the handle's lifetime the kill policy.** The job
+/// dies when its last handle closes, and everything in it dies with it. So `job` is not
+/// bookkeeping that can be tidied up: holding it open IS the process group, and closing it IS
+/// `terminate`. A future refactor that adds an early `CloseHandle(job)` "for symmetry" would be
+/// killing the tree, not freeing a resource.
+///
+/// **`process` — a second handle this function OWNS, closed as soon as the assignment is done.**
+/// `OpenProcess` creates a new handle; assigning the process to the job gives the *job* its own
+/// reference to the process object, and that does **not** demote this one to a borrow. The
+/// `CloseHandle` here is therefore mandatory rather than tidy: without it every group creation
+/// leaks one process handle. It is closed immediately because nothing after the assignment needs
+/// it — the job holds the process, not us.
+///
+/// Its close sits **above** every error branch, so by the time any exit is reached it has already
+/// been released; and when `OpenProcess` returns null the `&&` short-circuits, so `assigned` is
+/// false and the assignment is never attempted.
+///
+/// The bound this crate provides stops at the job. A descendant that escaped before assignment is
+/// not in it — see `configure` for why the child is started suspended.
 #[cfg(windows)]
 #[allow(clippy::missing_errors_doc)]
 pub fn create(child: &std::process::Child) -> Result<ProcessGroup, ProcessTreeError> {

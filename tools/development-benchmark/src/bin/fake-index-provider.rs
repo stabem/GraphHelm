@@ -14,6 +14,29 @@ use std::io::{BufRead, Write};
 
 pub const HEAD_SHA: &str = "1111111111111111111111111111111111111111";
 
+/// The head this run reports: the fixed synthetic sha unless the STORE carries an override.
+///
+/// The override exists for the #637 tree-derivation cells, which need the fake to report a
+/// COMMIT THAT EXISTS in the cell's fixture repository -- a fixed synthetic sha can never
+/// resolve to a tree, so those cells could only ever exercise the "underivable" refusal.
+///
+/// It travels INSIDE the store (a `head.txt` beside `graph.db`) rather than as an environment
+/// variable, because the containment funnel is the point: the child gets a sanitised
+/// environment, so a cell's env var never arrives -- measured, the first version of this
+/// override used env and the cell watched the fixed sha come back. The store copy is the one
+/// channel the funnel deliberately forwards (`CBM_CACHE_DIR`), which also mirrors the real
+/// provider: its reported head comes from the store it reads, not from its caller.
+fn head_sha() -> String {
+    std::env::var("CBM_CACHE_DIR")
+        .ok()
+        .and_then(|cache| {
+            std::fs::read_to_string(std::path::Path::new(&cache).join("head.txt")).ok()
+        })
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| HEAD_SHA.to_owned())
+}
+
 fn main() {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -42,7 +65,7 @@ fn main() {
                 "jsonrpc": "2.0", "id": id,
                 "result": {
                     "content": [{"type": "text",
-                                 "text": format!("{{\"git\":{{\"head_sha\":\"{HEAD_SHA}\"}}}}")}],
+                                 "text": format!("{{\"git\":{{\"head_sha\":\"{}\"}}}}", head_sha())}],
                     "isError": false
                 }
             }),

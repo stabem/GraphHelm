@@ -1,8 +1,8 @@
 {
   "caseId": "accounting-unavailable",
   "query": "In execution accounting receipts, how is a cost the runtime could not see distinguished from a cost observed at zero, and why must the two never collapse?",
-  "repoSnapshot": "136440ae81a451a6d6d87364cd769aa1719c9d83",
-  "indexGeneration": "136440ae81a451a6d6d87364cd769aa1719c9d83",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
   "hits": [
     {
       "path": "core/runtime/tests/context_accounting.rs",

@@ -57,6 +57,18 @@ struct Arguments {
     /// Same shape as the executable pin's repair: the expected value comes from the operator, the
     /// observed value from the thing being checked, and they must agree.
     store_head_sha: String,
+    /// The repository whose object database DERIVES the head-to-tree binding (#637).
+    ///
+    /// `--store-head-sha` binds the store to a COMMIT and `--repo-snapshot` names the TREE the
+    /// artifacts will declare, and these are different kinds of identifier: nothing tied them
+    /// together, so the shipped corpus froze coordinates produced against tree `15456c4d`
+    /// while every artifact declared `136440ae`. Line ranges that were correct in one tree
+    /// address different code in the other, silently, because both are valid line numbers.
+    /// The link is DERIVED here (`git rev-parse <head>^{tree}` in this repository) and compared
+    /// to the declared snapshot -- never declared on both sides, the same repair shape as the
+    /// executable and store pins. An explicit path, never the process CWD: the working
+    /// directory answers for whatever checkout the operator happened to stand in.
+    repo: PathBuf,
     limit: u32,
 }
 
@@ -84,6 +96,7 @@ fn parse_arguments() -> Result<Arguments, String> {
         project: take("--project")?,
         repo_snapshot: take("--repo-snapshot")?,
         store_head_sha: take("--store-head-sha")?,
+        repo: PathBuf::from(take("--repo")?),
         limit: values
             .get("--limit")
             .map_or(Ok(5), |value| value.parse::<u32>())
@@ -318,6 +331,42 @@ fn run() -> Result<(), String> {
             "the store reports head_sha {reported}, not the declared {}: an index built from \
              another revision would supply hits read against a repository it never saw",
             arguments.store_head_sha
+        ));
+    }
+
+    // THE HEAD MUST RESOLVE TO THE DECLARED TREE (#637), derived and compared, never declared
+    // on both sides. The head check above says the store indexed the commit the operator named;
+    // nothing yet says that commit's TREE is the one every artifact is about to declare -- and
+    // when they disagree, the coordinates are produced against one tree and sliced out of
+    // another. Both checks refuse BEFORE any search reply is trusted.
+    // `GIT_NO_REPLACE_OBJECTS=1`: a `refs/replace/<reported>` ref would redirect `rev-parse` to
+    // ANOTHER commit's tree by default (git applies replacements silently), so a replacement
+    // added after the store was indexed could make the derivation resolve to a tree that equals
+    // `--repo-snapshot` while the real commit names different bytes -- recreating the exact
+    // wrong-coordinate corpus this check exists to prevent, through a git mechanism rather than a
+    // wrong checkout (K on #675). The derivation must read the object database as the store did:
+    // unreplaced. Same family as the store/exe pins -- the instrument must answer for THIS
+    // subject, not a redirected one.
+    let derived = std::process::Command::new("git")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(&arguments.repo)
+        .arg("rev-parse")
+        .arg(format!("{reported}^{{tree}}"))
+        .output()
+        .map_err(|error| format!("git rev-parse could not run: {error}"))?;
+    if !derived.status.success() {
+        return Err(format!(
+            "the store's head {reported} does not resolve in {}: without the commit, the              head-to-tree binding cannot be derived, and an underivable binding refuses rather              than assumes",
+            arguments.repo.display()
+        ));
+    }
+    let derived_tree = String::from_utf8_lossy(&derived.stdout).trim().to_owned();
+    if derived_tree != arguments.repo_snapshot {
+        return Err(format!(
+            "the store's head {reported} resolves to tree {derived_tree}, not the declared {}:              the coordinates about to be frozen were produced against a tree the artifacts              would not name (#637)",
+            arguments.repo_snapshot
         ));
     }
 

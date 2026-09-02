@@ -1736,6 +1736,10 @@ fn two_route_wiring(directory: &Path, live_base_url: &str) -> (ServeExtra, PathB
             "dead_route".into(),
             "--staging".into(),
             staging.to_str().unwrap().into(),
+            // #583/#642: the real-executor flags require an explicit program allowlist, never
+            // defaulted. `agent_tool_graph` spawns exactly `git`, so that is the whole set.
+            "--allow-program".into(),
+            "git".into(),
         ],
         env: vec![
             ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
@@ -1933,6 +1937,10 @@ fn a_sealed_model_reply_can_be_read_back_as_the_text_the_provider_sent() {
             route_id.into(),
             "--staging".into(),
             staging.to_str().unwrap().into(),
+            // #583/#642: the real-executor flags require an explicit program allowlist, never
+            // defaulted. `agent_tool_graph` spawns exactly `git`, so that is the whole set.
+            "--allow-program".into(),
+            "git".into(),
         ],
         env: vec![
             ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),

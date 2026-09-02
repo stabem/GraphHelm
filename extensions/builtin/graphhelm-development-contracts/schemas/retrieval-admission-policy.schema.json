@@ -60,16 +60,33 @@
     },
     "pathAdmission": {
       "type": "object",
-      "required": ["requirement", "onEscape", "refusedShapes"],
+      "required": ["requirement", "onEscape", "admittedForm", "refusedShapes"],
       "additionalProperties": false,
       "properties": {
         "requirement": { "const": "repository-relative" },
         "onEscape": { "const": "refuse:scope_mismatch" },
+        "admittedForm": {
+          "type": "object",
+          "description": "The POSITIVE path-admission contract (allow-list by form); refusedShapes are illustrative examples of what it excludes.",
+          "required": ["lineSuffix", "separator", "component", "componentMustNotBe"],
+          "additionalProperties": false,
+          "properties": {
+            "lineSuffix": { "const": "optional-trailing-:<digits>" },
+            "separator": { "const": "single-forward-slash" },
+            "component": { "const": "[A-Za-z0-9._-]+" },
+            "componentMustNotBe": {
+              "type": "array",
+              "minItems": 4,
+              "uniqueItems": true,
+              "items": { "enum": [".", "..", "<ends-with-dot>", "<reserved-DOS-device-stem>"] }
+            }
+          }
+        },
         "refusedShapes": {
           "type": "array",
-          "minItems": 3,
+          "minItems": 1,
           "uniqueItems": true,
-          "items": { "enum": ["parent-traversal", "rooted", "drive-qualified"] }
+          "items": { "enum": ["parent-traversal", "rooted", "drive-qualified", "alternate-stream", "reserved-device", "out-of-charset", "empty-component"] }
         }
       }
     },

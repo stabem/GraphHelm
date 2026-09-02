@@ -1081,3 +1081,76 @@ missing from it is the failure mode this project has now recorded five times:
 **Relationship:** amends D-042 and ADR-028 along one axis; consumes ADR-026's revisit trigger and
 narrows its reading to layer growth, with a mechanism attached; relies on ADR-024/025's tradeoff and
 does not modify it. Pairs with D-048.
+
+## 40. ADR-035 — Bounded source fallback becomes available at the compile layer, its real producer being the workspace channel itself
+
+**Status:** proposed.
+
+**Context:** ADR-031 and D-045 both declared source fallback `unavailable`, each with the same
+condition: *"there is no successful fallback spelling until a real producer exists."* #219's
+composed selector adds the compile layer that, when a claim's coverage is non-complete, consults a
+bounded `BoundedSourceSearch` channel SUPPLIED BY THE CALLER (`core/runtime/src/ports.rs`), whose
+paths join the claim — the only entry point, `compile_plan_composed_against<R: SourceReader>`, takes
+the channel as an INJECTED parameter, so `source_fallback_available()` is `true` here because the
+PATH exists in the runtime, not because a producer is present. The workspace-backed implementation
+of the port (`WorkspaceSourceChannel`) is delivered by #622; the production CONSUMER that calls
+`compile_plan*` in production arrives with #223/#224 (plan Tasks 007/008). The base plan compiler
+(`compile_plan`/`compile_plan_within`) already has a non-test consumer — `tools/development-benchmark`
+(`src/lib.rs:845`); it is only the COMPOSED/fallback path (`compile_plan_composed_against`) and its
+production channel that await #223/#224. The register row for D-045 records this. Codex was right
+that an
+amendment to the register that contradicts an accepted ADR is procedurally incomplete without an
+ADR/RFC recording the alternatives and the recommendation — AGENTS.md requires exactly that, and
+ADR-034 set the precedent this milestone. This ADR is that record.
+
+**The measured finding the amendment rests on, not a preference:**
+
+```
+StructuralCodeIndex over the shipped index:
+  required evidence in non-code files (JSON schemas, changelogs, .sql, .md)   UNREACHABLE
+  reason                                                                       the provider filters
+                                                                               non-construct nodes
+                                                                               BY DESIGN, at any query
+```
+
+So the compiler grew a second bounded channel rather than the corpus getting easier questions. The
+"real producer" ADR-031 awaited is, on the source axis, the `WorkspaceSourceChannel` itself: a
+deterministic, in-process, bounded producer of source-file candidates — not a fake, and not an MCP
+client. Its workspace-backed implementation is **delivered by #622**
+(`adapters/tool-host/src/source_channel.rs`, `impl BoundedSourceSearch`), and the production
+CONSUMER that calls `compile_plan*` in production arrives with **#223/#224** (plan Tasks 007/008).
+#219 delivers the compile-layer path and the port; the flag is `true` because that path exists and
+the caller injects the channel — no code between the merges claims a producer that is not there.
+
+**What this decides, and the boundary it does NOT cross:**
+
+- Bounded source fallback is available at the RETRIEVAL COMPILE LAYER, through
+  `compile_plan_composed_against`, licensed exclusively by a non-complete coverage state
+  (`Complete` never consults, so no workspace walk enters an ordinary compile). The channel's
+  paths pass the same escape check, declared limits, snapshot-freshness re-check and canonical
+  form as the index's own hits; the channel's typed failure returns beside the outcome; coverage
+  is never promoted.
+- The RECEIPT keeps no successful-fallback spelling. `validate_response` still records the
+  fallback as `unavailable`, and the closed coverage vocabulary gains no success state here.
+  ADR-031's receipt-level claim therefore STANDS unchanged: a composed claim is compile-layer
+  evidence, never receipt evidence. Integrating composition at the validated-receipt boundary
+  (scope binding of the channel's results, and an outcome the receipt can record) is a
+  frozen-schema change tracked as its own slice in #655.
+- The REINDEX fallback stays `unavailable`. This ADR moves one axis, not both.
+
+**Rejected alternatives:** keep source fallback unavailable and leave non-code required evidence
+permanently unreachable (rejected by the measured finding — it makes the benchmark's own questions
+unanswerable for a real class of evidence); add the receipt's success spelling now (rejected here
+only to keep the frozen-schema change its own reviewable slice, #655 — not rejected in principle);
+open a direct MCP client or a native index for the source axis (rejected by D-042, unchanged);
+relabel or regenerate the frozen corpus to dodge the question (that is #637, a different defect
+about tree provenance, not about whether fallback exists).
+
+**Consequences:** D-045's source-fallback clause is amended in the register with a pointer here;
+ADR-031's receipt-level and reindex-axis claims are untouched; #655 carries the receipt-boundary
+integration. A reader who follows ADR-031 to "fallback unavailable" now finds the transition
+recorded rather than a silent contradiction in the higher-precedence register.
+
+**Relationship:** amends D-045 and the source-fallback clause of ADR-031 along one axis; leaves
+ADR-031's receipt vocabulary and reindex axis unchanged; depends on nothing in ADR-034 but follows
+its precedent for how a decision amendment is recorded.

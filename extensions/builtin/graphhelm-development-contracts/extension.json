@@ -243,7 +243,7 @@
           "id": "schema/retrieval-admission-policy",
           "kind": "schema",
           "path": "schemas/retrieval-admission-policy.schema.json",
-          "sha256": "sha256:643e6e4814f25a3508d199b85ab2dfe2b3bb4333835715551eecb5cf5fade872",
+          "sha256": "sha256:cbe8c4aec08af6646c09cd867a512f4728bd118d491a9f17b77699ea27096b4e",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -256,7 +256,7 @@
           "id": "policy/retrieval-admission",
           "kind": "policy",
           "path": "policies/retrieval-admission.yaml",
-          "sha256": "sha256:07816bbfcaa32e5c925d8403d6ac68cba49daebca181a36933b9a265a0c2a173",
+          "sha256": "sha256:119bffb1d4c969d8d8a648c4813fafc681bcbbd909524d836961a4e89a637ab3",
           "effects": [],
           "permissions": [],
           "requires": {

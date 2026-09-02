@@ -142,3 +142,83 @@ pub struct StructuralIndexResponse {
     pub total_results: u32,
     pub hits: Vec<String>,
 }
+
+/// Declared bounds for one bounded source search (#219).
+///
+/// The bounds are the whole reason this port can exist beside a graph index: a channel that
+/// walks the workspace is unbounded by nature, and an unbounded evidence path inside plan
+/// compilation is a denial-of-service the plan itself invites. All three are ceilings the
+/// implementor must refuse to exceed rather than silently truncate -- a truncated search wearing
+/// a finished search's clothes is the same defect `compile_plan_within` refuses over-budget for.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceSearchBounds {
+    /// Maximum directory entries the implementor may VISIT, whether or not it opens them.
+    ///
+    /// Distinct from `max_files_scanned` because the two bound different costs and fail
+    /// independently (G on #622): a tree of a million empty directories, or one whose entries are
+    /// all filtered out by suffix, opens NO files and reads NO bytes while the walk itself runs
+    /// unbounded. The file and byte ceilings are about what is READ; this one is about what is
+    /// TRAVERSED, and only it can stop a walk that never reads anything.
+    ///
+    /// It lives here rather than as an internal cap inside an implementor because an internal cap
+    /// would be a SECOND bounds mechanism: two places deciding how much traversal is allowed, with
+    /// the caller's declaration and the implementor's constant able to disagree silently. One
+    /// declared struct, one oracle.
+    pub max_entries_visited: usize,
+    /// Maximum files the implementor may OPEN. Names the cost that actually scales.
+    pub max_files_scanned: usize,
+    /// Maximum bytes the implementor may READ across those files.
+    pub max_bytes_scanned: u64,
+    /// Maximum paths the implementor may RETURN.
+    pub max_results: u32,
+    /// Maximum QUERY TERMS the caller may supply, and the maximum total bytes across them.
+    ///
+    /// The other four ceilings bound the CORPUS side (how much the implementor walks, opens,
+    /// reads, returns); these bound the QUERY side (Codex #608). A compliant channel searches
+    /// every scanned file once per term, so an untrusted plan supplying an arbitrarily large term
+    /// slice — or arbitrarily long terms — makes the work scale as `files x terms` while every
+    /// corpus ceiling stays green. Enforced at the trust boundary (the compiler) BEFORE `search`
+    /// is invoked, so the bound holds for every implementor and not only the one that remembered
+    /// to cap its own input. One declared struct, one oracle, for the caller-controlled inputs too.
+    pub max_terms: usize,
+    pub max_term_bytes: u64,
+}
+
+/// Why a bounded source search produced no evidence.
+///
+/// Deliberately two variants and not one: "there is no channel here" and "the channel refused to
+/// exceed its declared ceiling" send an operator in opposite directions -- wire one up, versus
+/// raise the bound or narrow the query. Folding them is the flattening this lane filed as #247.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceSearchError {
+    /// No source channel is wired for this workspace.
+    Unavailable,
+    /// The search would have exceeded a declared bound. NOT a partial answer.
+    BoundExceeded,
+}
+
+/// A bounded, workspace-scoped search over SOURCE BYTES — the second evidence channel #219's
+/// acceptance calls the verified source fallback.
+///
+/// It exists because a structural index answers about what it INDEXED and parsed into
+/// constructs: measured against the shipped index, required evidence living in non-code files
+/// (JSON schemas, changelogs) is unreachable through `StructuralCodeIndex` at any query, because
+/// the provider filters non-construct nodes by design. That is a true finding about the
+/// instrument, not a gap in the question — so the compiler gets a second channel rather than the
+/// corpus getting easier questions.
+///
+/// **Returns paths only.** Ranking, snippets and reads stay out: this port decides WHICH files
+/// are candidate evidence, and every existing bound, escape check and budget in
+/// `compile_plan_within` then applies to its output exactly as it does to the index's.
+pub trait BoundedSourceSearch: Send + Sync {
+    /// Candidate repository-relative paths for `terms`, within `bounds`.
+    ///
+    /// # Errors
+    /// [`SourceSearchError::Unavailable`] when no channel is wired;
+    /// [`SourceSearchError::BoundExceeded`] when the search would cross a declared ceiling.
+    fn search(
+        &self,
+        terms: &[String],
+        bounds: &SourceSearchBounds,
+    ) -> Result<Vec<String>, SourceSearchError>;
+}

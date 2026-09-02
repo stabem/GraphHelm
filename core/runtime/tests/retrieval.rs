@@ -217,22 +217,51 @@ fn an_extraction_gap_zero_refuses_rather_than_claiming_absence() {
          a blind instrument's zero is not the subject's absence"
     );
 
-    // ASSERT THE REASON, not only the refusal. Gate stated by L and relayed to me before this PR
-    // existed, so this arm is CONFORMANCE to a stated gate rather than independent convergence --
-    // recorded here because a roster is not in front of whoever reads this in a year. Without it, the
-    // assertion above stays GREEN on the day bounded source fallback lands, because "refused after
-    // trying the source" and "refused because there was nothing to try" are the SAME outcome and
-    // DIFFERENT facts. The suite would survive, unchanged and unread, through the very change that
-    // makes its meaning wrong.
+    // ASSERT THE REASON, not only the refusal. The trap L armed here fired exactly as designed
+    // when #219's composed selector landed, and this arm was rewritten under it.
     //
-    // So the arm pins today's reason. When fallback exists this goes RED on purpose, and forces
-    // whoever built it to rewrite this arm to assert the fallback was ATTEMPTED and failed.
-    // An assertion that survives the change which makes it meaningless is the one nobody looks at
-    // again.
+    // The rewrite DIVERGES from the instruction the trap carried, and the divergence is the
+    // finding. It said: "rewrite this arm to assert the fallback was ATTEMPTED and failed."
+    // Writing that would make this cell assert something FALSE. The fallback that landed
+    // (`compile_plan_composed`) consults the channel for a CLAIM whose coverage is non-complete;
+    // a ZERO-hit response never reaches it, because `compile_plan` maps empty+non-complete to
+    // `negative_claim_unverified` first. So on THIS path the source is still not tried.
+    //
+    // A guard's message can teach the wrong edit: it offered an exit, and the exit was cheaper
+    // than the classification. What this arm asserts instead is the pair that is true today --
+    // the fallback EXISTS, and this path does not reach it -- and it proves the second half with
+    // a counting channel rather than claiming it in prose.
     assert!(
-        !graphhelm_runtime::retrieval::source_fallback_available(),
-        "bounded source fallback now exists, so this arm asserts the wrong thing: rewrite it \
-         to assert the fallback was ATTEMPTED and failed, not that there was nothing to try"
+        graphhelm_runtime::retrieval::source_fallback_available(),
+        "bounded source fallback landed with #219's composed selector"
+    );
+    let channel = CountingSourceChannel {
+        hits: vec!["never/read.rs".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let composed = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(Vec::new(), CoverageState::ExtractionGap),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["anything".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    )
+    .0;
+    assert_eq!(
+        composed,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::NegativeClaimUnverified
+        },
+        "the zero-hit exit is unchanged by composition"
+    );
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "MEASURED, not asserted in prose: the zero-hit path does not consult the channel, so \
+         `refused after trying the source` remains unbuilt. Whoever builds THAT exit rewrites \
+         this arm again -- and this time the assertion says which half is missing."
     );
 }
 
@@ -417,6 +446,74 @@ fn g4_a_parent_traversal_hit_is_refused_before_anything_is_read() {
 
 /// G4 sibling — an absolute POSIX path is not repository-relative, however innocent it looks.
 ///
+/// THE WIN32 PATH-FORM TABLE (Codex #608): one row per axis of the Windows path-semantics class,
+/// each asserting legal-or-refused through the real `compile_plan`. The point is to CLOSE the class
+/// in one place: the validator is an allow-list by FORM, so every refused row fails the same rule
+/// for the same reason, and a new same-class edge that is NOT refused means this table (and the
+/// rule) missed it, not that a new arm is owed. 30 rows; the individual g4 cells below duplicate a
+/// handful for their mutation-signature value.
+#[test]
+fn the_win32_path_form_table_holds() {
+    let rows: &[(&str, bool)] = &[
+        // legal forms (false = admitted)
+        ("core/events/src/local.rs", false),
+        ("schemas/node.schema.json", false),
+        ("src/foo.rs:12", false), // trailing :<digits> line suffix on an index hit
+        ("a/..foo.rs", false),    // ".." is a prefix of the component, not the component
+        ("a-b_c.2/x.rs", false),
+        ("UPPER/Mixed.RS", false), // case is not folded away; both spellings are legal
+        // drive-relative and rooted
+        ("C:1", true),
+        ("C:/Windows", true),
+        ("/etc/passwd", true),
+        (r"\x", true),
+        // UNC and device namespace
+        (r"\server\share", true),
+        (r"\?\C:\x", true),
+        (r"\.\PhysicalDrive0", true),
+        // alternate data streams
+        ("src/lib.rs:secret", true),
+        ("file::$DATA", true),
+        // reserved devices, with extension, with trailing space or dot
+        ("NUL", true),
+        ("logs/CON.txt", true),
+        ("COM1", true),
+        ("logs/NUL /x", true),
+        ("AUX.", true),
+        // parent traversal and Win32 dot/space normalization
+        ("..", true),
+        (".. ", true),
+        ("...", true),
+        ("foo.", true),
+        ("a/.. /b", true),
+        // 8.3 short name, full-width slash, control byte, mixed separator, empty components
+        ("PROGRA~1/x", true),
+        ("src\u{FF0F}lib.rs", true),
+        ("a\u{0000}b", true),
+        ("COM\u{00B9}", true), // superscript DOS-device alias — out of the ASCII charset
+        ("LPT\u{00B3}", true),
+        (r"src/..\x", true),
+        ("a//b", true), // middle empty component
+        ("a/", false),  // trailing slash canonicalizes to the legal
+    ];
+    for (hit, refused) in rows {
+        let outcome = compile_plan(
+            &fresh_binding(),
+            &IndexResponse::new(vec![(*hit).to_owned()], CoverageState::Complete),
+        );
+        let is_refused = matches!(
+            outcome,
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch
+            }
+        );
+        assert_eq!(
+            is_refused, *refused,
+            "`{hit}` expected refused={refused}, got {outcome:?}"
+        );
+    }
+}
+
 /// Separate arm rather than a loop over escape shapes: one arm sharing an assertion across all
 /// three would stay green while two of the three regressed.
 #[test]
@@ -450,11 +547,178 @@ fn g4_an_absolute_posix_hit_is_refused() {
 // defeats are indistinguishable in the output. Every mutation here asserts its anchor before
 // editing, so a missed anchor is an error rather than a false green.
 
+/// Codex #608 P1: the escape check ran on the raw spelling while `canonical_hit` (widened to
+/// strip a leading `./`) produced what was actually admitted. `.//etc/passwd` has a leading `.`
+/// and no `..` segment, so `is_repository_relative` accepted it, and canonicalisation then minted
+/// the absolute `/etc/passwd` INTO the claim. The check now runs on the canonical form.
+///
+/// A pair — index half and composed half — because the two admission sites validated the raw
+/// spelling independently, and one arm fixed alone would leave the other escaping.
+#[test]
+fn g4b_a_hit_that_canonicalizes_into_an_absolute_path_is_refused_by_the_index() {
+    let outcome = compile_plan(
+        &fresh_binding(),
+        &IndexResponse::new(vec![".//etc/passwd".to_owned()], CoverageState::Complete),
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::ScopeMismatch
+        },
+        "a hit that passes the raw check but canonicalizes to an absolute path is still an escape"
+    );
+}
+
+#[test]
+fn g4b_a_channel_hit_that_canonicalizes_into_an_absolute_path_is_refused() {
+    let channel = CountingSourceChannel {
+        hits: vec![".//etc/passwd".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::ScopeMismatch
+        },
+        "the channel is another untrusted producer: its canonicalized escape must refuse too"
+    );
+}
+
 /// G4 sibling — a Windows drive-qualified path, which contains no `..` and is still an escape.
 ///
 /// This is the arm that catches a segment-only check. `C:/Windows/System32/config/SAM` has no
 /// parent traversal and no leading slash: a guard that only looks for those two shapes lets it
 /// through, on the platform this repository is actually developed on.
+/// Codex #608: a Windows reserved DOS device component (`NUL`, `CON`, `AUX`, `PRN`, `COM1`-`COM9`,
+/// `LPT1`-`LPT9`) resolves to the DEVICE, not a repository file, when a Windows reader opens the
+/// claim. Relative, no colon, no `..`, so it slipped through; refused now, on the stem before the
+/// first `.` (so `CON.txt` is caught too).
+/// Codex #608: `.. ` (dotdot + trailing space) or `...` normalizes to `..` under Win32 path
+/// rules, which strip trailing spaces and dots, so a downstream join resolves the parent. Byte-
+/// equality to `..` missed it. `..foo` is a real filename and must still pass.
+#[test]
+fn g4_a_win32_normalized_parent_segment_is_refused() {
+    for hit in ["../secret", ".. /secret", "a/.. /b", "a/.../b", "..."] {
+        let outcome = compile_plan(
+            &fresh_binding(),
+            &IndexResponse::new(vec![hit.to_owned()], CoverageState::Complete),
+        );
+        assert_eq!(
+            outcome,
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch
+            },
+            "`{hit}` normalizes to a parent traversal on Windows"
+        );
+    }
+    for ok in ["src/..foo.rs", "a/..bar/c.rs"] {
+        let outcome = compile_plan(
+            &fresh_binding(),
+            &IndexResponse::new(vec![ok.to_owned()], CoverageState::Complete),
+        );
+        assert_ne!(
+            outcome,
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch
+            },
+            "`{ok}` is a real filename, not a parent reference"
+        );
+    }
+}
+
+#[test]
+fn g4_a_windows_reserved_device_hit_is_refused() {
+    for hit in [
+        "logs/NUL",
+        "NUL",
+        "src/CON.txt",
+        "COM1",
+        "a/LPT9/b.rs",
+        "logs/NUL /x",
+        "COM1 ",
+        "AUX.",
+    ] {
+        let outcome = compile_plan(
+            &fresh_binding(),
+            &IndexResponse::new(vec![hit.to_owned()], CoverageState::Complete),
+        );
+        assert_eq!(
+            outcome,
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch
+            },
+            "a reserved device component `{hit}` resolves to a device, not a repository file"
+        );
+    }
+    // Control: `common` / `CONFIG` / `COM0` are NOT devices (the stem is not exactly a device
+    // name), so an ordinary path carrying them is NOT refused for scope.
+    for ok in ["src/common.rs", "config/COM0.rs", "CONFIG/x.rs"] {
+        let outcome = compile_plan(
+            &fresh_binding(),
+            &IndexResponse::new(vec![ok.to_owned()], CoverageState::Complete),
+        );
+        assert_ne!(
+            outcome,
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch
+            },
+            "`{ok}` is an ordinary path and must not be refused as a reserved device"
+        );
+    }
+}
+
+/// Codex #608: `src/lib.rs:secret` is non-rooted, has no `..`, and its `:secret` is not an
+/// all-digit line suffix — so it passed. On Windows the colon selects an NTFS ALTERNATE DATA
+/// STREAM, naming bytes outside the snapshot's file content. Any colon left after the drive and
+/// line-suffix handling is now refused.
+#[test]
+fn g4_a_windows_alternate_data_stream_hit_is_refused() {
+    let outcome = compile_plan(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["src/lib.rs:secret".to_owned()],
+            CoverageState::Complete,
+        ),
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::ScopeMismatch
+        },
+        "an alternate-data-stream colon names bytes outside the tracked file"
+    );
+}
+
+/// Codex #608: `C:1` is a drive-RELATIVE path (drive C, relative "1"), but the line-suffix strip
+/// ran first and reduced it to `C`, hiding the drive from the qualified-path test. The drive prefix
+/// is now checked on the raw hit before any stripping. Sibling of the two g4 arms above.
+#[test]
+fn g4_a_numeric_drive_relative_hit_is_refused() {
+    let outcome = compile_plan(
+        &fresh_binding(),
+        &IndexResponse::new(vec!["C:1".to_owned()], CoverageState::Complete),
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::ScopeMismatch
+        },
+        "a numeric drive-relative path escapes even though its `:1` looks like a line suffix"
+    );
+}
+
 #[test]
 fn g4_a_windows_drive_qualified_hit_is_refused() {
     let outcome = compile_plan(
@@ -1261,6 +1525,23 @@ fn fake_index_produces_a_digest_bound_receipt_that_licenses_only_proven_absence(
     assert_eq!(decoded.stable_bytes().unwrap(), stable);
 }
 
+/// Codex #608: a receipt hit that is short AFTER canonicalization (`"a"` + a slash flood) but over
+/// `MAX_RECEIPT_TEXT_BYTES` raw must be refused — the canonicalizer trims the slashes, so the
+/// ceiling has to see the pre-canonical length or the oversized value is admitted.
+#[test]
+fn a_receipt_hit_over_the_raw_text_cap_is_refused_before_canonicalization() {
+    let request = receipt_request();
+    let mut response = complete_response(&request);
+    response.total_results = 1;
+    response.hits = vec![format!("a{}", "/".repeat(4200))];
+    response.pages[0].results = 1;
+
+    assert_eq!(
+        retrieve_coverage(&FakeStructuralCodeIndex::new(response), &request).unwrap_err(),
+        RetrievalReceiptError::EvidenceInvalid
+    );
+}
+
 #[test]
 fn best_effort_can_never_be_promoted_to_complete_coverage() {
     let request = receipt_request();
@@ -1854,6 +2135,965 @@ fn a_stale_attempt_keeps_its_own_refusal_instead_of_pooling_with_the_unverified(
     );
 }
 
+// ---------------------------------------------------------------------------
+// #219 composed selector, cell 1: FIX TODAY BEFORE CHANGING THE CONTRACT.
+//
+// The composed-selector work is about to change what `Partial` LICENSES. Before that, this cell
+// records what the compiler does today, so the change is a measured delta rather than a
+// remembered one -- trap-fixture-before-the-seal, and the seal here is a contract amendment.
+// ---------------------------------------------------------------------------
+
+/// TODAY: `Partial` coverage WITH hits compiles a Claim, and no second channel is consulted.
+///
+/// This is the arm the composed selector amends. The distinction that makes the amendment a
+/// CONTRACT change rather than an implementation: `compile_plan` only reads the coverage state
+/// inside `hits.is_empty()`, so a partial search that returned the WRONG five hits is
+/// indistinguishable here from a partial search that returned the right ones. Zero-hits and
+/// hits-without-the-required-path are DIFFERENT failure modes, and only the first has an exit
+/// today (`negative_claim_unverified` / the unbuilt source fallback).
+#[test]
+fn partial_coverage_with_hits_compiles_a_claim_and_consults_no_second_channel() {
+    let outcome = compile_plan(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+    );
+
+    match outcome {
+        RetrievalOutcome::Claim { hits, coverage } => {
+            assert_eq!(hits, vec!["core/events/src/local.rs".to_owned()]);
+            assert_eq!(
+                coverage,
+                CoverageState::Partial,
+                "the claim carries the provider's own partial verdict, unpromoted"
+            );
+        }
+        other => panic!("partial coverage with hits must compile a claim today: {other:?}"),
+    }
+}
+
+/// A source channel that RECORDS whether it was consulted. The count is the subject of the
+/// economic seal: `Complete` must never reach it, and the real provider reports `Partial` on
+/// every call (#576), so a channel consulted unconditionally would run on every compile.
+#[derive(Default)]
+struct CountingSourceChannel {
+    hits: Vec<String>,
+    consulted: std::sync::atomic::AtomicUsize,
+}
+
+impl graphhelm_runtime::ports::BoundedSourceSearch for CountingSourceChannel {
+    fn search(
+        &self,
+        _terms: &[String],
+        _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+    ) -> Result<Vec<String>, graphhelm_runtime::ports::SourceSearchError> {
+        self.consulted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.hits.clone())
+    }
+}
+
+fn search_bounds() -> graphhelm_runtime::ports::SourceSearchBounds {
+    graphhelm_runtime::ports::SourceSearchBounds {
+        max_entries_visited: 50_000,
+        max_files_scanned: 10_000,
+        max_bytes_scanned: 64 * 1024 * 1024,
+        max_results: 10,
+        max_terms: 64,
+        max_term_bytes: 64 * 256,
+    }
+}
+
+/// THE AMENDMENT: `Partial` licenses a bounded second channel, and its paths JOIN the claim.
+///
+/// The graph's hits keep their order and come first -- the second channel is evidence the graph
+/// could not reach, not a re-ranking of what it did.
+#[test]
+fn partial_coverage_licenses_the_bounded_source_channel_and_joins_its_paths() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let outcome = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    )
+    .0;
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "partial coverage must consult the channel exactly once"
+    );
+    match outcome {
+        RetrievalOutcome::Claim { hits, coverage } => {
+            assert_eq!(
+                hits,
+                vec![
+                    "core/events/src/local.rs".to_owned(),
+                    "schemas/node.schema.json".to_owned(),
+                ],
+                "graph hits keep their order and lead; the channel's paths join after"
+            );
+            assert_eq!(
+                coverage,
+                CoverageState::Partial,
+                "composing does not promote coverage"
+            );
+        }
+        other => panic!("the composed plan must still be a claim: {other:?}"),
+    }
+}
+
+/// THE ECONOMIC SEAL: `Complete` never reaches the channel. A complete search has nothing to
+/// fall back FROM, and the real provider reports Partial on every call -- so an unconditional
+/// consult would run the channel on every compile in production.
+#[test]
+fn complete_coverage_never_consults_the_bounded_source_channel() {
+    let channel = CountingSourceChannel {
+        hits: vec!["never/read.rs".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let outcome = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("complete", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    )
+    .0;
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a complete search has nothing to fall back from"
+    );
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => {
+            assert_eq!(hits, vec!["core/events/src/local.rs".to_owned()]);
+        }
+        other => panic!("complete coverage compiles a claim unchanged: {other:?}"),
+    }
+}
+
+/// A refusal is NOT a licence: a stale binding refuses before any channel is consulted. The
+/// channel is an evidence path, and a stale coordinate invalidates the whole response.
+#[test]
+fn a_stale_binding_refuses_before_the_bounded_channel_is_consulted() {
+    let channel = CountingSourceChannel {
+        hits: vec!["never/read.rs".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let outcome = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &stale_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000002"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    )
+    .0;
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "staleness invalidates the response before evidence is gathered"
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        }
+    );
+}
+
+/// K's #608 P1, first of a pair with ONE shape: the composition inherited `compile_plan`'s
+/// CLAIMS but not its GUARDS.
+///
+/// A provider that DECLARES `Stale` refuses at `compile_plan` — but only on the zero-hit path.
+/// With hits, a declared-stale response compiles a claim, and composition then treats it as
+/// non-complete coverage and consults the channel: an index that says it is stale gets a second
+/// evidence channel instead of a refusal. The file's own prose says "Either alone must refuse".
+#[test]
+fn a_declared_stale_response_refuses_before_the_channel_is_consulted() {
+    let channel = CountingSourceChannel {
+        hits: vec!["never/read.rs".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let outcome = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("stale", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    )
+    .0;
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a self-declared stale index must not be topped up with a second channel"
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        }
+    );
+}
+
+/// K's #608 P1, second of the pair: the channel's paths skipped the escape check.
+///
+/// `compile_plan` validates every hit with `is_repository_relative` BEFORE building a claim, and
+/// says so: "nothing escaping ever reaches a reader". That sentence was true of the index's hits
+/// and false of the channel's, which joined the claim unvalidated.
+#[test]
+fn an_escaping_path_from_the_channel_refuses_the_whole_claim() {
+    for escaping in [
+        "../outside.rs",
+        "/etc/passwd",
+        "C:/Windows/System32/config/SAM",
+        "core/../../escape.rs",
+    ] {
+        let channel = CountingSourceChannel {
+            hits: vec![escaping.to_owned()],
+            consulted: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let outcome = graphhelm_runtime::retrieval::compile_plan_composed_against(
+            &fresh_binding(),
+            &IndexResponse::new(
+                vec!["core/events/src/local.rs".to_owned()],
+                coverage_from_wire("partial", "this cell"),
+            ),
+            &ReaderAt("gen-0000000000000001"),
+            &channel,
+            &["schema".to_owned()],
+            &search_bounds(),
+            &generous_limits(),
+        )
+        .0;
+
+        assert_eq!(
+            outcome,
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch
+            },
+            "the channel offered {escaping:?} and the claim was built anyway"
+        );
+    }
+}
+
+/// A reader whose snapshot is CHOSEN, so a cell can put the workspace ahead of the binding.
+struct ReaderAt(&'static str);
+
+impl SourceReader for ReaderAt {
+    fn current_snapshot(&self) -> OpaqueId {
+        OpaqueId::parse(self.0).expect("a well-formed opaque id")
+    }
+}
+
+/// Codex #608 P1 (`:963`): the composition mixed evidence from two snapshots.
+///
+/// `compile_plan` cannot see this — `repo_snapshot == index_generation` is internally fresh — but
+/// the channel is WORKSPACE-SCOPED and reads the bytes as they are NOW. Join those paths to a
+/// claim compiled over an older generation and the result is one claim carrying evidence from two
+/// different states of the repository.
+///
+/// The remedy already exists: `compile_plan_against` refuses when the reader's current snapshot
+/// disagrees with the binding, and the composed entry point needs the same check BEFORE it
+/// consults a channel that reads current bytes.
+#[test]
+fn a_workspace_that_moved_refuses_before_the_channel_reads_current_bytes() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let outcome = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000009"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the channel reads CURRENT bytes, so a moved workspace must refuse before it is consulted"
+    );
+    assert_eq!(
+        outcome.0,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        }
+    );
+}
+
+/// Codex #608 P2 (`:980`): the channel's typed failure was discarded while the comment claimed it
+/// stayed visible to the caller. The comment was the load-bearing half of a promise the code did
+/// not keep -- `Unavailable` (wire a channel) and `BoundExceeded` (narrow the query or raise a
+/// bound) send an operator in opposite directions, and both arrived as the same silent claim.
+///
+/// The composed entry point now RETURNS the reason beside the outcome.
+#[test]
+fn a_channel_failure_reaches_the_caller_with_its_reason() {
+    struct FailingChannel(graphhelm_runtime::ports::SourceSearchError);
+    impl graphhelm_runtime::ports::BoundedSourceSearch for FailingChannel {
+        fn search(
+            &self,
+            _terms: &[String],
+            _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+        ) -> Result<Vec<String>, graphhelm_runtime::ports::SourceSearchError> {
+            Err(self.0)
+        }
+    }
+
+    for reason in [
+        graphhelm_runtime::ports::SourceSearchError::Unavailable,
+        graphhelm_runtime::ports::SourceSearchError::BoundExceeded,
+    ] {
+        let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+            &fresh_binding(),
+            &IndexResponse::new(
+                vec!["core/events/src/local.rs".to_owned()],
+                coverage_from_wire("partial", "this cell"),
+            ),
+            &ReaderAt("gen-0000000000000001"),
+            &FailingChannel(reason),
+            &["schema".to_owned()],
+            &search_bounds(),
+            &generous_limits(),
+        );
+
+        assert!(
+            matches!(outcome, RetrievalOutcome::Claim { .. }),
+            "the channel is evidence, not authority: its failure leaves the index claim standing"
+        );
+        assert_eq!(
+            failure,
+            Some(reason),
+            "the two failures send an operator in OPPOSITE directions and must not collapse"
+        );
+    }
+}
+
+/// Codex #608: a channel that RETURNS more than `bounds.max_results` bypassed the caller's
+/// result ceiling, because the bound was only ever handed TO the channel — and a flooding
+/// producer is the one that ignores it. The compiler now reads the bound over what actually
+/// arrived: the index's claim stands untouched, none of the flood is joined, and the caller
+/// hears the same typed `BoundExceeded` a refusing channel would have carried.
+#[test]
+fn a_channel_flooding_past_its_result_bound_is_refused_and_joins_nothing() {
+    let over = search_bounds().max_results as usize + 1;
+    let channel = CountingSourceChannel {
+        hits: (0..over).map(|i| format!("src/flood_{i}.rs")).collect(),
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => {
+            assert_eq!(
+                hits,
+                vec!["core/events/src/local.rs".to_owned()],
+                "none of the flood may join: the channel is evidence, not authority"
+            );
+        }
+        other => panic!("the index's own claim must stand: {other:?}"),
+    }
+    assert_eq!(
+        failure,
+        Some(graphhelm_runtime::ports::SourceSearchError::BoundExceeded),
+        "an over-bound response is the source side crossing a ceiling, and the caller hears it"
+    );
+}
+
+/// A reader whose answer CHANGES between calls: the workspace as it is when asked, twice.
+struct MovingReader {
+    answers: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl SourceReader for MovingReader {
+    fn current_snapshot(&self) -> OpaqueId {
+        let mut answers = self.answers.lock().expect("no poisoned lock in this cell");
+        let next = if answers.len() > 1 {
+            answers.remove(0)
+        } else {
+            answers[0]
+        };
+        OpaqueId::parse(next).expect("a well-formed opaque id")
+    }
+}
+
+/// Codex #608: the snapshot pre-check AGES while the bounded walk runs. A workspace edited
+/// mid-search hands back paths from newer bytes under a check that passed on older ones, so the
+/// compiler asks the reader AGAIN after the search — and a moved workspace refuses instead of
+/// composing evidence from two states of the repository. (The window between the channel's last
+/// read and the re-check remains, and is declared at the check; closing it needs the search
+/// response to carry the snapshot identity it searched, which is receipt-boundary work.)
+#[test]
+fn a_workspace_that_moves_during_the_search_refuses_after_it() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    // First answer satisfies the pre-check; the second, read after the search, disagrees.
+    let reader = MovingReader {
+        answers: std::sync::Mutex::new(vec!["gen-0000000000000001", "gen-0000000000000009"]),
+    };
+
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &reader,
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "arrangement: the pre-check must pass, or this cell re-proves the PRE-check"
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        },
+        "evidence gathered over moved bytes must not compose with the older index claim"
+    );
+}
+
+/// Codex #608: the freshness recheck must gate EVERY post-search return, not only the successful
+/// union. A slow search that ends in `Unavailable`/`BoundExceeded` used to return the index claim
+/// for the OLD snapshot, because the recheck sat after the success path. A failing channel plus a
+/// workspace that moved during the search must refuse `IndexStale`, not hand back stale coordinates
+/// with a failure reason attached.
+#[test]
+fn a_failing_search_over_a_moved_workspace_refuses_rather_than_returning_the_stale_claim() {
+    struct FailingChannel;
+    impl graphhelm_runtime::ports::BoundedSourceSearch for FailingChannel {
+        fn search(
+            &self,
+            _terms: &[String],
+            _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+        ) -> Result<Vec<String>, graphhelm_runtime::ports::SourceSearchError> {
+            Err(graphhelm_runtime::ports::SourceSearchError::Unavailable)
+        }
+    }
+    // Fresh at the pre-check, moved by the time the post-search recheck runs.
+    let reader = MovingReader {
+        answers: std::sync::Mutex::new(vec!["gen-0000000000000001", "gen-0000000000000009"]),
+    };
+
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &reader,
+        &FailingChannel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        },
+        "a failing search over a moved workspace must refuse, not return the old snapshot's claim"
+    );
+}
+
+/// Codex #608: the QUERY is caller-controlled and unbounded by `SourceSearchBounds`' corpus
+/// ceilings. An oversized term slice (or overlong terms) makes a compliant channel do `files x
+/// terms` work under every corpus ceiling, so the compiler bounds the terms at the trust boundary
+/// BEFORE invoking `search` — the channel is never even consulted, and the operator hears
+/// `BoundExceeded`, the source-side ceiling.
+/// Codex #608: the BYTE ceiling on terms is its own check (count is tested by the sibling above).
+/// A few overlong terms, under the count but over the aggregate byte budget, must refuse before the
+/// channel is consulted.
+#[test]
+fn an_oversized_aggregate_of_term_bytes_is_refused_before_the_channel_is_consulted() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    // 2 terms (under max_terms=64) whose bytes (2 * 9000) exceed max_term_bytes (64*256=16384).
+    let terms = vec!["a".repeat(9000), "b".repeat(9000)];
+
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &terms,
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an over-byte query must refuse BEFORE the channel is invoked"
+    );
+    assert!(
+        matches!(outcome, RetrievalOutcome::Claim { .. }),
+        "the index claim stands; only the source consultation is blocked"
+    );
+    assert_eq!(
+        failure,
+        Some(graphhelm_runtime::ports::SourceSearchError::BoundExceeded),
+        "an oversized aggregate of term bytes is a source-side ceiling"
+    );
+}
+
+#[test]
+fn an_oversized_term_slice_is_refused_before_the_channel_is_consulted() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    // One more term than `search_bounds().max_terms` (64).
+    let terms: Vec<String> = (0..65).map(|i| format!("t{i}")).collect();
+
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &terms,
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an over-bound query must refuse BEFORE the channel is invoked"
+    );
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => assert_eq!(
+            hits,
+            vec!["core/events/src/local.rs".to_owned()],
+            "the index claim stands; the oversized query only blocks the source consultation"
+        ),
+        other => panic!("the index claim must stand: {other:?}"),
+    }
+    assert_eq!(
+        failure,
+        Some(graphhelm_runtime::ports::SourceSearchError::BoundExceeded),
+        "an oversized caller-controlled query is a source-side ceiling"
+    );
+}
+
+/// Codex #608: a channel returning one ENORMOUS raw path (`"file"` + a flood of trailing `/`)
+/// passes the result count and then `canonical_hit` shrinks it to four bytes, so the post-union
+/// byte check never sees the flood the channel already allocated and scanned. The RAW aggregate
+/// is bounded the instant the search returns, before canonicalization.
+/// Codex #608: a channel hit carries no line suffix (`BoundedSourceSearch` is paths-only), so
+/// `src/lib.rs:123` is a NUMERIC NTFS alternate-data-stream selector, not a `:line`. The shared
+/// `is_repository_relative` would strip `:123` and accept `src/lib.rs`; the channel is held to the
+/// stricter no-colon rule.
+#[test]
+fn a_numeric_alternate_stream_channel_hit_is_refused() {
+    let channel = CountingSourceChannel {
+        hits: vec!["src/lib.rs:123".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::ScopeMismatch
+        },
+        "a colon in a channel hit is an ADS selector, not a line suffix"
+    );
+}
+
+/// Codex #608: the raw-payload ceiling bounds the AGGREGATE of index + source, not the source
+/// alone. Index hits already spend part of the budget, so a source path that fits the remaining
+/// space independently but overflows the total must refuse.
+#[test]
+fn the_aggregate_of_index_and_source_raw_payload_is_bounded() {
+    // index hit 24 bytes + source path 50 bytes = 74 > max_bytes 64, each under it alone.
+    let channel = CountingSourceChannel {
+        hits: vec![format!("s/{}", "a".repeat(48))],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let tight = DeclaredLimits {
+        max_results: 10,
+        max_bytes: 64,
+        max_tokens: 100_000,
+        ..generous_limits()
+    };
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &tight,
+    );
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => assert_eq!(
+            hits,
+            vec!["core/events/src/local.rs".to_owned()],
+            "the index claim stands; the source is refused against the REMAINING budget"
+        ),
+        other => panic!("index claim must stand: {other:?}"),
+    }
+    assert_eq!(
+        failure,
+        Some(graphhelm_runtime::ports::SourceSearchError::BoundExceeded),
+        "index+source together over max_bytes is a source-side ceiling"
+    );
+}
+
+/// Codex #608: the raw-payload bound covers TOKENS too, not only bytes./// Codex #608: the raw-payload bound covers TOKENS too, not only bytes. A raw path large enough to
+/// blow the token estimate while `max_bytes` is permissive would otherwise pass the raw check and
+/// then shrink under canonicalization before the token estimate runs.
+#[test]
+fn an_enormous_raw_channel_path_over_the_token_ceiling_is_refused() {
+    let flood = format!("file{}", "/".repeat(4000));
+    let channel = CountingSourceChannel {
+        hits: vec![flood],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    // Bytes permissive, tokens tight: 4004 bytes / 4 = 1001 tokens > max_tokens = 100.
+    let tight = DeclaredLimits {
+        max_results: 10,
+        max_bytes: 100_000,
+        max_tokens: 100,
+        ..generous_limits()
+    };
+
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &tight,
+    );
+
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => assert_eq!(
+            hits,
+            vec!["core/events/src/local.rs".to_owned()],
+            "the index claim stands; the token flood joins nothing"
+        ),
+        other => panic!("the index claim must stand: {other:?}"),
+    }
+    assert_eq!(
+        failure,
+        Some(graphhelm_runtime::ports::SourceSearchError::BoundExceeded),
+        "a raw payload over max_tokens is the channel crossing a ceiling, heard before canonicalization"
+    );
+}
+
+#[test]
+fn an_enormous_raw_channel_path_is_refused_before_canonicalization_shrinks_it() {
+    let flood = format!("file{}", "/".repeat(500));
+    let channel = CountingSourceChannel {
+        hits: vec![flood],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    // Canonical form is "file" (4 bytes) -- comfortably under a small max_bytes; the RAW 504-byte
+    // path is what must trip the ceiling.
+    let tight = DeclaredLimits {
+        max_results: 10,
+        max_bytes: 64,
+        max_tokens: 100_000,
+        ..generous_limits()
+    };
+
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &tight,
+    );
+
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => assert_eq!(
+            hits,
+            vec!["core/events/src/local.rs".to_owned()],
+            "the index claim stands; none of the flood joins"
+        ),
+        other => panic!("the index claim must stand: {other:?}"),
+    }
+    assert_eq!(
+        failure,
+        Some(graphhelm_runtime::ports::SourceSearchError::BoundExceeded),
+        "a raw payload over max_bytes is the channel crossing a ceiling, heard before canonicalization"
+    );
+}
+
+/// Codex #608: a DECLARED stale coverage that is ALSO over-budget must refuse `IndexStale`, not
+/// `ArtifactTooLarge`. `compile_plan_within` applies the limits first, so before the fix a
+/// stale-and-large response told the caller to trim the query instead of to reindex — the stale
+/// coordinates are wrong regardless of size. The stale check now runs before the limits.
+#[test]
+fn a_stale_and_over_budget_response_refuses_as_stale_not_as_too_large() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let tight = DeclaredLimits {
+        max_results: 1,
+        max_bytes: 8,
+        max_tokens: 100_000,
+        ..generous_limits()
+    };
+    // Stale AND over every reasonable byte/result budget: two long hits, declared stale.
+    let response = IndexResponse::new(
+        vec![
+            "core/events/src/local.rs".to_owned(),
+            "core/events/src/lib.rs".to_owned(),
+        ],
+        coverage_from_wire("stale", "this cell"),
+    );
+
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &response,
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &tight,
+    );
+
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::IndexStale
+        },
+        "staleness outranks the budget: reindex, do not trim the query"
+    );
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a stale response gathers no channel evidence"
+    );
+}
+
+/// Codex #608: `compile_plan_within` bounded the INDEX's hits, and the union then grew past the
+/// same ceiling — the caller received exactly the flood the limit refused, one append later. The
+/// COMPOSED claim re-enters the result ceiling: over is refused, never truncated.
+#[test]
+fn a_composed_union_that_crosses_the_declared_result_ceiling_is_refused() {
+    let channel = CountingSourceChannel {
+        hits: vec![
+            "schemas/node.schema.json".to_owned(),
+            "schemas/edge.schema.json".to_owned(),
+        ],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let tight = DeclaredLimits {
+        max_results: 2,
+        ..generous_limits()
+    };
+
+    let (outcome, failure) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &tight,
+    );
+
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::CardinalityViolation
+        },
+        "1 index hit + 2 channel hits over max_results=2 must refuse, never truncate"
+    );
+    assert_eq!(
+        failure, None,
+        "the ceiling is the caller's, not a channel failure"
+    );
+}
+
+/// Codex #608: the port assigns NO ranking semantics to source paths, so a filesystem's
+/// enumeration order must not leak into `Claim.hits` — identical repositories on two
+/// filesystems must compose identical claims. The channel's additions arrive sorted and
+/// deduped behind the ordered index prefix.
+#[test]
+fn channel_additions_join_sorted_and_deduped_behind_the_index_prefix() {
+    let channel = CountingSourceChannel {
+        hits: vec![
+            "schemas/zeta.schema.json".to_owned(),
+            "schemas/alpha.schema.json".to_owned(),
+            "./schemas/zeta.schema.json".to_owned(),
+            "core/events/src/local.rs".to_owned(),
+        ],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec!["core/events/src/local.rs".to_owned()],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &generous_limits(),
+    );
+
+    match outcome {
+        RetrievalOutcome::Claim { hits, .. } => assert_eq!(
+            hits,
+            vec![
+                "core/events/src/local.rs".to_owned(),
+                "schemas/alpha.schema.json".to_owned(),
+                "schemas/zeta.schema.json".to_owned(),
+            ],
+            "index prefix first and untouched; additions sorted, canonicalised, deduped"
+        ),
+        other => panic!("this arrangement composes a claim: {other:?}"),
+    }
+}
+
+/// Codex #608: the composed path ran the index half through the unbounded `compile_plan`, so an
+/// index response that `compile_plan_within` refuses — a flood — could still buy composition.
+/// The index half now inherits the caller's declared limits, and an over-limit response refuses
+/// BEFORE the channel is consulted: no evidence is gathered against an invalid response.
+#[test]
+fn an_over_limit_index_response_refuses_before_the_channel_is_consulted() {
+    let channel = CountingSourceChannel {
+        hits: vec!["schemas/node.schema.json".to_owned()],
+        consulted: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let tight = DeclaredLimits {
+        max_results: 1,
+        ..generous_limits()
+    };
+
+    let (outcome, _) = graphhelm_runtime::retrieval::compile_plan_composed_against(
+        &fresh_binding(),
+        &IndexResponse::new(
+            vec![
+                "core/events/src/local.rs".to_owned(),
+                "core/events/src/lib.rs".to_owned(),
+            ],
+            coverage_from_wire("partial", "this cell"),
+        ),
+        &ReaderAt("gen-0000000000000001"),
+        &channel,
+        &["schema".to_owned()],
+        &search_bounds(),
+        &tight,
+    );
+
+    assert_eq!(
+        channel.consulted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a refusal is not a licence: no evidence is gathered against an invalid response"
+    );
+    assert_eq!(
+        outcome,
+        RetrievalOutcome::Refused {
+            code: DevelopmentRefusalCode::CardinalityViolation
+        }
+    );
+}
 /// #226 S2a — THE CLOSED VOCABULARY GAINS ITS CONSUMER, at the layer that knows the kind.
 ///
 /// `CoverageState` is declared closed in `core/protocols/src/development.rs` ("each state has a

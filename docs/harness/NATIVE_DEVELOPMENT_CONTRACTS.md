@@ -621,11 +621,11 @@ Every site below is **measured at `origin/main`**, with the ref inside the comma
 closed vocabulary, and refuses a COMPLETE claim the producer's own record contradicts:
 
 ```
-core/runtime/src/retrieval.rs:550   fn plan_coverage_is_a_closed_token
+core/runtime/src/retrieval.rs:490   fn plan_coverage_is_a_closed_token
 core/runtime/src/retrieval.rs:371   return Err(RetrievalReceiptError::CoveragePromotion)
-core/runtime/tests/retrieval.rs:1873
+core/runtime/tests/retrieval.rs:3113
        a_plan_coverage_token_outside_the_closed_vocabulary_is_refused
-core/runtime/tests/retrieval.rs:1953
+core/runtime/tests/retrieval.rs:3193
        the_committed_s2_corpus_is_refused_by_the_retrieval_plan_compiler
 ```
 

@@ -397,6 +397,17 @@ fn validate_response(
         received_limits.bytes,
     )?;
 
+    // The RAW length is bounded BEFORE `canonical_hit` (Codex #608): the canonicalizer trims
+    // trailing slashes, so a short name followed by thousands of `/` shrinks under
+    // `MAX_RECEIPT_TEXT_BYTES` after being scanned and copied in full — the oversized raw value
+    // would be admitted despite the hard per-text ceiling. Checked on the raw hit first.
+    if response
+        .hits
+        .iter()
+        .any(|hit| hit.len() > MAX_RECEIPT_TEXT_BYTES)
+    {
+        return Err(RetrievalReceiptError::EvidenceInvalid);
+    }
     let mut hits = response
         .hits
         .iter()
@@ -500,6 +511,11 @@ fn validate_request_targets(request: &StructuralIndexRequest) -> Result<(), Retr
         .iter()
         .chain(request.negative_scopes.iter())
     {
+        // RAW length first (Codex #608): `canonical_hit` trims trailing slashes, so the ceiling
+        // must see the pre-canonical value or a slash-flood is admitted after being scanned.
+        if value.len() > MAX_RECEIPT_TEXT_BYTES {
+            return Err(RetrievalReceiptError::EvidenceInvalid);
+        }
         let canonical = canonical_hit(value);
         if canonical.len() > MAX_RECEIPT_TEXT_BYTES
             || !is_repository_relative(&canonical)
@@ -845,7 +861,16 @@ pub fn compile_plan(binding: &SnapshotBinding, response: &IndexResponse) -> Retr
     }
     // Provider output is untrusted typed evidence, and a hit is a path this plan would hand to a
     // reader. Validated BEFORE the claim is built, so nothing escaping ever reaches a reader.
-    if response.hits.iter().any(|hit| !is_repository_relative(hit)) {
+    // Validated on the CANONICAL form, because the canonical form is what is ADMITTED below
+    // (Codex #608 P1): `is_repository_relative` on the raw spelling accepted `.//etc/passwd`
+    // (leading `.`, no `..` segment), and `canonical_hit` then stripped the `./` to `/etc/passwd`
+    // -- an absolute escape minted AFTER the check. Validate what will be stored, the same order
+    // the receipt path at `canonical_hit(value)` + `is_repository_relative(&canonical)` uses.
+    if response
+        .hits
+        .iter()
+        .any(|hit| !is_repository_relative(&canonical_hit(hit)))
+    {
         return RetrievalOutcome::Refused {
             code: DevelopmentRefusalCode::ScopeMismatch,
         };
@@ -866,7 +891,15 @@ pub fn compile_plan(binding: &SnapshotBinding, response: &IndexResponse) -> Retr
 /// Canonicalised where the claim is BUILT rather than at every point one is compared: a
 /// normalisation each consumer has to remember is one some consumer will forget.
 fn canonical_hit(hit: &str) -> String {
-    hit.replace('\\', "/")
+    // Same three spellings the benchmark's `canonical_path` folds, for the same reason: `./x`,
+    // `x` and `x/` are one file wearing three names, and two of them surviving into a claim is
+    // the split this function exists to close (caught by the sorted-union cell on #608 -- the
+    // separator swap alone kept the promise "one file named two ways stays one hit" only for
+    // the separator). Case is NOT folded: identity here is byte identity, and case-folding
+    // equates files that genuinely differ on Unix.
+    let slashed = hit.replace('\\', "/");
+    let stripped = slashed.strip_prefix("./").unwrap_or(&slashed);
+    stripped.trim_end_matches('/').to_owned()
 }
 
 /// Whether a provider-supplied hit stays inside the repository.
@@ -875,32 +908,64 @@ fn canonical_hit(hit: &str) -> String {
 /// perfectly ordinary `src/..foo.rs`, and a rule that fires on innocent input gets relaxed by the
 /// next person who hits it.
 fn is_repository_relative(hit: &str) -> bool {
-    // A hit may carry a trailing `:<line>`, and on Windows `:` also separates a DRIVE. Splitting on
-    // the first colon conflates the two: `C:/Windows/System32` yields `"C"`, which has no `..` and
-    // no leading slash, so a drive-qualified escape reads as an ordinary relative path. Strip only
-    // a trailing all-digit suffix, from the END.
+    // ALLOW-LIST BY FORM, not a deny-list of known-bad shapes (Codex #608, the whole Win32
+    // path-semantics class in one rule). Enumerating the class edge by edge -- drive-relative,
+    // rooted, UNC, `\\?\`, alternate data streams, reserved device names, 8.3 short names,
+    // trailing dots/spaces, full-width and mixed separators, control and non-ASCII bytes -- is a
+    // race the enumerator wins, one reopened finding per edge. Instead a repository-relative path
+    // is DEFINED positively: an optional trailing `:<digits>` line suffix (index hits carry one),
+    // then a non-empty sequence of components joined by single '/', each a `[A-Za-z0-9._-]+` that
+    // is not `.`/`..`, does not end in `.`, and is not a reserved DOS device. Every escape in the
+    // class fails one clause BY CONSTRUCTION: `\`, `:`, space, control, full-width slash or any
+    // non-ASCII byte is outside the component charset; a leading/trailing/doubled '/' makes an
+    // empty component; a drive `C:` is caught on the raw hit before the line-suffix strip could
+    // hide it as a bare `C`.
+    //
+    // Measured safe for this validator's population: every path in the served tree and the frozen
+    // corpus is already within `[A-Za-z0-9._/-]`, so the allow-list rejects no legitimate evidence.
+    let mut raw = hit.chars();
+    if matches!((raw.next(), raw.next()), (Some(letter), Some(':')) if letter.is_ascii_alphabetic())
+    {
+        return false;
+    }
     let path = match hit.rsplit_once(':') {
         Some((head, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => head,
         _ => hit,
     };
-
     if path.is_empty() {
         return false;
     }
-    // Rooted at a separator: absolute POSIX, or a Windows UNC/rooted path.
-    if path.starts_with('/') || path.starts_with('\\') {
-        return false;
-    }
-    // Drive-qualified (`C:` or `C:/...`): an escape carrying no `..` at all.
-    let mut chars = path.chars();
-    if matches!((chars.next(), chars.next()), (Some(letter), Some(':')) if letter.is_ascii_alphabetic())
-    {
-        return false;
-    }
-    // Parent traversal, checked by SEGMENT rather than substring: a substring test for `".."` also
-    // rejects the perfectly ordinary `src/..foo.rs`, and a rule that fires on innocent input gets
-    // relaxed by the next person who hits it.
-    !path.split(['/', '\\']).any(|segment| segment == "..")
+    path.split('/').all(is_safe_component)
+}
+
+/// One component a repository-relative path may contain: non-empty, drawn from `[A-Za-z0-9._-]`,
+/// not `.` or `..`, not ending in `.` (Win32 strips a trailing dot, so `foo.` and `foo` would be
+/// one file under two spellings), and not a reserved DOS device stem. `..foo` is a real filename
+/// and passes; `..`, `.. ` (space, rejected by the charset), `...` (trailing dot) do not.
+fn is_safe_component(component: &str) -> bool {
+    !component.is_empty()
+        && component != "."
+        && component != ".."
+        && !component.ends_with('.')
+        && component
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')
+        && !is_reserved_device_component(component)
+}
+
+/// Whether one path component is a Windows reserved DOS device name (case-insensitive, judged on
+/// the stem before the first `.`, since `CON.txt` still resolves to the `CON` device).
+fn is_reserved_device_component(component: &str) -> bool {
+    // Win32 strips trailing spaces and dots from a component before resolving it, so `NUL ` and
+    // `COM1.` resolve to the device (Codex #608). Trim them before extracting the stem, the same
+    // normalization the parent-traversal check applies.
+    let trimmed = component.trim_end_matches([' ', '.']);
+    let stem = trimmed.split('.').next().unwrap_or(trimmed);
+    let upper = stem.to_ascii_uppercase();
+    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && matches!(upper.as_bytes()[3], b'1'..=b'9'))
 }
 
 /// Compile a plan, verifying the bytes a reader would serve against the binding first.
@@ -984,22 +1049,274 @@ pub fn compile_plan_within(
     outcome
 }
 
-/// Whether bounded source fallback exists yet. It does not.
+/// Whether bounded source fallback exists. It does, through [`compile_plan_composed_against`].
 ///
 /// This is not a feature flag and must never become one. It exists so a guard can assert the REASON
 /// a non-complete coverage state refuses, rather than only that it refuses.
 ///
-/// Today `ExtractionGap` refuses because there is nothing to fall back TO. The acceptance criterion
-/// gives that state two exits — bounded source fallback, or `negative_claim_unverified` — and only
-/// the second is built. "Refused after trying the source" and "refused because no source path
-/// exists" are identical in the outcome and are different facts.
+/// **What it claims, precisely (K on #608): the fallback PATH exists in the runtime — not that a
+/// producer is present.** The only entry point is `compile_plan_composed_against<R: SourceReader>`,
+/// which takes the `BoundedSourceSearch` channel as an INJECTED parameter; no variant constructs a
+/// producer internally. So "true" is correct on this branch: the path is real and the caller
+/// supplies the channel. #622 adds a workspace-backed IMPLEMENTATION of the port, not the path; the
+/// production CONSUMER that calls this in production arrives with #223/#224 (plan Tasks 007/008). A
+/// presence-of-producer signal, if ever wanted, is a DIFFERENT symbol derived from the injected
+/// channel — not this `const fn`.
 ///
-/// **When fallback lands, flip this to `true` and the guard that reads it goes RED on purpose.**
-/// That is the point: an assertion that survives the change which makes it meaningless is the one
-/// nobody looks at again. Whoever builds the fallback is then forced to rewrite that arm
-/// deliberately, asserting that the fallback was ATTEMPTED, instead of inheriting a green cell that
-/// silently changed meaning underneath them.
+/// **The scope of what landed, stated precisely, because this constant is read as a claim.**
+/// `compile_plan_composed` consults the channel when a claim's coverage is non-complete. A
+/// ZERO-hit response never reaches that point: `compile_plan` maps empty+non-complete to
+/// `negative_claim_unverified` before composition begins. So `ExtractionGap` with no hits still
+/// refuses without trying the source — the fallback exists for hits-without-the-required-path,
+/// and the zero-hit exit is still unbuilt. Whoever builds THAT rewrites the arm again.
 #[must_use]
 pub const fn source_fallback_available() -> bool {
-    false
+    true
+}
+
+/// Compile a plan with a bounded source channel available to non-complete coverage (#219).
+///
+/// **This is a CONTRACT AMENDMENT, declared as one.** `compile_plan` reads the coverage state
+/// only when the index returned nothing, so today a partial search that returned the WRONG hits
+/// is indistinguishable from one that returned the right ones: zero-hits and
+/// hits-without-the-required-path are different failure modes and only the first had an exit.
+/// Here `Partial` — which a best-effort provider reports on EVERY call — licenses one bounded
+/// consultation of the source channel, whose paths JOIN the claim.
+///
+/// `Complete` never consults: a complete search has nothing to fall back from, and since the
+/// live provider is best-effort by construction, an unconditional consult would put a
+/// workspace walk in every compile.
+///
+/// **The reader and the limits are REQUIRED, not offered** (Codex on #608, second round):
+///
+/// - A readerless overload existed and let any caller compose the channel's CURRENT bytes onto
+///   an older binding by simply not asking whether the workspace moved. Deleting it is the fix;
+///   documenting the hole at its signature — which the overload did — was the hole with a label.
+/// - The composed path ran the index half through the unbounded `compile_plan`, so a flooding
+///   index response that `compile_plan_within` refuses could still buy composition. The index
+///   half now inherits the caller's `DeclaredLimits`, and the COMPOSED claim re-enters the
+///   result ceiling after the union — a bound checked before an append is not a bound on the
+///   appended result.
+///
+/// The channel's typed failure is RETURNED beside the outcome: `Unavailable` (wire a channel)
+/// and `BoundExceeded` (narrow the query or raise a bound) send an operator in opposite
+/// directions, and the channel is EVIDENCE, not authority — its failure leaves the index's own
+/// claim standing.
+pub fn compile_plan_composed_against<R: crate::ports::SourceReader + ?Sized>(
+    binding: &SnapshotBinding,
+    response: &IndexResponse,
+    reader: &R,
+    channel: &dyn crate::ports::BoundedSourceSearch,
+    terms: &[String],
+    bounds: &crate::ports::SourceSearchBounds,
+    limits: &DeclaredLimits,
+) -> (RetrievalOutcome, Option<crate::ports::SourceSearchError>) {
+    // BEFORE anything else: a workspace that moved makes the channel's current bytes and the
+    // index's older claim two different subjects.
+    if reader.current_snapshot() != binding.repo_snapshot {
+        return (
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::IndexStale,
+            },
+            None,
+        );
+    }
+    // DECLARED staleness outranks a budget refusal (Codex #608). A response that is BOTH stale
+    // AND over-budget must send the caller to REINDEX (`IndexStale`), never to trim the query
+    // (`ArtifactTooLarge`): stale coordinates are wrong regardless of payload size, and
+    // `compile_plan_within` applies the limits first, so a stale-and-large response would be
+    // masked as merely large. Checked here, before the limits, so the staleness signal wins.
+    if response.coverage == CoverageState::Stale {
+        return (
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::IndexStale,
+            },
+            None,
+        );
+    }
+    // The index half is compiled UNDER the caller's declared limits (Codex on #608): a stale
+    // binding or an escaping path invalidates the response outright, and a flooding response is
+    // refused here exactly as it would be on the uncomposed path.
+    let outcome = compile_plan_within(binding, response, limits);
+    // A refusal is not a licence: staleness, an escaping path or a crossed limit invalidates the
+    // response, and no evidence is gathered against an invalid response.
+    let RetrievalOutcome::Claim { hits, coverage } = outcome else {
+        return (outcome, None);
+    };
+    // The economic seal: only a non-complete search has something to fall back from. This is the
+    // one branch that keeps a workspace walk out of every compile.
+    if coverage == CoverageState::Complete {
+        return (RetrievalOutcome::Claim { hits, coverage }, None);
+    }
+    // A DECLARED stale coverage has already refused above, before the limits, so the composition
+    // below only ever runs on a non-complete, non-stale claim (Codex #608 moved the check up: a
+    // stale-AND-over-budget response must read as stale, which `compile_plan_within` would have
+    // masked as merely large).
+
+    // The QUERY is bounded at the trust boundary, before any channel is invoked (Codex #608):
+    // `terms` come from an untrusted plan, a channel searches each scanned file once per term, so
+    // an oversized term slice — or overlong terms — scales the work as `files x terms` under every
+    // corpus ceiling. Refused as a source-side `BoundExceeded` (the index claim stands, the query
+    // crossed a ceiling), enforced HERE so it holds for every `BoundedSourceSearch` and not only
+    // the implementor that caps its own input.
+    // COUNT first, O(1), before summing bytes (Codex #608): an oversized term slice would
+    // otherwise be walked in full by the `.sum()` before the count ceiling it should have stopped
+    // is even consulted — the traversal the bound exists to prevent, run to compute the bound.
+    if terms.len() > bounds.max_terms {
+        return (
+            RetrievalOutcome::Claim { hits, coverage },
+            Some(crate::ports::SourceSearchError::BoundExceeded),
+        );
+    }
+    // Bytes summed only over the already-count-bounded slice.
+    let term_bytes: u64 = terms.iter().map(|term| term.len() as u64).sum();
+    if term_bytes > bounds.max_term_bytes {
+        return (
+            RetrievalOutcome::Claim { hits, coverage },
+            Some(crate::ports::SourceSearchError::BoundExceeded),
+        );
+    }
+    let search_result = channel.search(terms, bounds);
+    // Freshness re-checked the INSTANT the search returns, gating EVERY post-search path out of
+    // here rather than only the success path (Codex #608). The pre-check ages while a bounded
+    // walk runs, and a workspace edited mid-search makes even a FAILING (`Unavailable` /
+    // `BoundExceeded`) or an over-result search's index claim describe a snapshot that no longer
+    // exists — the earlier fix rechecked only after a successful union, so a slow failing search
+    // still exposed stale coordinates. Rechecking before the match means a moved workspace
+    // refuses `IndexStale` whatever the search did. The residual window (between the channel's
+    // last read and this call) is unchanged and still declared; closing it needs the search to
+    // carry the snapshot it ran over (receipt-boundary, #655).
+    if reader.current_snapshot() != binding.repo_snapshot {
+        return (
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::IndexStale,
+            },
+            None,
+        );
+    }
+    let found = match search_result {
+        Ok(found) => found,
+        Err(reason) => return (RetrievalOutcome::Claim { hits, coverage }, Some(reason)),
+    };
+    // The channel's own result ceiling is enforced HERE, over what it actually returned, for
+    // the same reason `compile_plan_within` re-checks the index's bounds: a flooding producer
+    // is the threat the bound exists for, so asking IT to respect the limit is not a bound at
+    // all (Codex on #608). The index's claim stands — the channel is evidence, not authority —
+    // and the over-bound response carries the same typed reason a refusing channel would have
+    // carried, so the operator hears "the source side crossed a ceiling" either way.
+    if found.len() as u64 > u64::from(bounds.max_results) {
+        return (
+            RetrievalOutcome::Claim { hits, coverage },
+            Some(crate::ports::SourceSearchError::BoundExceeded),
+        );
+    }
+    // The channel's RAW payload is bounded BEFORE canonicalization, on BOTH bytes and tokens
+    // (Codex #608). `canonical_hit` trims trailing slashes, so `"a"` followed by hundreds of `/`
+    // shrinks toward one byte and the post-union byte/token checks never see the flood — but the
+    // enormous string was already allocated and scanned to get there, and its token estimate can
+    // exceed `max_tokens` even when `max_bytes` is permissive. The aggregate raw size is refused
+    // the instant the search returns, before any per-path canonicalisation or set construction,
+    // the same posture as the result-count ceiling: the index claim stands, the operator hears
+    // `BoundExceeded`.
+    // The AGGREGATE of both received payloads, not the source alone (Codex #608): the index half
+    // already spent part of `max_bytes`/`max_tokens`, so giving the source a fresh full ceiling
+    // lets index+source together exceed the declared budget (40 bytes of index + a 50-byte source
+    // path under a 64-byte limit, both passing independently). The raw index hits and summary are
+    // added in, so the ceiling bounds everything the caller received before any canonicalization.
+    let index_raw: u64 = response
+        .hits
+        .iter()
+        .map(|hit| hit.len() as u64)
+        .sum::<u64>()
+        + response
+            .summary
+            .as_ref()
+            .map_or(0, |summary| summary.len() as u64);
+    let raw_bytes: u64 = index_raw + found.iter().map(|hit| hit.len() as u64).sum::<u64>();
+    if raw_bytes > limits.max_bytes || raw_bytes.div_ceil(4) > u64::from(limits.max_tokens) {
+        return (
+            RetrievalOutcome::Claim { hits, coverage },
+            Some(crate::ports::SourceSearchError::BoundExceeded),
+        );
+    }
+    // A channel hit carries NO line suffix — `BoundedSourceSearch` promises paths only — so ANY
+    // colon in a source hit is illegal, and the index's `:<digits>` line-suffix exception must NOT
+    // apply to it (Codex #608). `is_repository_relative` strips a trailing all-digit suffix, so it
+    // would accept `src/lib.rs:123` (a numeric NTFS alternate-data-stream selector on Windows) by
+    // reducing it to `src/lib.rs`. The channel is held to the stricter rule here, before that
+    // shared check runs.
+    if found.iter().any(|hit| hit.contains(':')) {
+        return (
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch,
+            },
+            None,
+        );
+    }
+    // SAME SHAPE, SECOND HALF (K's #608 P1). `compile_plan` validates every hit before building
+    // a claim and states the invariant plainly: "nothing escaping ever reaches a reader". That
+    // sentence was true of the INDEX's hits and false of the channel's, which joined the claim
+    // unvalidated. The channel is another untrusted producer of paths, so it meets the same
+    // check, and an escaping path refuses the WHOLE claim rather than being quietly dropped --
+    // dropping it would leave a claim built from a producer that just tried to escape.
+    // Validated on the CANONICAL form for the same reason as the index half (Codex #608 P1):
+    // `canonical_hit` widened to strip a leading `./`, so a raw hit that passed the escape check
+    // could canonicalize into an absolute path that then joined the claim. Validate what is
+    // admitted.
+    if found
+        .iter()
+        .any(|hit| !is_repository_relative(&canonical_hit(hit)))
+    {
+        return (
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::ScopeMismatch,
+            },
+            None,
+        );
+    }
+    // Union, graph FIRST and order preserved; the channel's additions arrive SORTED and deduped
+    // (Codex on #608): the port assigns no ranking semantics to source paths, so a filesystem's
+    // enumeration order must not leak into `Claim.hits` — identical repositories must compose
+    // identical claims on every filesystem. Canonicalised through the same function the index's
+    // own hits go through, so one file named two ways stays one hit.
+    let mut composed = hits;
+    let additions: std::collections::BTreeSet<String> = {
+        let existing: std::collections::BTreeSet<&str> =
+            composed.iter().map(String::as_str).collect();
+        found
+            .iter()
+            .map(|path| canonical_hit(path))
+            .filter(|canonical| !existing.contains(canonical.as_str()))
+            .collect()
+    };
+    composed.extend(additions);
+    // The COMPOSED claim re-enters the caller's result ceiling: `compile_plan_within` bounded
+    // the index's hits, and a union that then grows past the same ceiling would hand the caller
+    // exactly the flood the limit refused (Codex on #608). Refused, never truncated — a silently
+    // truncated union is a partial answer in a complete answer's clothes.
+    if composed.len() as u64 > u64::from(limits.max_results) {
+        return (
+            RetrievalOutcome::Refused {
+                code: DevelopmentRefusalCode::CardinalityViolation,
+            },
+            None,
+        );
+    }
+    // No separate post-union BYTE/TOKEN check: it would be dead (Codex #608 aggregate finding).
+    // The aggregate-raw ceiling above bounds `index_raw + source_raw` BEFORE canonicalization,
+    // and the composed set is (canonical index hits ∪ canonical source additions, deduped) with
+    // no summary — every transform from raw to composed only SHRINKS or removes bytes, so
+    // `composed_bytes <= raw_bytes` always. A post-union byte check could therefore never fire
+    // after the raw check passed, and a check that cannot gate is worse than none. The result
+    // COUNT is different — the union can grow past `max_results` even when each half is under it —
+    // so that ceiling stays, just above.
+    // Coverage is NOT promoted. The composed set may be larger and the search is still the
+    // best-effort search the provider reported -- a union of two incomplete answers is incomplete.
+    (
+        RetrievalOutcome::Claim {
+            hits: composed,
+            coverage,
+        },
+        None,
+    )
 }

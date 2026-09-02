@@ -40,24 +40,44 @@ boundEnforcement:
 pathAdmission:
   requirement: repository-relative
   onEscape: refuse:scope_mismatch
-  refusedShapes:
-    - parent-traversal    # `..` climbing above the root, checked by SEGMENT not by substring
-    - rooted              # /etc/passwd, or a leading backslash
-    - drive-qualified     # C:/... — an escape carrying no `..` at all
+  # ADMISSION IS AN ALLOW-LIST BY FORM, not a deny-list of shapes. The Windows path-semantics class
+  # is open-ended (see Microsoft "Naming Files, Paths, and Namespaces"), so the runtime DEFINES the
+  # legal form positively and refuses everything else. `refusedShapes` below are ILLUSTRATIVE
+  # examples of what the form rejects, not an exhaustive enumeration -- the form is the contract.
+  admittedForm:
+    lineSuffix: optional-trailing-:<digits>   # index hits carry one; every other colon is refused
+    separator: single-forward-slash
+    component: "[A-Za-z0-9._-]+"
+    componentMustNotBe: ["." , "..", "<ends-with-dot>", "<reserved-DOS-device-stem>"]
+  refusedShapes:                              # examples the form excludes, not a closed list
+    - parent-traversal    # `..`, and Win32 spellings that normalize to it (`.. `, `...`)
+    - rooted              # leading `/` or `\`, an empty first component
+    - drive-qualified     # C:/... or C:1 — a `<letter>:` prefix, caught on the raw hit
+    - alternate-stream    # any colon that is not the trailing :line — an NTFS ADS selector
+    - reserved-device     # a component whose stem is a DOS device (NUL/CON/AUX/PRN/COM1-9/LPT1-9)
+    - out-of-charset      # `\`, space, control, non-ASCII, full-width slash, `~`, `$`, `%`, ...
+    - empty-component     # `a//b`, a leading or embedded empty segment
 
 providerSummary:
   authority: none
 
 # DECLARED GAPS, stated because a policy listing only what it enforces reads as complete:
 #
-#   * BOUNDED SOURCE FALLBACK IS NOT BUILT. The acceptance criterion gives non-complete coverage
-#     two exits — bounded source fallback OR negative_claim_unverified — and only the second
-#     exists. So every non-complete state above currently refuses BECAUSE THERE IS NOTHING TO FALL
-#     BACK TO, not because a fallback was attempted and failed. Those read identically in the
-#     outcome and are different facts. `extractionGap` is where it matters most: its repair is to
-#     read the source, which is precisely the exit that does not exist yet.
-#     A guard pins this: the ExtractionGap arm asserts source_fallback_available() is false, so the
-#     day fallback lands that arm goes RED and must be rewritten deliberately.
+#   * BOUNDED SOURCE FALLBACK: THE COMPILE-LAYER PATH IS BUILT; THE PRODUCTION PRODUCER AND
+#     CONSUMER ARE NOT YET. The acceptance criterion gives non-complete coverage two exits —
+#     bounded source fallback OR negative_claim_unverified. The fallback PATH now exists:
+#     `compile_plan_composed_against` consults a `BoundedSourceSearch` channel SUPPLIED BY THE
+#     CALLER (the channel is injected), and `source_fallback_available()` returns `true` to state
+#     that the path exists in the runtime — NOT that a producer is wired. What is not on the main
+#     branch yet: the workspace-backed implementation of the port (`WorkspaceSourceChannel`,
+#     delivered by #622) and the production CONSUMER that calls `compile_plan*` (delivered by
+#     #223/#224, plan Tasks 007/008). Until those land, non-complete states still refuse in
+#     practice because no production caller injects a channel — `extractionGap` is where it matters
+#     most, its repair being to read the source. A ZERO-hit non-complete response never reaches the
+#     channel regardless: `compile_plan` maps empty+non-complete to `negative_claim_unverified`
+#     before composition.
+#     A guard pins the flag: the ExtractionGap arm asserts source_fallback_available() is `true`
+#     (the path exists), so removing the compile-layer path turns that arm RED.
 #
 #   * CAPABILITY RECEIPTS ARE NOT AN INPUT. The acceptance criterion names determinism over
 #     "identical inputs AND capability receipts" — two variables. Only the first is exercised here:

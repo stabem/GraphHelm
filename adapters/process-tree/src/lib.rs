@@ -52,6 +52,27 @@ impl std::fmt::Display for ProcessTreeError {
 
 impl std::error::Error for ProcessTreeError {}
 
+/// A process could not be bound to an identity the reap cannot invalidate, so the caller COULD NOT
+/// ASK rather than got an answer (#621, #680).
+///
+/// **Its own type rather than a third variant of [`ProcessTreeError`]**, and the reason is a
+/// measurement: widening that enum broke `backup.rs`'s exhaustive match, in an extraction whose
+/// contract is that the event store is untouched. Group setup and identity capture are different
+/// concerns with different callers, and one of them had a consumer that proved it.
+///
+/// Never silently downgraded to a bare id: a fallback would let a caller believe it held identity
+/// while holding a number, which is the drift this type exists to prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdentityUnavailable;
+
+impl std::fmt::Display for IdentityUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the process could not be bound to a durable identity")
+    }
+}
+
+impl std::error::Error for IdentityUnavailable {}
+
 /// A handle to the group a child and its descendants belong to.
 ///
 /// Opaque, and one type name on both platforms so callers need no `cfg` of their own. On Unix the
@@ -263,35 +284,35 @@ pub fn terminate(process_id: u32, group: ProcessGroup) {
     }
 }
 
-/// Whether a process id belongs to something still running.
+/// `SYNCHRONIZE` (`0x0010_0000`): the access right that permits WAITING on a handle.
 ///
-/// **Public, and it was the second-most duplicated thing in this move.** It lived in `backup.rs`
-/// behind `cfg(test)`, and `adapters/tool-host` grew an identical pair while #621 was being written
-/// — the author had searched for the precedent of the FIX and not for the precedent of the
-/// INSTRUMENT. One helper, every suite.
-///
-/// **An id is not a process.** Once a child is reaped its id may be recycled, so this answers
-/// "something with this id is running", not "that child is running". A recycle reads as ALIVE, so a
-/// guard built on it fails toward red rather than toward green — which is the only reason it is
-/// usable as an oracle at all.
-/// What a Windows process that has not exited reports as its exit code (`STATUS_PENDING`).
-const STILL_ACTIVE: u32 = 259;
+/// Declared here rather than imported: `windows-sys` exposes it only under
+/// `Win32_Storage_FileSystem`, as a FILE access right, and pulling that feature in for one constant
+/// would widen this crate's surface for no other reason. The value is the documented Win32 one.
+#[cfg(windows)]
+const SYNCHRONIZE: u32 = 0x0010_0000;
 
-/// The decision the Windows query feeds, separated so BOTH directions are testable without an
-/// operating system that fails on demand.
+/// `WAIT_OBJECT_0`: the handle is SIGNALED, which for a process handle means it has exited.
+const WAIT_SIGNALED: u32 = 0;
+/// `WAIT_TIMEOUT`: nothing happened in the interval, so the process is still running.
+const WAIT_STILL_RUNNING: u32 = 258;
+
+/// What a zero-timeout wait on a process handle says about liveness, or `None` when the wait failed.
 ///
-/// **A query that could not decide reads as RUNNING** (L, on #680). The previous form was
-/// `queried && code == STILL_ACTIVE`, so an `OpenProcess` that succeeded followed by a
-/// `GetExitCodeProcess` that failed answered NOT-RUNNING — the one direction this helper's whole
-/// justification says it never takes. A caller asserting "the child is gone" would have passed on a
-/// failure to observe. Reading an undecidable query as running costs nothing and keeps the property.
-/// Compiled on every platform, and unused on the ones whose query it does not describe — declared
-/// here rather than silenced, because the point of hoisting the decision out of the `unsafe` block
-/// is that BOTH platforms' test suites exercise both directions.
-#[cfg_attr(not(windows), allow(dead_code))]
+/// **This replaces reading the exit code, and the reason is a real ambiguity rather than tidiness**
+/// (Codex, on #680). `GetExitCodeProcess` returns 259 both for a process that has NOT exited and for
+/// one that exited WITH 259 — so a child legitimately exiting with that value reads as running
+/// forever. Guarding `fake_tool` against 259 protected that fixture and nothing else: this crate
+/// binds arbitrary executables, and the operator picks the tests runner.
+///
+/// A handle's signaled state has no such overlap. No exit code can imitate it.
 #[must_use]
-fn decide_liveness(query_succeeded: bool, exit_code: u32) -> bool {
-    !query_succeeded || exit_code == STILL_ACTIVE
+fn liveness_from_wait(waited: u32) -> Option<bool> {
+    match waited {
+        WAIT_SIGNALED => Some(false),
+        WAIT_STILL_RUNNING => Some(true),
+        _ => None,
+    }
 }
 
 /// The decision the Unix query feeds.
@@ -306,6 +327,18 @@ fn decide_liveness_from_signal(sent: bool, permission_denied: bool) -> bool {
     sent || permission_denied
 }
 
+/// Whether a process id belongs to something still running.
+///
+/// **Public, and it was the second-most duplicated thing in this move.** It lived in `backup.rs`
+/// behind `cfg(test)`, and `adapters/tool-host` grew an identical pair while #621 was being written
+/// -- the author had searched for the precedent of the FIX and not for the precedent of the
+/// INSTRUMENT. One helper, every suite.
+///
+/// **An id is not a process.** Once a child is reaped its id may be recycled, so this answers
+/// "something with this id is running", not "that child is running". A recycle reads as ALIVE, so a
+/// guard built on it fails toward red rather than toward green -- which is the only reason it is
+/// usable as an oracle at all. A caller that needs process IDENTITY rather than id liveness has to
+/// hold something the reap cannot invalidate; that is not this function.
 #[cfg(unix)]
 #[must_use]
 pub fn process_is_running(process_id: u32) -> bool {
@@ -321,14 +354,26 @@ pub fn process_is_running(process_id: u32) -> bool {
     decide_liveness_from_signal(sent, permission_denied)
 }
 
+/// Whether a process id belongs to something still running.
+///
+/// **Public, and it was the second-most duplicated thing in this move.** It lived in `backup.rs`
+/// behind `cfg(test)`, and `adapters/tool-host` grew an identical pair while #621 was being written
+/// -- the author had searched for the precedent of the FIX and not for the precedent of the
+/// INSTRUMENT. One helper, every suite.
+///
+/// **An id is not a process.** Once a child is reaped its id may be recycled, so this answers
+/// "something with this id is running", not "that child is running". A recycle reads as ALIVE, so a
+/// guard built on it fails toward red rather than toward green -- which is the only reason it is
+/// usable as an oracle at all. A caller that needs process IDENTITY rather than id liveness has to
+/// hold something the reap cannot invalidate; that is not this function.
 #[cfg(windows)]
 #[must_use]
 pub fn process_is_running(process_id: u32) -> bool {
     use windows_sys::Win32::{
         Foundation::CloseHandle,
-        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        System::Threading::{OpenProcess, WaitForSingleObject},
     };
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, process_id) };
     if handle.is_null() {
         // No handle is the ONE undecidable case that reads as absent, and it earns that: the id is
         // gone, or it belongs to something this process may not even ask about -- and on Windows a
@@ -336,38 +381,236 @@ pub fn process_is_running(process_id: u32) -> bool {
         // must not require.
         return false;
     }
-    let mut exit_code = 0_u32;
-    let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) } != 0;
+    let waited = unsafe { WaitForSingleObject(handle, 0) };
     unsafe { CloseHandle(handle) };
-    decide_liveness(queried, exit_code)
+    // A wait that could not decide reads as RUNNING -- the direction rule, unchanged from the
+    // exit-code form it replaces. Wrong toward "still there" costs a red; wrong toward "gone" would
+    // let a caller pass on a failure to observe.
+    liveness_from_wait(waited).unwrap_or(true)
+}
+
+/// A handle on a process that the reap cannot invalidate.
+///
+/// **Why an id is not enough**, and why the answer is not "the window is small": once a child is
+/// reaped its id may be reassigned, so a check against a bare id can observe an unrelated process
+/// and read it as the child still running. That is a FALSE RED, and a false red on an authoritative
+/// gate is still a nondeterministic gate — being wrong in the comfortable direction is a mitigation,
+/// not a property (Codex, on #680).
+///
+/// What removes the nondeterminism is holding something the OS binds to the process rather than to
+/// the number:
+///
+/// - **Windows** — an open handle RESERVES the id: the system will not reassign it while any handle
+///   to that process is held. So the id cannot come to mean something else while this value lives.
+/// - **Linux** — a `pidfd` refers to the process itself. It reports the original's exit and never a
+///   successor's.
+///
+/// # Refusal rather than fallback
+///
+/// Below either floor — a kernel without `pidfd_open`, a Windows process this one may not open, a
+/// Unix that is not Linux — [`ProcessIdentity::capture`] REFUSES. It does not fall back to the bare
+/// id, because a fallback is the `unwrap_or` that turns a known gap into silent drift: the caller
+/// would go on believing it held identity while holding a number. A caller that cannot ask must be
+/// told it cannot ask.
+#[derive(Debug)]
+pub struct ProcessIdentity {
+    process_id: u32,
+    #[cfg(any(windows, target_os = "linux"))]
+    handle: OwnedIdentity,
+}
+
+impl ProcessIdentity {
+    /// The id this identity is bound to. Useful in diagnostics; never as the thing to check.
+    #[must_use]
+    pub fn process_id(&self) -> u32 {
+        self.process_id
+    }
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct OwnedIdentity(isize);
+
+#[cfg(windows)]
+impl Drop for OwnedIdentity {
+    fn drop(&mut self) {
+        // The reservation ends here: after this the id may be reassigned, which is exactly why the
+        // value has to outlive the question a caller asks with it.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct OwnedIdentity(i32);
+
+#[cfg(target_os = "linux")]
+impl Drop for OwnedIdentity {
+    fn drop(&mut self) {
+        unsafe { libc::close(self.0) };
+    }
+}
+
+#[cfg(windows)]
+impl ProcessIdentity {
+    /// # Errors
+    /// [`IdentityUnavailable`] when the process cannot be opened — it is already
+    /// gone, or this process lacks the right to ask about it.
+    pub fn capture(process_id: u32) -> Result<Self, IdentityUnavailable> {
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // SYNCHRONIZE is what lets the handle be WAITED on; QUERY_LIMITED_INFORMATION stays because
+        // holding it is also what reserves the id.
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                0,
+                process_id,
+            )
+        };
+        if handle.is_null() {
+            return Err(IdentityUnavailable);
+        }
+        Ok(Self {
+            process_id,
+            handle: OwnedIdentity(handle as isize),
+        })
+    }
+
+    /// Whether the process this identity names is still running.
+    ///
+    /// Exact, because the handle held since [`capture`](Self::capture) has kept the id from being
+    /// reassigned: a `true` here is the original process and never a successor.
+    ///
+    /// # Errors
+    /// [`IdentityUnavailable`] when the query itself fails — the caller could not
+    /// ask, which is not the same as an answer and must not be recorded as one.
+    pub fn is_running(&self) -> Result<bool, IdentityUnavailable> {
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        let waited = unsafe { WaitForSingleObject(self.handle.0 as _, 0) };
+        liveness_from_wait(waited).ok_or(IdentityUnavailable)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ProcessIdentity {
+    /// # Errors
+    /// [`IdentityUnavailable`] when `pidfd_open` is unavailable (kernels before
+    /// 5.3 answer `ENOSYS`) or refuses.
+    pub fn capture(process_id: u32) -> Result<Self, IdentityUnavailable> {
+        let descriptor = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_open,
+                libc::pid_t::try_from(process_id).map_err(|_| IdentityUnavailable)?,
+                0,
+            )
+        };
+        let descriptor = i32::try_from(descriptor).map_err(|_| IdentityUnavailable)?;
+        if descriptor < 0 {
+            return Err(IdentityUnavailable);
+        }
+        Ok(Self {
+            process_id,
+            handle: OwnedIdentity(descriptor),
+        })
+    }
+
+    /// # Errors
+    /// [`IdentityUnavailable`] when the poll itself fails.
+    pub fn is_running(&self) -> Result<bool, IdentityUnavailable> {
+        // A pidfd becomes READABLE when its process exits, and it refers to the process rather than
+        // to the number -- so this can never answer about a successor.
+        let mut watched = libc::pollfd {
+            fd: self.handle.0,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let polled = unsafe { libc::poll(&raw mut watched, 1, 0) };
+        if polled < 0 {
+            return Err(IdentityUnavailable);
+        }
+        Ok(watched.revents & libc::POLLIN == 0)
+    }
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+impl ProcessIdentity {
+    /// Always refuses on a Unix that is not Linux.
+    ///
+    /// `pidfd_open` is Linux's, and there is no portable equivalent — a bare id would be the
+    /// fallback, and a fallback here is the drift this type exists to prevent. Declared rather than
+    /// approximated: this repository targets Windows and Linux (`AGENTS.md:115`), so the platform
+    /// that cannot answer is one nothing runs on.
+    ///
+    /// # Errors
+    /// Always [`IdentityUnavailable`].
+    pub fn capture(_process_id: u32) -> Result<Self, IdentityUnavailable> {
+        Err(IdentityUnavailable)
+    }
+
+    /// # Errors
+    /// Always [`IdentityUnavailable`]; no value of this type can be constructed.
+    pub fn is_running(&self) -> Result<bool, IdentityUnavailable> {
+        Err(IdentityUnavailable)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{STILL_ACTIVE, decide_liveness, decide_liveness_from_signal};
+    use super::{
+        IdentityUnavailable, ProcessIdentity, WAIT_SIGNALED, WAIT_STILL_RUNNING,
+        decide_liveness_from_signal, liveness_from_wait,
+    };
 
-    /// The direction is the property, so both directions are pinned rather than the happy one.
+    /// The direction is the property, so every outcome is pinned rather than the happy one.
     #[test]
-    fn a_query_that_could_not_decide_reads_as_running() {
-        // The defect L found: this returned false, which is a false DEAD -- a caller asserting
-        // "the child is gone" would have passed on a failure to observe.
-        assert!(
-            decide_liveness(false, 0),
-            "a failed exit-code query must read as running, never as gone"
+    fn a_wait_that_could_not_decide_reads_as_running() {
+        // The defect L found in the exit-code form: it answered "gone", a false DEAD -- a caller
+        // asserting "the child is gone" would have passed on a failure to observe. `None` is what
+        // the free function turns into "running" and what the identity turns into an error; neither
+        // may turn it into "gone".
+        assert_eq!(
+            liveness_from_wait(0xFFFF_FFFF),
+            None,
+            "WAIT_FAILED must not decide"
         );
-        assert!(
-            decide_liveness(false, STILL_ACTIVE),
-            "a failed query reads as running whatever the untouched buffer happens to hold"
+        assert_eq!(
+            liveness_from_wait(1),
+            None,
+            "an unknown wait code must not decide"
         );
     }
 
     #[test]
-    fn a_query_that_decided_is_believed_in_both_directions() {
-        assert!(decide_liveness(true, STILL_ACTIVE), "still active is alive");
-        assert!(!decide_liveness(true, 0), "a real exit code is gone");
-        assert!(
-            !decide_liveness(true, 1),
-            "a nonzero exit code is still an exit"
+    fn a_wait_that_decided_is_believed_in_both_directions() {
+        assert_eq!(
+            liveness_from_wait(WAIT_SIGNALED),
+            Some(false),
+            "a signaled process handle means the process exited"
+        );
+        assert_eq!(
+            liveness_from_wait(WAIT_STILL_RUNNING),
+            Some(true),
+            "a wait that timed out means it is still running"
+        );
+    }
+
+    /// The ambiguity this replaced, pinned as a property rather than left in prose.
+    ///
+    /// `GetExitCodeProcess` answered 259 for a process that had NOT exited and for one that exited
+    /// WITH 259, so those two states were indistinguishable and the fixture guard covered only
+    /// `fake_tool`. A signaled handle has no such overlap.
+    #[test]
+    fn no_wait_code_means_both_running_and_exited() {
+        assert_ne!(
+            liveness_from_wait(WAIT_STILL_RUNNING),
+            liveness_from_wait(WAIT_SIGNALED),
+            "the two states must be distinguishable, which is the whole reason for the change"
+        );
+        assert_ne!(
+            WAIT_SIGNALED, WAIT_STILL_RUNNING,
+            "and distinguishable at the source, not only after interpretation"
         );
     }
 
@@ -387,5 +630,62 @@ mod tests {
             !decide_liveness_from_signal(false, false),
             "undelivered and not denied is gone"
         );
+    }
+
+    /// Requirement (1): below the floor the instrument REFUSES; it never answers with the id.
+    ///
+    /// Process id 0 cannot be opened on Windows and cannot be signalled meaningfully on Unix, so
+    /// `capture` has nothing to bind to. The property under test is the SHAPE of that outcome: an
+    /// `Err` the caller must handle, rather than a `bool` that quietly means "I used the number
+    /// instead". A fallback here is the `unwrap_or` that turns a known gap into silent drift.
+    #[test]
+    fn an_unbindable_process_refuses_instead_of_falling_back_to_the_id() {
+        let refused = ProcessIdentity::capture(0);
+        // `Err(IdentityUnavailable)` is a unit-struct PATTERN, and it only is one because the type
+        // is imported above. Without that import the same line binds a fresh variable and matches
+        // ANY error -- a pattern that always passes, wearing the shape of one that discriminates.
+        // Clippy is what caught it here; the import is load-bearing rather than tidy.
+        assert_eq!(
+            refused.err(),
+            Some(IdentityUnavailable),
+            "capture must refuse rather than hand back an id-shaped answer"
+        );
+    }
+
+    /// Requirement (2), the half this platform can prove: the identity SURVIVES the reap.
+    ///
+    /// A child is spawned, bound, killed and reaped. The bare id is then free to mean something
+    /// else -- that is the false-red path -- but the held identity still answers, and answers GONE.
+    /// A bare-id check has no way to promise the same after the reap.
+    ///
+    /// **What this cell proves and what it cites.** It proves the binding outlives the process and
+    /// keeps reporting the original. That the OS will not REASSIGN the id while a handle is held is
+    /// a documented Windows guarantee (the reservation is why the handle is held at all) and is not
+    /// proven here: arming it would need to exhaust the id space under churn, which is a stress test
+    /// rather than a cell. On Linux the same property comes from the `pidfd` referring to the
+    /// process rather than the number, and it is CI's Linux leg that exercises it -- the half not
+    /// run here is the half that carries the weight there.
+    #[test]
+    fn a_bound_identity_still_answers_after_the_process_is_reaped() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--this-argument-makes-the-test-binary-exit-immediately")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("a child to bind to");
+        let identity = ProcessIdentity::capture(child.id()).expect("the live child binds");
+        assert_eq!(identity.process_id(), child.id());
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        match identity.is_running() {
+            Ok(alive) => assert!(
+                !alive,
+                "the reaped child must read as gone through its own identity"
+            ),
+            Err(error) => panic!("the identity stopped answering after the reap: {error}"),
+        }
     }
 }

@@ -756,3 +756,125 @@ fn a_cancel_inside_the_last_poll_is_not_recorded_as_a_timeout() {
         blamed_the_clock
     );
 }
+
+/// #621: the child is gone, proved by ASKING THE OS rather than by watching a file go quiet.
+///
+/// The cells above sample a trace file across a wall-clock window. That is what `AGENTS.md:121`
+/// forbids, and the reason it cannot be repaired in place is sharper than the rule: a child that is
+/// alive but DESCHEDULED for the whole window writes nothing and is indistinguishable from a dead
+/// one, because both produce zero bytes. Widening the window makes the flake rarer and the suite
+/// slower, and never makes the oracle able to tell the two apart.
+///
+/// This one asks the operating system. It is deterministic in both directions.
+///
+/// **Its own weakness, and which way it fails.** A process id may be recycled once its process is
+/// reaped, so this proves "nothing with that id is running", not "that child is not running". The
+/// recycle window is the width of one query, and a recycle would make the assertion see a LIVE id
+/// and go red. A guard whose weakness pushes it toward red is the shape to prefer; the alternative
+/// would have been a false green, which is what the file sampling could produce.
+#[test]
+fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().to_path_buf();
+    let trace = root.join("trace.txt");
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+
+    let handle = {
+        let (root, trace, signal) = (root.clone(), trace.clone(), signal.clone());
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &["append-forever".to_owned(), trace.display().to_string()],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    timeout: Duration::from_secs(60),
+                    max_output_bytes: 1024 * 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    // Arrangement: the seam must have BOUND a spawn, and the OS must agree it is running. Without
+    // both, the assertion below would be about a child that never started -- and "no live process"
+    // is trivially true of a process that does not exist.
+    // NOTHING in this loop panics, and that is the shape rather than the style (Codex, on #680).
+    // The first version raised the arrangement failure here, BEFORE `cancel` and `join` — so a
+    // runner slow enough to miss the window left the child and the call thread alive for the whole
+    // 60 s timeout. A cancellation test that leaks a child on its own failure path is the defect it
+    // exists to catch, and it is the third time this family has bitten its own harness.
+    //
+    // The wait polls an observable that ALREADY EXISTS — `spawned_processes()`, which the assertion
+    // reads anyway — rather than a readiness signal added to `CancelSignal` for this test's benefit.
+    // A `Condvar` on a production type, on the funnel every Tier 1 execution passes through, is API
+    // surface bought for a harness; the poll costs nothing anyone else has to know about.
+    const READINESS_POLL: Duration = Duration::from_millis(50);
+    const READINESS_ATTEMPTS: u32 = 400;
+
+    let mut bound = None;
+    let mut unbindable = None;
+    for _ in 0..READINESS_ATTEMPTS {
+        if let Some(observation) = signal.spawned_processes().first().cloned() {
+            match observation.is_running() {
+                Ok(true) => {
+                    bound = Some(observation);
+                    break;
+                }
+                Ok(false) => {}
+                // Below the floor the instrument REFUSES rather than falling back to a bare id, so
+                // this is "I could not ask" -- a broken harness, not an answer, and it must never
+                // be read as either colour.
+                Err(error) => {
+                    unbindable = Some(error);
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(READINESS_POLL);
+    }
+
+    signal.cancel();
+
+    // Read BETWEEN the cancel and the join, and it has to be here: `cancel` promises the reap is
+    // done when it returns, and joining first would wait for the child by another route and hide
+    // exactly the property under test. The question goes through an identity the reap cannot
+    // invalidate, so a recycled id cannot answer it.
+    let liveness = bound
+        .as_ref()
+        .map(|observation| (observation.process_id(), observation.is_running()));
+
+    // Cleanup happens before any verdict, so no failure path below can leave a child behind.
+    let _ = handle.join().expect("the call thread returns");
+
+    if let Some(error) = unbindable {
+        panic!(
+            "HARNESS-BROKE: the child could not be bound to a durable identity ({error}); this \
+             cell cannot decide anything about liveness"
+        );
+    }
+    // An exhausted deadline is HARNESS-BROKE and says so, with the bound named. The arrangement was
+    // never met, which is a statement about this machine rather than about cancellation — colouring
+    // it as a property failure would put a red on the gate for a slow runner, which is the shape the
+    // report named.
+    let Some((process_id, liveness)) = liveness else {
+        panic!(
+            "HARNESS-BROKE: arrangement not met in {:?} — no child was ever observed running, so \
+             nothing here measures a reap and this run decides nothing about cancellation",
+            READINESS_POLL * READINESS_ATTEMPTS
+        );
+    };
+    match liveness {
+        Ok(alive) => assert!(
+            !alive,
+            "cancel returned while process {process_id} was still running: the caller was told the \
+             run stopped when it had not"
+        ),
+        Err(error) => panic!(
+            "HARNESS-BROKE: the identity stopped answering after cancel ({error}); the cell cannot \
+             tell a live child from a dead one"
+        ),
+    }
+}

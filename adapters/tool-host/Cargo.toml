@@ -6,6 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# A REAL dependency, not dev-only, and that is a change from this PR's first shape. The cancellation
+# seam must bind each spawn to an identity the reap cannot invalidate, and the binding happens at
+# spawn time -- in production code. #618 will need this crate here anyway, to kill the tree through
+# the same funnel; making it a dependency now is that direction rather than a detour.
+graphhelm-process-tree = { path = "../process-tree" }
 graphhelm-tool-broker = { path = "../../core/tool-broker" }
 # #543: the production SourceReader implements the runtime port here, in the adapter that
 # already owns disk readers; runtime does not depend back on this crate, so no cycle.

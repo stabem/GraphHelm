@@ -14,6 +14,14 @@ struct CancelState {
     /// Spawns currently inside the poll loop with this signal attached.
     in_flight: std::sync::Mutex<usize>,
     reaped: std::sync::Condvar,
+    /// Every spawn this signal has seen, in order, each bound to a durable identity (#621).
+    ///
+    /// **Drained when each call ends**, not append-only. Holding every entry for the life of the
+    /// host kept one OS handle per completed child — a `pidfd` each on Linux, until `Command::spawn`
+    /// fails with `EMFILE` (Codex, on #680). A caller that already took an entry keeps it alive
+    /// through its own `Arc`, which is how the cancellation cell can still ask after the call has
+    /// let go.
+    observed: std::sync::Mutex<Vec<std::sync::Arc<ObservedSpawn>>>,
 }
 
 /// A stop condition the caller can raise AFTER the child is running (#180).
@@ -90,6 +98,28 @@ impl CancelSignal {
         self.0.raised.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// Every spawn under this signal, in order, each bound to an identity the reap cannot
+    /// invalidate (#621).
+    ///
+    /// **A testability seam, and it is here because the alternative is worse.** The cancellation
+    /// cells used to prove "the child is gone" by sampling a trace file across a wall-clock window,
+    /// which `AGENTS.md:121` forbids and which cannot in principle work: a child that is alive but
+    /// DESCHEDULED for the whole window writes nothing and looks exactly like a dead one. Both
+    /// produce zero bytes, so no oracle built on that file can separate them.
+    ///
+    /// The first version of this returned bare ids, and a bare id is not identity — it may be
+    /// reassigned after the reap, so a check could observe an unrelated process and go red on a
+    /// correct cancellation (Codex, on #680). Each entry now carries a Windows handle or a Linux
+    /// `pidfd`, which the OS binds to the process rather than to the number.
+    #[must_use]
+    pub fn spawned_processes(&self) -> Vec<std::sync::Arc<ObservedSpawn>> {
+        self.0
+            .observed
+            .lock()
+            .map(|observed| observed.clone())
+            .unwrap_or_default()
+    }
+
     /// Register a spawn that has NOT happened yet, or refuse because cancellation already decided
     /// the count was zero.
     ///
@@ -107,7 +137,10 @@ impl CancelSignal {
             return None;
         }
         *count += 1;
-        Some(AttachedSpawn(self))
+        Some(AttachedSpawn {
+            signal: self,
+            recorded: std::cell::RefCell::new(None),
+        })
     }
 
     fn leave(&self) {
@@ -138,6 +171,46 @@ impl std::fmt::Debug for CancelSignal {
             .debug_struct("CancelSignal")
             .field("raised", &self.is_cancelled())
             .finish_non_exhaustive()
+    }
+}
+
+/// One spawn, bound to an identity the reap cannot invalidate (#621, #680).
+///
+/// Not a bare id. An id may be reassigned once its process is reaped, so a check against one can
+/// observe an unrelated process and read it as the child still running — a FALSE RED, and a false
+/// red on an authoritative gate is still a nondeterministic gate. Holding a Windows handle or a
+/// Linux `pidfd` binds the question to the process rather than to the number.
+///
+/// **A capture that failed is RECORDED as failed**, never replaced by the id. A caller that could
+/// not ask must be told it could not ask; substituting the number would be the `unwrap_or` that
+/// turns a known gap into silent drift.
+#[derive(Debug)]
+pub struct ObservedSpawn {
+    process_id: u32,
+    identity: Result<
+        graphhelm_process_tree::ProcessIdentity,
+        graphhelm_process_tree::IdentityUnavailable,
+    >,
+}
+
+impl ObservedSpawn {
+    /// The id this spawn was given. For diagnostics — never the thing to check.
+    #[must_use]
+    pub fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
+    /// Whether this exact process is still running.
+    ///
+    /// # Errors
+    /// [`graphhelm_process_tree::IdentityUnavailable`] when the identity could not
+    /// be taken or the query failed. That is "I could not ask", and a caller must treat it as a
+    /// broken instrument rather than as an answer in either direction.
+    pub fn is_running(&self) -> Result<bool, graphhelm_process_tree::IdentityUnavailable> {
+        self.identity.as_ref().map_or_else(
+            |error| Err(*error),
+            graphhelm_process_tree::ProcessIdentity::is_running,
+        )
     }
 }
 
@@ -329,11 +402,54 @@ pub fn run_verified_in_workspace(
 /// A manual decrement at the end of the function would be wrong on every path that returns before
 /// it, and those paths exist: an unspawnable program, a broken pipe. A cancel waiting on a count
 /// that a failed spawn never decremented would block for the full bound.
-struct AttachedSpawn<'signal>(&'signal CancelSignal);
+struct AttachedSpawn<'signal> {
+    signal: &'signal CancelSignal,
+    /// The entry this registration put in `observed`, so the SAME entry can be taken out again.
+    ///
+    /// A cell, because `record` runs behind `&self` -- the guard is held immutably for the life of
+    /// the call. Single-threaded: only this call touches it.
+    recorded: std::cell::RefCell<Option<std::sync::Arc<ObservedSpawn>>>,
+}
+
+impl AttachedSpawn<'_> {
+    /// Record the child this registration was taken out for (#621).
+    ///
+    /// Separate from `attach` because the registration happens BEFORE the spawn — deliberately, so
+    /// a cancellation cannot decide the count is zero while a child is being created (#609) — and
+    /// the child does not exist until after it. Two steps because the ordering that makes the count
+    /// correct is the ordering that makes the identity late.
+    fn record(&self, process_id: u32) {
+        // The identity is taken HERE, while the child is certainly alive, because that is the only
+        // moment at which the binding can be made -- after the reap there is nothing left to bind
+        // to. A capture that fails is recorded as a failure rather than replaced by the id.
+        let identity = graphhelm_process_tree::ProcessIdentity::capture(process_id);
+        let entry = std::sync::Arc::new(ObservedSpawn {
+            process_id,
+            identity,
+        });
+        if let Ok(mut observed) = self.signal.0.observed.lock() {
+            observed.push(std::sync::Arc::clone(&entry));
+        }
+        *self.recorded.borrow_mut() = Some(entry);
+    }
+}
 
 impl Drop for AttachedSpawn<'_> {
     fn drop(&mut self) {
-        self.0.leave();
+        // The signal RELEASES its own reference when the call ends (Codex, on #680). The first
+        // version kept every entry for the life of the host, so a long drive accumulated one OS
+        // handle per completed child -- on Linux one pidfd each, until `spawn` fails with EMFILE.
+        // The mechanism that made the question answerable was making the answer permanent.
+        //
+        // A caller that already took the entry keeps it alive through its own `Arc`, which is
+        // exactly what the cancellation cell does: it clones before `cancel`, so it can still ask
+        // after the call has finished and let go.
+        if let Some(entry) = self.recorded.borrow_mut().take()
+            && let Ok(mut observed) = self.signal.0.observed.lock()
+        {
+            observed.retain(|held| !std::sync::Arc::ptr_eq(held, &entry));
+        }
+        self.signal.leave();
     }
 }
 
@@ -434,6 +550,13 @@ pub fn run_in_workspace(
     let mut child = command
         .spawn()
         .map_err(|source| HostError::Spawn { source })?;
+
+    // The id, recorded the moment it exists, so a cell can ask about LIVENESS instead of sampling
+    // bytes across a wall-clock window (#621). Nothing in production reads it; the seam exists
+    // because the property "no live child" has no other observer from outside this function.
+    if let Some(attached) = _attached.as_ref() {
+        attached.record(child.id());
+    }
 
     // Stdin is the one per-tool exception to null (a patch travels here). The write runs on
     // its own thread so an input larger than the OS pipe buffer can never wedge this thread

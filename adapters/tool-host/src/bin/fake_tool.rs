@@ -119,6 +119,20 @@ TAIL-SENTINEL
                 .expect("exit-code needs a value")
                 .parse()
                 .expect("an i32");
+            // 259 is STATUS_PENDING, which is what Windows reports as the exit code of a process
+            // that has NOT exited. A liveness check reads it as "still running", so a fixture that
+            // could exit with it would be indistinguishable from a fixture still alive.
+            //
+            // Refused HERE rather than promised in a comment (L, on #680). The seal used to read
+            // "every caller spawns programs that do not exit with 259", which was true of today's
+            // suite and said nothing about the binary — a seal against a corpus rots the moment
+            // somebody adds a caller. This one is a property of `fake_tool` itself.
+            assert_ne!(
+                code, 259,
+                "fake_tool refuses to exit with STATUS_PENDING: a process reporting 259 cannot be \
+                 told apart from one that is still running, and the liveness observer would read \
+                 this fixture as alive forever"
+            );
             std::process::exit(code);
         }
         other => {

@@ -30,6 +30,7 @@ $PinnedSuites = @(
     'gate-stage-reddens.tests.ps1',
     'gate-target-dir.tests.ps1',
     'manifest-name.tests.ps1',
+    'normalize-script-eol.tests.ps1',
     'slot-lock.tests.ps1'
 )
 

@@ -114,8 +114,9 @@ impl ContainedProviderSession {
     ///
     /// # Errors
     /// [`HostError::SnapshotMismatch`] BEFORE any spawn when the pinned copy moved (proven by
-    /// the #544 observable: the funnel's sandbox dirs stay uncreated); otherwise exactly the
-    /// funnel's errors.
+    /// the #544 observable: the funnel's sandbox dirs stay uncreated);
+    /// [`HostError::CaptureLost`] when the run produced bytes no reader could read; otherwise
+    /// exactly the funnel's errors.
     pub fn call(
         &self,
         arguments: &[String],
@@ -142,7 +143,12 @@ impl ContainedProviderSession {
         }
         crate::snapshot::copy_tree(self.snapshot.root(), &serving)?;
         let extra = BTreeMap::new();
-        run_verified_in_workspace(
+        // A capture nobody could read is refused here rather than handed back. This seam returns a
+        // bare `CapturedProcess`, so its consumers -- the provider in `codebase-memory-mcp` and the
+        // benchmark generator -- have no disposition to carry "the bytes are missing"; they read the
+        // exit code and hash what they were given. `ToolHost::invoke` keeps REPORTING the same
+        // condition instead, because a disposition is the right vocabulary there.
+        crate::process::reject_lost_capture(run_verified_in_workspace(
             &self.workspace,
             &self.executable,
             arguments,
@@ -151,6 +157,6 @@ impl ContainedProviderSession {
             stdin_bytes,
             limits,
             cancel,
-        )
+        )?)
     }
 }

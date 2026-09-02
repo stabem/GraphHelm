@@ -237,17 +237,26 @@ fn a_cancelled_call_leaves_no_live_child() {
 
     // ARRANGEMENT CONTROL: the child must really be running and really writing, or "it stopped"
     // is a statement about a process that never started.
+    // The arrangement's own budget, named because the number stopped being arbitrary. Spawning
+    // costs a `CREATE_SUSPENDED` start plus a walk of the thread snapshot since #618 -- the same
+    // design that closes the window a child used to escape the job through -- so the setup pays
+    // real time before the property is even observable. This is SETUP time, not tolerance for the
+    // property: whatever is asserted below fails with its own sentence, never by running out of
+    // this budget.
+    const ARRANGEMENT_POLL: Duration = Duration::from_millis(50);
+    const ARRANGEMENT_ATTEMPTS: u32 = 400;
     let mut grew = false;
-    for _ in 0..100 {
+    for _ in 0..ARRANGEMENT_ATTEMPTS {
         if std::fs::read(&trace).map(|b| b.len()).unwrap_or(0) > 20 {
             grew = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(ARRANGEMENT_POLL);
     }
     assert!(
         grew,
-        "the child never started writing; nothing below measures a cancellation"
+        "the child never started writing within {:?}; nothing below measures a cancellation",
+        ARRANGEMENT_POLL * ARRANGEMENT_ATTEMPTS
     );
 
     signal.cancel();
@@ -317,17 +326,26 @@ fn cancel_returns_only_after_the_child_is_reaped() {
         })
     };
 
+    // The arrangement's own budget, named because the number stopped being arbitrary. Spawning
+    // costs a `CREATE_SUSPENDED` start plus a walk of the thread snapshot since #618 -- the same
+    // design that closes the window a child used to escape the job through -- so the setup pays
+    // real time before the property is even observable. This is SETUP time, not tolerance for the
+    // property: whatever is asserted below fails with its own sentence, never by running out of
+    // this budget.
+    const ARRANGEMENT_POLL: Duration = Duration::from_millis(50);
+    const ARRANGEMENT_ATTEMPTS: u32 = 400;
     let mut grew = false;
-    for _ in 0..100 {
+    for _ in 0..ARRANGEMENT_ATTEMPTS {
         if std::fs::metadata(&trace).map(|m| m.len()).unwrap_or(0) > 20 {
             grew = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(ARRANGEMENT_POLL);
     }
     assert!(
         grew,
-        "the child never started writing; nothing below measures a reap"
+        "the child never started writing within {:?}; nothing below measures a reap",
+        ARRANGEMENT_POLL * ARRANGEMENT_ATTEMPTS
     );
 
     signal.cancel();
@@ -877,4 +895,201 @@ fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
              tell a live child from a dead one"
         ),
     }
+}
+
+/// #618: the kill reaches the TREE, proved on a process the host never had a handle to.
+///
+/// **Why no earlier cell could see this.** Every other fixture is a single process — `sleep`,
+/// `append-forever`, `big-output` — so "the kill reached everything" and "the kill reached the one
+/// thing there was" are the same observation. The gap survived three rounds of cancellation work
+/// because the fixtures could not express it, not because anyone argued it away.
+///
+/// The grandchild reports its OWN id, because the host never held a handle to it: that is the whole
+/// difficulty, and it is why the fixture writes the id to a file instead of the test reading it from
+/// anywhere in the host.
+///
+/// **The CANCELLATION is the trigger, and the choice is about determinism rather than semantics.**
+/// Both stop conditions go through the same two lines, so the subject is identical either way; the
+/// deadline would make the arrangement race a clock, and a cell that fails sometimes teaches people
+/// to re-run instead of to read. #180's cell is still where cancellation-SPECIFIC behaviour lives.
+///
+/// **This is a LINK cell.** Delete the call to `graphhelm_process_tree` from `run_in_workspace` and
+/// it fails; the extracted crate's own tests would still pass. `origin/main` before this change is
+/// exactly that state, which is where its red was measured.
+#[test]
+fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
+    let workspace = tempfile::tempdir().unwrap();
+    // OUTSIDE the workspace: the host removes the workspace after the call, and evidence that
+    // vanishes with the subject cannot be read afterwards.
+    let evidence = tempfile::tempdir().unwrap();
+    let pid_path = evidence.path().join("grandchild.pid");
+
+    // The stop is triggered by READINESS, not by a clock (Codex, on #703). The first version gave
+    // the call a two-second deadline and hoped the fixture had spawned its grandchild and written
+    // the id before it fired; on a loaded machine it may not, and the cell then fails reading a
+    // missing file while the tree kill is perfectly correct -- a red about this code caused by the
+    // harness. A cell that fails sometimes teaches people to re-run instead of to read, and that is
+    // paid once by whoever writes it and forever by everyone else.
+    //
+    // `CancelSignal` fires the SAME kill and reap lines the deadline would, so nothing about the
+    // subject changes: only who decides when.
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+    let handle = {
+        let (root, pid_path, signal) = (
+            workspace.path().to_path_buf(),
+            pid_path.clone(),
+            signal.clone(),
+        );
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &[
+                    "spawn-grandchild".to_owned(),
+                    pid_path.display().to_string(),
+                ],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    // Generous: the deadline must NOT be what stops this call.
+                    timeout: Duration::from_secs(120),
+                    max_output_bytes: 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    // Readiness is the grandchild's id appearing, which is an observable the fixture already
+    // produces. Bounded, and an exhausted bound is HARNESS-BROKE naming the limit rather than a red
+    // about the kill.
+    const READY_POLL: Duration = Duration::from_millis(50);
+    const READY_ATTEMPTS: u32 = 400;
+    let mut reported = None;
+    // The identity is captured HERE, while the grandchild is certainly alive, and held across the
+    // kill. A numeric pid is recyclable: probing it after the kill can report an unrelated
+    // replacement as alive, and killing it then terminates a stranger on a busy host (Codex, on
+    // #703). On Windows an open handle keeps the kernel object -- and therefore the pid -- from
+    // being reused for as long as this binding lives, which is what makes the reap below safe.
+    let mut identity = None;
+    for _ in 0..READY_ATTEMPTS {
+        if let Ok(text) = std::fs::read_to_string(&pid_path)
+            && let Ok(id) = text.trim().parse::<u32>()
+        {
+            identity = Some(graphhelm_process_tree::ProcessIdentity::capture(id));
+            reported = Some(id);
+            break;
+        }
+        std::thread::sleep(READY_POLL);
+    }
+
+    signal.cancel();
+    let captured = handle
+        .join()
+        .expect("the call thread returns")
+        .expect("the call returns a record for the child the cancellation stopped");
+
+    let Some(grandchild) = reported else {
+        panic!(
+            "HARNESS-BROKE: the fixture never reported a grandchild id in {:?}; nothing here \
+             measures a tree kill",
+            READY_POLL * READY_ATTEMPTS
+        );
+    };
+
+    // Read BEFORE the property, and in its own colour. A descendant that escaped the kill holds the
+    // pipes open, so the capture had to abandon its readers — an INSTRUMENT failure, and also the
+    // reason the sabotaged run finishes at all instead of wedging. Sorting it under the property's
+    // red would file "the harness could not read" as "the tree kill failed", and only one of those
+    // two is about this code.
+    //
+    // This wording was briefly replaced by one describing a grace that releases the group early and
+    // keeps what drained. That mechanism was written and measured — 12.34 s against this sabotage,
+    // with a partial capture instead of none — and then destroyed by a `git checkout HEAD --` that
+    // was undoing a sabotage in the same file, because the design was uncommitted and HEAD was the
+    // commit before it. The message edit committed alone, describing code that no longer existed and
+    // reading as the better engineering of the two.
+    //
+    // The design is #708, with both measurements and the refinement it still needs (the grace must
+    // expire on SILENCE rather than elapsed time, or it cuts a descendant that is legitimately still
+    // writing — a tests runner's workers are descendants and their output is the point). The rule
+    // that would have prevented the loss: a sabotage and a fix must never share uncommitted state.
+    // The verdict is TAKEN, then the survivor is cleaned up, and only then is anything asserted
+    // (Codex, on #703). The first version asserted straight away, so on the failure it exists to
+    // detect — a grandchild that outlived the kill — it panicked and left that grandchild sleeping
+    // for its full hour. **A test about leaked processes that leaks a process when it catches one**,
+    // and it is the second time this file has had the shape: the arrangement used to panic before
+    // `cancel` and `join` for the same reason.
+    //
+    // The OS reports the exit; this cell does not sample for it. `TerminateJobObject` returns before
+    // the job's processes have finished exiting and the `join` above waits for the DIRECT child's
+    // reap, so the grandchild's death is genuinely later than this point -- but "later" is an event,
+    // not a duration. A 100 x 50 ms loop turned that into an elapsed-time verdict, and on a loaded
+    // gate it could leave `survived` true for a descendant that exited immediately afterwards: a
+    // false red about the kill, produced by the scheduler (Codex, on #703).
+    //
+    // The patience is generous BECAUSE it is not the mechanism. The wait returns the instant the
+    // process goes, so on the passing path its size costs nothing; it is only reached when the
+    // grandchild really is still there, and the defect this cell detects leaves it sleeping for an
+    // hour. The bound stays only because an unbounded wait would turn a survivor into a suite that
+    // never returns -- a third colour instead of a failure.
+    const REAP_PATIENCE: Duration = Duration::from_secs(30);
+
+    // The verdict comes from the IDENTITY, and from nothing else. Where the platform has none --
+    // `capture` refuses on unix that is not Linux, and on kernels before `pidfd_open` -- this cell
+    // has NO adequate observer and stops saying so, rather than falling back to the pid probe.
+    //
+    // The fallback was mine and it was wrong (Codex, on #703). `kill(pid, 0)` succeeds against a
+    // ZOMBIE, so a grandchild the tree kill correctly killed reads as alive until its adopter reaps
+    // it, and this authoritative gate would fail on the OS's reaping schedule. That is #715, still
+    // open, and judging with an instrument a filed defect says lies is worse than not judging:
+    // AGENTS.md:121 -- "if a promised behavior has no adequate observer, stop with OBSERVER_MISSING".
+    let Some(handle) = identity
+        .as_ref()
+        .and_then(|captured| captured.as_ref().ok())
+    else {
+        panic!(
+            "OBSERVER_MISSING: no ProcessIdentity for the grandchild {grandchild}, and the pid \
+             probe reads a zombie as alive (#715), so this run has no honest way to decide whether \
+             the tree kill worked"
+        );
+    };
+
+    let survived = !handle.wait_until_gone(REAP_PATIENCE).unwrap_or_else(|_| {
+        panic!(
+            "HARNESS-BROKE: the wait on the grandchild's identity failed; this run decides nothing \
+             about the tree kill"
+        )
+    });
+
+    if survived {
+        // Through the IDENTITY, not through the number. This used to shell out to `taskkill /PID`
+        // or `kill -9`, which is safe on Windows -- the held handle reserves the id -- and unsafe on
+        // Linux, where a pidfd does not reserve it: between the liveness answer above and the signal
+        // the number can be reassigned and the kill lands on a stranger. The crate now owns that
+        // asymmetry (Codex, on #703), so this cell no longer has to remember which platform it is
+        // on, and it spawns no process to clean one up.
+        //
+        // Best-effort by design: the verdict is already in `survived`, so a cleanup that fails must
+        // not replace it with a panic about the cleanup.
+        let _ = handle.terminate();
+    }
+
+    // Released only after the reap, because the reap goes through it.
+    drop(identity);
+
+    assert!(
+        !captured.readers_abandoned,
+        "HARNESS-BROKE: reader deadline reached — a descendant still holds the pipe, so this run \
+         captured nothing and decides nothing about the tree kill"
+    );
+
+    assert!(
+        !survived,
+        "the grandchild {grandchild} outlived the kill: `Child::kill` ended the direct child and \
+         left everything it spawned running, reparented and holding whatever the workspace held. \
+         Still alive {:?} after the kill, waited for as an event rather than sampled",
+        REAP_PATIENCE
+    );
 }

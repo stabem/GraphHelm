@@ -374,6 +374,22 @@ fn liveness_from_wait(waited: u32) -> Option<bool> {
     }
 }
 
+/// A `WaitForSingleObject` timeout that can never be `INFINITE`.
+///
+/// `0xFFFFFFFF` is not "the longest wait", it is **no bound at all** -- so a saturating conversion
+/// turns a very large patience into a wait that never returns (Codex, on #703). That is the third
+/// colour this change exists to remove: neither pass nor fail, and no `cargo test` timeout to catch
+/// it. A caller asking for an absurd bound gets the longest FINITE one instead, because being one
+/// millisecond short of a 49-day wait cannot matter to anyone, and hanging forever can.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[must_use]
+fn windows_wait_milliseconds(patience: std::time::Duration) -> u32 {
+    const INFINITE: u32 = u32::MAX;
+    u32::try_from(patience.as_millis())
+        .unwrap_or(INFINITE)
+        .min(INFINITE - 1)
+}
+
 /// The decision the Unix query feeds.
 ///
 /// **`EPERM` means the process EXISTS**: the signal was refused rather than undelivered, which is
@@ -550,6 +566,63 @@ impl ProcessIdentity {
         let waited = unsafe { WaitForSingleObject(self.handle.0 as _, 0) };
         liveness_from_wait(waited).ok_or(IdentityUnavailable)
     }
+
+    /// Block until the process this identity names is gone, or until `patience` elapses.
+    ///
+    /// **The point is that the OS reports the exit, rather than a caller sampling for it.** A poll
+    /// loop turns "did it die" into an elapsed-time question with a granularity attached, and on a
+    /// loaded host the sample can miss an exit that happened between two of them. Here the wait
+    /// returns the instant the process goes, so the bound is only ever reached when it genuinely
+    /// did not (Codex, on #703).
+    ///
+    /// `patience` still exists, and deliberately: an unbounded wait turns a surviving process into a
+    /// suite that never returns, which is a third colour rather than a failure. Reaching the bound
+    /// is evidence, not a timeout to be retried.
+    ///
+    /// Returns whether the process is GONE.
+    ///
+    /// # Errors
+    /// [`IdentityUnavailable`] when the wait itself fails -- the caller could not ask, which is not
+    /// an answer and must not be recorded as one.
+    pub fn wait_until_gone(
+        &self,
+        patience: std::time::Duration,
+    ) -> Result<bool, IdentityUnavailable> {
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        let waited =
+            unsafe { WaitForSingleObject(self.handle.0 as _, windows_wait_milliseconds(patience)) };
+        liveness_from_wait(waited)
+            .map(|running| !running)
+            .ok_or(IdentityUnavailable)
+    }
+
+    /// Kill exactly the process this identity names -- never a tree, and never a successor.
+    ///
+    /// Opening by id is safe HERE and nowhere else: `self` holds a handle, and while it lives the
+    /// id cannot be reassigned, so the id this reopens is the same process it was captured from.
+    /// The capture rights stay `QUERY_LIMITED_INFORMATION | SYNCHRONIZE` -- widening them for every
+    /// caller in order to serve this one would hand out a termination right nobody asked for.
+    ///
+    /// # Errors
+    /// [`IdentityUnavailable`] when the process cannot be opened for termination or the kill is
+    /// refused. A process that has already exited reports as unavailable, which a caller that
+    /// checked [`is_running`](Self::is_running) first will not see.
+    pub fn terminate(&self) -> Result<(), IdentityUnavailable> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_TERMINATE, TerminateProcess,
+        };
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, self.process_id) };
+        if handle.is_null() {
+            return Err(IdentityUnavailable);
+        }
+        let killed = unsafe { TerminateProcess(handle, 1) };
+        unsafe { CloseHandle(handle) };
+        if killed == 0 {
+            return Err(IdentityUnavailable);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -591,6 +664,68 @@ impl ProcessIdentity {
         }
         Ok(watched.revents & libc::POLLIN == 0)
     }
+
+    /// Kill exactly the process this identity names -- never a tree, and never a successor.
+    ///
+    /// Through the `pidfd`, not through the number. A pidfd refers to the PROCESS, so this cannot
+    /// reach a successor; sending to the bare id could, because holding a pidfd does NOT reserve
+    /// the id the way a Windows handle does. That asymmetry is the whole reason this method exists
+    /// rather than callers running `kill` (Codex, on #703): the Windows side was already safe and
+    /// the Linux side was not, and one API hides the difference from every caller.
+    ///
+    /// # Errors
+    /// [`IdentityUnavailable`] when `pidfd_send_signal` is unavailable (kernels before 5.1) or the
+    /// signal is refused.
+
+    /// Block until the process this identity names is gone, or until `patience` elapses.
+    ///
+    /// **The point is that the OS reports the exit, rather than a caller sampling for it.** A poll
+    /// loop turns "did it die" into an elapsed-time question with a granularity attached, and on a
+    /// loaded host the sample can miss an exit that happened between two of them. Here the wait
+    /// returns the instant the process goes, so the bound is only ever reached when it genuinely
+    /// did not (Codex, on #703).
+    ///
+    /// `patience` still exists, and deliberately: an unbounded wait turns a surviving process into a
+    /// suite that never returns, which is a third colour rather than a failure. Reaching the bound
+    /// is evidence, not a timeout to be retried.
+    ///
+    /// Returns whether the process is GONE.
+    ///
+    /// # Errors
+    /// [`IdentityUnavailable`] when the wait itself fails -- the caller could not ask, which is not
+    /// an answer and must not be recorded as one.
+    pub fn wait_until_gone(
+        &self,
+        patience: std::time::Duration,
+    ) -> Result<bool, IdentityUnavailable> {
+        let mut watched = libc::pollfd {
+            fd: self.handle.0,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let milliseconds = i32::try_from(patience.as_millis()).unwrap_or(i32::MAX);
+        let polled = unsafe { libc::poll(&raw mut watched, 1, milliseconds) };
+        if polled < 0 {
+            return Err(IdentityUnavailable);
+        }
+        Ok(watched.revents & libc::POLLIN != 0)
+    }
+
+    pub fn terminate(&self) -> Result<(), IdentityUnavailable> {
+        let sent = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.handle.0,
+                libc::SIGKILL,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+        if sent < 0 {
+            return Err(IdentityUnavailable);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -613,13 +748,32 @@ impl ProcessIdentity {
     pub fn is_running(&self) -> Result<bool, IdentityUnavailable> {
         Err(IdentityUnavailable)
     }
+
+    /// Always [`IdentityUnavailable`]; no value of this type can be constructed.
+    ///
+    /// # Errors
+    /// Always.
+    pub fn terminate(&self) -> Result<(), IdentityUnavailable> {
+        Err(IdentityUnavailable)
+    }
+
+    /// Always [`IdentityUnavailable`]; no value of this type can be constructed.
+    ///
+    /// # Errors
+    /// Always.
+    pub fn wait_until_gone(
+        &self,
+        _patience: std::time::Duration,
+    ) -> Result<bool, IdentityUnavailable> {
+        Err(IdentityUnavailable)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         IdentityUnavailable, ProcessIdentity, WAIT_SIGNALED, WAIT_STILL_RUNNING,
-        decide_liveness_from_signal, liveness_from_wait,
+        decide_liveness_from_signal, liveness_from_wait, windows_wait_milliseconds,
     };
 
     /// The direction is the property, so every outcome is pinned rather than the happy one.
@@ -746,5 +900,154 @@ mod tests {
             ),
             Err(error) => panic!("the identity stopped answering after the reap: {error}"),
         }
+    }
+
+    /// The identity can also ACT, not only observe -- and it acts on the process it names.
+    ///
+    /// **Why the crate owns this instead of a caller running `kill`.** A caller that holds an
+    /// identity and then shells out to `kill <pid>` is safe on Windows, where the held handle
+    /// reserves the id, and unsafe on Linux, where a pidfd does not: between the liveness answer
+    /// and the signal the number can be reassigned, and the signal lands on a stranger. One method
+    /// hides that asymmetry from every caller rather than asking each to remember it (Codex, on
+    /// #703, after the tree-kill cell did exactly the unsafe thing).
+    ///
+    /// The cell proves the ACT reaches its subject. It does not prove the negative -- that no
+    /// unrelated process is ever signalled -- which would need id exhaustion under churn and is a
+    /// stress test rather than a cell. What carries that half is the mechanism: on Linux the signal
+    /// goes through the pidfd, which cannot name a successor at all.
+    /// A child that outlives the cell unless something kills it. Its LIFETIME is what bounds a
+    /// failing run, since no cell here decides by clock: a kill that does nothing is reported when
+    /// the sleeper ends.
+    fn sleeper() -> std::process::Child {
+        if cfg!(windows) {
+            let mut command = std::process::Command::new("ping");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sleep");
+            command.arg("30");
+            command
+        }
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("a long-lived child to bind to")
+    }
+
+    /// `INFINITE` is not a long wait, it is no wait bound at all -- so the conversion must never
+    /// produce it, however absurd the patience.
+    #[test]
+    fn an_oversized_patience_never_becomes_an_unbounded_wait() {
+        for patience in [
+            std::time::Duration::MAX,
+            std::time::Duration::from_millis(u64::from(u32::MAX)),
+            std::time::Duration::from_millis(u64::from(u32::MAX) + 1),
+        ] {
+            let milliseconds = windows_wait_milliseconds(patience);
+            assert_ne!(
+                milliseconds,
+                u32::MAX,
+                "a patience of {patience:?} became INFINITE, which is a hang and not a bound"
+            );
+        }
+    }
+
+    /// The control: ordinary patiences pass through EXACTLY, so the cap above is a cap and not a
+    /// clamp that quietly rewrites every caller's bound.
+    #[test]
+    fn an_ordinary_patience_is_passed_through_unchanged() {
+        assert_eq!(
+            windows_wait_milliseconds(std::time::Duration::from_secs(30)),
+            30_000
+        );
+        assert_eq!(windows_wait_milliseconds(std::time::Duration::ZERO), 0);
+    }
+
+    /// The wait returns as soon as the process goes, and it is the OS that says so.
+    ///
+    /// Paired with the control below, because "gone" from a call that ALWAYS says gone would be
+    /// worth nothing. Together they say the wait discriminates: a killed process reports gone well
+    /// inside a generous bound, and a living one reports still-here at a short one.
+    #[test]
+    fn the_wait_returns_when_the_process_goes_and_not_before() {
+        let mut sleeper = sleeper();
+        let identity = ProcessIdentity::capture(sleeper.id()).expect("the live child binds");
+
+        // THE CONTROL, first and on the same subject: a process that is running is not reported
+        // gone. Short on purpose -- this bound is expected to be reached.
+        let still_here = !identity
+            .wait_until_gone(std::time::Duration::from_millis(200))
+            .expect("the wait answers");
+
+        // And the control needs its own control, because the subject is MORTAL. `sleeper()` ends on
+        // its own eventually, so a host that descheduled this thread long enough would have the
+        // wait correctly report an exit and this cell blame `wait_until_gone` for it (Codex, on
+        // #703). Asking the child whether it is still there removes the time assumption entirely:
+        // if it ended by itself, the ARRANGEMENT failed and there is nothing here to conclude.
+        if let Some(status) = sleeper.try_wait().expect("the sleeper can be asked") {
+            panic!(
+                "HARNESS-BROKE: the sleeper ended on its own ({status}) before the control ran, so \
+                 nothing here measures whether a running process is reported as gone"
+            );
+        }
+
+        assert!(still_here, "a running sleeper was reported as gone");
+
+        identity
+            .terminate()
+            .expect("the identity kills its own process");
+
+        // Generous on purpose: this bound must NOT be reached, so its size costs nothing on the
+        // path that matters and only bounds a genuine failure.
+        let gone = identity
+            .wait_until_gone(std::time::Duration::from_secs(30))
+            .expect("the wait answers after the kill");
+        let status = sleeper.wait().expect("the sleeper is reaped");
+
+        assert!(gone, "the wait did not report a killed process as gone");
+        assert!(
+            !status.success(),
+            "the sleeper exited successfully, so nothing killed it and this cell measured nothing"
+        );
+    }
+
+    #[test]
+    fn an_identity_terminates_the_process_it_names() {
+        let mut sleeper = sleeper();
+
+        let identity = ProcessIdentity::capture(sleeper.id()).expect("the live child binds");
+        assert!(
+            identity.is_running().expect("the identity answers"),
+            "ARRANGEMENT: the sleeper must be running, or nothing below measures a kill"
+        );
+
+        identity
+            .terminate()
+            .expect("the identity kills its own process");
+
+        // NO CLOCK. `TerminateProcess` and `SIGKILL` are both asynchronous, so a polling window is
+        // an elapsed-time assertion about an event the OS reports exactly (Codex, on #703): on a
+        // loaded runner a fixed window can expire while the kill was working perfectly, and the
+        // gate then fails for the scheduler's reasons. `wait` returns when the process is gone.
+        let status = sleeper.wait().expect("the sleeper is reaped");
+
+        // But waiting ALONE would be vacuous, and that is the trap inside the obvious fix. A sleeper
+        // nothing killed exits when its own sleep ends; `wait` returns just the same, and the
+        // identity then reports it gone -- a cell that passes whether or not `terminate` did
+        // anything. The exit STATUS separates the two: a killed process is never a success, and the
+        // sleeper's own completion is always exit 0.
+        assert!(
+            !status.success(),
+            "the sleeper exited successfully, which is what it does when nothing kills it -- \
+             `terminate` did not reach it"
+        );
+
+        assert!(
+            !identity
+                .is_running()
+                .expect("the identity keeps answering after the kill"),
+            "the identity still reports the sleeper as running after it was reaped"
+        );
     }
 }

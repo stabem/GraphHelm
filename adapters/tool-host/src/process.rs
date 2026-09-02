@@ -36,20 +36,23 @@ struct CancelState {
 ///
 /// # What it does NOT reach, and the reasons are not the same
 ///
-/// **Descendants.** [`Child::kill`] ends the direct child; a grandchild it spawned survives and is
-/// reparented (Codex, #609). Worse than a leak: a grandchild that inherited stdout or stderr keeps
-/// those pipes open, so the reader joins below block after the direct child is already reaped — the
-/// failure shows up as a wedged caller rather than as a cancellation that did not take. Closing it
-/// means a Windows job object or a Unix process group, which is platform work this change does not
-/// carry. Tracked as #618.
+/// **Descendants are REACHED now (#618), and this paragraph used to say the opposite.** The kill
+/// goes through `graphhelm_process_tree`: a process group on Unix, a kill-on-close job object on
+/// Windows, with the child started suspended there so the job is assigned before it can spawn
+/// anything outside it. `Child::kill` ended the direct process and left everything it started
+/// reparented and running — and a descendant that inherited stdout or stderr held those pipes open,
+/// so the reader joins below blocked after the direct child was already reaped. The leak was the
+/// visible half; the wedged caller was the one that mattered.
 ///
-/// This comment used to add that nothing in this repository reaches the gap today, on the grounds
-/// that `fake_tool` spawns nothing and the builtin tools run `git` directly. That was a measurement
-/// of the FIXTURES wearing the clothes of a claim about the FUNNEL. `validate_program_name` checks
-/// the shape of a name only — it is not an allowlist — and `ToolCall::Tests` runs
-/// `config.tests_runner`, an operator-supplied program whose whole job is to spawn other processes.
-/// `TestsTool` in production is the shape that reaches this, and it reaches it every time; the
-/// repository's own tests do not only because they set `tests_runner` to `fake_tool`.
+/// The claim is a LINK: delete the calls to that crate from `run_in_workspace` and
+/// `the_deadline_kills_the_whole_tree_and_not_only_the_direct_child` fails, while the crate's own
+/// tests keep passing.
+///
+/// An earlier version of this comment also said nothing in this repository reached the gap, because
+/// `fake_tool` spawned nothing and the builtin tools run `git` directly. That was a measurement of
+/// the FIXTURES wearing the clothes of a claim about the FUNNEL: `validate_program_name` checks the
+/// shape of a name only, and `ToolCall::Tests` runs `config.tests_runner`, an operator-supplied
+/// program whose whole job is to spawn other processes.
 ///
 /// **Workspace management.** `workspace.rs` runs `git` directly rather than through
 /// [`run_in_workspace`], for the reason written there: provisioning has no workspace to run inside
@@ -242,6 +245,17 @@ pub struct CapturedProcess {
     /// and anything that only asks "was anything cut" keeps working unchanged.
     pub truncated: bool,
     pub timed_out: bool,
+    /// Whether the capture gave up waiting for a reader (#618).
+    ///
+    /// SEPARATE from `truncated`, deliberately. Truncation means a cap was reached and the bytes
+    /// past it were dropped on purpose; this means the bytes could not be READ AT ALL, because
+    /// something other than the child still held the pipe. Folding the two into one flag would make
+    /// a deliberate cut indistinguishable from a lost capture, which is the shape #177 existed to
+    /// undo one field over.
+    ///
+    /// It should never be true once the kill reaches the whole tree. If it is, something escaped
+    /// the process group or the job object, and the flag is the only place that says so.
+    pub readers_abandoned: bool,
     /// Whether a raised [`CancelSignal`] is what stopped this child (#609, Codex).
     ///
     /// `timed_out = expired && !cancelled` removes the WRONG cause from the record; it does not
@@ -281,6 +295,13 @@ pub enum HostError {
     /// running.
     #[error("the executable does not match its pin")]
     ExecutableMismatch { expected: String, actual: String },
+    /// The child could not be placed in a killable process group (#618). `rule` is a fixed name,
+    /// never OS text.
+    ///
+    /// Refused rather than run: a child outside its group cannot be killed as a tree, and returning
+    /// a record for it would advertise a guarantee this call could not keep.
+    #[error("the child could not be placed in a process group: {rule}")]
+    ProcessGroup { rule: &'static str },
     /// The host's cancellation signal was already raised when this call asked to spawn (#609).
     /// Refused rather than spawned-then-killed: `cancel` waits only for the children it knows
     /// about, so one created after it returned would outlive the guarantee it had just given.
@@ -290,6 +311,36 @@ pub enum HostError {
     /// values — re-pin or investigate, never read anyway.
     #[error("the index snapshot does not match its pin")]
     SnapshotMismatch { expected: String, actual: String },
+    /// The capture gave up on a reader, so the bytes this call would report were never read
+    /// (#618). `rule` is a fixed name, never OS text.
+    ///
+    /// Refused rather than returned, and ONLY on the seams that have no way to say it otherwise.
+    /// `ToolHost::invoke` reports the same condition as `GHTOOL013_CAPTURE_LOST`, because a
+    /// disposition is exactly the vocabulary for "the call happened and here is what we know".
+    /// A consumer holding a bare `CapturedProcess` has no such vocabulary: it reads `exit_code`,
+    /// hashes the bytes, and an unread `stderr` hashes to the digest of zero bytes -- evidence
+    /// that the tool printed nothing, rather than the absence it actually is.
+    #[error("the capture could not be read: {rule}")]
+    CaptureLost { rule: &'static str },
+}
+
+/// Refuse a capture whose readers were abandoned; pass every other capture through unchanged.
+///
+/// The one place this decision is made for consumers that receive a `CapturedProcess` directly.
+/// It is a FUNCTION rather than an inline `if` because the condition it discriminates cannot be
+/// produced on a correct build -- `readers_abandoned` is only ever true when something escaped
+/// the process group -- so the only way to test the decision without sabotaging the tree kill is
+/// to hand it the value.
+///
+/// # Errors
+/// [`HostError::CaptureLost`] when the capture reports abandoned readers.
+pub fn reject_lost_capture(captured: CapturedProcess) -> Result<CapturedProcess, HostError> {
+    if captured.readers_abandoned {
+        return Err(HostError::CaptureLost {
+            rule: "a reader was abandoned, so these bytes were never read",
+        });
+    }
+    Ok(captured)
 }
 
 /// The fixed inheritance allowlist. Everything else the parent holds — passphrases, tokens,
@@ -299,6 +350,37 @@ pub enum HostError {
 /// side). Note the contrast with the 05b gateway's allowlist, which deliberately keeps the
 /// host `HOME`/`APPDATA` because official CLIs own their own auth: a tool workspace has no
 /// auth of its own to keep, so Tier 1 is stricter by design.
+/// The shortest drain a loaded host can still be expected to finish in.
+///
+/// A floor, not a target. Without one, a child that ran all the way to its deadline would leave zero
+/// drain, and every timed-out call would start reporting capture losses caused by nothing but the
+/// arithmetic.
+const MINIMUM_DRAIN: Duration = Duration::from_secs(1);
+
+/// When the readers must stop draining: the invocation's OWN deadline, floored.
+///
+/// Two wrong versions came before this one, and the second was mine (Codex, on #703, twice).
+///
+/// A fixed twenty seconds was wrong in both directions at once: a two-second call could overshoot
+/// its deadline by twenty, and a two-minute call would cut a descendant still legitimately writing
+/// at twenty. Deriving the budget from `limits.timeout` fixed those and kept the deeper error --
+/// it started a FRESH clock, so a child that ran for nearly its whole deadline and then left a pipe
+/// held could take almost TWICE the timeout to return, and the escape was reported only after the
+/// caller's entire budget with no ceiling above it.
+///
+/// Reusing the deadline removes both. The drain ends when the invocation was always going to end,
+/// so the total is bounded by the timeout the caller chose plus the floor -- never a multiple of it.
+///
+/// This is still NOT the whole fix, and the remaining gap is the one a clock cannot close: the right
+/// bound expires on SILENCE rather than on elapsed time. A tests runner's workers are descendants
+/// and their output IS the point, so a drain that ends while bytes are still arriving cuts a
+/// legitimate capture no matter which instant is chosen. That needs the readers to report progress
+/// rather than only a result -- #708's design, and the same protocol change #726 needs.
+#[must_use]
+fn drain_deadline(invocation_deadline: Instant, now: Instant) -> Instant {
+    invocation_deadline.max(now + MINIMUM_DRAIN)
+}
+
 const INHERITED: &[&str] = &[
     "PATH",
     "PATHEXT",
@@ -547,9 +629,31 @@ pub fn run_in_workspace(
         None => None,
     };
 
+    // #618: the child is prepared to be killed as a TREE, not alone. On Unix this puts it in its
+    // own process group; on Windows it starts SUSPENDED so the job object can be assigned before it
+    // runs — a child that ran first could spawn descendants outside the job, which is the hole.
+    graphhelm_process_tree::configure(&mut command);
+
     let mut child = command
         .spawn()
         .map_err(|source| HostError::Spawn { source })?;
+
+    // Assigned immediately, and on Windows this also RESUMES the suspended child. Failing here
+    // leaves a child that cannot be killed as a tree, so the call refuses rather than proceeding
+    // with a weaker guarantee than it advertises — and the child is reaped on the way out.
+    let mut group = match graphhelm_process_tree::create(&child) {
+        Ok(group) => group,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(HostError::ProcessGroup {
+                rule: match error {
+                    graphhelm_process_tree::ProcessTreeError::JobSetup => "job_setup",
+                    graphhelm_process_tree::ProcessTreeError::ProcessResume => "process_resume",
+                },
+            });
+        }
+    };
 
     // The id, recorded the moment it exists, so a cell can ask about LIVENESS instead of sampling
     // bytes across a wall-clock window (#621). Nothing in production reads it; the seam exists
@@ -574,7 +678,11 @@ pub fn run_in_workspace(
     let cap = limits.max_output_bytes;
     let stdout_pipe = child.stdout.take().expect("stdout was piped");
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
+    // Each reader ANSWERS THROUGH A CHANNEL rather than a join handle, so the wait for it can be
+    // bounded. A thread blocked in `read` cannot be interrupted from outside, so the only way to
+    // stop waiting on one is to stop listening -- which is what the deadline below does.
     let reader = |mut pipe: Box<dyn Read + Send>| {
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             // #177 tail half: keep the HEAD *and* the TAIL, eliding the middle.
             //
@@ -657,8 +765,12 @@ pub fn run_in_workspace(
                 head
             };
             let truncated = elided > 0;
-            (kept, truncated)
-        })
+            // A closed receiver means the caller stopped listening -- it reached the reader deadline
+            // and moved on. Nothing to report and nothing to fail: this thread is the abandoned
+            // one, and it ends here rather than outliving the call with an answer nobody wants.
+            let _ = sender.send((kept, truncated));
+        });
+        receiver
     };
     let stdout_reader = reader(Box::new(stdout_pipe));
     let stderr_reader = reader(Box::new(stderr_pipe));
@@ -678,7 +790,15 @@ pub fn run_in_workspace(
                 // two differ only in `timed_out`, because a cancelled call did not run out of
                 // time -- recording it as a timeout would put a false cause in the record.
                 if expired || cancelled {
-                    let _ = child.kill();
+                    // #618: the TREE, not the child. `Child::kill` ends the direct process and
+                    // leaves anything it spawned reparented and running — and a descendant that
+                    // inherited stdout or stderr holds those pipes open, so the reader joins below
+                    // block after the direct child is already reaped. The leak was the visible
+                    // half; the wedged caller was the one that mattered.
+                    graphhelm_process_tree::terminate(
+                        child.id(),
+                        graphhelm_process_tree::for_thread(group),
+                    );
                     let status = child.wait().ok();
                     // Cancellation WINS when both are true (Codex, #609). A cancel raised inside
                     // the last poll interval before the deadline leaves both conditions true at
@@ -702,8 +822,35 @@ pub fn run_in_workspace(
     if let Some(writer) = stdin_writer {
         let _ = writer.join();
     }
-    let (stdout, stdout_truncated) = stdout_reader.join().unwrap_or_default();
-    let (stderr, stderr_truncated) = stderr_reader.join().unwrap_or_default();
+    // BOUNDED, and the bound is a backstop rather than a normal path (#618). A reader thread blocks
+    // in `read` until every writer end of the pipe closes -- and on Windows a descendant receives
+    // the parent's pipe handles even when its own stdio is null, because `Command` spawns with
+    // `bInheritHandles = TRUE`. So a descendant that escaped the kill holds the pipe open and this
+    // join never returns: the call wedges, and a wedged call is worse than a failed one because
+    // nothing reports it.
+    //
+    // With the tree kill above, that should not happen. This deadline firing is therefore a SIGNAL
+    // that something escaped the job, and `readers_abandoned` carries it rather than being folded
+    // into `truncated` -- fusing two causes into one flag is the defect #177 was about.
+    let reader_deadline = drain_deadline(deadline, Instant::now());
+    let mut readers_abandoned = false;
+    let mut collect = |receiver: std::sync::mpsc::Receiver<(Vec<u8>, bool)>| {
+        let remaining = reader_deadline.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(remaining) {
+            Ok(answer) => answer,
+            Err(_) => {
+                readers_abandoned = true;
+                (Vec::new(), false)
+            }
+        }
+    };
+    let (stdout, stdout_truncated) = collect(stdout_reader);
+    let (stderr, stderr_truncated) = collect(stderr_reader);
+
+    // Released after the readers, never before: on Windows the job object carries
+    // `KILL_ON_JOB_CLOSE`, so closing it while a descendant still holds a pipe would kill that
+    // descendant out from under a reader that is mid-read. The order is the whole safety of it.
+    graphhelm_process_tree::close(&mut group);
 
     Ok(CapturedProcess {
         exit_code: exit_status.and_then(|status| status.code()),
@@ -714,6 +861,7 @@ pub fn run_in_workspace(
         truncated: stdout_truncated || stderr_truncated,
         timed_out,
         cancelled: was_cancelled,
+        readers_abandoned,
     })
 }
 
@@ -726,4 +874,56 @@ fn elision_marker(elided: u64) -> Vec<u8> {
 "
     )
     .into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MINIMUM_DRAIN, drain_deadline};
+    use std::time::{Duration, Instant};
+
+    /// The defect this replaced: the drain used to start a fresh clock, so a call that spent almost
+    /// all of its budget and then hit a held pipe could take nearly TWICE its timeout to return.
+    /// Reusing the invocation deadline bounds the total at the deadline itself.
+    #[test]
+    fn a_child_that_exits_early_drains_only_until_the_original_deadline() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(120);
+        // The child exited at once, so `now` here is near the start of the budget.
+        let drain_ends = drain_deadline(deadline, now);
+        assert_eq!(
+            drain_ends, deadline,
+            "the drain ran past the deadline the caller chose"
+        );
+    }
+
+    /// And the floor, which is what stops the reuse from degenerating: a child that ran ALL the way
+    /// to its deadline leaves zero remaining budget, and without the floor every timed-out call
+    /// would report a capture loss produced by the arithmetic rather than by an escaped process.
+    #[test]
+    fn a_child_that_used_its_whole_budget_still_gets_the_floor() {
+        let deadline = Instant::now();
+        let now = deadline + Duration::from_millis(5);
+        assert_eq!(drain_deadline(deadline, now), now + MINIMUM_DRAIN);
+    }
+
+    /// The bound the reviewer asked for, stated as the property rather than as an example: the
+    /// total can never be a MULTIPLE of the caller's timeout, only the timeout plus the floor.
+    #[test]
+    fn the_total_never_exceeds_the_timeout_plus_the_floor() {
+        let start = Instant::now();
+        for timeout in [
+            Duration::from_millis(50),
+            Duration::from_secs(2),
+            Duration::from_secs(120),
+        ] {
+            let deadline = start + timeout;
+            // Worst case for the total: the child exits at the very last instant of its budget.
+            let drain_ends = drain_deadline(deadline, deadline);
+            assert!(
+                drain_ends <= deadline + MINIMUM_DRAIN,
+                "a {timeout:?} call could run until {:?} past its deadline",
+                drain_ends - deadline
+            );
+        }
+    }
 }

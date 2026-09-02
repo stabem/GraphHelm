@@ -11,6 +11,10 @@
 //!   directory, exit 0
 //! - `cwd`: print the current directory, exit 0
 //! - `sleep`: sleep 3600 s (the host must kill it)
+//! - `spawn-grandchild <path>`: spawn `sleep` as a CHILD OF THIS CHILD, write its process id to
+//!   `<path>`, then sleep. The fixture for #618: every other mode is a single process, so none of
+//!   them can observe whether a kill reached a tree or only its root. The grandchild reports its
+//!   own id because the host never had a handle to it.
 //! - `append-forever <path>`: append a line to <path> every 5 ms, forever. The mirror of
 //!   `sleep` for CANCELLATION (#180): `sleep` proves a child was killed by observing that the
 //!   CALL returned, which a caller can fake by abandoning the handle. This one leaves a trace
@@ -71,6 +75,39 @@ fn main() {
                 // defect's grain cannot see the defect.
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
+        }
+        "spawn-grandchild" => {
+            // The fixture for #618: this process spawns ANOTHER one and reports its id, so a test
+            // can ask about a process the host never had a handle to. `append-forever` and `sleep`
+            // are both single processes by construction and cannot observe a tree kill at all --
+            // which is why the descendant gap survived every cell until this one.
+            let path = arguments.next().expect("spawn-grandchild needs a path");
+            // Never waited on, DELIBERATELY: the whole point is a process that outlives its parent
+            // and must be reached by something other than this handle. Waiting here would reap the
+            // grandchild before the host's kill could fail to, which is the observation the fixture
+            // exists to make possible.
+            #[allow(clippy::zombie_processes)]
+            let grandchild = std::process::Command::new(std::env::current_exe().expect("own path"))
+                .arg("sleep")
+                .stdin(std::process::Stdio::null())
+                // NOT enough to stop inheritance on Windows, and this comment used to claim it was.
+                // MEASURED: with the tree kill sabotaged, the cell did not fail -- it HUNG, with a
+                // live grandchild, because `Command` spawns with `bInheritHandles = TRUE` and the
+                // parent's pipe handles are inheritable at that moment. Setting the grandchild's own
+                // stdio to null decides what its std handles POINT AT; it does not decide which
+                // handles it receives.
+                //
+                // So this fixture carries BOTH halves of #618 whether it wants to or not: the
+                // descendant survives, and it holds the pipes open so the reader joins never
+                // return. That is the failure mode the issue names, and it is why the cell's red is
+                // a hang rather than an assertion.
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("the grandchild spawns");
+            std::fs::write(&path, grandchild.id().to_string())
+                .expect("the grandchild id is written");
+            std::thread::sleep(std::time::Duration::from_secs(3600));
         }
         "sleep" => {
             std::thread::sleep(std::time::Duration::from_secs(3600));

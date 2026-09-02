@@ -69,6 +69,55 @@ fn refusal_rule(refusal: &BrokerRefusal) -> &'static str {
     }
 }
 
+/// One name for one condition, because it is reported from TWO places and they must not drift:
+/// the disposition below (the funnel was read directly and the call has a verdict to record) and
+/// `HostError::CaptureLost` (a seam that returns the capture itself and can only refuse). Same
+/// defect, same code, so a record search finds both.
+const CAPTURE_LOST_CODE: &str = "GHTOOL013_CAPTURE_LOST";
+
+/// Which disposition a captured run records, in the order the four conditions outrank each other.
+///
+/// **A lost capture outranks everything, including a cancellation.** That is a reversal (Codex, on
+/// #703): the chain used to read `cancelled` first, so a cancelled call whose readers were also
+/// abandoned recorded `GHTOOL011_CANCELLED` and threw away the only signal that a process escaped
+/// containment. The escape then looked like an ordinary stop, with fabricated empty buffers hashed
+/// into the record as evidence.
+///
+/// The two are not the same KIND of fact, which is what settles the order. A cancellation is a
+/// cause, and one the reader already knows because they caused it; losing it costs a name. A lost
+/// capture is a statement about whether the bytes in this record mean anything at all, and it is
+/// the only place a containment failure is visible. Wrong cause, recorded: a human reads the log
+/// and recovers. Fabricated evidence, recorded as success: nobody recovers, because nothing looks
+/// wrong.
+///
+/// Cancellation still outranks the deadline for #609's reason -- a cancel raised inside the last
+/// poll interval leaves both true, and blaming the clock invents a fault nobody committed.
+///
+/// `GHTOOL011_CANCELLED` stays narrower than it could be, deliberately: the honest disposition is a
+/// `Cancelled` variant of its own, and adding one is a wire-vocabulary change with its own schema
+/// and vocabulary-agreement guards. `HostError` reaches `TerminalFailure`, which is the right
+/// outcome for a cancellation, so the narrowing costs the NAME and not the behaviour.
+fn disposition_for(captured: &CapturedProcess) -> ToolDisposition {
+    if captured.readers_abandoned {
+        ToolDisposition::HostError {
+            code: CAPTURE_LOST_CODE.to_owned(),
+        }
+    } else if captured.cancelled {
+        ToolDisposition::HostError {
+            code: "GHTOOL011_CANCELLED".to_owned(),
+        }
+    } else if captured.timed_out {
+        ToolDisposition::TimedOut
+    } else {
+        match captured.exit_code {
+            Some(code) => ToolDisposition::Completed { exit_code: code },
+            None => ToolDisposition::HostError {
+                code: "GHTOOL007_EXIT_UNKNOWN".to_owned(),
+            },
+        }
+    }
+}
+
 /// The stable internal code a host failure records (`HostError` → `ToolDisposition::HostError`).
 fn host_error_code(error: &HostError) -> String {
     match error {
@@ -83,6 +132,8 @@ fn host_error_code(error: &HostError) -> String {
         HostError::ExecutableMismatch { .. } => "GHTOOL009_EXECUTABLE_MISMATCH".to_owned(),
         HostError::SnapshotMismatch { .. } => "GHTOOL010_SNAPSHOT_MISMATCH".to_owned(),
         HostError::Cancelled => "GHTOOL011_CANCELLED".to_owned(),
+        HostError::ProcessGroup { .. } => "GHTOOL012_PROCESS_GROUP".to_owned(),
+        HostError::CaptureLost { .. } => CAPTURE_LOST_CODE.to_owned(),
     }
 }
 
@@ -216,37 +267,7 @@ impl ToolHost {
         let executed = self.execute_plan(call, &plan, actor);
         let (disposition, captured) = match executed {
             Ok(captured) => {
-                // Cancellation is read BEFORE the exit code, because a killed child HAS one
-                // (Codex, #609). Falling through recorded a cancelled call as
-                // `Completed { exit_code: 1 }` on Windows — a tool that ran and failed — which
-                // `ToolFailureSemantics::RetryEligible` turns into `RetryableFailure`. The record
-                // then invited a retry of something an operator had deliberately stopped.
-                //
-                // It reuses GHTOOL011_CANCELLED so the code means ONE thing: this call reached no
-                // tool verdict because the host was cancelled — whether the spawn was refused or
-                // the running child was killed. Those were inconsistent before: only the refusal
-                // had a name, and the case that actually matters had none.
-                //
-                // NARROWER than it could be, deliberately. The honest disposition is a
-                // `Cancelled` variant of its own; adding one is a wire-vocabulary change with its
-                // own schema and vocabulary-agreement guards, which is protocol scope rather than
-                // this issue's. `HostError` reaches `TerminalFailure`, which is the right outcome
-                // for a cancellation — you do not retry what an operator stopped — so the
-                // narrowing costs the NAME and not the behaviour.
-                let disposition = if captured.cancelled {
-                    ToolDisposition::HostError {
-                        code: "GHTOOL011_CANCELLED".to_owned(),
-                    }
-                } else if captured.timed_out {
-                    ToolDisposition::TimedOut
-                } else {
-                    match captured.exit_code {
-                        Some(code) => ToolDisposition::Completed { exit_code: code },
-                        None => ToolDisposition::HostError {
-                            code: "GHTOOL007_EXIT_UNKNOWN".to_owned(),
-                        },
-                    }
-                };
+                let disposition = disposition_for(&captured);
                 (disposition, captured)
             }
             Err(error) => (
@@ -263,6 +284,8 @@ impl ToolHost {
                     stderr_truncated: false,
                     truncated: false,
                     timed_out: false,
+                    // Nothing was read because nothing ran.
+                    readers_abandoned: false,
                     // A refusal before the spawn already carries its own code through
                     // `host_error_code`; this arm is about a child that never existed.
                     cancelled: false,
@@ -456,5 +479,76 @@ impl ToolHost {
             }
             IsolationTier::Tier2 | IsolationTier::Tier3 => Err(HostError::TierViolation),
         }
+    }
+}
+
+#[cfg(test)]
+mod disposition_tests {
+    use super::{CAPTURE_LOST_CODE, disposition_for};
+    use crate::process::CapturedProcess;
+    use graphhelm_tool_broker::record::ToolDisposition;
+
+    fn captured(cancelled: bool, readers_abandoned: bool, timed_out: bool) -> CapturedProcess {
+        CapturedProcess {
+            exit_code: Some(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            truncated: false,
+            timed_out,
+            readers_abandoned,
+            cancelled,
+        }
+    }
+
+    /// THE cell: both true at once, which is the case the old order got wrong. A cancellation that
+    /// also lost its capture means a process escaped containment, and recording it as an ordinary
+    /// stop threw that away along with any warning that the empty buffers are fabricated.
+    #[test]
+    fn a_lost_capture_outranks_a_cancellation() {
+        match disposition_for(&captured(true, true, false)) {
+            ToolDisposition::HostError { code } => assert_eq!(code, CAPTURE_LOST_CODE),
+            other => panic!("a cancelled call that lost its capture recorded {other:?}"),
+        }
+    }
+
+    /// The control that keeps the cell above from passing for the wrong reason: a cancellation
+    /// with an intact capture is still a cancellation, so the guard is an ORDER and not a blanket.
+    #[test]
+    fn a_cancellation_that_kept_its_capture_is_still_a_cancellation() {
+        match disposition_for(&captured(true, false, false)) {
+            ToolDisposition::HostError { code } => assert_eq!(code, "GHTOOL011_CANCELLED"),
+            other => panic!("an ordinary cancellation recorded {other:?}"),
+        }
+    }
+
+    /// The deadline loses to a lost capture for the same reason the cancellation does: a
+    /// `TimedOut` carrying an empty digest reads as "the tool printed nothing before it hung".
+    #[test]
+    fn a_lost_capture_outranks_a_deadline() {
+        match disposition_for(&captured(false, true, true)) {
+            ToolDisposition::HostError { code } => assert_eq!(code, CAPTURE_LOST_CODE),
+            other => panic!("a timed-out call that lost its capture recorded {other:?}"),
+        }
+    }
+
+    /// And the cancellation still outranks the deadline (#609), which the reversal must not undo.
+    #[test]
+    fn a_cancellation_still_outranks_a_deadline() {
+        match disposition_for(&captured(true, false, true)) {
+            ToolDisposition::HostError { code } => assert_eq!(code, "GHTOOL011_CANCELLED"),
+            other => panic!("a cancelled call that also expired recorded {other:?}"),
+        }
+    }
+
+    /// Nothing set: the exit code decides, so the chain above is an exception list and not the
+    /// normal path.
+    #[test]
+    fn an_ordinary_run_records_its_exit_code() {
+        assert!(matches!(
+            disposition_for(&captured(false, false, false)),
+            ToolDisposition::Completed { exit_code: 0 }
+        ));
     }
 }

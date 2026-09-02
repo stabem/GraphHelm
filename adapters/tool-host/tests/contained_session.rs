@@ -249,3 +249,67 @@ fn the_session_identity_round_trips_in_the_record_and_old_records_decode_as_none
     let decoded: ToolCallRecord = serde_json::from_value(old).unwrap();
     assert_eq!(decoded.contained_session, None);
 }
+
+/// A capture the readers could not read must not reach a consumer as a RESULT.
+///
+/// `ToolHost::invoke` has a disposition vocabulary and says `GHTOOL013_CAPTURE_LOST` with it. The
+/// session has none: it hands a `CapturedProcess` straight to whoever called, and the two
+/// consumers that reach the funnel this way -- `codebase-memory-mcp`'s provider and the
+/// development benchmark's generator -- read `exit_code` and hash the bytes. An empty `stderr`
+/// that was never read hashes to the digest of zero bytes and is then indistinguishable from a
+/// tool that printed nothing (Codex, on #703). So this seam REFUSES rather than reports.
+#[test]
+fn a_lost_capture_is_refused_rather_than_returned() {
+    let lost = graphhelm_tool_host::process::CapturedProcess {
+        exit_code: Some(0),
+        stdout: b"a valid response the provider would have trusted".to_vec(),
+        stderr: Vec::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        truncated: false,
+        timed_out: false,
+        readers_abandoned: true,
+        cancelled: false,
+    };
+
+    // The dangerous shape precisely: a SUCCESSFUL exit code and a plausible stdout. Nothing in
+    // the value itself looks wrong, which is why the flag has to be the thing that decides.
+    let refused = graphhelm_tool_host::process::reject_lost_capture(lost);
+
+    match refused {
+        Err(HostError::CaptureLost { .. }) => {}
+        Err(other) => panic!("refused for the wrong reason: {other}"),
+        Ok(captured) => panic!(
+            "a lost capture was returned as a result: exit_code={:?}, stderr={} bytes",
+            captured.exit_code,
+            captured.stderr.len()
+        ),
+    }
+}
+
+/// The other direction, so the guard is not simply "refuse everything": an ordinary capture
+/// passes through UNCHANGED, bytes and all. Without this cell, a `reject_lost_capture` that
+/// returned `Err` on every input would satisfy the test above.
+#[test]
+fn an_ordinary_capture_passes_through_untouched() {
+    let ordinary = graphhelm_tool_host::process::CapturedProcess {
+        exit_code: Some(3),
+        stdout: b"stdout bytes".to_vec(),
+        stderr: b"stderr bytes".to_vec(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        truncated: false,
+        timed_out: false,
+        readers_abandoned: false,
+        cancelled: false,
+    };
+
+    let passed = graphhelm_tool_host::process::reject_lost_capture(ordinary)
+        .expect("a capture that was read is not refused");
+
+    // A non-zero exit code is a RESULT, not a loss: the guard must not confuse "the tool failed"
+    // with "we could not read what the tool said".
+    assert_eq!(passed.exit_code, Some(3));
+    assert_eq!(passed.stdout, b"stdout bytes");
+    assert_eq!(passed.stderr, b"stderr bytes");
+}

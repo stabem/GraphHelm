@@ -29,6 +29,24 @@ pub struct ShellTool;
 /// this slice — exit code IS the contract).
 pub struct TestsTool;
 
+/// Whether a multi-stage tool must stop at its first stage and return THAT capture.
+///
+/// `commit` is the only tool here that runs the funnel twice, and it used to test the first stage's
+/// exit code alone. A `git add -A` that exits 0 while its readers were abandoned then had its
+/// capture DISCARDED and replaced by the second stage's, so a lost capture in the first half could
+/// be recorded as a wholly successful commit (Codex, on #703).
+///
+/// Reachable, and not only in theory: an untrusted repository whose `.gitattributes` selects a
+/// clean filter (`filter.<driver>.clean`) has `git add` spawn that filter, and a descendant of it
+/// holding a pipe is exactly the escape this issue is about.
+///
+/// A stage is final when it FAILED or when its capture was lost. The second is not a lesser case of
+/// the first: an exit code of 0 whose bytes were never read is the more dangerous of the two,
+/// because it looks like success rather than like an error.
+fn first_stage_is_final(captured: &CapturedProcess) -> bool {
+    captured.exit_code != Some(0) || captured.readers_abandoned
+}
+
 /// A synthesized in-process result shaped like a captured child, so every tool produces the
 /// same material for the record: bytes, an exit code, truncation.
 fn in_process(stdout: Vec<u8>, truncated: bool) -> CapturedProcess {
@@ -44,6 +62,8 @@ fn in_process(stdout: Vec<u8>, truncated: bool) -> CapturedProcess {
         stderr_truncated: false,
         truncated,
         timed_out: false,
+        // No pipe and no reader: Tier 0 synthesizes its bytes rather than reading them.
+        readers_abandoned: false,
         // Tier 0 spawns nothing, so no cancellation could have stopped a child here. A
         // measurement about a path with no child, not a default.
         cancelled: false,
@@ -179,7 +199,7 @@ impl RepositoryTool {
             limits,
             cancel,
         )?;
-        if add.exit_code != Some(0) {
+        if first_stage_is_final(&add) {
             return Ok(add);
         }
         run_in_workspace(
@@ -248,5 +268,51 @@ impl TestsTool {
             limits,
             cancel,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_stage_is_final;
+    use crate::process::CapturedProcess;
+
+    fn staged(exit_code: Option<i32>, readers_abandoned: bool) -> CapturedProcess {
+        CapturedProcess {
+            exit_code,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            truncated: false,
+            timed_out: false,
+            readers_abandoned,
+            cancelled: false,
+        }
+    }
+
+    /// THE cell: a first stage that SUCCEEDED and lost its capture. The old test read the exit code
+    /// alone, so this one passed straight through and the second stage's result replaced it.
+    #[test]
+    fn a_successful_first_stage_that_lost_its_capture_is_final() {
+        assert!(first_stage_is_final(&staged(Some(0), true)));
+    }
+
+    /// The control, without which the cell above would be satisfied by a predicate that always
+    /// stops: an ordinary first stage must NOT stop, or the second stage would never run.
+    #[test]
+    fn an_ordinary_first_stage_continues() {
+        assert!(!first_stage_is_final(&staged(Some(0), false)));
+    }
+
+    /// And the case that already worked, kept so the addition cannot quietly remove it.
+    #[test]
+    fn a_failed_first_stage_is_still_final() {
+        assert!(first_stage_is_final(&staged(Some(1), false)));
+    }
+
+    /// A stage with no exit code at all is final too -- unknown is not success.
+    #[test]
+    fn an_unknown_exit_code_is_final() {
+        assert!(first_stage_is_final(&staged(None, false)));
     }
 }

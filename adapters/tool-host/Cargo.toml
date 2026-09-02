@@ -22,5 +22,9 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Authorized workspace dep: O_NOFOLLOW/O_NONBLOCK candidate opens in source_channel.
+libc.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

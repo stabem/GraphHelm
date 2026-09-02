@@ -4257,202 +4257,49 @@ impl Drop for ProcessWatchdog {
     }
 }
 
-#[cfg(unix)]
-#[derive(Clone, Copy)]
-struct ProcessGroup;
+// Process-tree termination moved to `adapters/process-tree` (#618). The bodies that used to sit
+// here are unchanged there; what stays is the CALL and the one place this crate's vocabulary is
+// restated.
+//
+// Why it moved: `adapters/tool-host`'s spawn funnel — the path every Tier 1 execution takes — kills
+// the direct child only, while this file had carried job objects and process groups since the
+// evidence-store milestone. The capability existed and the place that needed it most did not call
+// it. Copying it would have made platform code exist twice, which is the worst kind to have two of.
+//
+// The wrappers below are kept rather than inlined at the ~15 call sites, so this move changes no
+// call site at all and the error mapping lives in exactly one place.
+use graphhelm_process_tree::{ProcessGroup, ProcessTreeError};
 
-#[cfg(unix)]
 fn configure_process_group(command: &mut std::process::Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-    #[cfg(target_os = "linux")]
-    let expected_parent = unsafe { libc::getpid() };
-    #[cfg(target_os = "linux")]
-    unsafe {
-        command.pre_exec(move || {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::getppid() != expected_parent {
-                return Err(std::io::Error::from_raw_os_error(libc::ECHILD));
-            }
-            Ok(())
-        });
-    }
+    graphhelm_process_tree::configure(command);
 }
 
-#[cfg(unix)]
-fn create_process_group(_: &std::process::Child) -> Result<ProcessGroup, BackupError> {
-    Ok(ProcessGroup)
-}
-
-#[cfg(unix)]
-fn process_group_for_thread(group: ProcessGroup) -> ProcessGroup {
-    group
-}
-
-#[cfg(unix)]
-fn close_process_group(_: &mut ProcessGroup) {}
-
-#[cfg(unix)]
-fn terminate_process(process_id: u32, _: ProcessGroup) {
-    if let Ok(process_id) = i32::try_from(process_id) {
-        unsafe {
-            libc::kill(-process_id, libc::SIGKILL);
-        }
-    }
-}
-
-#[cfg(windows)]
-type ProcessGroup = usize;
-
-#[cfg(windows)]
-fn configure_process_group(command: &mut std::process::Command) {
-    use std::os::windows::process::CommandExt;
-    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
-    command.creation_flags(CREATE_SUSPENDED);
-}
-
-#[cfg(windows)]
+/// The extracted crate cannot name `UnavailableStage`, so the mapping is here — and it is the only
+/// semantic surface the extraction touches. Each variant maps to the stage the inline code returned
+/// for exactly the same condition: `JobSetup` for a job object that could not be created,
+/// configured or assigned, `ProcessResume` for an assigned child that could not be resumed.
 fn create_process_group(child: &std::process::Child) -> Result<ProcessGroup, BackupError> {
-    use windows_sys::Win32::{
-        Foundation::CloseHandle,
-        System::{
-            JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-                SetInformationJobObject,
-            },
-            Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE},
-        },
-    };
-    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    if job.is_null() {
-        return Err(unavailable(UnavailableStage::JobSetup));
-    }
-    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    let configured = unsafe {
-        SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            std::ptr::from_ref(&limits).cast(),
-            u32::try_from(std::mem::size_of_val(&limits)).unwrap(),
-        )
-    } != 0;
-    let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, child.id()) };
-    let assigned = !process.is_null() && unsafe { AssignProcessToJobObject(job, process) } != 0;
-    if !process.is_null() {
-        unsafe { CloseHandle(process) };
-    }
-    if !configured || !assigned {
-        unsafe { CloseHandle(job) };
-        return Err(unavailable(UnavailableStage::JobSetup));
-    }
-    if let Err(error) = resume_suspended_process(child.id()) {
-        unsafe { CloseHandle(job) };
-        return Err(error);
-    }
-    Ok(job as usize)
+    graphhelm_process_tree::create(child).map_err(|error| match error {
+        ProcessTreeError::JobSetup => unavailable(UnavailableStage::JobSetup),
+        ProcessTreeError::ProcessResume => unavailable(UnavailableStage::ProcessResume),
+    })
 }
 
-#[cfg(windows)]
-fn resume_suspended_process(process_id: u32) -> Result<(), BackupError> {
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
-        System::{
-            Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
-                Thread32Next,
-            },
-            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
-        },
-    };
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(unavailable(UnavailableStage::ProcessResume));
-    }
-    let mut entry = THREADENTRY32 {
-        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).unwrap(),
-        ..THREADENTRY32::default()
-    };
-    let mut found = unsafe { Thread32First(snapshot, std::ptr::addr_of_mut!(entry)) } != 0;
-    let mut resumed = false;
-    while found {
-        if entry.th32OwnerProcessID == process_id {
-            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
-            if !thread.is_null() {
-                resumed = unsafe { ResumeThread(thread) } != u32::MAX;
-                unsafe { CloseHandle(thread) };
-                if resumed {
-                    break;
-                }
-            }
-        }
-        found = unsafe { Thread32Next(snapshot, std::ptr::addr_of_mut!(entry)) } != 0;
-    }
-    unsafe { CloseHandle(snapshot) };
-    if resumed {
-        Ok(())
-    } else {
-        Err(unavailable(UnavailableStage::ProcessResume))
-    }
-}
-
-#[cfg(windows)]
 fn process_group_for_thread(group: ProcessGroup) -> ProcessGroup {
-    group
+    graphhelm_process_tree::for_thread(group)
 }
 
-#[cfg(windows)]
 fn close_process_group(group: &mut ProcessGroup) {
-    if *group != 0 {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(*group as _) };
-        *group = 0;
-    }
+    graphhelm_process_tree::close(group);
 }
 
-#[cfg(windows)]
 fn terminate_process(process_id: u32, group: ProcessGroup) {
-    use windows_sys::Win32::{
-        Foundation::CloseHandle,
-        System::{
-            JobObjects::TerminateJobObject,
-            Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess},
-        },
-    };
-    if group != 0 {
-        unsafe { TerminateJobObject(group as _, 1) };
-        return;
-    }
-    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
-    if !handle.is_null() {
-        unsafe {
-            TerminateProcess(handle, 1);
-            CloseHandle(handle);
-        }
-    }
+    graphhelm_process_tree::terminate(process_id, group);
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 fn process_is_running(process_id: u32) -> bool {
-    i32::try_from(process_id).is_ok_and(|process_id| unsafe { libc::kill(process_id, 0) } == 0)
-}
-
-#[cfg(all(test, windows))]
-fn process_is_running(process_id: u32) -> bool {
-    use windows_sys::Win32::{
-        Foundation::CloseHandle,
-        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
-    };
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
-    if handle.is_null() {
-        return false;
-    }
-    let mut exit_code = 0_u32;
-    let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) } != 0;
-    unsafe { CloseHandle(handle) };
-    queried && exit_code == 259
+    graphhelm_process_tree::process_is_running(process_id)
 }
 
 fn wait_child(

@@ -15,6 +15,7 @@ members = [
   "core/extension-host",
   "core/tool-broker",
   "adapters/sealed-key-provider",
+  "adapters/process-tree",
   "adapters/postgres-event-store",
   "adapters/model-gateway",
   "adapters/tool-host",

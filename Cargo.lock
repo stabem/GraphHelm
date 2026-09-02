@@ -1090,6 +1090,7 @@ dependencies = [
  "getrandom 0.4.3",
  "graphhelm-events",
  "graphhelm-graph",
+ "graphhelm-process-tree",
  "graphhelm-protocols",
  "hex",
  "libc",
@@ -1101,6 +1102,14 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "zeroize",
+]
+
+[[package]]
+name = "graphhelm-process-tree"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -60,7 +60,7 @@
           "id": "schema/development-envelope",
           "kind": "schema",
           "path": "schemas/development-envelope.schema.json",
-          "sha256": "sha256:148eb7892ffc687d78427879855e053d0a5da3fdf4158bb1c37089a67070ee05",
+          "sha256": "sha256:0daab3948be5699c5cd8d794fc4f1eaf062053ea7c472a863dfa563b32f07222",
           "effects": [],
           "permissions": [],
           "requires": {

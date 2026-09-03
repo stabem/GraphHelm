@@ -270,6 +270,42 @@ impl SnapshotBinding {
 }
 
 wire_vocabulary! {
+    /// Why a bounded source search produced no evidence, as it travels on the wire.
+    ///
+    /// Deliberately two variants and not one: "there is no channel here" and "the channel refused
+    /// to exceed its declared ceiling" send an operator in opposite directions -- wire one up,
+    /// versus raise the bound or narrow the query. Folding them is the flattening #247 records.
+    ///
+    /// **Declared HERE and not in `core/runtime/src/ports.rs`, where the port lives (#724, Codex
+    /// P1 on #745).** The jurisdiction rule above is the reason: this value travels in the
+    /// development envelope, so it belongs to the contract that carries it, and that contract's
+    /// enforcement pair -- schema as authority plus a set-equality guard between the Rust type
+    /// and the schema -- can only be met where the schema is. `core/runtime` re-exports it, so
+    /// every caller keeps the name it already used.
+    ///
+    /// **This is NOT `fallbackOutcome`, and the difference has two owners.**
+    /// `retrieval-coverage-receipt.schema.json` `$defs/fallbackOutcome` is
+    /// `["not_required", "unavailable"]`: the RECEIPT's record of a fallback, owned by the
+    /// receipt boundary (#655), and D-045 states it has no success state. This set is the
+    /// CHANNEL's typed failure at the COMPILE layer, returned beside an outcome that still
+    /// stands -- the channel is evidence, not authority -- which is why `bound_exceeded` exists
+    /// here and has no counterpart there.
+    ///
+    /// The two overlap on `unavailable`, and that overlap was reached by luck rather than by
+    /// derivation: the spelling was chosen from neighbouring snake_case by an author who did not
+    /// know `fallbackOutcome` existed. `the_two_fallback_vocabularies_overlap_on_exactly_one`
+    /// makes the agreement a checked property. It asserts the INTERSECTION and not equality on
+    /// purpose: #655 owns `fallbackOutcome` and may add a member to it legitimately, and a guard
+    /// that fired on that would be firing on correct divergence.
+    SourceSearchError {
+        /// No source channel is wired for this workspace.
+        Unavailable => "unavailable",
+        /// The search would have exceeded a declared bound. NOT a partial answer.
+        BoundExceeded => "bound_exceeded",
+    }
+}
+
+wire_vocabulary! {
     /// What a search actually covered, as a CLOSED set: each state has a DIFFERENT correct response
     /// to a zero result, so a bool or an error channel would destroy the distinction the fallback
     /// decision rests on.
@@ -710,5 +746,56 @@ mod receipt_schema_tests {
             .map(|value| value.wire_name())
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(schema_fallbacks, rust_fallbacks);
+    }
+}
+
+#[cfg(test)]
+mod source_search_error_tests {
+    use super::SourceSearchError;
+
+    /// The two variants, their two spellings, and nothing else in the set.
+    ///
+    /// `every()` is asserted alongside the spellings on purpose. A cell that only checked
+    /// `wire_name()` variant by variant would stay green if a THIRD variant were added without a
+    /// spelling decision -- it would simply never be asked. Pinning the set makes adding a
+    /// variant a change that must be made here too, which is what "closed vocabulary" means.
+    ///
+    /// This pins the macro's output against itself and is NOT the contract guard: `wire_name()`
+    /// and `every()` are generated from one literal list, so comparing them compares that list
+    /// with itself. The schema is the authority, and
+    /// `apps/cli/tests/development_contract_schemas.rs` holds the guard that anchors this set to
+    /// it. Both are needed: this one names the intended spellings, that one proves the schema
+    /// agrees.
+    #[test]
+    fn the_two_channel_failures_have_their_two_spellings() {
+        assert_eq!(SourceSearchError::Unavailable.wire_name(), "unavailable");
+        assert_eq!(
+            SourceSearchError::BoundExceeded.wire_name(),
+            "bound_exceeded"
+        );
+        assert_eq!(
+            SourceSearchError::every(),
+            &[
+                SourceSearchError::Unavailable,
+                SourceSearchError::BoundExceeded
+            ],
+        );
+    }
+
+    /// serde is the THIRD producer of these spellings, and the one the other cells cannot see.
+    ///
+    /// serde is what actually travels. Left to its default naming it would emit the Rust
+    /// identifier (`"Unavailable"`, `"BoundExceeded"`) while `wire_name()` said something else
+    /// -- two serialisers of one closed vocabulary, disagreeing, with every other cell green.
+    #[test]
+    fn serde_emits_the_same_spelling_wire_name_does() {
+        for failure in SourceSearchError::every() {
+            let json = serde_json::to_string(failure).expect("a fieldless enum serialises");
+            assert_eq!(
+                json,
+                format!("\"{}\"", failure.wire_name()),
+                "serde and wire_name disagree for {failure:?}",
+            );
+        }
     }
 }

@@ -64,6 +64,13 @@
         "citation_unresolved"
       ]
     },
+    "sourceSearchFailure": {
+      "description": "Why a bounded source search produced no evidence, carried BESIDE an outcome that still stands: the channel is evidence, not authority. Distinct from retrieval-coverage-receipt.schema.json $defs/fallbackOutcome, which is the receipt's record of a fallback and is owned by the receipt boundary (#655); that set has no success state and no bound-exceeded member. The two overlap on \"unavailable\" only, and that intersection is asserted by a guard rather than left to coincidence.",
+      "enum": [
+        "unavailable",
+        "bound_exceeded"
+      ]
+    },
     "coverageState": {
       "description": "What a search actually covered. CLOSED and never a boolean: each state has a different correct response to a zero result, and any shape that folds them together destroys the distinction the fallback decision is taken on.",
       "enum": [

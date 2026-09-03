@@ -184,18 +184,14 @@ pub struct SourceSearchBounds {
     pub max_term_bytes: u64,
 }
 
-/// Why a bounded source search produced no evidence.
-///
-/// Deliberately two variants and not one: "there is no channel here" and "the channel refused to
-/// exceed its declared ceiling" send an operator in opposite directions -- wire one up, versus
-/// raise the bound or narrow the query. Folding them is the flattening this lane filed as #247.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SourceSearchError {
-    /// No source channel is wired for this workspace.
-    Unavailable,
-    /// The search would have exceeded a declared bound. NOT a partial answer.
-    BoundExceeded,
-}
+// RE-EXPORTED, not declared here (#724, Codex P1 on #745).
+//
+// The vocabulary travels in the development envelope, so `core/protocols/src/development.rs:89`
+// puts it under that contract's jurisdiction: schema as authority plus a set-equality guard
+// between the Rust type and the schema. `core/runtime` cannot carry that pair -- the schema lives
+// with the contract -- so the declaration moved and this is the same type under the name every
+// existing caller already uses. Its cells moved with it, beside the declaration.
+pub use graphhelm_protocols::SourceSearchError;
 
 /// A bounded, workspace-scoped search over SOURCE BYTES — the second evidence channel #219's
 /// acceptance calls the verified source fallback.

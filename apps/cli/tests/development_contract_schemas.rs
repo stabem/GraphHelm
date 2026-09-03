@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use graphhelm_protocols::{
     ArtifactBinding, ArtifactId, CoverageState, DEVELOPMENT_API_MAJOR, DevelopmentEnvelope,
     DevelopmentKind, DevelopmentRefusalCode, DevelopmentScope, OpaqueId, ProjectId,
-    SemanticVersion, SnapshotBinding, WireHash, WorkspaceId, canonical_json,
+    SemanticVersion, SnapshotBinding, SourceSearchError, WireHash, WorkspaceId, canonical_json,
     development_api_version_major, normalise_path_separators, verify_binding,
 };
 
@@ -1006,5 +1006,104 @@ fn serde_and_wire_name_agree_on_every_vocabulary() {
         CoverageState::every(),
         CoverageState::wire_name,
         "CoverageState",
+    );
+}
+
+/// The source-search failure vocabulary agrees between the schema (authoritative) and the type.
+///
+/// The mutation this exists to catch is a RENAME on one side only, which a count comparison
+/// cannot see -- so this asserts set equality and prints the two differences.
+///
+/// It is the guard the type's own cells cannot be: `wire_name()` and `every()` are generated from
+/// one literal list in `wire_vocabulary!`, so comparing them compares that list with itself. This
+/// is what anchors the list to the contract, and it is the enforcement half the jurisdiction rule
+/// at `core/protocols/src/development.rs:89` requires of any closed set travelling in this
+/// envelope.
+#[test]
+fn the_source_search_failure_vocabulary_is_one_set_on_both_sides() {
+    let from_schema = schema_enum(&envelope_schema(), "sourceSearchFailure");
+    let from_type: BTreeSet<String> = SourceSearchError::every()
+        .iter()
+        .map(|failure| failure.wire_name().to_owned())
+        .collect();
+
+    let only_in_schema: Vec<_> = from_schema.difference(&from_type).collect();
+    let only_in_type: Vec<_> = from_type.difference(&from_schema).collect();
+    assert!(
+        only_in_schema.is_empty() && only_in_type.is_empty(),
+        "the source-search failure vocabulary diverged. only in schema: {only_in_schema:?}; only \
+         in the Rust type: {only_in_type:?}. The schema is authoritative; the type follows it."
+    );
+}
+
+/// The vocabulary is APPEND-ONLY, which is a claim about ORDER that set equality cannot make.
+///
+/// A reorder keeps both sides equal as sets, so the cell above stays green through it while every
+/// consumer reading the list positionally silently renumbers. Same reasoning, and same shape, as
+/// `the_refusal_vocabulary_is_in_the_same_order_on_both_sides`.
+#[test]
+fn the_source_search_failure_vocabulary_is_in_the_same_order_on_both_sides() {
+    let from_schema: Vec<String> = envelope_schema()["$defs"]["sourceSearchFailure"]["enum"]
+        .as_array()
+        .expect("$defs/sourceSearchFailure/enum is an array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("$defs/sourceSearchFailure/enum holds a non-string")
+                .to_owned()
+        })
+        .collect();
+    let from_type: Vec<String> = SourceSearchError::every()
+        .iter()
+        .map(|failure| failure.wire_name().to_owned())
+        .collect();
+    assert_eq!(
+        from_schema, from_type,
+        "the source-search failure vocabulary is in a different ORDER on the two sides. Set \
+         equality cannot see this, and a positional consumer renumbers silently."
+    );
+}
+
+/// The two fallback vocabularies overlap on EXACTLY the one member, read from both schemas.
+///
+/// `$defs/sourceSearchFailure` here is the CHANNEL's typed failure at the compile layer;
+/// `retrieval-coverage-receipt.schema.json` `$defs/fallbackOutcome` is the RECEIPT's record of a
+/// fallback, owned by the receipt boundary (#655). They are different sets with different owners,
+/// and they share the spelling `unavailable`.
+///
+/// **That sharing was reached by luck.** The spelling was chosen from neighbouring snake_case by
+/// an author who did not know `fallbackOutcome` existed. An agreement reached that way is not an
+/// agreement: nothing tells the next person the two lists are related, and the day one side is
+/// renamed both stay green. This makes it a checked property.
+///
+/// **INTERSECTION, deliberately not equality.** #655 owns `fallbackOutcome` and may add a member
+/// to it legitimately -- `not_required` already has no counterpart here, and a success state would
+/// be another. A guard asserting equality would fire on that correct divergence, which is a guard
+/// that has to be deleted the first time it speaks.
+///
+/// Both sides are read from the SCHEMAS and neither from a Rust literal: the schemas are the
+/// authority, and a cell that took one side from the type would agree with itself the day the
+/// type and its schema drifted.
+#[test]
+fn the_two_fallback_vocabularies_overlap_on_exactly_one() {
+    let path = extension_dir().join("schemas/retrieval-coverage-receipt.schema.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("receipt schema unreadable at {}: {error}", path.display()));
+    let receipt: serde_json::Value =
+        serde_json::from_str(&text).expect("the receipt schema is JSON");
+
+    let channel = schema_enum(&envelope_schema(), "sourceSearchFailure");
+    let receipt_outcomes = schema_enum(&receipt, "fallbackOutcome");
+    let shared: BTreeSet<_> = channel.intersection(&receipt_outcomes).cloned().collect();
+
+    let expected: BTreeSet<String> = ["unavailable".to_owned()].into_iter().collect();
+    assert_eq!(
+        shared, expected,
+        "the declared overlap between the channel's failure vocabulary ({channel:?}) and the \
+         receipt's fallback outcomes ({receipt_outcomes:?}) changed. One condition spelled two \
+         ways, or two conditions spelled one way, is how these vocabularies drift while both look \
+         correct locally -- and #655 owns the receipt side, so a new member THERE is legitimate \
+         while a new SHARED member is a decision someone has to make on purpose."
     );
 }

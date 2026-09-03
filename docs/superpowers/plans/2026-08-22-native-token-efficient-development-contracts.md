@@ -356,8 +356,16 @@ Existing dependency issues are reused:
   - `apps/cli/tests/development_mcp.rs`
   - `apps/cli/tests/development_api.rs`
 - **Description:** Expose schema-equivalent commands/endpoints/tools for contract resolution,
-  retrieval/context compilation, memory proposal/status transitions, owner presentation, and
-  accounting. CLI, HTTP, and MCP remain adapters over the same Runtime services.
+  context compilation, retrieval plan compilation, memory proposal/status transitions, owner
+  presentation, and accounting. CLI, HTTP, and MCP remain adapters over the same Runtime
+  services.
+
+  **"context compilation" and "retrieval plan compilation" are TWO compilers, not one activity.**
+  They were written here as one phrase, `retrieval/context compilation`, and that phrasing sent a
+  reader grepping for "retrieval" straight past the surface that exists. `context_compiler`
+  (budget fitting and capsule serialisation) is served by `development.compile-context`, shipped.
+  `retrieval::compile_plan_composed_against` is a different compiler with a different vocabulary
+  and has no adapter; it is tracked in #724. Measured in #722.
 - **Acceptance criteria:**
   - Equivalent inputs produce equivalent typed results, diagnostics, and refusals on all surfaces.
   - Per-contribution MCP tokens bind package digest, contribution, actor, tools, effects, and expiry.

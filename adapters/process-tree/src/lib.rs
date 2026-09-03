@@ -24,6 +24,56 @@
 //! refusal when the signal is already raised, per-stream output caps, a disposition to record.
 //! Moving it would be extraction with no second consumer, which is generality bought on
 //! speculation.
+//!
+//! # The two platforms are NOT equally strong, and this crate used to imply they were (#717)
+//!
+//! Everything below is written as one guarantee with two spellings: [`configure`], [`create`],
+//! [`terminate`], [`close`]. The containment underneath them is not symmetric, and a caller reading
+//! the signatures would reasonably assume it is.
+//!
+//! | | Unix | Windows |
+//! |---|---|---|
+//! | the container | a process group | a job object |
+//! | can a descendant leave it? | **YES** — one `setsid` or `setpgid` call | **no** — breakaway needs `CREATE_BREAKAWAY_FROM_JOB` *and* a job that permits it, and this job does not set `JOB_OBJECT_LIMIT_BREAKAWAY_OK` |
+//! | what `close` does | nothing; there is no handle to release | kills the job's remaining MEMBERS (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) |
+//!
+//! **One caveat on the Windows column, because the table would otherwise overstate it** (Codex, on
+//! #746). "Cannot leave" is about breakaway, and there is a second way to be outside a job: never
+//! having joined it. Nothing in this API forces [`configure`] to run before the spawn, and a child
+//! spawned without it runs immediately — so anything IT starts before [`create`] assigns the job is
+//! outside the job, and neither [`terminate`] nor [`close`] reaches it. That is why the suspension in
+//! [`configure`] is load-bearing rather than tidiness, and why `adapters/tool-host`'s funnel calls it.
+//! The Windows advantage is real and it is conditional on that call.
+//!
+//! **The Unix hole fails toward a false GREEN, which is the worse direction.** A descendant that
+//! leaves the group survives `terminate`, and if it also redirects its streams the reader backstop
+//! sees a clean EOF — so the capture looks normal and the record says a tree is gone while it is
+//! not. Tracked as #717, and the code fix is platform work (a PID namespace, a cgroup, or a
+//! supervisor that reaps by subtree) rather than a line.
+//!
+//! ## The inequality has produced two defects that look nothing like each other
+//!
+//! Both found on #703, and they are the argument for declaring it rather than leaving it implicit —
+//! a reader cannot rediscover from the API that these have a common cause:
+//!
+//! 1. **A descendant that escapes the kill** and outlives the call (#717 itself).
+//! 2. **A reader thread that never returns** (#726). When a capture gives up on its readers, the
+//!    caller still runs [`close`]. On Windows that kills the job's remaining MEMBERS — which, when
+//!    [`configure`] ran before the spawn, includes every descendant — so the inherited pipe closes,
+//!    and the blocked reader returns microseconds later; on Unix `close` does nothing, so the
+//!    descendant lives, keeps the pipe, and the thread blocks forever — two stranded threads and
+//!    their buffers per invocation.
+//!
+//! **A doc gap that generates dissimilar defects is a defect generator, not a formatting task.**
+//! Neither of those was findable by reading `terminate`; both were findable by asking what `close`
+//! means on each platform, which is a question the API never invited.
+//!
+//! ## What a caller should therefore assume
+//!
+//! Treat the guarantee as **"the tree is killed unless a descendant deliberately left the group"**,
+//! and on Unix treat a clean capture as evidence about the CHILD rather than about the tree. See
+//! also #715: on Unix a killed-but-unreaped descendant still reads as running, so the liveness
+//! answer has its own asymmetry one layer down.
 
 /// Why a process group could not be established.
 ///
@@ -103,6 +153,11 @@ impl ProcessGroup {
 /// to `SIGKILL` it if this process dies — with a `getppid` check inside `pre_exec` closing the race
 /// where the parent dies between fork and the `prctl`.
 ///
+/// **The Unix grouping is escapable and the Windows one is not** (#717): a descendant calling
+/// `setsid` or `setpgid` leaves the group, while leaving a job object needs a creation flag the job
+/// can refuse. The `PR_SET_PDEATHSIG` above narrows nothing here either — it is set on the DIRECT
+/// child and does not extend to what that child spawns.
+///
 /// On Windows the child starts SUSPENDED, because a job object can only be assigned after the
 /// process exists and a child that ran first could spawn descendants outside the job. [`create`]
 /// resumes it once the assignment holds.
@@ -145,10 +200,30 @@ pub fn for_thread(group: ProcessGroup) -> ProcessGroup {
 }
 
 /// Release the group's handle. A no-op on Unix, which holds none.
+///
+/// **The no-op is not the same act as the Windows one, and the difference is load-bearing** (#717).
+/// There the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so closing it KILLS whatever is still
+/// inside; here there is nothing to close and nothing dies. A caller that treats `close` as cleanup
+/// gets cleanup on one platform and a comment on the other.
+///
+/// The measured consequence is #726: when a capture abandons its readers, `close` still runs. On
+/// Windows the escaped descendant dies, its inherited pipe handle closes, and the blocked reader
+/// thread returns; on Unix it lives, keeps the pipe, and that thread blocks forever.
 #[cfg(unix)]
 pub fn close(_group: &mut ProcessGroup) {}
 
-/// Kill the process and everything it spawned.
+/// Kill the process and everything it spawned **that is still in its process group** (#717).
+///
+/// The qualifier is the whole of the Unix/Windows difference. `kill(-pgid)` reaches the group, and a
+/// descendant that called `setsid` or `setpgid` is no longer in it — one syscall, no privileges
+/// required, and nothing here can observe that it happened. The Windows body has no equivalent hole:
+/// a job object holds everything its members create unless the job itself permits breakaway, and
+/// this one does not.
+///
+/// **It fails toward a false GREEN.** The escapee survives; if it also redirected its streams the
+/// readers see a clean EOF, and the record then says the tree is gone while it is not. That is the
+/// dangerous direction, and it is why the gap is declared here rather than left for a reader to
+/// infer from the absence of a comment.
 #[cfg(unix)]
 pub fn terminate(process_id: u32, _group: ProcessGroup) {
     if let Ok(process_id) = i32::try_from(process_id) {
@@ -313,6 +388,27 @@ fn resume_suspended_process(process_id: u32) -> Result<(), ProcessTreeError> {
     }
 }
 
+/// Release the job handle — **which KILLS the job's remaining members**.
+///
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` makes the handle's lifetime the kill policy, so this is not
+/// merely cleanup: it is a second kill, and callers order it after their readers for that reason.
+///
+/// **The Unix counterpart does none of that** (#717). There a process group has no handle to
+/// release and `close` is a no-op, so a descendant that escaped `terminate` survives this call
+/// instead of dying to it. Written on BOTH bodies deliberately: each is invisible in the other's
+/// rendered documentation, and the reader who most needs to know the two differ is the one reading
+/// only the platform they are on.
+///
+/// The measured consequence is #726: when a capture abandons its readers, `close` still runs. Here
+/// the job's remaining members die, their inherited pipe handles close, and the blocked reader thread
+/// returns within microseconds. On Unix that thread blocks forever.
+///
+/// **"Members", not "everything that ran" — the distinction is real and this doc overstated it once**
+/// (Codex, on #746). Nothing in this API forces [`configure`] to be called before the spawn, and a
+/// child spawned without it runs immediately: anything IT starts before [`create`] assigns the job is
+/// outside the job, and `KILL_ON_JOB_CLOSE` never touches it. Such a process can keep an inherited
+/// pipe end and its reader will not return here either. The funnel in `adapters/tool-host` does call
+/// [`configure`], which is what closes that window for the case #726 measured.
 #[cfg(windows)]
 pub fn close(group: &mut ProcessGroup) {
     if group.0 != 0 {
@@ -321,6 +417,17 @@ pub fn close(group: &mut ProcessGroup) {
     }
 }
 
+/// Kill the process and everything it spawned.
+///
+/// **No qualifier is needed on this platform, and that is the asymmetry** (#717). A job object holds
+/// every process its members create; leaving one requires `CREATE_BREAKAWAY_FROM_JOB` *and* a job
+/// that permits breakaway, and this job does not set `JOB_OBJECT_LIMIT_BREAKAWAY_OK`.
+///
+/// **The Unix counterpart is escapable**: it sends `SIGKILL` to a process group, and one `setsid` or
+/// `setpgid` call takes a descendant out of it — no privileges, and nothing observable. Its
+/// guarantee is therefore "everything it spawned THAT IS STILL IN THE GROUP", and it fails toward a
+/// false GREEN. Said here as well as there because neither body appears in the other's rendered
+/// documentation.
 #[cfg(windows)]
 pub fn terminate(process_id: u32, group: ProcessGroup) {
     use windows_sys::Win32::{

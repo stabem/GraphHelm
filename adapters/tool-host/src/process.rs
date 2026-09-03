@@ -44,9 +44,20 @@ struct CancelState {
 /// so the reader joins below blocked after the direct child was already reaped. The leak was the
 /// visible half; the wedged caller was the one that mattered.
 ///
+/// **On Unix that sentence needs a qualifier, and a caller reading only this page would not know it**
+/// (#717, #748). The two containers are not equally strong: a job object holds everything its
+/// members create, while a process group is left by one `setsid` or `setpgid` call — no privileges,
+/// nothing observable. So the Unix guarantee is "the tree, MINUS anything that deliberately left the
+/// group", and it fails toward a false GREEN: the escapee survives, and if it redirected its streams
+/// the readers below see a clean EOF, so the capture looks normal while the record is wrong. Treat a
+/// clean Unix capture as evidence about the CHILD rather than about the tree. `adapters/process-tree`
+/// carries the full comparison; #748 is the containment work that would remove the qualifier.
+///
 /// The claim is a LINK: delete the calls to that crate from `run_in_workspace` and
-/// `the_deadline_kills_the_whole_tree_and_not_only_the_direct_child` fails, while the crate's own
-/// tests keep passing.
+/// `the_stop_kills_the_whole_tree_and_not_only_the_direct_child` fails, while the crate's own tests
+/// keep passing. (That cell was named `the_deadline_…` until #703 moved its trigger from the deadline
+/// to a `CancelSignal`; this page cited the dead name until #735 — an instruction for falsifying a
+/// claim is worth nothing if the reader runs it and finds nothing.)
 ///
 /// An earlier version of this comment also said nothing in this repository reached the gap, because
 /// `fake_tool` spawned nothing and the builtin tools run `git` directly. That was a measurement of

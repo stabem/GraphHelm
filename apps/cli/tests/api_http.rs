@@ -4,7 +4,7 @@
 //! dependencies (TLS stacks, in reqwest's case) this workspace does not want.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -589,6 +589,221 @@ const CONNECT_BUDGET: Duration = Duration::from_secs(1);
 /// connection), not a claim about the drip-fed case #738 names.
 const CLIENT_IO_HANG_GUARD: Duration = Duration::from_secs(30);
 
+/// The TOTAL budget for one `raw_request`/`post_request` call, independent of
+/// `CLIENT_IO_HANG_GUARD` (#738). The per-read guard resets on every successful syscall, so it
+/// cannot bound a server that keeps trickling data slower than itself but never falls fully
+/// silent -- this constant is the ceiling on the WHOLE request that closes that gap. 1.5x
+/// `CLIENT_IO_HANG_GUARD`: long enough that a request needing one genuinely slow individual read
+/// under real load (the case #716's own n=40 already measured and validated at 30s) still
+/// completes inside it, short enough that the drip cell below is provably caught in bounded time
+/// rather than an arbitrarily large one. Not independently re-measured against a rate -- this is
+/// a NEW axis (total elapsed across possibly several successful reads) the storm study never
+/// varied and does not need to re-validate; `a_slow_drip_server_fails_bounded_by_the_total_
+/// request_deadline_not_forever` is what tests THIS axis, deterministically, not by rate.
+const CLIENT_REQUEST_DEADLINE: Duration = Duration::from_secs(45);
+
+/// The message a total-deadline expiry produces, parametrized rather than reading the production
+/// constants directly (H, #740 review: a test needs to construct its own expected value against a
+/// SMALL deadline, not the real 45s one -- reading `CLIENT_REQUEST_DEADLINE` here would make that
+/// impossible without paying the real budget in wall time on every gate run). Names the TOTAL
+/// deadline specifically and distinctly from a per-read failure's own message
+/// (`harness_broke_error`'s own text never contains this phrase) -- a caller, or a test asserting
+/// on the message, must be able to tell the two apart without guessing.
+///
+/// `bytes_received` is the actual byte count the caller observed, not a claim -- the previous
+/// version of this message asserted "every individual read/write succeeded" unconditionally, which
+/// was true only vacuously when zero reads had happened (Codex, #740 review: the drip cell's own
+/// peer never got a chance to send anything, so this message's own "several successful reads"
+/// claim was never actually witnessed by the test asserting on it). Reporting a real count both
+/// fixes that and gives a caller a way to tell "the deadline fired before any data arrived" (0)
+/// apart from "it fired after genuine progress" (>=1) without re-deriving it.
+///
+/// Counts BYTES, not `read()` syscalls (Codex, #740 review, second round: TCP preserves the byte
+/// stream, not write boundaries -- a client delayed while a peer emits several small writes can
+/// legitimately drain them all in ONE `read()` call, so a syscall count can undercount genuine
+/// progress and flake red on correct code under real scheduling load). A byte count doesn't have
+/// that failure mode: however the data was batched into syscalls, the number of bytes that actually
+/// arrived before the deadline fired is the same real number either way.
+/// `phase` names WHICH of `read_within_deadline`'s (or `check_total_deadline`'s) own checks
+/// produced this error -- distinct call sites, not a free-text label (Codex, #740 review, eighth
+/// round, `:5415`): a test asserting only on `bytes_received` cannot tell "the top-of-loop check
+/// caught it before any read was attempted" apart from "the EOF arm's own re-check caught it after
+/// a real read" -- both can report the same count, so a cell built to exercise ONE specific path
+/// (like the EOF re-check `:707` added) could pass "vacuously," having actually gone through a
+/// DIFFERENT, unrelated-but-also-correct path instead. Asserting on `phase` turns that silent
+/// vacuous green into a loud, investigable one: the wrong phase means the cell's own arrangement
+/// missed its target, not that production code is broken.
+fn total_deadline_error(
+    what: &str,
+    started: Instant,
+    total_deadline: Duration,
+    per_read_guard: Duration,
+    bytes_received: usize,
+    phase: &str,
+) -> std::io::Error {
+    // H, #740 review: "read(s)" was literal parenthesised text, not real pluralization, and the
+    // fixed trailing clause claimed "several successful reads" even when the count is 0 or 1 --
+    // both reachable (a pre-flight `check_total_deadline` call always reports 0; a slow-starting
+    // drip could expire after exactly one byte). Pluralize on the real count instead of asserting
+    // a specific magnitude the message did not observe.
+    let plural = if bytes_received == 1 { "" } else { "s" };
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!(
+            "HARNESS-BROKE: {what} did not complete within its {total_deadline:?} TOTAL request \
+             deadline ({phase}, elapsed {:?}) after {bytes_received} byte{plural} received, each \
+             read individually within its {per_read_guard:?} per-read guard -- the total budget \
+             ran out across that progress rather than any single read stalling on its own (#738). \
+             Not distinguishable from the client side whether that is real load or a server \
+             trickling data on purpose.",
+            started.elapsed()
+        ),
+    )
+}
+
+/// Reads to EOF like `read_to_end`, but bounded by TWO independent, INTERACTING budgets (#738,
+/// #740's correction to the first version here): `total_deadline` for the whole call, and
+/// `per_read_guard` for any ONE `read()` -- but a read that starts just before `total_deadline`
+/// expires must not still be allowed to block for the FULL `per_read_guard` afterwards (H
+/// measured exactly that: checking only BEFORE each read, with the socket's own timeout fixed at
+/// the full per-read value regardless of how little total budget remained, gave a real worst case
+/// of `total_deadline + per_read_guard`, not `total_deadline`). Each iteration re-arms the
+/// socket's own `set_read_timeout` to `min(per_read_guard, time left until total_deadline)` --
+/// shrinking as the total budget runs down -- so the read itself can never overrun past
+/// `total_deadline` by more than its own last, now-tiny, per-read window.
+///
+/// `read_to_end` is one call that loops internally, with no seam to check anything between its
+/// own reads, so a manual loop is what makes this axis checkable (and now enforceable) at all.
+/// `ErrorKind::Interrupted` (EINTR) is retried, not failed -- the same lesson #736's `WouldBlock`
+/// fix already carries: a transient, platform-level interruption is not evidence of anything about
+/// either guard, and `read_to_end`'s own stdlib implementation retries it too.
+fn read_within_deadline(
+    stream: &mut TcpStream,
+    what: &str,
+    started: Instant,
+    total_deadline: Duration,
+    per_read_guard: Duration,
+) -> std::io::Result<Vec<u8>> {
+    let deadline = started + total_deadline;
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 8192];
+    // Counts BYTES actually received, not `read()` syscalls (Codex, #740 review, second round: TCP
+    // preserves the byte stream, not write boundaries -- a delayed reader can drain several small
+    // writes in ONE syscall, so a syscall count can undercount genuine progress under real
+    // scheduling load). This is the witness `total_deadline_error` reports, so a test asserting on
+    // its message can tell "fired before any data arrived" apart from "fired after genuine
+    // progress" without trusting an unverified claim in the string, and without depending on how
+    // the transport happened to batch that progress into syscalls.
+    let mut bytes_received: usize = 0;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(total_deadline_error(
+                what,
+                started,
+                total_deadline,
+                per_read_guard,
+                bytes_received,
+                "checked before starting a read",
+            ));
+        }
+        // `set_read_timeout` returns `Err(InvalidInput)` on a literal zero Duration (does not
+        // panic -- Codex, #740 review, caught a doc comment here that claimed otherwise);
+        // `remaining` is already known non-zero above, but IS allowed to be sub-millisecond, and
+        // this floor then WIDENS the socket's own timeout past what `remaining` actually allowed
+        // (Codex, #740 review, sixth round, `:707`: this is a real widening, not just a defensive
+        // minimum -- see the `Ok(0)` arm below for the one place it matters).
+        let this_read_budget = remaining.min(per_read_guard).max(Duration::from_millis(1));
+        stream.set_read_timeout(Some(this_read_budget))?;
+        match stream.read(&mut buf) {
+            Ok(0) => {
+                // EOF is a successful read, but a peer that closes INSIDE the floor's own widened
+                // window (above) can deliver it after `total_deadline` has genuinely passed --
+                // with no scheduling delay needed at all, purely from `remaining` landing
+                // sub-millisecond at the moment this read was attempted (Codex, #740 review,
+                // sixth round, `:707`). Every other exit from this loop already re-verifies the
+                // deadline before reporting anything (the next iteration's own top-of-loop check
+                // for `Ok(n)`, the error arm's own diagnosis for a timeout) -- EOF was the one
+                // path that returned straight through without it.
+                if Instant::now() >= deadline {
+                    return Err(total_deadline_error(
+                        what,
+                        started,
+                        total_deadline,
+                        per_read_guard,
+                        bytes_received,
+                        "checked at end-of-stream",
+                    ));
+                }
+                return Ok(raw);
+            }
+            Ok(n) => {
+                raw.extend_from_slice(&buf[..n]);
+                bytes_received += n;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                // `this_read_budget < per_read_guard` means `remaining` (not `per_read_guard`) was
+                // the binding constraint on THIS read's socket timeout -- so a timeout here is the
+                // total deadline expiring mid-read, not this one read stalling on its own budget
+                // while total time was still ample. Only a timeout-shaped kind gets this
+                // re-diagnosis; a non-timeout error (e.g. connection reset) is never the deadline's
+                // fault regardless of which budget was smaller, so it still goes to
+                // `harness_broke_error`, which itself passes non-timeout kinds through untouched.
+                let is_timeout = matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                );
+                if is_timeout && this_read_budget < per_read_guard {
+                    return Err(total_deadline_error(
+                        what,
+                        started,
+                        total_deadline,
+                        per_read_guard,
+                        bytes_received,
+                        "checked once a read timed out",
+                    ));
+                }
+                return Err(harness_broke_error(error, what, started, this_read_budget));
+            }
+        }
+    }
+}
+
+/// The write-side half of the total deadline (#738): "total per request" means the WHOLE request,
+/// not only the read half. This is a pre-flight guard ONLY -- it bounds the time BEFORE a write
+/// attempt starts, not the write's own completion, unlike `read_within_deadline`'s loop, which
+/// re-checks and re-arms on every syscall. That asymmetry is disclosed, not hidden (Codex, #740
+/// review, P2): a `write_all` call that itself makes slow partial progress -- possible in general
+/// for a payload larger than the socket send buffer against a peer that drains it slowly -- could
+/// still run past `total_deadline` by up to `per_read_guard`, the same shape #738's read-side
+/// defect had. Accepted here rather than built out to a symmetric write loop because every write
+/// in this suite today is a small, single-syscall payload (a JSON body or a header block, never
+/// streamed) that completes in one `write_all` call well under `per_read_guard` regardless of
+/// load -- the vulnerable case cannot occur with this suite's own current traffic. Filed as #743
+/// (write-side deadline enforcement) rather than built speculatively for a payload shape nothing
+/// here produces.
+fn check_total_deadline(
+    what: &str,
+    started: Instant,
+    total_deadline: Duration,
+    per_read_guard: Duration,
+) -> std::io::Result<()> {
+    if Instant::now() >= started + total_deadline {
+        // No read has been attempted yet at a pre-flight check -- `0` is the real byte count, not
+        // a placeholder.
+        return Err(total_deadline_error(
+            what,
+            started,
+            total_deadline,
+            per_read_guard,
+            0,
+            "checked before writing",
+        ));
+    }
+    Ok(())
+}
+
 /// The libtest thread-count policy this PROCESS is running under -- a MIRROR of libtest's own
 /// three-way precedence, not an observation of a decision already made (H, #736 review: the
 /// earlier name and doc here claimed more than this function does). libtest picks, in order:
@@ -670,7 +885,20 @@ fn this_process_test_concurrency() -> String {
 /// timeout un-recoloured -- reading as a genuine subject failure, the exact opposite of what this
 /// fix exists to prevent -- while every OTHER kind (`ConnectionRefused` included) still passes
 /// through untouched; the two-arm split below stays exactly what the tests prove.
-fn harness_broke_error(error: std::io::Error, what: &str, started: Instant) -> std::io::Error {
+/// `guard` is the ACTUAL per-attempt timeout in effect when `error` was produced, not always
+/// `CLIENT_IO_HANG_GUARD` (#740, found while wiring `read_within_deadline`'s own dynamically
+/// shrunk per-read window through here): a read governed by a SHRUNK socket timeout (the total
+/// deadline's own remaining budget, once it drops below the full per-read guard) still times out
+/// as `TimedOut`/`WouldBlock` same as a full-window one, and a message hardcoding the full guard's
+/// own duration would claim a budget that was never actually in effect for that attempt -- the
+/// same "literal describing a fact it did not observe" defect #736's `test_concurrency` review
+/// closed, one call site over.
+fn harness_broke_error(
+    error: std::io::Error,
+    what: &str,
+    started: Instant,
+    guard: Duration,
+) -> std::io::Error {
     if !matches!(
         error.kind(),
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
@@ -680,12 +908,12 @@ fn harness_broke_error(error: std::io::Error, what: &str, started: Instant) -> s
     std::io::Error::new(
         std::io::ErrorKind::TimedOut,
         format!(
-            "HARNESS-BROKE: {what} did not complete within its {CLIENT_IO_HANG_GUARD:?} hang \
-             guard (elapsed {:?}) at {}. The harness budget was exhausted -- either the client \
-             was starved under this suite's own load (#716, the measured common case), or the \
-             server stopped answering; not distinguishable from the client side. If this fires \
-             reliably rather than occasionally, the guard itself needs re-measuring, not a bigger \
-             number guessed on top.",
+            "HARNESS-BROKE: {what} did not complete within its {guard:?} hang guard (elapsed \
+             {:?}) at {}. The harness budget was exhausted -- either the client was starved under \
+             this suite's own load (#716, the measured common case), or the server stopped \
+             answering; not distinguishable from the client side. If this fires reliably rather \
+             than occasionally, the guard itself needs re-measuring, not a bigger number guessed \
+             on top.",
             started.elapsed(),
             this_process_test_concurrency()
         ),
@@ -696,10 +924,15 @@ fn harness_broke_error(error: std::io::Error, what: &str, started: Instant) -> s
 /// doc comment for why it panics directly rather than threading a `Result` through its 59
 /// callers): unwraps `result`, panicking with the re-coloured message on a timeout and the
 /// original `{error}` for anything else, same split as the `Result`-returning path.
-fn unwrap_or_harness_broke<T>(result: std::io::Result<T>, what: &str, started: Instant) -> T {
+fn unwrap_or_harness_broke<T>(
+    result: std::io::Result<T>,
+    what: &str,
+    started: Instant,
+    guard: Duration,
+) -> T {
     match result {
         Ok(value) => value,
-        Err(error) => panic!("{}", harness_broke_error(error, what, started)),
+        Err(error) => panic!("{}", harness_broke_error(error, what, started, guard)),
     }
 }
 
@@ -713,7 +946,12 @@ fn unwrap_or_harness_broke<T>(result: std::io::Result<T>, what: &str, started: I
 fn harness_broke_error_recolours_only_timed_out() {
     let started = Instant::now();
     let timed_out = std::io::Error::new(std::io::ErrorKind::TimedOut, "the underlying wait");
-    let recoloured = harness_broke_error(timed_out, "reading the response from http://x", started);
+    let recoloured = harness_broke_error(
+        timed_out,
+        "reading the response from http://x",
+        started,
+        CLIENT_IO_HANG_GUARD,
+    );
     assert_eq!(recoloured.kind(), std::io::ErrorKind::TimedOut);
     let message = recoloured.to_string();
     assert!(
@@ -804,8 +1042,12 @@ fn test_concurrency_falls_back_to_available_parallelism_with_neither() {
 fn harness_broke_error_recolours_would_block_too() {
     let started = Instant::now();
     let would_block = std::io::Error::new(std::io::ErrorKind::WouldBlock, "the underlying wait");
-    let recoloured =
-        harness_broke_error(would_block, "reading the response from http://x", started);
+    let recoloured = harness_broke_error(
+        would_block,
+        "reading the response from http://x",
+        started,
+        CLIENT_IO_HANG_GUARD,
+    );
     assert_eq!(
         recoloured.kind(),
         std::io::ErrorKind::TimedOut,
@@ -829,7 +1071,12 @@ fn harness_broke_error_recolours_would_block_too() {
 fn harness_broke_error_leaves_other_kinds_untouched() {
     let started = Instant::now();
     let refused = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "no listener there");
-    let result = harness_broke_error(refused, "connecting to http://x", started);
+    let result = harness_broke_error(
+        refused,
+        "connecting to http://x",
+        started,
+        CLIENT_IO_HANG_GUARD,
+    );
     assert_eq!(result.kind(), std::io::ErrorKind::ConnectionRefused);
     assert_eq!(
         result.to_string(),
@@ -882,14 +1129,28 @@ fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
         request.push_str(&format!("Authorization: Bearer {token}\r\n"));
     }
     request.push_str("\r\n");
+    check_total_deadline(
+        &format!("writing the request to {url}"),
+        started,
+        CLIENT_REQUEST_DEADLINE,
+        CLIENT_IO_HANG_GUARD,
+    )?;
     stream.write_all(request.as_bytes()).map_err(|error| {
-        harness_broke_error(error, &format!("writing the request to {url}"), started)
+        harness_broke_error(
+            error,
+            &format!("writing the request to {url}"),
+            started,
+            CLIENT_IO_HANG_GUARD,
+        )
     })?;
 
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).map_err(|error| {
-        harness_broke_error(error, &format!("reading the response from {url}"), started)
-    })?;
+    let raw = read_within_deadline(
+        &mut stream,
+        &format!("reading the response from {url}"),
+        started,
+        CLIENT_REQUEST_DEADLINE,
+        CLIENT_IO_HANG_GUARD,
+    )?;
     parse_response(&String::from_utf8_lossy(&raw))
 }
 
@@ -1242,23 +1503,41 @@ fn post_request(
         request.push_str(&format!("{name}: {value}\r\n"));
     }
     request.push_str("\r\n");
+    check_total_deadline(
+        &format!("writing the request headers to {url}"),
+        started,
+        CLIENT_REQUEST_DEADLINE,
+        CLIENT_IO_HANG_GUARD,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
     unwrap_or_harness_broke(
         stream.write_all(request.as_bytes()),
         &format!("writing the request headers to {url}"),
         started,
+        CLIENT_IO_HANG_GUARD,
     );
+    check_total_deadline(
+        &format!("writing the request body to {url}"),
+        started,
+        CLIENT_REQUEST_DEADLINE,
+        CLIENT_IO_HANG_GUARD,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
     unwrap_or_harness_broke(
         stream.write_all(&payload),
         &format!("writing the request body to {url}"),
         started,
+        CLIENT_IO_HANG_GUARD,
     );
 
-    let mut raw = Vec::new();
-    unwrap_or_harness_broke(
-        stream.read_to_end(&mut raw),
+    let raw = read_within_deadline(
+        &mut stream,
         &format!("reading the response from {url}"),
         started,
-    );
+        CLIENT_REQUEST_DEADLINE,
+        CLIENT_IO_HANG_GUARD,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
     parse_response(&String::from_utf8_lossy(&raw)).unwrap()
 }
 
@@ -4851,3 +5130,426 @@ fn an_evidence_path_that_is_not_a_string_is_refused_rather_than_ignored() {
     assert_eq!(status, 400, "{reply}");
     assert_eq!(reply["diagnostics"][0]["path"], "/evidenceOut", "{reply}");
 }
+
+// -------------------------------------------------------------------------------------------
+// #738: `CLIENT_IO_HANG_GUARD` bounds each individual read/write (`set_read_timeout`, reset on
+// every successful syscall) -- not the request as a whole. A server that keeps a connection open
+// while trickling data slower than the guard but never fully silent escapes it forever, however
+// long the whole response takes. This section's own fake server proves that directly.
+// -------------------------------------------------------------------------------------------
+
+/// Accepts exactly one connection, discards whatever the client sent (never parsed -- the drip
+/// itself is the whole point, not a valid HTTP response), then writes `bytes.len()` single-byte
+/// chunks, sleeping `gap` before each. Returns the bound `http://127.0.0.1:PORT` base.
+///
+/// `gap` deliberately stays well under `CLIENT_IO_HANG_GUARD` (30s) so the per-read guard this
+/// suite already relies on never fires on its own -- the ONLY way this connection ever ends is
+/// the drip completing or a caller's own total-request deadline cutting it off first, whichever
+/// of those two happens being exactly the property under test.
+///
+/// A caller that needs the first `N` bytes to have PROVABLY arrived before starting its own
+/// deadline clock should not try to out-race this thread's own scheduling (H, #740 review,
+/// seventh round, `:5245` -- an earlier version of this helper wrote an `immediate` prefix with
+/// no sleep specifically to narrow that race, which Codex correctly still called a race: nothing
+/// synchronizes the client with the server's own scheduling, only makes the client's own window
+/// to lose the race narrower). Block on `TcpStream::peek` instead -- see the main drip cell's own
+/// use of it, right before it captures `started`.
+fn drip_server(gap: Duration, bytes: &'static [u8]) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut discard = [0u8; 4096];
+        let _ = stream.read(&mut discard);
+        for byte in bytes {
+            std::thread::sleep(gap);
+            if stream.write_all(std::slice::from_ref(byte)).is_err() {
+                return;
+            }
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Connects to a fake server, matching the connect half of `raw_request`/`post_request` exactly
+/// (`split_url` -> `to_socket_addrs` -> `connect_with_retry`) -- used by cells that call
+/// `read_within_deadline`/`check_total_deadline` directly, with their own small deadlines,
+/// instead of going through `raw_request` and paying the real `CLIENT_REQUEST_DEADLINE` budget in
+/// wall time on every run (H, #740 review).
+fn connect_to(base: &str) -> TcpStream {
+    let (host, port, _) = split_url(&format!("{base}/"));
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    connect_with_retry(&address).unwrap()
+}
+
+/// A drip slower than the per-read guard but never silent must still fail bounded by the TOTAL
+/// deadline, not the per-read guard's own full window, and not forever. Small constructed
+/// deadline/gap (H, #740 review): the real `CLIENT_REQUEST_DEADLINE` (45s) would make every gate
+/// run pay that budget in wall time for this one cell -- the mechanism under test does not care
+/// what the numbers ARE, only that the total is enforced against the per-read guard correctly, so
+/// this cell proves that at a scale that costs milliseconds, not the suite's own declared budget.
+///
+/// Writes a byte before reading (Codex, #740 review, P1): the earlier version of this cell called
+/// `connect_to` and went straight to `read_within_deadline` without ever writing anything.
+/// `drip_server`'s own discard read blocks until it receives something, so the server never
+/// reached its drip loop at all -- the cell was exercising a totally silent peer (the case the
+/// per-read guard alone already covers) rather than #738's own axis, several successful reads
+/// that individually stay within the per-read guard while their SUM exceeds the total deadline. A
+/// reset-the-total-on-every-successful-read regression would have stayed green.
+///
+/// Neither elapsed wall time nor a `read()` syscall count is the oracle here (Codex, #740 review,
+/// second round, both P1): elapsed time makes real OS scheduling latency part of correctness (a
+/// process descheduled past an epsilon fails even when the deadline is enforced correctly; a timer
+/// reading rounded slightly early can fail a lower bound the same way), and a syscall count is
+/// scheduler- AND transport-dependent (TCP preserves bytes, not write boundaries -- a delayed
+/// reader can drain several small writes in ONE `read()`, undercounting genuine progress). Neither
+/// failure mode depends on the deadline logic being wrong. The oracle instead is the BYTE count
+/// `total_deadline_error` reports: `>= 2` proves genuine drip progress happened (not a silent
+/// peer), `< payload.len()` proves the call did NOT wait for the whole drip (bounded, not
+/// unbounded) -- both deterministic facts about what actually arrived, indifferent to how long
+/// anything took in wall-clock terms or how the transport happened to batch it into syscalls.
+#[test]
+fn a_slow_drip_server_fails_bounded_by_the_total_deadline_not_the_per_read_guard() {
+    let total_deadline = Duration::from_millis(300);
+    // The real named constant, not a duplicated `Duration::from_secs(30)` literal (H, #740
+    // review): a duplicate can drift silently from the production value it is meant to represent,
+    // and a sabotage of the real constant would not necessarily be caught by a test holding its
+    // own separate copy.
+    let per_read_guard = CLIENT_IO_HANG_GUARD; // production's own value; unshrunk on purpose
+    let drip_gap = Duration::from_millis(50); // << total_deadline; several successful reads happen
+    // 40 * 50ms = 2s of drip against a 300ms deadline (H, #740 review -- a real, measured
+    // blocker, worse than first reported: the server's own clock starts at the request byte, the
+    // client's `started` a moment later on a DIFFERENT clock, and the two only ever agree up to
+    // however much the drip OUTLASTS the deadline. At the previous 10-byte/500ms drip that margin
+    // was 500ms - 300ms = 200ms; H injected 250ms of reader-side scheduling delay -- comfortably
+    // realistic under the gate's own 32-thread concurrency -- and the whole drip fit inside the
+    // now-later deadline, so the cell failed with "expected a bounded failure, got 10 bytes":
+    // above the margin this does not get noisy, it INVERTS, reddening on code that limited
+    // correctly). 2s of drip makes the margin 2000ms - 300ms = 1.7s, absorbing scheduling delay far
+    // past anything realistic, at zero cost to the green path -- the client still bails at
+    // ~300ms regardless of how long the full drip would take, and the abandoned server thread
+    // just errors on its next write to the now-closed socket.
+    let payload: &[u8] = b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; // 40 x's, uniformly gap-spaced
+    let payload_len = payload.len();
+    let base = drip_server(drip_gap, payload);
+    let mut stream = connect_to(&base);
+    // Unblocks `drip_server`'s own discard read so it actually reaches its drip loop -- content is
+    // irrelevant, never parsed as HTTP (matching `drip_server`'s own doc comment).
+    stream.write_all(b"x").unwrap();
+    // Blocks until at least the first two bytes are PROVABLY sitting in the socket buffer before
+    // starting the deadline clock below (H, #740 review, seventh round, `:5245` -- kills the
+    // server-side race rather than narrowing it, same framing as `:5243`'s own fix, which Codex
+    // correctly pointed out was still only a narrower race: writing the server's first bytes with
+    // no sleep makes it FASTER, not synchronized -- a server thread that never gets scheduled
+    // within `total_deadline` still loses). `peek` does NOT consume the bytes; the real reads
+    // below still count them via `bytes_received` as normal. A generous read timeout on the peek
+    // itself means a genuinely broken server (one that never writes anything) fails this cell
+    // loud, with a clear panic, rather than hanging it.
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut peek_buf = [0u8; 2];
+    while stream
+        .peek(&mut peek_buf)
+        .expect("peek should not fail against a live connection")
+        < 2
+    {}
+    let started = Instant::now();
+    let outcome = read_within_deadline(
+        &mut stream,
+        "reading the drip",
+        started,
+        total_deadline,
+        per_read_guard,
+    );
+    match outcome {
+        Ok(raw) => panic!("expected a bounded failure, got {} bytes", raw.len()),
+        Err(error) => {
+            let message = error.to_string();
+            // The distinctive phrase, not merely the shared `HARNESS-BROKE:` prefix both guards'
+            // messages carry (H, #740 review): with the per-read guard shrunk below the drip gap,
+            // the OLD assertion (`starts_with("HARNESS-BROKE:")`) passed at ~`per_read_guard`
+            // elapsed even though the total-deadline axis this cell exists to test was never
+            // reached -- green with the subject switched off. This assertion cannot pass that way:
+            // only `total_deadline_error`'s own message contains this phrase.
+            assert!(
+                message.contains("TOTAL request deadline"),
+                "expected the total-deadline diagnostic specifically, not just any HARNESS-BROKE: \
+                 {message}"
+            );
+            // The witness, both directions, parsed out of the message itself
+            // (`total_deadline_error`'s own real count, not a second copy of the claim) rather than
+            // a separate return channel, since the message is the one artifact both production
+            // callers and this test already observe.
+            let bytes_received: usize = message
+                .split("after ")
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|token| token.parse().ok())
+                .unwrap_or_else(|| panic!("message did not report a byte count: {message}"));
+            // Lower bound: without writing the request byte above, this would read "0" every time,
+            // meaning the deadline fired before any data arrived against a totally silent peer --
+            // indistinguishable from what the per-read guard alone already catches.
+            assert!(
+                bytes_received >= 2,
+                "expected the deadline to fire only after multiple bytes had already arrived, \
+                 proving several-successful-reads-then-expiry was actually exercised (not a \
+                 silent peer, which the per-read guard alone already covers): {message}"
+            );
+            // Upper bound: the drip's own full length (40 bytes) can only have arrived entirely if
+            // `read_within_deadline` waited out the WHOLE 2s drip instead of bailing at the 300ms
+            // total deadline -- the same "bounded, not unbounded" property the old elapsed-time
+            // ceiling asserted, but as a fact about what data arrived rather than how long
+            // anything took.
+            assert!(
+                bytes_received < payload_len,
+                "the total deadline is not actually bounding anything: all {payload_len} bytes \
+                 arrived, meaning the call waited out the whole drip instead of the \
+                 {total_deadline:?} budget: {message}"
+            );
+        }
+    }
+}
+
+/// The rearm's own witness, missing until now (H, #740 review): the main cell above proves the
+/// TOTAL deadline fires at all, but its uniform 50ms drip gap means removing the rearm
+/// (`min(per_read_guard, remaining)` back to plain `per_read_guard`) only delays the top-of-loop
+/// catch by about one gap -- comfortably inside that cell's own margin, so that sabotage stays
+/// GREEN there (confirmed directly: 0.30s, unchanged). The elapsed-time assertion that used to
+/// catch this was correctly removed for `:5219` (elapsed time is a scheduler-fragile oracle in
+/// general), but removing it also removed the only thing that happened to be watching this axis --
+/// coverage regressed silently. This cell restores it with an arrangement designed so the
+/// rearm's effect is not a rounding error to detect but the entire result: a read that starts with
+/// the shrunk budget times out correctly before any byte exists to receive, while the SAME read
+/// sabotaged to the full `per_read_guard` simply waits for that byte and succeeds.
+///
+/// Still byte-count, not elapsed time, as the pass/fail oracle (matching the main cell's own
+/// `:5198`/`:5219` fix): whether zero bytes or one arrived before the deadline fired is a
+/// deterministic fact, immune to scheduling noise, rather than a numeric threshold that needs an
+/// epsilon. But Codex's own next round (`:5339`) caught that the byte-count witness alone still
+/// has TWO scheduler-dependent failure directions the previous 200ms/1s arrangement didn't guard
+/// against: (a) a FALSE PASS if the client is descheduled for >= `total_deadline` right after
+/// `started` is captured -- `remaining` is already zero by the time the loop's top-of-loop check
+/// runs, so the function returns a 0-byte deadline error WITHOUT ever attempting a read, which
+/// reads identically to the rearm working correctly; (b) a false FAIL if the client is descheduled
+/// past the drip gap once the read is already armed, letting the byte legitimately arrive and land
+/// on correct code. H's own fix (accepted over Codex's suggested injected clock -- see below):
+/// widen both numbers so each failure direction needs an amount of scheduling delay this
+/// arrangement can name explicitly. total_deadline = ~1s, drip gap = ~10s: the false-pass direction
+/// (a) now needs >= 1s of client-side descheduling immediately after `started`, and the defect's
+/// own signal (the rearm actually being absent) is a full ~10s wait -- a 10x separation from the
+/// false-pass threshold, comfortably beyond any scheduling delay this suite has ever observed
+/// (H's own measurement on the previous 200ms/1s arrangement: 206.3ms with the rearm, 1000.4ms
+/// without). Cost: ~0.8s added to the whole suite's own ~28s -- the client still bails at ~1s
+/// regardless of the drip's own full length, and the abandoned server thread just errors on its
+/// next write to the closed socket.
+///
+/// NOT Codex's suggested injected clock: `read_within_deadline`'s actual bound is
+/// `TcpStream::set_read_timeout`, which is enforced by the OS against wall-clock time, not against
+/// any value this test could inject or control. An injected clock could change what
+/// `read_within_deadline`'s OWN bookkeeping (`remaining`, `deadline`) believes the time is, but the
+/// socket itself would still time out on the real clock regardless -- the two would disagree, and
+/// only a full mock of the socket layer (not just the clock) would make this test genuinely
+/// clock-independent. That is a materially different, larger design than a two-number widening,
+/// disproportionate to this one cell; noted directly in the `:5339` thread rather than built here.
+#[test]
+fn a_read_that_starts_before_any_byte_exists_still_times_out_at_the_shrunk_budget() {
+    let total_deadline = Duration::from_secs(1);
+    let per_read_guard = CLIENT_IO_HANG_GUARD;
+    // No `immediate` bytes here on purpose -- this cell's whole point is a read that starts with
+    // nothing yet to receive, so its own shrunk budget (not incoming data) is what ends it.
+    let base = drip_server(Duration::from_secs(10), b"ab");
+    let mut stream = connect_to(&base);
+    stream.write_all(b"x").unwrap();
+    let started = Instant::now();
+    let outcome = read_within_deadline(
+        &mut stream,
+        "reading a not-yet-started drip",
+        started,
+        total_deadline,
+        per_read_guard,
+    );
+    match outcome {
+        Ok(raw) => panic!("expected a bounded failure, got {} bytes", raw.len()),
+        Err(error) => {
+            let message = error.to_string();
+            assert!(
+                message.contains("TOTAL request deadline"),
+                "expected the total-deadline diagnostic specifically: {message}"
+            );
+            // The discriminator: WITH the rearm, this read's budget shrinks to ~1s, well under
+            // the 10s gap, so it times out with nothing received. WITHOUT it (sabotaged to the
+            // full `per_read_guard`), the read simply waits for the byte at 10s and succeeds --
+            // `bytes_received` becomes 1, and this assertion is what catches that the main cell's
+            // own uniform-gap arrangement cannot.
+            let bytes_received: usize = message
+                .split("after ")
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|token| token.parse().ok())
+                .unwrap_or_else(|| panic!("message did not report a byte count: {message}"));
+            assert_eq!(
+                bytes_received, 0,
+                "expected the shrunk per-read budget to expire before the first byte (due at \
+                 10s) could arrive -- a nonzero count here means the read waited for real data \
+                 instead of honoring its own shrunk timeout: {message}"
+            );
+        }
+    }
+}
+
+/// `:707` (Codex, #740 review, sixth round): `Ok(0) => return Ok(raw)` reported success without
+/// re-checking `total_deadline`, and the 1ms floor on `this_read_budget` opens that window with
+/// NO scheduling delay needed at all -- purely from `remaining` landing sub-millisecond at the
+/// moment a read is attempted. `started` is deliberately backdated here rather than relying on
+/// live timing to land in that sub-ms window (which would be genuinely racy): backdating by
+/// `total_deadline` minus a small, fixed margin makes `remaining` land deterministically inside
+/// the floor's own window on entry, independent of how long connecting and writing the request
+/// actually took on this run. A server that closes with no bytes and no delay (`drip_server(_,
+/// b"")`, the `bytes` loop never executing) delivers EOF on the very first read, comfortably
+/// inside the floor-widened budget on a loopback connection.
+#[test]
+fn eof_arriving_after_the_deadline_is_not_silently_accepted() {
+    let total_deadline = Duration::from_millis(20);
+    let per_read_guard = CLIENT_IO_HANG_GUARD;
+    let base = drip_server(Duration::from_millis(0), b"");
+    let mut stream = connect_to(&base);
+    stream.write_all(b"x").unwrap();
+    // Backdated so `remaining` is ~15us when `read_within_deadline` computes it -- below the 1ms
+    // floor, so `this_read_budget` widens to 1ms regardless of how little time is actually left.
+    // Tuned empirically by sweeping the margin in batches of 50 runs each, watching for the TWO
+    // opposite failure modes this same race can produce: 100us measured too generous under a warm
+    // cache/branch-predictor state (round trip repeatedly finished faster than that, so the
+    // deadline genuinely hadn't passed -- correct, but not exercising this cell's own axis;
+    // 30/30 misses at the first sweep, worse at 50us: 20/50); 5us measured too tight (the
+    // handful of function calls before the FIRST `remaining` computation themselves sometimes
+    // exceeded it, catching the top-of-loop check instead of the EOF arm: 12/50 wrong-phase).
+    // 15us sits in the gap between those two failure modes (0/50, then 1/50 on a repeat batch --
+    // matching H's own 30/30 clean measurement on this same design, within the noise this
+    // technique's own real-clock nature can't fully remove). The phase assertion below is what
+    // makes a miss loud and attributable to this cell's own construction rather than a silent,
+    // accidentally-correct pass (Codex, #740 review, eighth round, `:5415`).
+    let started = Instant::now() - (total_deadline - Duration::from_micros(15));
+    let outcome = read_within_deadline(
+        &mut stream,
+        "reading an immediate close",
+        started,
+        total_deadline,
+        per_read_guard,
+    );
+    match outcome {
+        Ok(raw) => panic!(
+            "expected the deadline, already effectively expired, to be re-checked before EOF \
+             was accepted as success -- got {} bytes instead of a bounded failure",
+            raw.len()
+        ),
+        Err(error) => {
+            let message = error.to_string();
+            assert!(
+                message.contains("TOTAL request deadline"),
+                "expected the total-deadline diagnostic specifically, not a generic \
+                 HARNESS-BROKE (e.g. a connection-reset race): {message}"
+            );
+            // The phase witness (Codex, #740 review, eighth round, `:5415`): `bytes_received == 0`
+            // is consistent with EITHER the top-of-loop check catching an already-expired deadline
+            // before attempting a read, OR the EOF arm's own re-check catching it after a real
+            // read -- this cell's whole reason to exist is proving the SECOND path specifically,
+            // and without this assertion it could pass "vacuously" on a run where the backdated
+            // margin missed and the top check fired instead, silently not exercising `:707`'s own
+            // fix at all. A wrong phase here means the cell's own arrangement missed its target,
+            // not that production code is broken -- loud and investigable rather than a quiet,
+            // accidentally-correct green.
+            assert!(
+                message.contains("checked at end-of-stream"),
+                "expected the EOF arm's own re-check to be what caught this specifically, not the \
+                 top-of-loop check catching an already-expired deadline before any read was \
+                 attempted -- the backdated margin missed its target this run: {message}"
+            );
+        }
+    }
+}
+
+// The other direction, proven by sabotage rather than a second permanent cell (H, #740 review):
+// if `read_within_deadline` never enforced the total deadline at all, this same arrangement would
+// eventually fail via the per-read guard instead once the drip finally exceeds it -- a message
+// the assertion above, checking specifically for "TOTAL request deadline", correctly refuses.
+// Measuring that here would need the per-read guard to actually fire, which needs the drip to run
+// past it -- expensive again, the exact cost problem this file's cells were rewritten to avoid.
+// Documented rather than encoded: the total-deadline check at the top of
+// `read_within_deadline`'s own loop is unconditional (no flag, no cfg) and unreachable to skip
+// without editing the function itself, so there is no runtime toggle for a cheap cell to exercise
+// -- verified by reading `read_within_deadline`'s own body, and by the sabotage-and-revert done
+// by hand while developing this fix (temporarily commenting out the `if remaining.is_zero()`
+// branch reproduced the ORIGINAL #738 defect exactly: a real response after the drip's own full
+// duration, not a bounded HARNESS-BROKE failure).
+//
+// The rearm (`min(per_read_guard, remaining)`, #740's own correction to the first version of this
+// function) is now covered by its own permanent cell,
+// `a_read_that_starts_before_any_byte_exists_still_times_out_at_the_shrunk_budget`, ABOVE this
+// comment block -- not by hand-verification alone (H, #740 review, fifth round: the elapsed-time
+// assertion the main cell used to carry doubled as this axis's only witness; dropping it for
+// `:5219` silently uncovered the rearm too, and H caught that the main cell's own uniform 50ms
+// drip gap stays GREEN under this exact sabotage -- removing the rearm there only delays the
+// top-of-loop catch by about one drip gap, comfortably inside the main cell's own margin).
+// First observed by hand during development, before being promoted to the cell above: with
+// `this_read_budget` forced to `per_read_guard` regardless of `remaining`, a 200ms deadline
+// against a 3s drip gap no longer times out at ~200ms -- the read simply waits for the byte that
+// arrives at 3s, succeeds, and only THEN does the next loop iteration's top-of-loop check catch
+// the (by now long-expired) deadline. Observed directly with a temporary elapsed-time assertion:
+// `elapsed=3.0004996s`, message reporting one byte received. The committed cell uses a 1s gap
+// rather than 3s (cheap enough to keep permanent) and asserts on the byte count instead
+// (`bytes_received == 0`) rather than elapsed time, for the same reason `:5198`/`:5219` moved the
+// main cell off elapsed time -- a mismatched gap-to-deadline ratio this large doesn't need a
+// wall-clock threshold to discriminate; whether the byte arrived before the shrunk budget expired
+// is already a deterministic yes/no.
+//
+// The margin fix (40-byte drip instead of 10, H's own #740 review finding, worse than first
+// reported) has its own by-hand proof, not a permanent second cell (the injected delay below adds
+// real wall time, the exact cost this file's cells exist to avoid paying on every gate run).
+// Reproduced H's own repro directly: inserted `std::thread::sleep(Duration::from_millis(250))`
+// between the request write and capturing `started`, matching realistic reader-side scheduling
+// delay under the gate's own 32-thread concurrency. Against the OLD 10-byte/500ms drip (margin
+// 500ms - 300ms = 200ms), this reproduced H's exact finding verbatim: `panicked ... expected a
+// bounded failure, got 10 bytes` -- the whole drip fit inside the now-later deadline, and the
+// cell inverted rather than going noisy, reddening on code that limited correctly. Against the
+// committed 40-byte/2s drip (margin 2000ms - 300ms = 1.7s), the same 250ms delay passes cleanly
+// in 0.56s -- matching H's own prediction. Both temporary edits reverted immediately after.
+//
+// Why the committed cell asserts neither elapsed time nor a `read()` count (Codex, #740 review,
+// third round, both P1): the margin fix above makes the cell CORRECT under realistic scheduling
+// delay, but the two witnesses it used to prove that -- an elapsed-time ceiling/floor and a
+// syscall count -- are each independently scheduler-fragile in ways the underlying deadline logic
+// is not. Elapsed time ties correctness to how long the TEST PROCESS itself took to run, which a
+// descheduled thread or a slightly-early timer reading can perturb regardless of whether the
+// socket deadline fired correctly. A `read()` count ties correctness to how the TRANSPORT happened
+// to batch bytes into syscalls, which TCP never promises to preserve. Both were replaced with the
+// byte count `total_deadline_error` reports: `>= 2` and `< payload_len` are facts about what
+// data actually arrived, true or false independent of wall-clock timing or syscall batching.
+//
+// The server-side synchronization fix has its own by-hand proof, not a permanent delayed-server
+// cell (the injected delay adds real wall time, the exact cost problem these cells exist to
+// avoid). History: `:5243` (Codex, #740 review, fourth round) first fixed this by having
+// `drip_server` write an `immediate` prefix with no sleep right after the discard-read --
+// narrowing the race (a server thread merely slow to WRITE could no longer lose) without removing
+// it (a server thread slow to be SCHEDULED at all still could). Codex caught that distinction in
+// the fifth round (`:5245`): "making the server's first write immediate removes its sleeps but
+// does not synchronize it with the client." H's own fix, committed here, kills the race instead:
+// the main cell blocks on `TcpStream::peek` for the first two bytes to be PROVABLY present before
+// capturing `started` at all, so no amount of server-thread scheduling delay can make the deadline
+// clock start before real progress exists. `drip_server` reverted to a plain `gap`/`bytes`
+// signature -- the `immediate` parameter is no longer needed by anything.
+//
+// Proven directly, both ways: injected `std::thread::sleep(Duration::from_secs(2))` into
+// `drip_server`'s own spawned thread right after the discard-read -- an order of magnitude past
+// anything Codex named, to show this is a genuine synchronization rather than a wider race. The
+// committed design (with the `peek` loop) passed cleanly, 2.41s total (matching the peek wait
+// plus the read deadline). Then, isolating the `peek` loop's own necessity: removed it (falling
+// straight through to `started = Instant::now()`) and re-injected the ORIGINAL 260ms delay Codex
+// named -- reproduced the exact old failure again, `panicked ... after 0 bytes received`. Both
+// temporary edits reverted immediately after.

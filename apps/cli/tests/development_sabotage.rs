@@ -1047,7 +1047,7 @@ fn a_gap_does_not_backfill_across_a_section_boundary_even_if_verify_would_allow_
 /// cited line contains both.
 #[test]
 fn a_gap_does_not_close_when_its_section_verifies_more_than_one_candidate() {
-    let source = "`core/governor/src/memory.rs:256`   code: MemoryRefusalCode::SecretDetected\n\
+    let source = "`core/governor/src/memory.rs:256` code: MemoryRefusalCode::SecretDetected\n\
          `core/governor/tests/memory.rs:63` names nothing identifier-shaped on its own line.\n"
         .to_owned();
     let verify = |path: &str, line: usize, candidate: &str| {
@@ -1075,7 +1075,7 @@ fn a_gap_closes_when_a_sibling_citation_names_the_same_exact_line() {
     let prose_only =
         "core/governor/src/memory.rs:296 screens with\nno symbol on this line\n".to_owned();
     let code_shaped =
-        "core/governor/src/memory.rs:296   fn content_is_secret_shaped -> bool\n".to_owned();
+        "core/governor/src/memory.rs:296 fn content_is_secret_shaped -> bool\n".to_owned();
     let (citations, unreached, _, _) =
         doc_citations_across_sources(&[prose_only, code_shaped], &never_verifies);
     assert!(
@@ -1100,7 +1100,7 @@ fn a_gap_closes_when_a_sibling_citation_names_the_same_exact_line() {
 /// `jpd_plugin.rs`'s token), reproduced deliberately here to prove the widening does not reopen it.
 #[test]
 fn a_range_donor_does_not_backfill_a_narrower_point_inside_it() {
-    let ranged = "core/graph/src/persistence.rs:730-732\n    real_token_lives_here\n".to_owned();
+    let ranged = "core/graph/src/persistence.rs:730-732\n real_token_lives_here\n".to_owned();
     let point = "core/graph/src/persistence.rs:731 nothing identifier-shaped follows\n".to_owned();
     let (_, unreached, _, _) = doc_citations_across_sources(&[ranged, point], &never_verifies);
     assert_eq!(
@@ -1115,7 +1115,7 @@ fn a_range_donor_does_not_backfill_a_narrower_point_inside_it() {
 /// of the coordinate, and matching on line alone would let one file's symbol answer for another's.
 #[test]
 fn a_gap_does_not_backfill_across_a_different_path_at_the_same_line() {
-    let resolved = "core/graph/src/persistence.rs:296   fn unrelated_token -> bool\n".to_owned();
+    let resolved = "core/graph/src/persistence.rs:296 fn unrelated_token -> bool\n".to_owned();
     let gap = "core/governor/src/memory.rs:296 screens with\nno symbol on this line\n".to_owned();
     let (_, unreached, _, _) = doc_citations_across_sources(&[resolved, gap], &never_verifies);
     assert_eq!(

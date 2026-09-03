@@ -324,7 +324,7 @@ fn a_directory_link_pointing_outside_is_not_served_as_evidence() {
     let made = std::os::unix::fs::symlink(outside.path(), &link).is_ok();
     assert!(
         made,
-        "arrangement: the cell could not create the link it exists to test, so a green here          would prove nothing"
+        "arrangement: the cell could not create the link it exists to test, so a green here would prove nothing"
     );
 
     let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();

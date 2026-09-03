@@ -358,14 +358,14 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("git rev-parse could not run: {error}"))?;
     if !derived.status.success() {
         return Err(format!(
-            "the store's head {reported} does not resolve in {}: without the commit, the              head-to-tree binding cannot be derived, and an underivable binding refuses rather              than assumes",
+            "the store's head {reported} does not resolve in {}: without the commit, the head-to-tree binding cannot be derived, and an underivable binding refuses rather than assumes",
             arguments.repo.display()
         ));
     }
     let derived_tree = String::from_utf8_lossy(&derived.stdout).trim().to_owned();
     if derived_tree != arguments.repo_snapshot {
         return Err(format!(
-            "the store's head {reported} resolves to tree {derived_tree}, not the declared {}:              the coordinates about to be frozen were produced against a tree the artifacts              would not name (#637)",
+            "the store's head {reported} resolves to tree {derived_tree}, not the declared {}: the coordinates about to be frozen were produced against a tree the artifacts would not name (#637)",
             arguments.repo_snapshot
         ));
     }

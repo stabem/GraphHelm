@@ -279,6 +279,117 @@ fn kinds_after(events: &Path, sequence: u64) -> Vec<String> {
         .collect()
 }
 
+/// Which of three states the store is in when a ring that was required did not arrive (#514).
+///
+/// The failure this answers looked like this and said nothing:
+///
+/// ```text
+/// assertion `left == right` failed: the first trigger rings
+///   left: 0
+///  right: 1
+/// ```
+///
+/// The POST returned 200, so the server ACCEPTED the signal, and then zero bytes crossed. That
+/// leaves two mechanisms a reader cannot tell apart from `left: 0` -- the ring fired and the
+/// sleeper missed it, or no ring was ever attempted -- and they have opposite causes. Raising the
+/// sleeper's wait bound would make the red rarer without making it better, which is the mistake
+/// #386 already made once; the artefact that decides it is the store, and it is right there at
+/// panic time.
+///
+/// A SEAM that takes the kinds as a value, so its own cells feed it constructed states rather than
+/// racing a 1-in-10 flake into existence. It is deliberately not `#[cfg(windows)]`: the reading is
+/// a property of the event kinds, and its cells are worth running on every platform even though
+/// only Windows has the rendezvous.
+///
+/// Three states rather than two. The third -- no `signal_recorded` at all -- is separated because
+/// it is a claim about something else entirely: the POST was answered 200 and left no durable
+/// trace, which is not a wake defect and must not be reported as one.
+///
+/// **PRECONDITION, and it is not satisfied everywhere.** The reading distinguishes the two wake
+/// states by whether the lease consumption is DURABLE, so it is only sound where phase 3 has had
+/// time to land. At the two call sites it is used from, the reading is taken after
+/// `Sleeper::wait` returned -- which on the failing path means its own ten-second bound expired
+/// first -- so phase 3 had ten seconds and an absent consumption really means no ring.
+///
+/// `a_designed_phase3_delay_is_absorbed_by_the_receipt_wait` VIOLATES that precondition on
+/// purpose: it sets `GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS=2000`, so at the instant of its ring
+/// there is no consumption in the store BY DESIGN. This diagnosis is deliberately not wired into
+/// that test's assertion, because there it would read the designed delay as "no ring was
+/// attempted" and say so confidently. A diagnosis that is wrong is worse than the bare
+/// `left: 0, right: 1` it replaces: that one at least does not send anyone anywhere.
+fn ring_absence_reading(kinds: &[String]) -> &'static str {
+    if kinds.iter().any(|kind| kind == "wake_lease_consumed") {
+        "the lease WAS consumed, so a ring was attempted and the sleeper did not receive it (a rendezvous problem, not a trigger problem)"
+    } else if kinds.iter().any(|kind| kind == "signal_recorded") {
+        "the signal is durable and the lease was NOT consumed, so no ring was attempted (a trigger problem, not a rendezvous problem)"
+    } else {
+        "neither the signal nor a lease consumption is in the store, so a POST answered 200 left no durable trace at all -- which is not a wake defect"
+    }
+}
+
+/// The reading above, taken from the store at the moment an expected ring is missing.
+///
+/// Called ONLY from the failing branch of an assertion: `assert_eq!` evaluates its format
+/// arguments after the comparison fails, so a passing run pays nothing for this.
+#[cfg(windows)]
+fn missing_ring_diagnosis(events: &Path, since: u64) -> String {
+    let kinds = kinds_after(events, since);
+    format!(
+        "{} -- kinds after sequence {since}: {kinds:?}",
+        ring_absence_reading(&kinds)
+    )
+}
+
+/// The three readings are DIFFERENT, which is the only thing that makes the diagnosis worth
+/// printing. A version that returned one sentence for every state would still satisfy an
+/// assertion that merely checks a message appears.
+#[test]
+fn the_ring_absence_reading_separates_the_three_states() {
+    let consumed = ring_absence_reading(&[
+        "signal_recorded".to_owned(),
+        "wake_lease_consumed".to_owned(),
+    ]);
+    let recorded = ring_absence_reading(&["signal_recorded".to_owned()]);
+    let neither = ring_absence_reading(&[]);
+
+    assert!(
+        consumed.contains("rendezvous problem"),
+        "a consumed lease means the ring was attempted: {consumed}"
+    );
+    assert!(
+        recorded.contains("trigger problem"),
+        "a durable signal with no consumption means no ring was attempted: {recorded}"
+    );
+    assert!(
+        neither.contains("no durable trace"),
+        "an empty store after an accepted POST is neither of the wake states: {neither}"
+    );
+    assert!(
+        consumed != recorded && recorded != neither && consumed != neither,
+        "the three readings must differ, or the diagnosis names a state without distinguishing it"
+    );
+}
+
+/// A lease consumption decides the reading even when the kinds arrive in the other order, and
+/// unrelated kinds do not.
+#[test]
+fn the_ring_absence_reading_is_about_the_two_kinds_and_not_their_order() {
+    let reversed = ring_absence_reading(&[
+        "wake_lease_consumed".to_owned(),
+        "signal_recorded".to_owned(),
+    ]);
+    assert!(
+        reversed.contains("rendezvous problem"),
+        "the consumption decides regardless of order: {reversed}"
+    );
+    let unrelated =
+        ring_absence_reading(&["execution_started".to_owned(), "node_ready".to_owned()]);
+    assert!(
+        unrelated.contains("no durable trace"),
+        "kinds that are neither of the two are not a wake state: {unrelated}"
+    );
+}
+
 /// The sleeper half: creates the platform rendezvous for `rendezvous_id` (the Task 0/1
 /// derivation: a fixed local prefix plus the opaque id) and returns a handle whose
 /// `wait(timeout)` blocks for the ring, returning the bytes received.
@@ -512,7 +623,12 @@ fn an_append_beyond_the_cursor_rings_one_byte_only_after_the_trigger_is_durable(
     // The ring: exactly one byte, and AT THE INSTANT IT ARRIVES the trigger is durable
     // (the sleeper snapshots the store from inside its own read completion).
     let (bytes, at_ring) = sleeper.wait();
-    assert_eq!(bytes.len(), 1, "exactly one content-free byte crossed");
+    assert_eq!(
+        bytes.len(),
+        1,
+        "exactly one content-free byte crossed -- {}",
+        missing_ring_diagnosis(&events, before)
+    );
     assert!(
         at_ring.iter().any(|kind| kind == "signal_recorded"),
         "a ring implies a durable trigger — the append must be readable at the instant \
@@ -742,6 +858,9 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
     let logical_rendezvous_id = "rvz-burn-1";
     let (_guard, address, token, sleeper) =
         serve_before_arming_sleeper(&events, "exec-wake-burn", logical_rendezvous_id, &[]);
+    // Read BEFORE the POST, because the diagnosis below is about what the signal added and a
+    // sequence taken afterwards would include it (#514).
+    let before_first_signal = head(&events);
 
     // First trigger rings and burns.
     let (status, _reply) = post_json(
@@ -752,7 +871,12 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
         &signal_body("signal-burn-1", &directory.path().join("ev1.json")),
     );
     assert_eq!(status, 200);
-    assert_eq!(sleeper.wait().0.len(), 1, "the first trigger rings");
+    assert_eq!(
+        sleeper.wait().0.len(),
+        1,
+        "the first trigger rings -- {}",
+        missing_ring_diagnosis(&events, before_first_signal)
+    );
 
     // Re-arm the exact runner-scoped PIPE but not the lease: a second trigger must NOT ring
     // (lease burned). A concurrent runner has a different physical name; both arms here do not.

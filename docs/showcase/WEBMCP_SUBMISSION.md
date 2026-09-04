@@ -1,17 +1,37 @@
-# GraphHelm Studio — submission package
+# GraphHelm Studio — submission package (ABANDONED, 2026-09-03)
 
-Prepared for the OpenAI Developer Showcase, whose WebMCP apps view currently states that examples
-are coming soon (<https://developers.openai.com/showcase?view=webmcp-apps>). Projects are
-submitted through the developer community at <https://developers.openai.com/community>.
+Drafted for the OpenAI Developer Showcase, whose WebMCP apps view stated at the time that examples
+were coming soon (<https://developers.openai.com/showcase?view=webmcp-apps>); projects were to be
+submitted through the developer community at <https://developers.openai.com/community>. Both are
+recorded in the past tense on purpose -- they were true when this was written, they are not a route
+anyone is taking, and neither was re-checked afterwards.
+
+> **Disposition: ABANDONED, 2026-09-03.** The owner decided on 2026-09-03 to abandon this
+> submission and refocus on the product and the MVP. **Nothing was ever submitted, and nothing is
+> queued.** The document is retained as a record of the work and as reusable product material --
+> the description, the tool inventory and the limitations below are accurate and are worth lifting
+> elsewhere. It is not a deliverable waiting on a step. Every instruction-shaped passage further
+> down (a capture checklist, a video script, form text to paste) describes what a submission
+> *would* have needed. None of it is outstanding work, and none of it should be acted on.
+>
+> **If the submission is ever revived, that is a new decision, and this line is the thing it has to
+> overturn.**
+>
+> And the paragraphs below are not contradicted by this one, so do not "tidy" the overlap away: every
+> sentence under here was, and remains, literally TRUE. Nothing was submitted; no browser proof was
+> captured. **The tense was the defect, not the facts** — a true statement of absence carrying no date
+> and no disposition reads as *not yet* rather than *not ever*. Remove the dates and the past tense
+> and the file goes straight back to reading as a queued deliverable.
 
 This is **not** a hackathon, a competition, a prize, or a partnership, and nothing in this
-document should be read as claiming one. It is a submission draft, ready for the owner to review
-but not yet ready to send. **Nothing here has been submitted.**
+document should be read as claiming one. It **was** a submission draft. **Nothing here was ever
+submitted**, and the draft was abandoned rather than held open.
 
-**Validation status:** repository tests exercise the adapter, but no compatible browser host has
-yet been observed registering and invoking these Site tools. Do not submit until that browser
-proof is captured. The video script and screenshot list below are a capture checklist, not
-evidence that the capture already happened.
+**Validation status, as it stood when the draft was abandoned:** repository tests exercised the
+adapter, and no compatible browser host was ever observed registering and invoking these Site
+tools. That browser proof was never captured -- and it is not owed. The video script and
+screenshot list below record what a capture would have covered; they were never evidence that one
+happened, and with the submission abandoned they are not a task anyone inherits.
 
 ---
 
@@ -189,6 +209,9 @@ Open <http://127.0.0.1:4173>, paste the token, and connect.
 
 ## 13. Video script (60–90 seconds)
 
+*Never recorded. Kept because it is an accurate walk through the demo path, which is worth having
+written down; it is not a shot list anyone owes.*
+
 | Time | Beat |
 |---|---|
 | 0:00–0:10 | **The problem.** Three terminals. "Something stopped. Which one, and why?" |
@@ -202,7 +225,10 @@ Open <http://127.0.0.1:4173>, paste the token, and connect.
 | 1:18–1:26 | Show the audit: who did what, with idempotency keys. Reload — the Runtime is untouched, the token is gone. |
 | 1:26–1:30 | Close: local-first, open source, no proprietary cloud dependency. |
 
-## 14. Screenshots to capture
+## 14. Screenshots the submission would have carried
+
+*Never captured, and not outstanding. The list stays because it names the five things worth
+showing about this surface, which is useful independently of any submission.*
 
 1. Connected control room: run list, attention verdict, state counts, timeline.
 2. A run in `needs_you`, with the blocking node named in the reasons.
@@ -238,7 +264,10 @@ Recorded as a partial delivery of open issue #105:
 
 Apache-2.0.
 
-## 19. Ready-to-paste form text
+## 19. The form text that was drafted
+
+*There is no form to paste it into. Retained because the wording is the tightest description of
+the surface anyone wrote, and it is reusable in a README or a page.*
 
 > **GraphHelm Studio — operate real agent runs together with Codex, from the same local control
 > room.**

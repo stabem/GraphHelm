@@ -98,7 +98,15 @@ const CAPTURE_LOST_CODE: &str = "GHTOOL013_CAPTURE_LOST";
 /// and vocabulary-agreement guards. `HostError` reaches `TerminalFailure`, which is the right
 /// outcome for a cancellation, so the narrowing costs the NAME and not the behaviour.
 fn disposition_for(captured: &CapturedProcess) -> ToolDisposition {
-    if captured.readers_abandoned {
+    // BOTH lost-capture causes answer with the same code, and the distinction lives in the
+    // record's own fields rather than in the wire vocabulary (#790). From the caller's side the
+    // condition is identical -- bytes this call cannot account for -- and adding a second code
+    // would be a wire-vocabulary change of the kind the paragraph above prices for
+    // `GHTOOL011_CANCELLED`. `readers_abandoned` says a descendant survived the kill;
+    // `reader_lost` says a reader thread died holding output. A consumer that needs to tell them
+    // apart reads the record; a consumer that only needs to know the capture is untrustworthy
+    // reads this code.
+    if captured.readers_abandoned || captured.reader_lost {
         ToolDisposition::HostError {
             code: CAPTURE_LOST_CODE.to_owned(),
         }
@@ -286,6 +294,7 @@ impl ToolHost {
                     timed_out: false,
                     // Nothing was read because nothing ran.
                     readers_abandoned: false,
+                    reader_lost: false,
                     // A refusal before the spawn already carries its own code through
                     // `host_error_code`; this arm is about a child that never existed.
                     cancelled: false,
@@ -491,6 +500,41 @@ mod disposition_tests {
     use crate::process::CapturedProcess;
     use graphhelm_tool_broker::record::ToolDisposition;
 
+    /// A lost reader answers with the same code an abandoned one does (#790).
+    ///
+    /// The boundary, not the field: `disposition_for` is where the record's third state becomes
+    /// something a caller can act on, and deleting its `|| captured.reader_lost` reddens nothing
+    /// without this.
+    ///
+    /// One code for two causes is deliberate. From the caller's side the condition is identical
+    /// -- bytes this call cannot account for -- and the distinction lives in the record's own
+    /// fields, so a second wire code would buy nothing and cost a vocabulary change.
+    #[test]
+    fn a_lost_reader_reports_the_capture_as_lost() {
+        let mut lost = captured(false, false, false);
+        lost.reader_lost = true;
+        assert_eq!(
+            disposition_for(&lost),
+            ToolDisposition::HostError {
+                code: CAPTURE_LOST_CODE.to_owned()
+            },
+            "a reader that died holding output must not report as a completed run"
+        );
+    }
+
+    /// CONTROL: with neither cause set, the exit code still decides.
+    ///
+    /// Without this, a `disposition_for` that answered CAPTURE_LOST unconditionally would satisfy
+    /// the cell above.
+    #[test]
+    fn an_ordinary_capture_still_reports_its_exit_code() {
+        assert_eq!(
+            disposition_for(&captured(false, false, false)),
+            ToolDisposition::Completed { exit_code: 0 },
+            "an ordinary capture is not a lost one"
+        );
+    }
+
     fn captured(cancelled: bool, readers_abandoned: bool, timed_out: bool) -> CapturedProcess {
         CapturedProcess {
             exit_code: Some(0),
@@ -501,6 +545,7 @@ mod disposition_tests {
             truncated: false,
             timed_out,
             readers_abandoned,
+            reader_lost: false,
             cancelled,
         }
     }

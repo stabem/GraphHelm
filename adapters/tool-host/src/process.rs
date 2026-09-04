@@ -411,6 +411,28 @@ pub struct CapturedProcess {
     /// It should never be true once the kill reaches the whole tree. If it is, something escaped
     /// the process group or the job object, and the flag is the only place that says so.
     pub readers_abandoned: bool,
+    /// A reader thread ended WITHOUT answering, so this call cannot account for what it held.
+    ///
+    /// **A third state, and it exists because widening either of the other two would be a lie**
+    /// (#790). `truncated` means bytes were read and then dropped -- this reader may have read
+    /// nothing, or everything, and there is no way to tell. `readers_abandoned` means SOMETHING
+    /// ESCAPED THE TREE KILL, which `tests/process_isolation.rs` asserts against as a containment
+    /// claim; a dead reader thread escaped nothing, so setting that flag would make a containment
+    /// assertion fail for a reason that has nothing to do with containment.
+    ///
+    /// **What it separates:** "the tool printed nothing" from "this call's reader died holding
+    /// what the tool printed". Before this field those were the same observation -- an empty
+    /// buffer, `truncated` false, `readers_abandoned` false -- and the second is a successful tool
+    /// call whose output silently vanished. The consequence is worst where output IS the point: a
+    /// `ToolCall::Tests` whose runner printed a hundred failing assertions and whose reader then
+    /// died reports as a clean run with no output, and the operator reads the exit code.
+    ///
+    /// **Reachability, measured rather than assumed:** the reader closure sends unconditionally at
+    /// the end of its loop, and that is its ONLY send site. So a receiver seeing `Disconnected`
+    /// saw the sender dropped without a send, which happens only if the thread unwound before
+    /// reaching it -- an allocation failure under memory pressure, or a panic inside the head/tail
+    /// elision. Rare, and the rarity is exactly why it would never be noticed.
+    pub reader_lost: bool,
     /// Whether a raised [`CancelSignal`] is what stopped this child (#609, Codex).
     ///
     /// `timed_out = expired && !cancelled` removes the WRONG cause from the record; it does not
@@ -493,6 +515,17 @@ pub fn reject_lost_capture(captured: CapturedProcess) -> Result<CapturedProcess,
     if captured.readers_abandoned {
         return Err(HostError::CaptureLost {
             rule: "a reader was abandoned, so these bytes were never read",
+        });
+    }
+    // THE THIRD SITE, and the one where the consequence is worst (#790). This seam's own doc
+    // explains why it refuses rather than reports: its consumers HASH THE BYTES, and an empty
+    // stream that was never read hashes to the digest of zero bytes, which is indistinguishable
+    // from a tool that printed nothing. That argument does not care HOW the bytes went missing --
+    // an escaped descendant or a reader thread that died holding them produce the same untrusted
+    // digest -- and the guard checked only the first cause.
+    if captured.reader_lost {
+        return Err(HostError::CaptureLost {
+            rule: "a reader ended without answering, so these bytes cannot be accounted for",
         });
     }
     Ok(captured)
@@ -587,6 +620,8 @@ struct DrainedReaders {
     abandoned: bool,
     /// Whether the drain already released the group, so the caller does not release it twice.
     released: bool,
+    /// A reader's sender was dropped without an answer -- see `CapturedProcess::reader_lost`.
+    reader_lost: bool,
 }
 
 /// Wait for both readers, and on expiry force EOF and keep whatever had drained.
@@ -636,6 +671,7 @@ fn drain_readers(
 ) -> DrainedReaders {
     let mut pending = [Some(stdout), Some(stderr)];
     let mut answers: [Option<(Vec<u8>, bool)>; 2] = [None, None];
+    let mut reader_lost = false;
     let mut seen = [0_u64; 2];
     let mut last_change = [Instant::now(); 2];
 
@@ -649,10 +685,18 @@ fn drain_readers(
                     answers[index] = Some(answer);
                     pending[index] = None;
                 }
-                // A sender dropped without answering means the reader thread is gone and no answer
-                // is coming. Stop waiting on it. It is not pending, and it is not an escape
-                // either, so it must not set the flag.
-                Err(RecvTimeoutError::Disconnected) => pending[index] = None,
+                // A sender dropped without answering means the reader thread is gone and no
+                // answer is coming. Stop waiting on it. It is not pending, and it is NOT AN
+                // ESCAPE, so it must not set `abandoned` -- that flag is a containment claim and
+                // a dead reader escaped nothing.
+                //
+                // But it is not nothing either, and saying nothing was the defect (#790): the
+                // caller would receive an empty buffer indistinguishable from a tool that printed
+                // nothing. `reader_lost` is the third state, set here and nowhere else.
+                Err(RecvTimeoutError::Disconnected) => {
+                    pending[index] = None;
+                    reader_lost = true;
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     let bytes = progress.load(Ordering::Relaxed);
                     if bytes != seen[index] {
@@ -736,6 +780,7 @@ fn drain_readers(
         stderr: stderr.unwrap_or_else(|| (Vec::new(), false)),
         abandoned,
         released,
+        reader_lost,
     }
 }
 
@@ -1235,6 +1280,7 @@ pub fn run_in_workspace(
     let (stdout, stdout_truncated) = drained.stdout;
     let (stderr, stderr_truncated) = drained.stderr;
     let readers_abandoned = drained.abandoned;
+    let reader_lost = drained.reader_lost;
 
     Ok(CapturedProcess {
         exit_code: exit_status.and_then(|status| status.code()),
@@ -1246,6 +1292,7 @@ pub fn run_in_workspace(
         timed_out,
         cancelled: was_cancelled,
         readers_abandoned,
+        reader_lost,
     })
 }
 
@@ -1262,7 +1309,10 @@ fn elision_marker(elided: u64) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CancelSignal, DrainedReaders, MINIMUM_DRAIN, drain_deadline, drain_readers};
+    use super::{
+        CancelSignal, CapturedProcess, DrainedReaders, HostError, MINIMUM_DRAIN, drain_deadline,
+        drain_readers, reject_lost_capture,
+    };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::{Receiver, Sender, channel};
@@ -1670,6 +1720,118 @@ mod tests {
             "the second stream answered inside ITS OWN grace and was still lost: the window is shared, so the first stream spent it"
         );
         assert!(drained.released && drained.abandoned);
+    }
+
+    /// The session seam REFUSES a capture whose reader was lost, and not only one whose readers
+    /// were abandoned (#790).
+    ///
+    /// **This is the boundary cell, and the producer cell below cannot stand in for it.** That one
+    /// asserts on `drained.reader_lost` -- a FIELD -- which stays true whether or not anything
+    /// reads it. Deleting this arm today reddens nothing, measured: with all three consumers
+    /// removed and the producer left correct, the whole crate is green.
+    ///
+    /// This seam is the one that matters most of the three, by its own doc's argument: its
+    /// consumers HASH THE BYTES, and an empty stream that was never read hashes to the digest of
+    /// zero bytes -- indistinguishable from a tool that printed nothing. A lost capture reaching
+    /// them is a fabricated digest presented as a real one.
+    #[test]
+    fn the_session_seam_refuses_a_capture_whose_reader_was_lost() {
+        let lost = CapturedProcess {
+            exit_code: Some(0),
+            stdout: b"bytes a consumer would have hashed".to_vec(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            truncated: false,
+            timed_out: false,
+            cancelled: false,
+            readers_abandoned: false,
+            reader_lost: true,
+        };
+        assert!(
+            matches!(
+                reject_lost_capture(lost),
+                Err(HostError::CaptureLost { .. })
+            ),
+            "a capture whose reader ended without answering must be refused at the seam, not \
+             handed to a consumer that will hash it"
+        );
+    }
+
+    /// CONTROL for the cell above: an ORDINARY capture still passes through.
+    ///
+    /// Without it, a `reject_lost_capture` that refused every input would satisfy the refusal
+    /// above while making the seam useless -- and `readers_abandoned` must remain a separate
+    /// reason rather than being folded in.
+    #[test]
+    fn the_session_seam_passes_an_ordinary_capture_through() {
+        let ordinary = CapturedProcess {
+            exit_code: Some(0),
+            stdout: b"ordinary output".to_vec(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            truncated: false,
+            timed_out: false,
+            cancelled: false,
+            readers_abandoned: false,
+            reader_lost: false,
+        };
+        let passed = reject_lost_capture(ordinary).expect("an ordinary capture is not refused");
+        assert_eq!(passed.stdout, b"ordinary output".to_vec());
+    }
+
+    /// A reader whose sender is dropped WITHOUT an answer is reported as lost, and is not
+    /// confused with a tool that printed nothing (#790).
+    ///
+    /// The sender is dropped rather than a panic staged, which is the same choice every other
+    /// cell here makes: the protocol is what is under test, and a real panic inside a reader
+    /// thread would be a fixture about the unwinder rather than about the drain.
+    ///
+    /// Four assertions and only the first is the new behaviour. The other three are the ticket's
+    /// own acceptance criteria written as controls: `abandoned` must stay FALSE, because it is a
+    /// containment claim that `tests/process_isolation.rs` asserts against and a dead reader
+    /// escaped nothing; the buffer must stay empty and UNTRUNCATED, because those defaults are
+    /// right for a genuinely empty stream and the new state must be the only thing that changed;
+    /// and the healthy stream beside it must come through whole.
+    #[test]
+    fn a_reader_whose_sender_is_dropped_without_answering_is_reported_as_lost() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+        err.answer(b"stderr answered normally", false);
+        // The reader thread ended before its single send site. Its receiver now sees
+        // `Disconnected` rather than a timeout, which is the ONLY way that arm is reached.
+        drop(out);
+
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            far_deadline(),
+            GRACE,
+            POLL,
+            POST,
+            &mut || {},
+        );
+
+        assert!(
+            drained.reader_lost,
+            "a sender dropped without an answer must be reported: without this the caller cannot tell an empty capture from one whose reader died holding the output"
+        );
+        assert!(
+            !drained.abandoned,
+            "a dead reader escaped NOTHING -- `abandoned` is a containment claim and widening it here would make process_isolation.rs fail for a reason unrelated to containment"
+        );
+        assert_eq!(
+            drained.stdout,
+            (Vec::new(), false),
+            "empty and NOT truncated: those defaults are correct for a genuinely empty stream, so the new state must be the only thing this changes"
+        );
+        assert_eq!(
+            drained.stderr,
+            (b"stderr answered normally".to_vec(), false),
+            "the healthy stream beside it is untouched"
+        );
     }
 
     /// A reader that answers NEITHER before nor after the release is reported, not guessed at.

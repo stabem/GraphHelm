@@ -44,7 +44,11 @@ pub struct TestsTool;
 /// the first: an exit code of 0 whose bytes were never read is the more dangerous of the two,
 /// because it looks like success rather than like an error.
 fn first_stage_is_final(captured: &CapturedProcess) -> bool {
-    captured.exit_code != Some(0) || captured.readers_abandoned
+    // `reader_lost` joins for the reason the paragraph above already gives, applied to the other
+    // way a capture goes missing (#790): an exit code of 0 whose bytes were never read looks like
+    // success rather than like an error, and it does not matter to that argument WHETHER the bytes
+    // were lost to an escaped descendant or to a reader thread that died holding them.
+    captured.exit_code != Some(0) || captured.readers_abandoned || captured.reader_lost
 }
 
 /// A synthesized in-process result shaped like a captured child, so every tool produces the
@@ -64,6 +68,7 @@ fn in_process(stdout: Vec<u8>, truncated: bool) -> CapturedProcess {
         timed_out: false,
         // No pipe and no reader: Tier 0 synthesizes its bytes rather than reading them.
         readers_abandoned: false,
+        reader_lost: false,
         // Tier 0 spawns nothing, so no cancellation could have stopped a child here. A
         // measurement about a path with no child, not a default.
         cancelled: false,
@@ -276,6 +281,31 @@ mod tests {
     use super::first_stage_is_final;
     use crate::process::CapturedProcess;
 
+    /// A stage whose reader was lost is FINAL, even at exit code 0 (#790).
+    ///
+    /// The boundary again. `first_stage_is_final`'s own doc already argues this for the other
+    /// cause: an exit code of 0 whose bytes were never read looks like success rather than like
+    /// an error, and it is the more dangerous of the two. That argument does not care which way
+    /// the bytes went missing, and without this cell dropping `|| captured.reader_lost` is silent.
+    #[test]
+    fn a_stage_whose_reader_was_lost_is_final_despite_a_zero_exit() {
+        let mut lost = staged(Some(0), false);
+        lost.reader_lost = true;
+        assert!(
+            first_stage_is_final(&lost),
+            "a zero exit whose bytes were never read must stop the sequence, not continue it"
+        );
+    }
+
+    /// CONTROL: an ordinary zero-exit stage still continues.
+    #[test]
+    fn an_ordinary_first_stage_with_a_zero_exit_still_continues() {
+        assert!(
+            !first_stage_is_final(&staged(Some(0), false)),
+            "a clean stage is not final, or the predicate stops every sequence"
+        );
+    }
+
     fn staged(exit_code: Option<i32>, readers_abandoned: bool) -> CapturedProcess {
         CapturedProcess {
             exit_code,
@@ -286,6 +316,7 @@ mod tests {
             truncated: false,
             timed_out: false,
             readers_abandoned,
+            reader_lost: false,
             cancelled: false,
         }
     }

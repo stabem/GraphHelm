@@ -269,6 +269,7 @@ fn a_lost_capture_is_refused_rather_than_returned() {
         truncated: false,
         timed_out: false,
         readers_abandoned: true,
+        reader_lost: false,
         cancelled: false,
     };
 
@@ -301,6 +302,7 @@ fn an_ordinary_capture_passes_through_untouched() {
         truncated: false,
         timed_out: false,
         readers_abandoned: false,
+        reader_lost: false,
         cancelled: false,
     };
 

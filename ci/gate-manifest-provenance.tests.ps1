@@ -15,7 +15,7 @@
 # holds some commit this one descends from, which is true of every unpushed commit on a tracked
 # branch -- precisely the state the field exists to detect.
 
-$ExpectedAssertionCount = 160
+$ExpectedAssertionCount = 171
 # 'Continue', not 'Stop': these cells run git against fixtures that deliberately have no upstream
 # and no pull request, and under Windows PowerShell 5.1 a native command's redirected stderr
 # becomes a NativeCommandError that 'Stop' promotes to a terminating error. Judge by exit code and
@@ -1828,6 +1828,88 @@ try {
         -Message "the committable copy agrees with what was published ($primaryAfter) -- publisher said: $out"
     Assert-True -Condition ($twinAfter -cnotmatch 'tampered') `
         -Message "and so does the DURABLE twin, which the single-path version left corrupted ($twinAfter)"
+
+    Write-Host ''
+    Write-Host '-- the record says what the run COVERED, not only that it passed --' -ForegroundColor Cyan
+    # #725, case 1. `-SkipPostgres` skips both PostgreSQL passes and the manifest said `GREEN` with
+    # nothing recording that the run was partial, so a persistence-affecting change could be
+    # certified by a gate the repository itself prints "is not a full gate" about. The producer has
+    # to record the fact before any consumer can refuse it, and `merge-proof` can only check fields
+    # the manifest carries.
+    $coverageFn = ([System.Management.Automation.Language.Parser]::ParseFile($gatePath, [ref]$null, [ref]$null)).Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq 'Get-RunCoverage'
+        }, $true)
+    Assert-True -Condition ($null -ne $coverageFn) `
+        -Message 'ARRANGEMENT: the coverage rule is a function this cell can call'
+    if ($null -ne $coverageFn) {
+        . ([scriptblock]::Create($coverageFn.Extent.Text))
+        $partial = Get-RunCoverage -SkipPostgres $true
+        Assert-True -Condition ($partial.postgres -ceq 'skipped') `
+            -Message "a -SkipPostgres run records postgres as skipped (got [$($partial.postgres)])"
+        Assert-True -Condition ($partial.complete -eq $false) `
+            -Message 'and says the run was not complete, so a consumer can refuse it without knowing which flag was set'
+        $full = Get-RunCoverage -SkipPostgres $false
+        Assert-True -Condition ($full.postgres -ceq 'included' -and $full.complete -eq $true) `
+            -Message "CONTROL: a run without the flag records postgres as included and complete (got [$($full.postgres)])"
+    }
+
+    Write-Host ''
+    Write-Host '-- an untracked file is a tree no commit contains --' -ForegroundColor Cyan
+    # #725, case 2. `dirtyDiffHash` came from `git diff HEAD`, which OMITS untracked paths, so a run
+    # with an automatically discovered `build.rs` sitting untracked recorded a NULL hash -- the value
+    # that reads as "the worktree was exactly the commit" -- while measuring a tree no commit
+    # contains. The value was present and honest about the wrong question, which is why neither of
+    # merge-proof's refusals could catch it.
+    $dirtFn = ([System.Management.Automation.Language.Parser]::ParseFile($gatePath, [ref]$null, [ref]$null)).Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq 'Get-WorktreeDirt'
+        }, $true)
+    Assert-True -Condition ($null -ne $dirtFn) `
+        -Message 'ARRANGEMENT: the dirt rule is a function this cell can call'
+    if ($null -ne $dirtFn) {
+        . ([scriptblock]::Create($dirtFn.Extent.Text))
+        $untracked = Get-WorktreeDirt -Diff '' -PorcelainLines @('?? build.rs')
+        Assert-True -Condition ($null -ne $untracked.hash) `
+            -Message 'an untracked build-affecting file makes the run dirty, where a diff-only reading called it clean'
+        Assert-True -Condition (@($untracked.untracked) -ccontains 'build.rs') `
+            -Message 'and the record NAMES it, so a reader does not have to re-derive which path made the run dirty'
+
+        # THE GATE'S OWN ARTEFACTS ARE NOT THE AUTHOR'S WORK, and this control is what keeps the
+        # fix from freezing the board: the manifest store gains a file per run by design and
+        # `Write-CanaryNonce` rewrites the nonce before every run, so counting either as dirt would
+        # mark EVERY run dirty and refuse every merge. Same two exclusions the publisher already
+        # makes, for the same reasons.
+        $ownOnly = Get-WorktreeDirt -Diff '' -PorcelainLines @(
+            '?? .factory/gate-runs/abc123-20260904T000000.000Z-deadbeef.json',
+            ' M tools/ci-canary/src/nonce.rs')
+        Assert-True -Condition ($null -eq $ownOnly.hash -and @($ownOnly.untracked).Count -eq 0) `
+            -Message "CONTROL: the gate's own store and nonce are not dirt, or every run would refuse every merge"
+
+        # THE CASE EVERY ORDINARY RUN IS IN, and the one that made the merge proof unsatisfiable.
+        # `Write-CanaryNonce` rewrites the tracked nonce before the run starts, so `git diff HEAD`
+        # is NON-EMPTY on every gate invocation. Deciding dirtiness from the diff recorded a
+        # non-null hash every time -- 29 of 29 manifests in this worktree -- and merge-proof refuses
+        # a non-null `dirtyDiffHash`. The porcelain is what decides, so a tree whose only change is
+        # the gate's own artefact is CLEAN however much diff text that artefact produces.
+        $nonceOnly = Get-WorktreeDirt `
+            -Diff "diff --git a/tools/ci-canary/src/nonce.rs b/tools/ci-canary/src/nonce.rs`n-old`n+new" `
+            -PorcelainLines @(' M tools/ci-canary/src/nonce.rs')
+        Assert-True -Condition ($null -eq $nonceOnly.hash) `
+            -Message "a tree whose only change is the gate's own nonce is clean, or no run can ever satisfy the merge proof (got [$($nonceOnly.hash)])"
+
+        # AND A REAL DIFF STILL HASHES, unchanged: this widens what counts as dirty and must not
+        # narrow it.
+        $tracked = Get-WorktreeDirt -Diff "diff --git a/x b/x`n+one" -PorcelainLines @(' M x')
+        Assert-True -Condition ($null -ne $tracked.hash) `
+            -Message 'CONTROL: a tracked modification still hashes, so this only widens the reading'
+        $sameAgain = Get-WorktreeDirt -Diff "diff --git a/x b/x`n+one" -PorcelainLines @(' M x')
+        Assert-True -Condition ($tracked.hash -ceq $sameAgain.hash) `
+            -Message 'and the hash is a function of the tree, not of when it was taken'
+    }
+
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

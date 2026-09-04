@@ -1251,6 +1251,107 @@ function Publish-RunManifest {
     }
 }
 
+function Get-RunCoverage {
+    <#
+        What this run actually COVERED, as a fact the record carries rather than an inference a
+        reader makes from a console line (#725, case 1).
+
+        `-SkipPostgres` skips both PostgreSQL passes and the gate prints "this is not a full gate"
+        -- to the console, which is read once by whoever started it. The manifest is read by
+        everything afterwards, and it said `GREEN` with nothing distinguishing a partial run from a
+        complete one. So a persistence-affecting change could be certified by a run the repository
+        itself says did not cover persistence, and `ci/merge-proof.ps1` could not refuse it, because
+        a verifier can only check fields the producer wrote.
+
+        TWO FIELDS, and the second is not redundant. `postgres` names WHICH coverage was skipped, so
+        a future consumer can decide per subject; `complete` answers the question every consumer has
+        without teaching it the flag list -- and it is the field that keeps meaning when a second
+        skip switch is added, which a consumer matching on `postgres` alone would silently miss.
+
+        A SEAM THAT TAKES A BOOL AND RETURNS A RECORD, for the reason the other rules in this file
+        are: `Write-RunManifest` drives the whole gate and cannot be run from a cell, so the rule
+        lives where a cell can dot-source it out of the subject by AST.
+    #>
+    param([Parameter(Mandatory)] [bool] $SkipPostgres)
+
+    return [ordered]@{
+        postgres = if ($SkipPostgres) { 'skipped' } else { 'included' }
+        complete = (-not $SkipPostgres)
+    }
+}
+
+function Get-WorktreeDirt {
+    <#
+        Whether the tree this run measured is the commit it names, over EVERYTHING the build can
+        see -- not only over tracked modifications (#725, case 2).
+
+        `dirtyDiffHash` was computed from `git diff HEAD`, which omits untracked paths. A run with
+        an automatically discovered `build.rs` sitting untracked therefore recorded a NULL hash --
+        the value that reads as "the worktree was exactly the commit" -- while cargo compiled a tree
+        no commit contains. `ci/merge-proof.ps1` refuses a non-null hash and refuses the field being
+        absent, and neither refusal helps: the value was present and honest about the wrong
+        question.
+
+        THE TWO EXCLUSIONS ARE WHAT KEEP THIS FROM FREEZING THE BOARD, and they are the publisher's
+        own, deliberately: the manifest store gains a file per run BY DESIGN (#674(a)) and
+        `Write-CanaryNonce` rewrites the nonce before every run BY DESIGN (#152), so counting either
+        as dirt would mark every ordinary run dirty and refuse every merge. A guard that fires on
+        its own artefacts protects nothing; it just never lets the thing it guards happen.
+
+        THE PATHS TRAVEL WITH THE HASH. A hash says "this tree is not that commit" and a reader
+        then has to go find out what made it so -- at the moment they are reading a refusal, on a
+        machine that has moved on. Naming them costs one field.
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Diff,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $PorcelainLines
+    )
+
+    $storePrefix = '.factory/gate-runs/'
+    $gateOwnPath = 'tools/ci-canary/src/nonce.rs'
+    $foreign = New-Object System.Collections.Generic.List[string]
+    foreach ($line in @($PorcelainLines)) {
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.Length -lt 4) { continue }
+        # A porcelain line is `XY <path>`; a rename is `XY <old> -> <new>`. Both ends count, because
+        # a rename INTO the store from outside is still a path the commit does not carry.
+        $paths = ($line.Substring(3) -split ' -> ') | ForEach-Object { $_.Trim('"') }
+        foreach ($candidate in $paths) {
+            $normalised = $candidate -replace '\\', '/'
+            if ([string]::Equals($normalised, $gateOwnPath, [System.StringComparison]::Ordinal)) { continue }
+            if ($normalised.StartsWith($storePrefix, [System.StringComparison]::Ordinal)) { continue }
+            if (-not $foreign.Contains($normalised)) { $foreign.Add($normalised) }
+        }
+    }
+    $untracked = @($foreign | Sort-Object)
+
+    # THE PORCELAIN DECIDES, AND THE DIFF IS ONLY THE MATERIAL. `git status --porcelain` lists
+    # tracked modifications (` M path`) as well as untracked ones (`?? path`), so the foreign set
+    # above already answers "is this tree the commit it names" for BOTH halves. The diff text is
+    # what the hash is computed over; it is not what decides.
+    #
+    # WHY THAT ORDER MATTERS, MEASURED: `git diff HEAD` is non-empty on EVERY ordinary gate run,
+    # because `Write-CanaryNonce` rewrites the tracked `tools/ci-canary/src/nonce.rs` before the run
+    # starts (#152, by design). Deciding from the diff therefore recorded a non-null hash every
+    # time -- 29 of 29 manifests in this worktree -- and `ci/merge-proof.ps1` refuses a non-null
+    # `dirtyDiffHash` with "the gate ran with uncommitted edits". So the merge proof could not be
+    # satisfied by ANY run the gate has ever produced: the producer's own artefact permanently
+    # failed the consumer's check.
+    #
+    # That is the same defect the publisher's purity check already names one function up -- "a guard
+    # that refuses on its own artefact does not protect anything; it just never lets the thing it
+    # guards happen" -- and it was living one field over, in the value rather than in the refusal.
+    if ($untracked.Count -eq 0) {
+        return [ordered]@{ hash = $null; untracked = @() }
+    }
+    $material = ($Diff + "`n" + ($untracked -join "`n"))
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($material)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = [System.BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    } finally { $sha256.Dispose() }
+    return [ordered]@{ hash = $hash; untracked = $untracked }
+}
+
 function Write-RunManifest {
     # $Status: one of GREEN, RED, ABORTED-BY-CANARY - the house's PASS/FAIL/HARNESS-BROKE
     # discipline, plus the fourth value a contaminated build environment needs (orchestrator
@@ -1295,15 +1396,16 @@ function Write-RunManifest {
     # keeps other SESSIONS out; another shell in the same session is what remains. Declared as a
     # limit rather than papered over: this detects movement that LASTS, not movement that returns.
     $provenance = Get-HeadProvenance -HeadSha $headSha -BranchRef $script:gatedBranchAtStart
-    $diff = git diff HEAD
-    $dirtyDiffHash = if ($diff) {
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($diff -join "`n"))
-        $sha256 = [System.Security.Cryptography.SHA256]::Create()
-        try { [System.BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
-        finally { $sha256.Dispose() }
-    } else {
-        $null
-    }
+    # BOTH READS, because a tree is the commit it names only when nothing is modified AND nothing
+    # untracked is sitting in it (#725). `git diff HEAD` answers the first; only `git status
+    # --porcelain --untracked-files=all` answers the second, and the publisher below has been using
+    # exactly that read for its own purity check all along -- the manifest was the half that could
+    # not see it.
+    $diff = @(& git diff HEAD 2>$null | ForEach-Object { [string]$_ }) -join "`n"
+    $porcelain = @(& git status --porcelain --untracked-files=all 2>$null | ForEach-Object { [string]$_ })
+    $dirt = Get-WorktreeDirt -Diff $diff -PorcelainLines $porcelain
+    $dirtyDiffHash = $dirt.hash
+    $coverage = Get-RunCoverage -SkipPostgres ([bool]$SkipPostgres)
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
 
@@ -1389,6 +1491,15 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         pushedReason       = $provenance.pushedReason
         upstreamSha        = $provenance.upstreamSha
         dirtyDiffHash      = $dirtyDiffHash
+        # #725: WHAT MADE IT DIRTY, beside the hash that says it is. A hash sends a reader looking;
+        # the paths tell them, at the moment they are reading a refusal on a machine that has moved
+        # on. Empty on a clean tree, and never contains the gate's own store or nonce.
+        untrackedPaths     = @($dirt.untracked)
+        # #725: WHAT THIS RUN COVERED. `status` says the stages passed; this says which of them ran
+        # at all. Without it a `-SkipPostgres` run -- every run on a machine without PostgreSQL --
+        # is indistinguishable from a full gate to `ci/merge-proof.ps1`, which can only check fields
+        # the producer wrote.
+        coverage           = $coverage
         # A FACT, not an inference: the head moved between the start of the gate and this write.
         # The record names the head the STAGES ran against, and this says the working tree is no
         # longer on it -- which is why the publication below refuses to commit.

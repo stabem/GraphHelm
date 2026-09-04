@@ -1723,3 +1723,68 @@ fn a_batch_failing_its_own_checksum_reports_the_corrupt_batch_code() {
     };
     assert_eq!(error.code(), "GHE002_CORRUPT_BATCH");
 }
+
+/// An orphan BLOB that nobody holds is removed by the reconciling open (#328).
+///
+/// **This population was empty.** `an_orphan_temp_nobody_holds_is_still_deleted` covers the
+/// `.tmp` branch, and the two orphan-blob cells next to this one assert the opposite property --
+/// that an orphan is PRESERVED when validation refuses the store. Nothing asserted that a healthy
+/// store actually removes one, so the whole `delete_blobs` half of `apply_reconcile` was
+/// unobserved: the plan could be built with a handle that cannot perform the deletion and every
+/// test in the crate would still pass.
+///
+/// Measured before this cell existed: changing the blobs scan to open read-only -- which makes the
+/// by-handle `SetFileInformationByHandle(FileDispositionInfo)` fail, because that call requires a
+/// DELETE-capable handle -- left 76 of 76 crate tests green.
+///
+/// The orphan is born the way one is really born rather than staged: `BlobPublish` fails after
+/// `publish_staged` has run and before the journal append, so the blob sits in `blobs/` with
+/// nothing referencing it.
+#[test]
+fn an_orphan_blob_nobody_holds_is_deleted_on_the_next_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::BlobPublish,
+    )
+    .unwrap();
+    let sealed = sealed_evidence();
+    let reference = sealed.reference().clone();
+    assert!(
+        repo.append_atomic(&prepared(Some(reference), vec![sealed]))
+            .is_err()
+    );
+    drop(repo);
+
+    // ARRANGEMENT: the orphan has to EXIST before the open that must remove it, or "it is gone"
+    // below is true of a store that never had one.
+    let orphan = std::fs::read_dir(directory.path().join("blobs"))
+        .unwrap()
+        .next()
+        .expect("ARRANGEMENT: the failed publish must leave a blob behind")
+        .unwrap()
+        .path();
+    assert!(
+        orphan.exists(),
+        "ARRANGEMENT: no orphan blob at {}",
+        orphan.display()
+    );
+
+    let repo = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    )
+    .expect("a store whose only defect is an orphan blob opens");
+    drop(repo);
+
+    assert!(
+        !orphan.exists(),
+        "the reconciling open left the orphan blob at {}. The scan plans the deletion and \
+         `apply_reconcile` performs it by HANDLE, so a handle opened without DELETE access makes \
+         the removal fail while the open still reports success",
+        orphan.display()
+    );
+}

@@ -2024,8 +2024,12 @@ impl LocalEventRepository {
                 // Nothing here counts skips or ages them, deliberately, because the alternative
                 // is the cliff above. If that case ever needs to be visible, it needs a counter
                 // or a report, NOT a change to this decision. (Named by K reviewing #340.)
-                let Some(mut file) =
-                    open_child_file_for_delete(&self.blobs_handle, &self.root.join("blobs"), name)?
+                let Some(mut file) = open_child_file_for_reconcile(
+                    &self.blobs_handle,
+                    &self.root.join("blobs"),
+                    name,
+                    false,
+                )?
                 else {
                     return Ok(());
                 };
@@ -2048,9 +2052,59 @@ impl LocalEventRepository {
                     {
                         return Err(EventRepositoryError::UnsupportedFormat);
                     }
+                    // THE DELETE HANDLE IS OPENED HERE, FOR ORPHANS ONLY (#328). The scan above
+                    // validated this file's CONTENT through a read-only handle; the removal in
+                    // `apply_reconcile` happens BY HANDLE
+                    // (`SetFileInformationByHandle(FileDispositionInfo)`), which requires DELETE
+                    // access. Taking it during the scan meant every reachable blob -- all of them
+                    // in a healthy store -- paid destructive access to answer a read-only
+                    // question, and a foreign handle without `FILE_SHARE_DELETE` (antivirus, a
+                    // backup agent, an editor) turned that into contention on the read path.
+                    //
+                    // **THE IDENTITY IS TAKEN AND THE VALIDATING HANDLE IS THEN RELEASED, in that
+                    // order, and the order is the whole correctness of this block.** The first
+                    // version of this change held the read-only handle open across the re-open so
+                    // the two `File`s could be compared directly. That handle was opened WITHOUT
+                    // `FILE_SHARE_DELETE`, which makes it one of the "ANY existing handle" that
+                    // this function's own doc says refuses a `DELETE` open -- so the re-open took
+                    // `ERROR_SHARING_VIOLATION`, was mapped to `Ok(None)`, read as "held by
+                    // someone else", and the orphan was silently never removed while the open
+                    // still reported success. The change blocked itself, and the fact that
+                    // explains it is the same one measured to argue the window was closed.
+                    // `FileIdentity` is a plain `{device, file}` value, so it outlives the handle
+                    // it came from and nothing needs to be held.
+                    let validated = file_identity(&file)?;
+                    drop(file);
+                    let Some(deletable) = open_child_file_for_reconcile(
+                        &self.blobs_handle,
+                        &self.root.join("blobs"),
+                        name,
+                        true,
+                    )?
+                    else {
+                        // Held by someone else. Exactly what the scan already does with
+                        // contention: skip this cycle rather than call it a verdict.
+                        return Ok(());
+                    };
+                    // AND THE TWO HANDLES MUST BE THE SAME FILE. `remove_planned_file` already
+                    // compares the name as it stands now against the handle it is about to
+                    // delete; this is a THIRD object -- the handle that validated the bytes -- and
+                    // the window between VALIDATED and TO-DELETE is new with this change.
+                    //
+                    // THE WINDOW IS REAL ON BOTH PLATFORMS AND THIS COMPARISON IS WHAT CLOSES IT.
+                    // An earlier draft claimed the window could not open on Windows, because the
+                    // validating handle's share mode refuses any rename or delete of that name
+                    // while it lives. That is true of the handle -- and it is exactly why the
+                    // handle cannot still be alive here. Releasing it to let the `DELETE` open
+                    // succeed also releases that protection, so what was argued as belt-and-braces
+                    // is load-bearing on Windows for the same reason it always was on Unix, where
+                    // renaming over an open file is legal.
+                    if file_identity(&deletable)? != validated {
+                        return Ok(());
+                    }
                     delete_blobs.push(PlannedDelete {
                         name: name.to_owned(),
-                        file,
+                        file: deletable,
                     });
                 }
                 Ok(())
@@ -2068,8 +2122,12 @@ impl LocalEventRepository {
                 // Same rule as `blobs/` above, and it matters more here: a temp another handle
                 // holds is almost always a writer mid-publish, which is the one file in the
                 // repository that must NOT be swept.
-                let Some(file) =
-                    open_child_file_for_delete(&self.temp_handle, &self.root.join(".tmp"), name)?
+                let Some(file) = open_child_file_for_reconcile(
+                    &self.temp_handle,
+                    &self.root.join(".tmp"),
+                    name,
+                    true,
+                )?
                 else {
                     return Ok(());
                 };
@@ -4314,22 +4372,39 @@ fn open_child_file(
 
 /// `Ok(None)` means the file is held open by someone else and cannot be planned for deletion in
 /// this cycle. Unix has no sharing-violation failure mode, so this arm never produces it.
+///
+/// `want_delete` is accepted and ignored HERE, and the asymmetry is the point rather than an
+/// oversight (#328). Unix removes by directory handle and name, so no access right has to be
+/// requested at open time and a scan costs nothing extra; on Windows the same scan was taking
+/// `DELETE` on every reachable blob to decide whether the store was clean. One function with one
+/// parameter, not two spellings: a read-only twin would need its own sharing-violation mapping,
+/// and a second mapping is exactly how the two openers drift apart.
 #[cfg(unix)]
-fn open_child_file_for_delete(
+fn open_child_file_for_reconcile(
     directory: &File,
     path: &Path,
     name: &str,
+    _want_delete: bool,
 ) -> Result<Option<File>, EventRepositoryError> {
     open_child_file(directory, path, name, false, false).map(Some)
 }
 
 /// `Ok(None)` means another handle holds the file — see the call sites in `plan_reconcile` for
 /// what the scan does with that, and why it is not an error.
+///
+/// **`want_delete` is what #328 adds, and the sharing-violation mapping below is why it is a
+/// PARAMETER rather than a second function.** Requesting `DELETE` is refused while any existing
+/// handle was opened without `FILE_SHARE_DELETE`; a plain read-only open is refused while a handle
+/// exists without `FILE_SHARE_READ`. Both are contention and both must answer `Ok(None)`. A
+/// read-only twin written alongside this one would need its own copy of that mapping, and a blob
+/// held exclusively — which nothing in the suite covers today — would newly become
+/// `Err(Storage)` where it used to skip.
 #[cfg(windows)]
-fn open_child_file_for_delete(
+fn open_child_file_for_reconcile(
     _directory: &File,
     path: &Path,
     name: &str,
+    want_delete: bool,
 ) -> Result<Option<File>, EventRepositoryError> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Foundation::{ERROR_SHARING_VIOLATION, GENERIC_READ};
@@ -4337,9 +4412,10 @@ fn open_child_file_for_delete(
         DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
     validate_child_name(name)?;
+    let desired = GENERIC_READ | if want_delete { DELETE } else { 0 };
     let opened = std::fs::OpenOptions::new()
         .read(true)
-        .access_mode(GENERIC_READ | DELETE)
+        .access_mode(desired)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path.join(name));
@@ -5630,7 +5706,7 @@ mod limit_tests {
         std::fs::create_dir(&path).unwrap();
         let directory_handle = open_directory(&path).unwrap();
         std::fs::write(path.join("orphan.json"), b"validated").unwrap();
-        let planned = open_child_file_for_delete(&directory_handle, &path, "orphan.json")
+        let planned = open_child_file_for_reconcile(&directory_handle, &path, "orphan.json", true)
             .unwrap()
             .expect("nothing else holds this fixture file, so the plan gets its handle");
         let displaced = path.join("displaced.json");
@@ -5687,7 +5763,7 @@ mod limit_tests {
         std::fs::create_dir(&path).unwrap();
         std::fs::write(path.join("orphan.json"), b"validated").unwrap();
         let directory_handle = open_directory(&path).unwrap();
-        let retained = open_child_file_for_delete(&directory_handle, &path, "orphan.json")
+        let retained = open_child_file_for_reconcile(&directory_handle, &path, "orphan.json", true)
             .unwrap()
             .expect("nothing else holds this fixture file, so the plan gets its handle");
         remove_reconciled_file(&directory_handle, &path, "orphan.json", retained).unwrap();
@@ -7107,9 +7183,10 @@ mod limit_tests {
         std::fs::create_dir(&path).unwrap();
         let directory_handle = open_directory(&path).unwrap();
         std::fs::write(path.join("active-safe.tmp"), b"validated").unwrap();
-        let retained = open_child_file_for_delete(&directory_handle, &path, "active-safe.tmp")
-            .unwrap()
-            .expect("nothing else holds this fixture file, so the plan gets its handle");
+        let retained =
+            open_child_file_for_reconcile(&directory_handle, &path, "active-safe.tmp", true)
+                .unwrap()
+                .expect("nothing else holds this fixture file, so the plan gets its handle");
         remove_planned_file(&directory_handle, &path, "active-safe.tmp", retained).unwrap();
         assert_eq!(
             std::fs::read(path.join("active-safe.tmp")).unwrap(),

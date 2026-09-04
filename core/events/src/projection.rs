@@ -651,6 +651,12 @@ pub enum ReplayError {
     LimitExceeded,
     #[error("event stream failed integrity verification")]
     Corrupt,
+    /// The fold outlived the wall-clock budget its caller declared (#750). Not `LimitExceeded`,
+    /// for the reason `EventRepositoryError::ReadBudgetExceeded` states.
+    #[error(
+        "replay exceeded its {limit_millis} ms budget after folding {walked} events; this stream is longer than the read can fold within that budget"
+    )]
+    BudgetExceeded { walked: u64, limit_millis: i64 },
 }
 
 /// Durable, exact source position for one disposable projection generation.
@@ -901,6 +907,18 @@ fn map_replay_error(error: ReplayError) -> EventRepositoryError {
     match error {
         ReplayError::LimitExceeded => EventRepositoryError::LimitExceeded,
         ReplayError::Corrupt => EventRepositoryError::Integrity,
+        // Unreachable through this path today - `ProjectionRebuilder` folds pages through
+        // `apply_page`, never through `replay_within`, and nothing here declares a budget - but
+        // it is mapped rather than collapsed onto `Integrity`: a read that ran out of time is
+        // not a corrupt stream, and the day a rebuild does declare a budget, the wrong answer
+        // here would send an operator after a broken hash chain that does not exist.
+        ReplayError::BudgetExceeded {
+            walked,
+            limit_millis,
+        } => EventRepositoryError::ReadBudgetExceeded {
+            walked,
+            limit_millis,
+        },
     }
 }
 
@@ -2019,15 +2037,39 @@ impl ReplayError {
         match self {
             Self::LimitExceeded => "GHE006_LIMIT_EXCEEDED",
             Self::Corrupt => "GHE005_INTEGRITY_FAILURE",
+            Self::BudgetExceeded { .. } => "GHE013_READ_BUDGET_EXCEEDED",
         }
     }
 }
 
 /// Rebuilds current state without decrypting Evidence or interpreting authoring records.
+///
+/// Unbounded in time, which is what every caller but the status read wants: see
+/// [`replay_within`] for the bounded form and #750 for why only one caller declares a budget.
 pub fn replay(
     expected_scope: &graphhelm_protocols::RepositoryScope,
     expected_stream_id: &str,
     events: &[EventEnvelope],
+) -> Result<ExecutionProjection, ReplayError> {
+    replay_within(
+        expected_scope,
+        expected_stream_id,
+        events,
+        &crate::ReadBudget::unbounded(),
+    )
+}
+
+/// [`replay`], with a wall-clock budget checked DURING the fold.
+///
+/// The fold is roughly 42% of a status read's linear cost (#750's measurement); the journal
+/// verification inside `LocalEventRepository::open` is most of the rest, and a caller that
+/// wants a bounded READ has to pass the same budget to both. Bounding only this half would be
+/// a boundary that covers less than half of what it appears to.
+pub fn replay_within(
+    expected_scope: &graphhelm_protocols::RepositoryScope,
+    expected_stream_id: &str,
+    events: &[EventEnvelope],
+    budget: &crate::ReadBudget,
 ) -> Result<ExecutionProjection, ReplayError> {
     graphhelm_protocols::OpaqueId::parse(expected_stream_id).map_err(|_| ReplayError::Corrupt)?;
     if events.len() > MAX_READ_ALL {
@@ -2042,6 +2084,15 @@ pub fn replay(
     let mut aggregate_references = 0_usize;
     let mut active_legal_holds = BTreeSet::new();
     for (index, event) in events.iter().enumerate() {
+        // INSIDE the walk, never before it: a budget read once ahead of the loop bounds when
+        // the loop STARTS and nothing else. The count is the running one, so the refusal can
+        // say how far this read actually got.
+        budget
+            .check_progress(index as u64, index as u64 + 1)
+            .map_err(|exceeded| ReplayError::BudgetExceeded {
+                walked: exceeded.walked,
+                limit_millis: exceeded.limit_millis,
+            })?;
         let event_bytes = serialized_len_bounded(event, MAX_EVENT_BYTES)
             .map_err(|_| ReplayError::LimitExceeded)?;
         aggregate_bytes = aggregate_bytes

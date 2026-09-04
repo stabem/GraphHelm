@@ -173,6 +173,7 @@ Any wire integer is additionally bounded by 9,007,199,254,740,991 so JSON consum
 | `GHE008_STORAGE_FAILURE` | The underlying store failed without a more specific classification. |
 | `GHE009_EXTERNALIZATION_FAILED` | Authoring content cannot be safely projected and sealed. |
 | `GHE010_STREAM_SELECTION_REQUIRED` | The operation needs an explicit single stream. |
+| `GHE013_READ_BUDGET_EXCEEDED` | A read that declared a wall-clock budget outlived it mid-walk. |
 | `GHEV001_EVIDENCE_UNAVAILABLE` | Evidence is pending erasure, erased, expired, missing-key, or corrupt. |
 | `GHEV002_LEGAL_HOLD` | A legal hold blocks erasure or cleanup. |
 | `GHEV003_RETENTION_INELIGIBLE` | Policy, age, scope, or state does not permit the action. |
@@ -183,7 +184,7 @@ Any wire integer is additionally bounded by 9,007,199,254,740,991 so JSON consum
 | `GHCLI001_ARGUMENT_INVALID` | An operator argument is missing, out of range, or mutually exclusive. |
 | `GHCLI002_CONFIG_INVALID` | Operator configuration or an operator-supplied endpoint is unusable. |
 
-Each code names exactly one meaning. `GHE002_CORRUPT_BATCH` distinguishes a batch that failed its own checksum from a broken hash chain, and `GHPROJ001_WATERMARK_MISMATCH` distinguishes a non-resumable projection generation. `GHE011_SCOPE_VIOLATION` and `GHE012_CONTENT_UNAVAILABLE` were renumbered off `GHE004` and `GHE008`, which the repository already used for invalid input and storage failure: repository, retention, Evidence, materialization, projection, and backup errors share the numeric families where the classification is the same. Public diagnostics carry a stable code, a fixed message, and a registered JSON Pointer. Adapter internals retain their causes without exposing them through `Display` or CLI JSON.
+Each code names exactly one meaning. `GHE002_CORRUPT_BATCH` distinguishes a batch that failed its own checksum from a broken hash chain, and `GHPROJ001_WATERMARK_MISMATCH` distinguishes a non-resumable projection generation. `GHE013_READ_BUDGET_EXCEEDED` (issue #750) is separate from `GHE006_LIMIT_EXCEEDED` for the same kind of reason: a deterministic bound refuses the same input on every machine, while a wall-clock budget refuses a walk that would have completed given longer, and the operator's next move differs. `GHE011_SCOPE_VIOLATION` and `GHE012_CONTENT_UNAVAILABLE` were renumbered off `GHE004` and `GHE008`, which the repository already used for invalid input and storage failure: repository, retention, Evidence, materialization, projection, and backup errors share the numeric families where the classification is the same. Public diagnostics carry a stable code, a fixed message, and a registered JSON Pointer. Adapter internals retain their causes without exposing them through `Display` or CLI JSON.
 
 ## Operator CLI
 

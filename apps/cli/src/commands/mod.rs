@@ -339,6 +339,29 @@ pub(super) fn event_store(
     LocalEventRepository::open(path, Arc::new(SystemClock), Arc::new(UuidIds))
 }
 
+/// [`event_store`] for a read that declares a wall-clock budget (#750).
+///
+/// The budget carries the SAME kind of clock the handle does, so the deadline the open is
+/// measured against and the timestamps the handle would write come from one seam.
+pub(super) fn budgeted_event_store(
+    path: &std::path::Path,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<LocalEventRepository, EventRepositoryError> {
+    LocalEventRepository::open_within(path, Arc::new(SystemClock), Arc::new(UuidIds), budget)
+}
+
+/// The budget one status read declares.
+///
+/// Built once and shared by both halves of the read - the journal verification inside `open`
+/// and the fold - because the deadline is what is being bounded, not each half separately: two
+/// budgets started independently would let one read spend the whole budget twice.
+pub(super) fn status_read_budget() -> graphhelm_events::ReadBudget {
+    graphhelm_events::ReadBudget::starting_now(
+        Arc::new(SystemClock),
+        chrono::Duration::milliseconds(graphhelm_events::STATUS_READ_BUDGET_MILLIS),
+    )
+}
+
 pub(super) fn publish_loaded(
     loaded: &graphhelm_schema::LoadedGraph,
     actor: Actor,

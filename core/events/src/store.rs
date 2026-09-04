@@ -56,6 +56,17 @@ pub enum EventRepositoryError {
     StreamSelectionRequired,
     #[error("repository storage operation failed")]
     Storage,
+    /// The read declared a wall-clock budget and the walk outlived it (#750).
+    ///
+    /// Distinct from `LimitExceeded` on purpose: that one says the input is larger than a
+    /// deterministic bound this build refuses to process at all, and it is the same answer on
+    /// every machine. This one says a walk that WOULD have completed did not finish inside the
+    /// time the caller allowed, which depends on the store, the machine and the build. The
+    /// operator's next move differs, so the two must not share a code.
+    #[error(
+        "read exceeded its {limit_millis} ms budget after walking {walked} events; this store is larger than the read can answer within that budget"
+    )]
+    ReadBudgetExceeded { walked: u64, limit_millis: i64 },
 }
 
 impl EventRepositoryError {
@@ -73,6 +84,7 @@ impl EventRepositoryError {
             Self::UnsafePersistence => "GHE009_EXTERNALIZATION_FAILED",
             Self::StreamSelectionRequired => "GHE010_STREAM_SELECTION_REQUIRED",
             Self::Storage => "GHE008_STORAGE_FAILURE",
+            Self::ReadBudgetExceeded { .. } => "GHE013_READ_BUDGET_EXCEEDED",
         }
     }
 }

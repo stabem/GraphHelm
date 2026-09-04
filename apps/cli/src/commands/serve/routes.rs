@@ -197,13 +197,18 @@ fn percent_decode(value: &str) -> Option<String> {
 }
 
 /// `GET /v1/executions/{id}`: replies `execution.status`'s own `data` — the exact same
-/// `execution::status::execute` the CLI's `execution status` runs, so the two report byte-identical
+/// `execution::status` read the CLI's `execution status` runs, so the two report byte-identical
 /// output for the same stream ("one store, one truth").
+///
+/// `budgeted`, not `execute`: this is the read a caller WAITS on, and #750's measurement is that
+/// it is linear in the history with nothing bounding the time. The mutation replies further down
+/// this file keep the unbounded `execute` - a read that ran out of time must never turn a write
+/// that already committed into a refusal.
 pub(super) async fn status(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
-    match execution::status::execute(&state.events, Some(&execution_id)) {
+    match execution::status::budgeted(&state.events, Some(&execution_id)) {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(STATUS_COMMAND, value).output,
@@ -894,6 +899,24 @@ pub(super) async fn pause(
                         actor,
                         idempotency_key: key,
                     }));
+                    // THIS BOUNDS POLL COUNT, NOT WALL TIME, and the difference is deliberate
+                    // (peer review of #750). The read below is the UNBOUNDED `execute`, and the
+                    // deadline is only consulted BETWEEN iterations -- so the real ceiling is ten
+                    // seconds PLUS one read, and a single slow read overruns the stated budget by
+                    // however long it takes. #750 was raised with an eighteen-second read.
+                    //
+                    // The alternative is worse HERE, and only here. A budgeted read would answer
+                    // `GHE013_READ_BUDGET_EXCEEDED` on a slow store, and this loop would then have
+                    // to report `unknown` for a pause that may well have COMMITTED -- the caller
+                    // cannot tell "your interrupt did not land" from "the read after it was slow",
+                    // which is the exact ambiguity the unbounded post-mutation render exists to
+                    // remove. A wrong answer inside its budget is worse than a right answer late.
+                    //
+                    // Written down because it was not, and an undocumented trade is a trap: a
+                    // bound consulted outside the thing it means to bound looks correct in every
+                    // line taken alone, and a grep for either half finds nothing. If this loop
+                    // ever needs a real wall-time ceiling, the honest shape is a budget that
+                    // reports WHICH of the two happened, not a smaller number here.
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
                     loop {
                         if let Ok(value) =

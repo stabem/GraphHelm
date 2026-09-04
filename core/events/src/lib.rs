@@ -1,6 +1,7 @@
 //! Append-only event storage and replay.
 
 mod artifact;
+mod budget;
 mod canonical;
 mod evidence;
 mod integrity;
@@ -16,6 +17,7 @@ mod store;
 mod sweep;
 
 pub use artifact::{ArtifactRegistration, ArtifactRegistrationError, validate_artifact_reference};
+pub use budget::{READ_BUDGET_CHECK_INTERVAL, ReadBudget, ReadBudgetExceeded};
 pub use evidence::{
     EvidenceError, EvidenceInput, EvidenceOpener, EvidenceProtector, EvidenceSealer,
     MAX_EVIDENCE_ITEMS_PER_BATCH, SealedEvidence, SecretBytes,
@@ -31,6 +33,7 @@ pub use key::{
     RepositoryFuture, RevocationReceipt, RevokeKeyRequest, VerifyAuthenticationRequest,
     WrapKeyRequest, WrappedKey,
 };
+pub use limits::STATUS_READ_BUDGET_MILLIS;
 pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, ReadLockHeld,
     journal_line_roundtrips, with_repository_read_lock,
@@ -41,7 +44,7 @@ pub use projection::{
     MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt, OpenClaim, OpenWait, OverdueStage,
     ProjectionGeneration, ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository,
     ProjectionWatermark, ReplayError, claim_evidence_digest, overdue_at, project_customs_stage,
-    replay,
+    replay, replay_within,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

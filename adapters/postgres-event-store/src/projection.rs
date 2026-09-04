@@ -401,6 +401,16 @@ async fn authenticate_generation(
         rebuilt.apply_page(&events).map_err(|error| match error {
             graphhelm_events::ReplayError::LimitExceeded => EventRepositoryError::LimitExceeded,
             graphhelm_events::ReplayError::Corrupt => EventRepositoryError::Integrity,
+            // `apply_page` declares no budget, so this arm is unreachable from here; it is
+            // mapped to its own error rather than folded onto `Integrity` for the reason
+            // `map_replay_error` states - a read out of time is not a corrupt stream.
+            graphhelm_events::ReplayError::BudgetExceeded {
+                walked,
+                limit_millis,
+            } => EventRepositoryError::ReadBudgetExceeded {
+                walked,
+                limit_millis,
+            },
         })?;
         start = rebuilt
             .watermark()

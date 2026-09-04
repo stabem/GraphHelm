@@ -306,6 +306,9 @@ pub struct LocalEventRepository {
     journal_sync_count: Arc<AtomicU64>,
     failpoint: Option<LocalFailpoint>,
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
+    /// Unbounded unless this handle came from `open_within` (#750). Checked inside the journal
+    /// verification walk, which is the half of a status read's cost that is not the fold.
+    read_budget: crate::ReadBudget,
 }
 
 /// Whether a snapshot ran under the repository's lock, or under no lock because there was none
@@ -465,7 +468,29 @@ impl LocalEventRepository {
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, None)
+        Self::open_inner(
+            root.into(),
+            clock,
+            ids,
+            None,
+            crate::ReadBudget::unbounded(),
+        )
+    }
+
+    /// [`Self::open`], with a wall-clock budget on every journal walk this handle performs -
+    /// starting with `open`'s own verification, which is roughly 57% of a status read's linear
+    /// cost (#750's measurement; the fold is most of the rest).
+    ///
+    /// The budget belongs to the HANDLE rather than to one call because a read surface opens a
+    /// store per request (`event_store` in `apps/cli/src/commands/mod.rs`) and that open is the
+    /// first half of the read being bounded. One handle is one read's worth of budget.
+    pub fn open_within(
+        root: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        budget: crate::ReadBudget,
+    ) -> Result<Self, EventRepositoryError> {
+        Self::open_inner(root.into(), clock, ids, None, budget)
     }
 
     pub fn open_with_failpoint(
@@ -474,7 +499,13 @@ impl LocalEventRepository {
         ids: Arc<dyn IdGenerator>,
         failpoint: LocalFailpoint,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, Some(failpoint))
+        Self::open_inner(
+            root.into(),
+            clock,
+            ids,
+            Some(failpoint),
+            crate::ReadBudget::unbounded(),
+        )
     }
 
     fn open_inner(
@@ -482,6 +513,7 @@ impl LocalEventRepository {
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
         failpoint: Option<LocalFailpoint>,
+        read_budget: crate::ReadBudget,
     ) -> Result<Self, EventRepositoryError> {
         let schemas = graphhelm_schema::repository_schema_set()
             .map_err(|_| EventRepositoryError::IntegrityAt("open:schema-set"))?;
@@ -558,6 +590,7 @@ impl LocalEventRepository {
             journal_sync_count: Arc::new(AtomicU64::new(0)),
             failpoint,
             schemas,
+            read_budget,
         };
         let recovery = (|| {
             repository.validate_anchors()?;
@@ -1565,12 +1598,25 @@ impl LocalEventRepository {
         // each batch — they survive a splice through `state`, which is why they need no
         // ctx field.
         let state = Arc::make_mut(shared_state);
+        // #750: what this walk costs is linear in the journal, and until now nothing bounded
+        // how long it took. The count is in EVENTS rather than lines so the budget's interval
+        // means the same thing here as it does in the fold; the check is inside the loop, so a
+        // read that runs out of time says so instead of finishing minutes later.
+        let mut walked_events = 0_u64;
         for line in bytes
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty())
         {
             ensure_inclusive_limit(line.len() as u64, MAX_BATCH_BYTES as u64)?;
             let batch = parse_physical_batch(self.schemas, line)?;
+            let before = walked_events;
+            walked_events = walked_events.saturating_add(batch.events.len() as u64);
+            self.read_budget
+                .check_progress(before, walked_events)
+                .map_err(|exceeded| EventRepositoryError::ReadBudgetExceeded {
+                    walked: exceeded.walked,
+                    limit_millis: exceeded.limit_millis,
+                })?;
             if batch.checksum != batch_checksum(&batch)? {
                 // The batch failed its own checksum. Reporting this as a generic integrity failure
                 // left an operator unable to distinguish a corrupt stored line from a broken event

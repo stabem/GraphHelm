@@ -145,6 +145,23 @@ function Get-IndexBlobBytes {
     $info.CreateNoWindow = $true
 
     $process = [System.Diagnostics.Process]::Start($info)
+    # STDERR IS DRAINED CONCURRENTLY, NOT AFTERWARDS, and this line used to sit below the
+    # stdout loop. Both streams are redirected, so the child blocks writing once its stderr
+    # pipe buffer fills while this side is still blocked reading stdout, and neither ever
+    # moves. A hang HAS NO COLOUR: cargo has no per-test timeout and neither does a gate
+    # stage, so the run stalls rather than reddening, and a stalled run gets a gate switched
+    # off rather than fixed.
+    #
+    # MEASURED, because the comment that used to be here named the wrong trigger. `GIT_TRACE=1`
+    # over this repository is about 200 bytes -- nowhere near the ~4 KB buffer, so the trigger
+    # this program warned about could not actually reach it. `GIT_TRACE2_EVENT=1` on the exact
+    # command below is 3,585 bytes on this repository, 87% of one buffer, and it is an
+    # environment variable a developer exports once and every git child inherits. A slightly
+    # larger checkout crosses it.
+    #
+    # `ReadToEndAsync` started BEFORE the read below is what keeps the child draining while
+    # this side works. (Found by the GraphHelm ISSUES 4 lane reviewing #765.)
+    $drainStderr = $process.StandardError.ReadToEndAsync()
     $buffer = New-Object System.IO.MemoryStream
     try {
         # Copied in bounded chunks rather than with CopyTo, so the ceiling holds even if the
@@ -156,7 +173,7 @@ function Get-IndexBlobBytes {
             if (($buffer.Length + $read) -gt $MaxBytes) { return $null }
             $buffer.Write($chunk, 0, $read)
         }
-        $process.StandardError.ReadToEnd() | Out-Null
+        [void] $drainStderr.Wait()
         $process.WaitForExit()
         if ($process.ExitCode -ne 0) { return $null }
         # `,` before the array. PowerShell UNROLLS a returned collection, and an EMPTY byte[]
@@ -171,6 +188,103 @@ function Get-IndexBlobBytes {
     }
 }
 
+function Test-SameText {
+    <#
+        Two strings equal ORDINALLY, which is not what `-eq` and `-ceq` answer.
+
+        PowerShell's comparison operators go through the CURRENT CULTURE, and a culture comparison
+        gives some code points no weight at all. Measured on 5.1.26100.9168:
+
+            ('GREEN' + [char]0xFE00) -eq  'GREEN'   -> True
+            ('GREEN' + [char]0xFE00) -ceq 'GREEN'   -> True
+            ([char]0xFE00) -eq ''                   -> True   (its Length is 1)
+            [string]::Equals('GREEN' + [char]0xFE00, 'GREEN', 'Ordinal')  -> False
+
+        **`-ceq` IS NOT THE STRICT SPELLING.** Case-sensitivity and culture-awareness are
+        orthogonal, and this program reached for the `-c` family throughout on the belief that it
+        was the careful one. It was not; the belief came from prose (#753, #759) that enumerates
+        only the five case-INSENSITIVE operators, and a guard whose blind spot is inherited from
+        its own documentation is worse than an unguarded one, because the author believes they are
+        covered.
+
+        Ordinal keeps the case-sensitivity every `-ceq` here intended and removes only the culture.
+
+        Found by running #759's `ci/find-culture-comparisons.ps1` -- an AST detector, so it sees
+        the operator and not a string that names one -- against this file. It cannot see
+        `Sort-Object -Unique -CaseSensitive`, which is asked separately and measured to
+        distinguish a zero-weight pair (2, not 1), so that one is left alone.
+    #>
+    param([Parameter(Mandatory)] [AllowNull()] [AllowEmptyString()] $Left,
+          [Parameter(Mandatory)] [AllowNull()] [AllowEmptyString()] $Right)
+
+    if ($null -eq $Left -or $null -eq $Right) { return ($null -eq $Left -and $null -eq $Right) }
+    return [string]::Equals([string]$Left, [string]$Right, [System.StringComparison]::Ordinal)
+}
+
+function Test-InSet {
+    <#
+        Membership decided by `Test-SameText`, replacing `-ccontains` / `-cnotcontains`.
+
+        The two sites this matters most for are guards that FAIL OPEN: the UNCLASSIFIED residue
+        check, whose whole purpose is that no covered path goes unmentioned, and (in the write
+        half) the verifier's vacuity control, which runs after the program has already written.
+        A membership test that says "already there" about a path that is not there turns both of
+        them into the quiet success they exist to prevent.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [AllowNull()] $Set,
+          [Parameter(Mandatory)] [AllowNull()] [AllowEmptyString()] $Value)
+
+    foreach ($member in @($Set)) { if (Test-SameText $member $Value) { return $true } }
+    return $false
+}
+
+function Resolve-ScopePath {
+    <#
+        The operator's `-Path`, reduced to the repository-relative form every consumer of it needs.
+
+        git normalises a pathspec itself -- `:(literal)./ci` and `:(literal)ci/../ci` both list
+        exactly what `:(literal)ci` lists, measured on git 2.47.1.windows.1 -- and
+        `Test-ExactDirectory` does not: it matches each segment against the real directory entries,
+        so a `.` segment sent it looking for a directory literally named `.`, which exists on no
+        filesystem. The two halves of the same run therefore disagreed about what `-Path` meant,
+        and the disagreement is not symmetric: the disk half answering "absent" is what drops the
+        run into the case-insensitive fallback, widening a scope the operator narrowed correctly.
+
+        A seam that takes a STRING and returns one, for the same reason `Get-DistinctScopeSpellings`
+        does. These are verdicts about a path's SHAPE, and a cell that had to build each shape on
+        disk could only be run on a machine whose filesystem allowed it.
+
+        `..` pops, and a `..` with nothing left to pop is REFUSED BY NAME. Today such a path reaches
+        git, which errors with "is outside repository", and the probe reads that non-zero exit as
+        HARNESS-BROKE -- the instrument reporting that it cannot be trusted, when in fact it worked
+        and the answer was no. An operator's mistake and a broken tool are different states and the
+        exit codes say so: 1 for a refusal, 2 for an instrument that did not answer.
+
+        The separators are `/` and the platform's own, which is what the `-replace` this grew out of
+        compared. A backslash is a legal character in a filename on Linux and is not treated as a
+        separator there.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $RelativePath)
+
+    $separators = '[/' + [regex]::Escape([System.IO.Path]::DirectorySeparatorChar) + ']'
+    $segments = New-Object System.Collections.Generic.List[string]
+    foreach ($segment in ($RelativePath -split $separators)) {
+        if ((Test-SameText $segment '') -or (Test-SameText $segment '.')) { continue }
+        if (Test-SameText $segment '..') {
+            if ($segments.Count -eq 0) {
+                return [ordered]@{ ok = $false; path = ''; reason = 'climbs above the repository root' }
+            }
+            $segments.RemoveAt($segments.Count - 1)
+            continue
+        }
+        $segments.Add($segment)
+    }
+    # An EMPTY result is the repository root -- `-Path .`, `-Path a/..`. It is not an error and it is
+    # not an empty scope: it is the whole repository, which is what the operator asked for. The
+    # caller says so out loud rather than widening in silence.
+    return [ordered]@{ ok = $true; path = ($segments -join '/'); reason = '' }
+}
+
 function Test-ExactDirectory {
     <#
         Does this relative path exist on disk with EXACTLY this spelling?
@@ -182,9 +296,9 @@ function Test-ExactDirectory {
     param([Parameter(Mandatory)] [string] $Root, [Parameter(Mandatory)] [string] $RelativePath)
 
     $current = $Root
-    foreach ($segment in @($RelativePath -split '/' | Where-Object { $_ -ne '' })) {
+    foreach ($segment in @($RelativePath -split '/' | Where-Object { -not (Test-SameText $_ '') })) {
         $match = @(Get-ChildItem -LiteralPath $current -Force -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ceq $segment })
+                Where-Object { Test-SameText $_.Name $segment })
         if ($match.Count -ne 1) { return $false }
         $current = $match[0].FullName
     }
@@ -213,35 +327,143 @@ function Get-DistinctScopeSpellings {
 
 function Read-BoundedGit {
     <#
-        A git listing read under a character ceiling enforced AS IT ARRIVES.
+        A `-z` git listing, split into NUL-separated RECORDS out of the child's own stdout as the
+        characters arrive, filtered by a predicate the caller supplies, and bounded by what this
+        program KEEPS.
 
-        Three call sites read listings -- the two `-Path` probes and the main enumeration -- and
-        all three run before any per-path bound can apply, because they PRODUCE the list the paths
-        are filtered out of. `-Path .` in a large repository materialised every tracked entry
-        first. The ceiling has to be checked while the lines are consumed rather than after the
-        collection exists, or it is a limit on something already in memory.
+        Two things were wrong with the `& git` form this replaces, and the first hid the second.
+
+        `git ls-files -z` writes no newlines, and PowerShell splits a native command's output on
+        NEWLINES -- so the whole listing arrives as ONE element. Measured in this repository:
+        `& git ls-files -z -- 'ci/*'` returns 1 element of 559 characters containing NULs, not 21
+        elements. A ceiling checked "as each line arrives" is therefore checked exactly once, after
+        the pipeline has already built the entire listing in memory. The bound was real for a
+        newline-delimited listing and vacuous for all three callers here, every one of which
+        passes -z.
+
+        And it counted what GIT PRINTED. The extension filter ran afterwards, over records the
+        caller had already split out, so a scope holding a million short NON-script paths stayed
+        under the character ceiling while materialising every one of them; the count ceiling that
+        would have caught it is applied to the scripts, downstream of this. A bound on the wrong
+        population is a bound on the wrong question (#699).
+
+        So the ceiling counts the characters KEPT, and what git prints is walked in fixed-size
+        chunks and dropped. On overflow the rest of the output is still drained -- in the same
+        bounded chunks -- rather than abandoned, because a child blocked on a full pipe is a hang,
+        not a refusal.
+
+        THE PREDICATE IS THE ONLY REASON A RECORD IS KEPT, so a caller whose refusals depend on
+        seeing a MALFORMED record has to keep those. The enumeration below does exactly that: "could
+        not parse a `git ls-files --eol` record" is a refusal, and a record dropped quietly here
+        would retire it without anything going red.
+
+        `Arguments` and not `ArgumentList`: the latter arrived in .NET 5 and this runs under Windows
+        PowerShell 5.1, so the arguments are quoted explicitly, the same way `Get-IndexBlobBytes`
+        does and for the same reasons recorded there.
     #>
-    param([Parameter(Mandatory)] [string[]] $GitArgs)
+    param(
+        [Parameter(Mandatory)] [string[]] $GitArgs,
+        [scriptblock] $KeepRecord
+    )
 
-    $collected = New-Object System.Collections.Generic.List[string]
+    # No predicate means every record is kept, which is what the two -Path probes want: they decide
+    # over the SPELLINGS of directories, and filtering those by script extension would change which
+    # scopes count as ambiguous.
+    if ($null -eq $KeepRecord) { $KeepRecord = { param($Record) $true } }
+
+    $quoted = @($GitArgs) | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = 'git'
+    $info.Arguments = ($quoted -join ' ')
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    # Redirected and drained, NOT merged into the stream this parses: under GIT_TRACE=1 git writes
+    # trace records on stderr while still exiting 0, and a developer with tracing on would have
+    # trace lines arriving as paths. `Invoke-Git` documents the same trap.
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    # git writes path bytes as UTF-8. Named on the child rather than left to the console's code
+    # page, because this reads the stream directly and never passes through the console encoding
+    # the rest of the program sets.
+    $info.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+
+    $process = [System.Diagnostics.Process]::Start($info)
+    # STDERR IS DRAINED CONCURRENTLY, NOT AFTERWARDS, and this line used to sit below the
+    # stdout loop. Both streams are redirected, so the child blocks writing once its stderr
+    # pipe buffer fills while this side is still blocked reading stdout, and neither ever
+    # moves. A hang HAS NO COLOUR: cargo has no per-test timeout and neither does a gate
+    # stage, so the run stalls rather than reddening, and a stalled run gets a gate switched
+    # off rather than fixed.
+    #
+    # MEASURED, because the comment that used to be here named the wrong trigger. `GIT_TRACE=1`
+    # over this repository is about 200 bytes -- nowhere near the ~4 KB buffer, so the trigger
+    # this program warned about could not actually reach it. `GIT_TRACE2_EVENT=1` on the exact
+    # command below is 3,585 bytes on this repository, 87% of one buffer, and it is an
+    # environment variable a developer exports once and every git child inherits. A slightly
+    # larger checkout crosses it.
+    #
+    # `ReadToEndAsync` started BEFORE the read below is what keeps the child draining while
+    # this side works. (Found by the GraphHelm ISSUES 4 lane reviewing #765.)
+    $drainStderr = $process.StandardError.ReadToEndAsync()
+    $kept = New-Object System.Collections.Generic.List[string]
+    $pending = New-Object System.Text.StringBuilder
     $chars = 0L
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $code = 0
+    $overflowed = $false
     try {
-        foreach ($line in (& git @GitArgs 2>$null)) {
-            $text = [string]$line
-            $chars += $text.Length
-            if ($chars -gt $MaxEnumerationChars) {
-                return [ordered]@{ exitCode = 0; lines = @(); overflowed = $true }
+        $chunk = New-Object char[] 65536
+        while ($true) {
+            $read = $process.StandardOutput.Read($chunk, 0, $chunk.Length)
+            if ($read -le 0) { break }
+            if ($overflowed) { continue }
+            $text = New-Object string($chunk, 0, $read)
+            $start = 0
+            while ($true) {
+                $nul = $text.IndexOf([char]0, $start)
+                if ($nul -lt 0) {
+                    [void] $pending.Append($text.Substring($start))
+                    # A record with no terminator in sight is held, so it carries its own bound:
+                    # without one, a listing that never emits a NUL is unbounded in exactly the
+                    # buffer this function exists to bound.
+                    if ($pending.Length -gt $MaxEnumerationChars) {
+                        $overflowed = $true
+                        [void] $pending.Clear()
+                    }
+                    break
+                }
+                [void] $pending.Append($text.Substring($start, $nul - $start))
+                $record = $pending.ToString()
+                [void] $pending.Clear()
+                $start = $nul + 1
+                if (Test-SameText $record '') { continue }
+                if (-not (& $KeepRecord $record)) { continue }
+                $chars += $record.Length
+                if ($chars -gt $MaxEnumerationChars) {
+                    $overflowed = $true
+                    $kept.Clear()
+                    break
+                }
+                $kept.Add($record)
             }
-            $collected.Add($text)
         }
-        $code = $LASTEXITCODE
+        # Whatever is left with no terminator after it. Every `-z` record ends in NUL, so this is
+        # empty for the callers here; it is what keeps the function correct for output that is not
+        # NUL-terminated rather than silently losing the last record.
+        if (-not $overflowed -and $pending.Length -gt 0) {
+            $record = $pending.ToString()
+            if ((& $KeepRecord $record) -and (($chars + $record.Length) -le $MaxEnumerationChars)) {
+                $kept.Add($record)
+            }
+        }
+        [void] $drainStderr.Wait()
+        $process.WaitForExit()
+        if ($overflowed) {
+            return [ordered]@{ exitCode = 0; records = @(); overflowed = $true }
+        }
+        return [ordered]@{ exitCode = $process.ExitCode; records = @($kept); overflowed = $false }
     } finally {
-        $ErrorActionPreference = $previous
+        $pending = $null
+        $process.Dispose()
     }
-    return [ordered]@{ exitCode = $code; lines = @($collected); overflowed = $false }
 }
 
 function Invoke-Git {
@@ -325,8 +547,24 @@ $eolArgs = @('-C', $repositoryRoot, 'ls-files', '--eol', '--full-name', '-z', '-
 # the exact spelling first means a checkout that HAS it gets exactly it, and the fallback only
 # runs where the exact spelling matched nothing, which is the Windows case this was added for.
 $pathSpecPrefix = ':(literal)'
+# The normalised scope, decided ONCE and consumed by all three of the things that used to derive it
+# separately: the two probes, the enumeration pathspec, and the index-flag pathspec below. That last
+# one re-derived it from the raw `-Path`, which was the same string only for as long as normalising
+# did nothing; with `.` and `..` folded here, a second derivation would scan a scope different from
+# the one being swept, and the skip-worktree refusal is exactly the guard that must not be looking
+# somewhere else.
+$normalisedPath = ''
 if ($Path) {
-    $normalisedPath = $Path -replace [regex]::Escape([System.IO.Path]::DirectorySeparatorChar), '/'
+    $resolvedScope = Resolve-ScopePath -RelativePath $Path
+    if (-not $resolvedScope.ok) {
+        Fail "-Path '$Path' $($resolvedScope.reason). Name a directory inside the repository."
+    }
+    $normalisedPath = $resolvedScope.path
+    if (Test-SameText $normalisedPath '') {
+        Write-Host "[eol] -Path '$Path' names the repository root; sweeping the whole repository." -ForegroundColor Cyan
+    }
+}
+if ($normalisedPath) {
     $exact = Read-BoundedGit -GitArgs @('-C', $repositoryRoot, 'ls-files', '-z', '--', ":(literal)$normalisedPath")
     # A FAILED probe is not an empty one. `$exact.exitCode -eq 0` is required before the emptiness
     # is believed, because a transient failure returns empty output too -- and reading that as "the
@@ -342,7 +580,7 @@ if ($Path) {
         Write-Host '[eol] HARNESS-BROKE: the exact-spelling probe for -Path failed, so nothing here knows whether the directory exists as written.' -ForegroundColor Magenta
         exit 2
     }
-    if ((($exact.lines -join '') -replace "`0", '').Trim() -eq '') {
+    if ($exact.records.Count -eq 0) {
         # AN EMPTY SCOPE IS NOT A MISSING ONE. On a case-sensitive checkout holding an untracked
         # `Ci/` beside a tracked `ci/a.sh`, the exact probe comes back empty -- there are no index
         # entries under `Ci/` -- and falling back to `icase` then reported a file from a directory
@@ -362,9 +600,8 @@ if ($Path) {
         # both `parent/ci` and `parent/CI` yields ONE distinct first segment -- `parent` -- so the
         # ambiguity went unseen and both were swept. The depth of the requested path decides which
         # segments to compare.
-        $depth = @($normalisedPath -split '/' | Where-Object { $_ -ne '' }).Count
-        $spellings = Get-DistinctScopeSpellings -Paths @(($fallback.lines -join '') -split "`0" |
-                Where-Object { $_ -ne '' }) -Depth $depth
+        $depth = @($normalisedPath -split '/' | Where-Object { -not (Test-SameText $_ '') }).Count
+        $spellings = Get-DistinctScopeSpellings -Paths @($fallback.records) -Depth $depth
         if ($fallback.overflowed -or $fallback.exitCode -ne 0) {
             Write-Host '[eol] HARNESS-BROKE: the case-insensitive probe for -Path did not answer, so nothing here knows whether the scope is ambiguous.' -ForegroundColor Magenta
             exit 2
@@ -378,30 +615,51 @@ if ($Path) {
 } else {
     foreach ($spec in $ScriptPathspecs) { $eolArgs += $spec }
 }
-$enumeration = Read-BoundedGit -GitArgs $eolArgs
+$extensions = @('.sh', '.ps1', '.py')
+# The extension filter, handed to the reader instead of run over what the reader collected. It
+# lives outside the pathspec because `-Path` is literal above, and it now lives outside the parse
+# loop because a scope of a million short NON-script paths passed the character ceiling while
+# materialising every record, and the count ceiling that would have caught it is applied to the
+# scripts, one level further in (#699).
+#
+# A record with NO TAB is kept, deliberately. `could not parse a git ls-files --eol record` is a
+# REFUSAL, and a predicate that dropped the unparsable record would retire that refusal with
+# nothing going red -- the program would sweep on, quietly, over a listing it could not read.
+#
+# Case-INSENSITIVE, and unlike every other comparison in this file: an extension is a filesystem
+# fact, not content, and `A.SH` names the same kind of file as `a.sh`.
+$KeepScriptRecord = {
+    param($Record)
+    $tab = $Record.IndexOf("`t")
+    if ($tab -lt 0) { return $true }
+    $candidate = $Record.Substring($tab + 1).ToLowerInvariant()
+    foreach ($extension in $extensions) {
+        if ($candidate.EndsWith($extension)) { return $true }
+    }
+    return $false
+}
+$enumeration = Read-BoundedGit -GitArgs $eolArgs -KeepRecord $KeepScriptRecord
 if ($enumeration.overflowed) {
-    Write-Host ("[eol] REFUSED: the enumeration for this scope passes $MaxEnumerationChars characters " +
-        "of git output, which is more than this program will hold before it has decided anything. " +
-        "Narrow the run with -Path.") -ForegroundColor Red
+    Write-Host ("[eol] REFUSED: the enumeration for this scope keeps more than $MaxEnumerationChars " +
+        "characters of tracked scripts, which is more than this program will hold before it has " +
+        "decided anything. Narrow the run with -Path.") -ForegroundColor Red
     exit 1
 }
-$eolRaw = $enumeration.lines -join ''
 if ($enumeration.exitCode -ne 0) {
     Write-Host '[eol] HARNESS-BROKE: git ls-files --eol failed.' -ForegroundColor Magenta
     exit 2
 }
 
-$records = @($eolRaw -split "`0" | Where-Object { $_ -ne '' })
 # A count bound as well as a byte bound: the per-path records, the parsed entries and the flag
 # listing are all proportional to how many paths matched, and thousands of EMPTY scripts weigh
 # nothing against the retained-byte budget while still multiplying that state. A ceiling that only
 # counts bytes is not a ceiling on a sweep.
+$records = @($enumeration.records)
 if ($records.Count -eq 0) {
     Write-Host '[eol] no tracked .sh/.ps1/.py files in scope; nothing to do.' -ForegroundColor Cyan
     exit 0
 }
 
-$extensions = @('.sh', '.ps1', '.py')
 $files = @()
 foreach ($record in $records) {
     $tab = $record.IndexOf("`t")
@@ -409,10 +667,6 @@ foreach ($record in $records) {
         Fail "could not parse a `git ls-files --eol` record: [$record]. Refusing rather than guessing which part is the path." 2
     }
     $columns = $record.Substring(0, $tab)
-    # The extension filter lives here rather than in the pathspec, because -Path is literal above.
-    # Case-INSENSITIVE on purpose, and unlike every other comparison in this file: an extension is
-    # a filesystem fact, not content, and `A.SH` names the same kind of file as `a.sh`.
-    if (-not ($extensions | Where-Object { $record.Substring($tab + 1).ToLowerInvariant().EndsWith($_) })) { continue }
     # The ceiling is enforced AS THE LIST GROWS. Checked after the loop it is a bound on something
     # already built, and a scope of very many SHORT paths passes the character bound above while
     # still multiplying this state -- the same defect as bounding bytes and not count, one level
@@ -449,8 +703,8 @@ if ($files.Count -gt $MaxPaths) {
 # abort a `-Path ci` migration over a flagged script somewhere it was never going to touch --
 # a refusal that is true about the repository and false about the work being asked for.
 $flagPathspecs = @()
-if ($Path) {
-    $flagPathspecs += $pathSpecPrefix + ($Path -replace [regex]::Escape([System.IO.Path]::DirectorySeparatorChar), '/')
+if ($normalisedPath) {
+    $flagPathspecs += $pathSpecPrefix + $normalisedPath
 } else {
     foreach ($spec in $ScriptPathspecs) { $flagPathspecs += $spec }
 }
@@ -469,7 +723,7 @@ if ($flagRun.exitCode -ne 0) {
     Write-Host '[eol] HARNESS-BROKE: the skip-worktree enumeration failed, so nothing here observed the index flags.' -ForegroundColor Magenta
     exit 2
 }
-$flagOutput = @(($flagRun.lines -join '') -split "`0" | Where-Object { $_ -ne '' })
+$flagOutput = @(($flagRun.lines -join '') -split "`0" | Where-Object { -not (Test-SameText $_ '') })
 # The covered set, computed once and used by BOTH loops. A script the attribute does not cover is
 # not this program's business anywhere: flagging a `-text` file as skip-worktree refused a run over
 # a file that would never have been touched, and the same path missing from the working tree was
@@ -477,7 +731,7 @@ $flagOutput = @(($flagRun.lines -join '') -split "`0" | Where-Object { $_ -ne ''
 # read before any state is judged.
 $covered = @($files | Where-Object { $_.attribute -cmatch 'eol=lf' } | ForEach-Object { $_.path })
 foreach ($line in @($flagOutput)) {
-    if ($line -cmatch '^\S+\s+(.+)$' -and ($covered -cnotcontains $Matches[1])) { continue }
+    if ($line -cmatch '^\S+\s+(.+)$' -and -not (Test-InSet $covered $Matches[1])) { continue }
     # -cmatch, NOT -match. PowerShell's -match is case-INSENSITIVE by default, so `[a-z]` also
     # matches `H`, which is git's letter for an ordinary cached file. The first run of this script
     # refused the entire repository -- 38 normal files reported as skip-worktree -- and the refusal
@@ -513,7 +767,7 @@ $unsupported = @()
 $retained = 0L
 foreach ($file in $files) {
     # BEFORE anything is judged about it, including whether it exists.
-    if ($covered -cnotcontains $file.path) { continue }
+    if (-not (Test-InSet $covered $file.path)) { continue }
 
     $full = Join-Path $repositoryRoot $file.path
     if (-not (Test-Path -LiteralPath $full)) {
@@ -525,7 +779,7 @@ foreach ($file in $files) {
     # the working copy reads clean, so this program would rewrite a file whose index still
     # disagrees with it. That is a repository-level state to fix with `git add --renormalize`, not
     # something a working-tree sweep may paper over.
-    if ($file.indexEol -ceq '-text') {
+    if (Test-SameText $file.indexEol '-text') {
         # git itself says this is not text. The commonest cause for a tracked script is UTF-16 --
         # a normal encoding for Windows PowerShell -- whose CRLF is 0D 00 0A 00, with no adjacent
         # CR-LF pair for a byte replacement to find. Such a file would be reported as ALREADY
@@ -540,7 +794,7 @@ foreach ($file in $files) {
     # there is nothing in it to disagree. Refusing it sent an operator to renormalise a file that
     # has no line endings to normalise. `lf` and `none` are both fine; anything else is the
     # unrenormalised index this refusal is for.
-    if ($file.indexEol -cne 'lf' -and $file.indexEol -cne 'none') {
+    if (-not (Test-SameText $file.indexEol 'lf') -and -not (Test-SameText $file.indexEol 'none')) {
         $notNormalised += "$($file.path) [index is $($file.indexEol)]"
         continue
     }
@@ -652,7 +906,7 @@ foreach ($file in $files) {
     # the promised refusal silently absent for a real edit. This is the same defect as the
     # skip-worktree predicate's `-match` matching `H`, so every comparison in this file that is
     # about CONTENT or a PATH is now case-sensitive: the class, not the site.
-    if ($workingLf -cne $indexLf) {
+    if (-not (Test-SameText $workingLf $indexLf)) {
         $dirty += "$($file.path) [uncommitted edit]"
     } else {
         # The bytes that passed the check are KEPT. Re-reading the file in the write loop below
@@ -714,7 +968,7 @@ foreach ($file in $files) {
     if ($null -eq $bytes) { continue }
     $text = $Latin1.GetString($bytes)
     $converted = $text.Replace("`r`n", "`n")
-    if ($converted -ceq $text) { $alreadyLf += $file.path; continue }
+    if (Test-SameText $converted $text) { $alreadyLf += $file.path; continue }
 
     $normalized += $file.path
 }
@@ -738,7 +992,7 @@ foreach ($p in $notCovered) { Write-Host "  skipped (rule does not cover it)  $p
 # program: whatever the buckets become, the residue is still the thing nobody looked at.
 $classified = @($normalized + $alreadyLf + $notCovered +
     ($dirty + $oversize + $notNormalised + $unsupported | ForEach-Object { ($_ -split ' \[')[0] }))
-$unclassified = @($files | Where-Object { $classified -cnotcontains $_.path } | ForEach-Object { $_.path })
+$unclassified = @($files | Where-Object { -not (Test-InSet $classified $_.path) } | ForEach-Object { $_.path })
 if ($unclassified.Count -gt 0) {
     Write-Host ''
     Write-Host ("[eol] UNCLASSIFIED -- these are covered by the rule and this run reached no verdict " +

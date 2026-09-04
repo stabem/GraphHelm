@@ -16,7 +16,7 @@
 # #676 records `git checkout --force` behaving differently on 2.43.0, so a cell that asserts what
 # the RECIPE does is a claim about a git version and says so.
 
-$ExpectedAssertionCount = 69
+$ExpectedAssertionCount = 99
 # 'Continue', not 'Stop'. This suite RUNS the failing recipe on purpose, and under Windows
 # PowerShell 5.1 a native command's redirected stderr becomes a NativeCommandError that 'Stop'
 # promotes to a terminating error -- so `git checkout` printing "did not match any file" would kill
@@ -85,6 +85,24 @@ try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } 
 $script:gitVersion = ((& git --version) -join ' ').Trim()
 $programPath = Join-Path $PSScriptRoot 'normalize-script-eol.ps1'
 $programText = [System.IO.File]::ReadAllText($programPath)
+
+# THE ORDINAL HELPERS, EXTRACTED FROM THE PROGRAM AND PREPENDED TO EVERY SEAM THAT USES THEM.
+#
+# `Test-SameText` and `Test-InSet` sit above the functions the seams cut out, so an extraction
+# anchored at one of those functions no longer carries its own dependency -- which is exactly what
+# happened when they were introduced: nine cells went red at once, in three different seams, on a
+# change that had not altered a single decision.
+#
+# Extracted rather than redefined here. A copy in this file would let a sabotage of the REAL
+# `Test-SameText` -- ordinal back to `-eq`, say -- leave every seam cell green, which is the same
+# hole as a suite holding its own copy of a keyword list.
+$helperStart = $programText.IndexOf('function Test-SameText {')
+$helperEnd = $programText.IndexOf('function Resolve-ScopePath {')
+if ($helperStart -lt 0 -or $helperEnd -le $helperStart) {
+    Write-Host 'HARNESS-BROKE: the ordinal helpers were not found between their anchors' -ForegroundColor Magenta
+    exit 2
+}
+$OrdinalHelpers = $programText.Substring($helperStart, $helperEnd - $helperStart)
 if (-not (Test-Path -LiteralPath $programPath)) {
     Write-Host "HARNESS-BROKE: the subject is missing at $programPath" -ForegroundColor Magenta
     exit 2
@@ -705,6 +723,226 @@ Write-Output "two=$($two.Count) one=$($one.Count)"
     Assert-True -Condition ($result.exitCode -eq 0) -Message "the run succeeds (exit $($result.exitCode))"
     Assert-True -Condition (-not (Test-Reported -Text $result.text -Path 'ci/tracked.sh')) `
         -Message 'and does NOT report a file from a directory the operator did not name'
+
+    # ---- #699 finding 1: `.` and `..` inside -Path, folded before the disk is asked about it.
+    #
+    # git normalises a pathspec itself and `Test-ExactDirectory` did not, so the two halves of one
+    # run disagreed about what -Path named -- and the disagreement is not symmetric: the disk half
+    # answering "absent" is what drops the run into the case-insensitive fallback.
+    #
+    # The seam takes STRINGS, like the spelling collapse above and for the same reason. `a/../../x`
+    # is a claim about a path's SHAPE; a cell that had to build each shape on disk would be a claim
+    # about the machine that built it instead.
+    Write-Host ''
+    Write-Host '-- the scope path folds . and .., and refuses one that climbs out --' -ForegroundColor Cyan
+    $scopeSeam = Join-Path $fixtureRoot 'scope-seam.ps1'
+    $scopeStart = $programText.IndexOf('function Resolve-ScopePath {')
+    $scopeEnd = $programText.IndexOf('function Test-ExactDirectory {')
+    if ($scopeStart -lt 0 -or $scopeEnd -le $scopeStart) {
+        Write-Host 'HARNESS-BROKE: Resolve-ScopePath was not found between its anchors' -ForegroundColor Magenta
+        exit 2
+    }
+    [System.IO.File]::WriteAllText($scopeSeam, $OrdinalHelpers + $programText.Substring($scopeStart, $scopeEnd - $scopeStart) + @'
+
+foreach ($case in @('./ci', 'ci/../ci', 'a/./b/../c', '.', '../x', 'a/../../x')) {
+    $verdict = Resolve-ScopePath -RelativePath $case
+    Write-Output ('<' + $case + '> ok=' + $verdict.ok + ' path=<' + $verdict.path + '>')
+}
+
+# The ordinal comparisons, exercised through the REAL helpers this seam carries.
+$vs = [char]0x0FE00
+Write-Output ('culture-eq=' + (('GREEN' + $vs) -eq 'GREEN'))
+Write-Output ('culture-ceq=' + (('GREEN' + $vs) -ceq 'GREEN'))
+Write-Output ('ordinal-differs=' + (Test-SameText ('GREEN' + $vs) 'GREEN'))
+Write-Output ('ordinal-same=' + (Test-SameText 'GREEN' 'GREEN'))
+Write-Output ('ordinal-case=' + (Test-SameText 'GREEN' 'green'))
+Write-Output ('culture-empty=' + (("$vs") -eq ''))
+Write-Output ('ordinal-empty=' + (Test-SameText "$vs" ''))
+Write-Output ('inset-differs=' + (Test-InSet @('a.sh') ('a.sh' + $vs)))
+Write-Output ('inset-same=' + (Test-InSet @('a.sh') 'a.sh'))
+$weighted = Resolve-ScopePath -RelativePath "$vs"
+Write-Output ('weightless-scope=<' + $weighted.path + '>')
+'@, $Latin1)
+    $scopeOut = (@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scopeSeam 2>&1 |
+                ForEach-Object { [string]$_ }) -join "`n")
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('<./ci> ok=True path=<ci>')) `
+        -Message 'a leading ./ is dropped, so the disk is asked about the directory git was asked about'
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('<ci/../ci> ok=True path=<ci>')) `
+        -Message 'and a .. pops the segment before it rather than being handed to the disk as a name'
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('<a/./b/../c> ok=True path=<a/c>')) `
+        -Message 'both, interleaved, in one path'
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('<.> ok=True path=<>')) `
+        -Message 'the repository root reduces to the empty scope, which is the whole repository and not an error'
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('<../x> ok=False')) `
+        -Message 'a path that climbs above the root is REFUSED here, where the answer is known'
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('<a/../../x> ok=False')) `
+        -Message 'and climbing out after descending is the same refusal, not a shape that slips past'
+
+    # ---- #753's class, in this program's own comparisons. Found by running #759's AST detector
+    # (`ci/find-culture-comparisons.ps1`) against this file while reviewing that pull request: 17
+    # sites, of which the one below undoes this very fix.
+    #
+    # The first two assertions are ARRANGEMENT and they are the reason the rest matter: they show
+    # the operators this program used to reach for answering YES to two strings that differ.
+    Assert-True -Condition ($scopeOut -cmatch 'culture-eq=True') `
+        -Message 'ARRANGEMENT: -eq calls two DIFFERENT strings equal, because a variation selector has no culture weight'
+    Assert-True -Condition ($scopeOut -cmatch 'culture-ceq=True') `
+        -Message 'ARRANGEMENT: and so does -ceq -- case-sensitivity and culture-awareness are ORTHOGONAL'
+
+    Assert-True -Condition ($scopeOut -cmatch 'ordinal-differs=False') `
+        -Message 'the ordinal comparison tells them apart, which is the whole fix'
+    Assert-True -Condition ($scopeOut -cmatch 'ordinal-same=True') `
+        -Message 'CONTROL: and still calls two identical strings equal, or it is a comparer that never matches'
+    Assert-True -Condition ($scopeOut -cmatch 'ordinal-case=False') `
+        -Message 'and keeps the CASE-sensitivity every -ceq here intended: ordinal removes the culture, not the case'
+
+    # THE SITE THAT UNDID THE FIX. `-eq ''` is how this program asked whether -Path reduced to the
+    # repository root, and a string of Length 1 answered YES -- so a directory named with a
+    # zero-weight code point swept the WHOLE REPOSITORY instead of that one directory. The scope
+    # widening this pull request exists to close, through the other door.
+    Assert-True -Condition ($scopeOut -cmatch 'culture-empty=True') `
+        -Message 'ARRANGEMENT: a string of Length 1 compares -eq to the empty string'
+    Assert-True -Condition ($scopeOut -cmatch 'ordinal-empty=False') `
+        -Message 'ordinally it does not, so an emptiness guard stops answering yes about a non-empty value'
+    Assert-True -Condition ($scopeOut -cmatch [regex]::Escape('weightless-scope=<') -and $scopeOut -cnotmatch [regex]::Escape('weightless-scope=<>')) `
+        -Message 'END TO END: a -Path of one zero-weight character is a DIRECTORY, not the whole repository'
+
+    Assert-True -Condition ($scopeOut -cmatch 'inset-differs=False') `
+        -Message 'set membership tells the two paths apart too -- the residue guard fails OPEN otherwise'
+    Assert-True -Condition ($scopeOut -cmatch 'inset-same=True') `
+        -Message 'CONTROL: and still finds a path that really is in the set'
+
+    Write-Host ''
+    Write-Host '-- ./sub and sub/../sub reach what sub reaches, and none takes the fallback --' -ForegroundColor Cyan
+    $repo = New-Fixture -Name 'dotscope'
+    [System.IO.Directory]::CreateDirectory((Join-Path $repo 'sub')) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo 'sub/inside.sh'), "echo one`necho two`n", $Latin1)
+    Push-Location $repo
+    try {
+        & git add -A 2>&1 | Out-Null
+        & git commit -m dotscope --quiet 2>&1 | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $repo 'sub/inside.sh'), "echo one`r`necho two`r`n", $Latin1)
+    } finally { Pop-Location }
+    # A directory that EXISTS with the spelling asked for and holds nothing tracked. This is the
+    # branch the fallback steals: `Test-ExactDirectory` deciding the spelling is present is the only
+    # thing that stops the run widening to `:(literal,icase)`, and a `.` segment made it decide
+    # absent for a directory that is right there.
+    [System.IO.Directory]::CreateDirectory((Join-Path $repo 'bare')) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo 'bare/untracked.txt'), "not tracked`n", $Latin1)
+    $plain = Invoke-Program -Repo $repo -ExtraArgs @('-Path', 'bare')
+    Assert-True -Condition ($plain.text -cmatch 'exists and holds no tracked scripts') `
+        -Message 'ARRANGEMENT: the plain spelling reaches the exists-and-empty branch, so there is a branch to lose'
+    foreach ($spelling in @('./bare', 'bare/../bare')) {
+        $dotted = Invoke-Program -Repo $repo -ExtraArgs @('-Path', $spelling)
+        Assert-True -Condition ($dotted.text -cmatch 'exists and holds no tracked scripts') `
+            -Message "-Path '$spelling' reaches the same branch instead of falling back to the case-insensitive scope"
+    }
+    # THE PREMISE, PINNED -- and it does not redden under the sabotage that removes the folding,
+    # which is the honest reading of it. Both of these pass on the unfixed program too, because git
+    # normalises the PATHSPEC itself (`:(literal)./ci` lists what `:(literal)ci` lists, measured on
+    # 2.47.1.windows.1). That asymmetry between git and the disk is the whole defect, so the half
+    # this repository does not own is worth a pin: if a future git stopped folding, the fix above
+    # would be normalising one side of a disagreement that had moved.
+    $viaDot = Invoke-Program -Repo $repo -ExtraArgs @('-Path', './sub')
+    Assert-True -Condition ($viaDot.exitCode -eq 0) `
+        -Message "PREMISE: git folds the pathspec, so a dotted -Path over a populated directory succeeds (exit $($viaDot.exitCode))"
+    Assert-True -Condition (Test-Reported -Text $viaDot.text -Path 'sub/inside.sh') `
+        -Message 'PREMISE: and reaches the same file -Path sub reaches -- the sweep half was never the broken one'
+
+    # ---- #699 finding 2: the ceiling counts what the program KEEPS, not what git prints.
+    #
+    # Driven at the seam with a ceiling of 200 characters, because the real one is 20,000,000 and a
+    # fixture that reached it would need about a million paths. The ceiling is a NUMBER the function
+    # reads; the cell supplies a different number and the function is otherwise the one that ships.
+    #
+    # The first read is the ARRANGEMENT and it has to overflow, or the second read proves nothing:
+    # a filtered read that does not overflow says something only when the same listing, unfiltered,
+    # does.
+    Write-Host ''
+    Write-Host '-- the enumeration ceiling counts kept records, not printed ones --' -ForegroundColor Cyan
+    $bounded = New-Fixture -Name 'bounded'
+    [System.IO.Directory]::CreateDirectory((Join-Path $bounded 'n')) | Out-Null
+    foreach ($i in 1..400) {
+        [System.IO.File]::WriteAllText((Join-Path $bounded ('n/{0:D4}.txt' -f $i)), "x`n", $Latin1)
+    }
+    [System.IO.File]::WriteAllText((Join-Path $bounded 'keep.sh'), "echo one`necho two`n", $Latin1)
+    Push-Location $bounded
+    try {
+        & git add -A 2>&1 | Out-Null
+        & git commit -m bounded --quiet 2>&1 | Out-Null
+    } finally { Pop-Location }
+
+    $readerSeam = Join-Path $fixtureRoot 'reader-seam.ps1'
+    $readerStart = $programText.IndexOf('function Read-BoundedGit {')
+    $readerEnd = $programText.IndexOf('function Invoke-Git {')
+    if ($readerStart -lt 0 -or $readerEnd -le $readerStart) {
+        Write-Host 'HARNESS-BROKE: Read-BoundedGit was not found between its anchors' -ForegroundColor Magenta
+        exit 2
+    }
+    [System.IO.File]::WriteAllText($readerSeam, '$MaxEnumerationChars = 200' + "`n" + $OrdinalHelpers +
+        $programText.Substring($readerStart, $readerEnd - $readerStart) + @'
+
+$repo = $args[0]
+$listing = @('-C', $repo, 'ls-files', '-z', '--')
+$all = Read-BoundedGit -GitArgs $listing
+$scripts = Read-BoundedGit -GitArgs $listing -KeepRecord { param($Record) $Record.ToLowerInvariant().EndsWith('.sh') }
+$names = @($scripts.records)
+Write-Output ("unfiltered-overflowed=" + $all.overflowed)
+Write-Output ("filtered-overflowed=" + $scripts.overflowed)
+Write-Output ("kept=" + ($names -join ','))
+Write-Output ("all-kept-are-scripts=" + (($names.Count -gt 0) -and (@($names | Where-Object { -not $_.ToLowerInvariant().EndsWith('.sh') }).Count -eq 0)))
+'@, $Latin1)
+    $readerOut = (@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $readerSeam $bounded 2>&1 |
+                ForEach-Object { [string]$_ }) -join "`n")
+    Assert-True -Condition ($readerOut -cmatch 'unfiltered-overflowed=True') `
+        -Message 'ARRANGEMENT: unfiltered, this listing really does pass the ceiling'
+    Assert-True -Condition ($readerOut -cmatch 'filtered-overflowed=False') `
+        -Message 'and filtered it does NOT: the 400 non-scripts are dropped as they are read, never collected'
+    Assert-True -Condition ($readerOut -cmatch 'kept=[^\r\n]*keep\.sh') `
+        -Message 'while the script that IS in scope survives the same read'
+    # The emptiness is part of this condition on purpose: "every kept record is a script" is TRUE of
+    # a read that kept nothing, so without it the assertion survives a ceiling that overflowed and
+    # threw the whole listing away -- a green over an empty set, which is the shape that makes a
+    # suite look like coverage while measuring nothing.
+    Assert-True -Condition ($readerOut -cmatch 'all-kept-are-scripts=True') `
+        -Message 'and nothing the predicate refused was kept, over a set that is not empty'
+
+    # ---- The predicate the enumeration hands it, which decides two different things.
+    Write-Host ''
+    Write-Host '-- the kept-record predicate keeps scripts AND anything it cannot parse --' -ForegroundColor Cyan
+    $predicateSeam = Join-Path $fixtureRoot 'predicate-seam.ps1'
+    $predicateStart = $programText.IndexOf('$KeepScriptRecord = {')
+    $predicateEnd = $programText.IndexOf('$enumeration = Read-BoundedGit')
+    if ($predicateStart -lt 0 -or $predicateEnd -le $predicateStart) {
+        Write-Host 'HARNESS-BROKE: $KeepScriptRecord was not found between its anchors' -ForegroundColor Magenta
+        exit 2
+    }
+    [System.IO.File]::WriteAllText($predicateSeam, '$extensions = @(''.sh'', ''.ps1'', ''.py'')' + "`n" +
+        $programText.Substring($predicateStart, $predicateEnd - $predicateStart) + @'
+
+Write-Output ("upper=" + (& $KeepScriptRecord "i/lf w/lf attr/`tsub/BUILD.PS1"))
+Write-Output ("other=" + (& $KeepScriptRecord "i/lf w/lf attr/`tsub/notes.txt"))
+Write-Output ("notab=" + (& $KeepScriptRecord "a record with no tab at all"))
+'@, $Latin1)
+    $predicateOut = (@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $predicateSeam 2>&1 |
+                ForEach-Object { [string]$_ }) -join "`n")
+    Assert-True -Condition ($predicateOut -cmatch 'upper=True') `
+        -Message 'an uppercase extension is still in the sweep: the extension test stayed case-insensitive when it moved'
+    Assert-True -Condition ($predicateOut -cmatch 'other=False') `
+        -Message 'and a tracked non-script is refused, which is the whole point of filtering at the read'
+    Assert-True -Condition ($predicateOut -cmatch 'notab=True') `
+        -Message 'but an UNPARSABLE record is kept, so the refusal that names it is not retired by the filter'
+
+    Write-Host ''
+    Write-Host '-- a -Path that climbs out of the repository is a refusal, not a broken instrument --' -ForegroundColor Cyan
+    # Exit 2 says the tool could not answer. Here it answered: the path is outside the repository,
+    # which is the operator's mistake and reversible by retyping it. Reporting HARNESS-BROKE for
+    # that spends the one signal that means "do not trust what you just read".
+    $climb = Invoke-Program -Repo $repo -ExtraArgs @('-Path', '../outside')
+    Assert-True -Condition ($climb.exitCode -eq 1) `
+        -Message "the run REFUSES rather than reporting a broken instrument (exit $($climb.exitCode); before this change the probe's non-zero exit read as HARNESS-BROKE, 2)"
+    Assert-True -Condition ($climb.text -cmatch 'climbs above the repository root' -and $climb.text -cmatch [regex]::Escape('../outside')) `
+        -Message 'and says why, naming the path the operator typed'
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

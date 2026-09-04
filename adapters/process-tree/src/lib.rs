@@ -390,7 +390,7 @@ fn descendants_of(root: u32) -> Vec<(u32, u64)> {
             continue;
         };
         if let Some(record) = read_stat(pid) {
-            parents.insert(pid, record);
+            parents.insert(pid, (record.parent, record.started_at));
         }
     }
 
@@ -424,21 +424,39 @@ fn descendants_of(root: u32) -> Vec<(u32, u64)> {
 /// The fields are read AFTER the last `)`, because a process name can contain spaces and
 /// parentheses and splitting the whole line would put the parse at the mercy of whatever a child
 /// called itself.
+/// What `/proc/<pid>/stat` says: the state letter, the parent, and when it began.
+///
+/// ONE reader for all three. The sweep wants the parent and the start time;
+/// [`process_is_running`] wants the state -- and the state was already being SKIPPED here
+/// before anything needed it (#715). Two readers of one file drift; this is the file agreeing
+/// with itself.
 #[cfg(all(unix, target_os = "linux"))]
-fn read_stat(pid: u32) -> Option<(u32, u64)> {
+struct ProcStat {
+    state: char,
+    parent: u32,
+    started_at: u64,
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn read_stat(pid: u32) -> Option<ProcStat> {
     let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let tail = raw.get(raw.rfind(')')? + 2..)?;
     let mut fields = tail.split_whitespace();
-    let ppid = fields.nth(1)?.parse().ok()?;
-    // `starttime` is field 22 of the whole line; the state field is the first here, so it is at
-    // offset 19 from `ppid`'s successor.
+    let state = fields.next()?.chars().next()?;
+    let parent = fields.next()?.parse().ok()?;
+    // `starttime` is field 22 of the whole line; state and ppid are consumed above, so it sits
+    // at offset 17 from here.
     let started_at = fields.nth(17)?.parse().ok()?;
-    Some((ppid, started_at))
+    Some(ProcStat {
+        state,
+        parent,
+        started_at,
+    })
 }
 
 #[cfg(all(unix, target_os = "linux"))]
 fn process_start_time(pid: u32) -> Option<u64> {
-    read_stat(pid).map(|(_, started_at)| started_at)
+    read_stat(pid).map(|stat| stat.started_at)
 }
 
 /// Start the child suspended, so that `create` can put it in a job before it runs.
@@ -745,7 +763,34 @@ pub fn process_is_running(process_id: u32) -> bool {
     let sent = unsafe { libc::kill(process_id, 0) } == 0;
     let permission_denied =
         !sent && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
-    decide_liveness_from_signal(sent, permission_denied)
+    if !decide_liveness_from_signal(sent, permission_denied) {
+        return false;
+    }
+    // A PID TABLE ENTRY IS NOT A RUNNING PROCESS (#715). `kill(pid, 0)` succeeds against a
+    // ZOMBIE -- exited, and not yet reaped by its parent -- so a correctly killed descendant
+    // reads as ALIVE until its adopter gets round to it. Measured on Linux 6.6: a child that
+    // exited unreaped has state `Z` and `kill(pid, 0)` returns 0; after `waitpid` the same call
+    // fails with ESRCH.
+    //
+    // THE DIRECTION IS WHY THIS IS WORTH FIXING AND WHY IT WAS NOT A BLOCKER. The Windows twin
+    // (#680) read a dead process as alive and a CALLER PASSED -- a false green. This reads a
+    // dead process as alive and a cell asserting the tree is gone FAILS -- a false red, on a
+    // host whose pid 1 reaps slowly, containers especially. Noisy fails safe; silent does not,
+    // and nobody should later "fix" this by loosening the check.
+    //
+    // ONLY the zombie state is subtracted. `T` (stopped) and `D` (uninterruptible sleep) are
+    // processes that exist and will run again; calling them dead would invent the false green
+    // this exists to avoid.
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(pid) = u32::try_from(process_id) else {
+            return true;
+        };
+        if read_stat(pid).is_some_and(|stat| stat.state == 'Z') {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether a process id belongs to something still running.
@@ -1368,5 +1413,75 @@ mod tests {
                 .expect("the identity keeps answering after the kill"),
             "the identity still reports the sleeper as running after it was reaped"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod zombie_liveness {
+    /// #715: a PID TABLE ENTRY IS NOT A RUNNING PROCESS.
+    ///
+    /// `kill(pid, 0)` succeeds against a zombie -- a process that exited and whose parent has not
+    /// reaped it -- so a correctly killed descendant used to read as ALIVE until its adopter got
+    /// round to it. On a host whose pid 1 reaps slowly, containers especially, a cell asserting a
+    /// tree is gone would fail while the kill was perfectly correct.
+    ///
+    /// The zombie here is DELIBERATE and is made the only way it can be: spawn a child that exits
+    /// at once and never `wait` on it. Rust does not reap on drop, so the entry stays.
+    ///
+    /// **The CONTROL is a live child**, and it is what makes the assertion mean something. Without
+    /// it, a `process_is_running` that had been broken to return `false` for everything would
+    /// satisfy the zombie assertion and look like the fix.
+    #[test]
+    fn a_zombie_is_not_running_and_a_live_child_still_is() {
+        let mut alive = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the live child spawns");
+
+        // CONTROL FIRST, so a broken probe is caught before the finding is asserted.
+        assert!(
+            super::process_is_running(alive.id()),
+            "CONTROL: a live child read as NOT running, so the assertion below would pass for the \
+             wrong reason"
+        );
+
+        #[allow(clippy::zombie_processes)]
+        let departed = std::process::Command::new("/bin/true")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the short-lived child spawns");
+        let zombie = departed.id();
+
+        // It has to actually have exited, or this measures a live process. Bounded, and an
+        // exhausted bound says so rather than asserting on a state it never reached.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut reached_zombie = false;
+        while std::time::Instant::now() < deadline {
+            if super::read_stat(zombie).is_some_and(|stat| stat.state == 'Z') {
+                reached_zombie = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            reached_zombie,
+            "ARRANGEMENT: the child never became a zombie within 5s, so this run measures nothing"
+        );
+
+        assert!(
+            !super::process_is_running(zombie),
+            "a zombie read as RUNNING: a correctly killed descendant looks alive until its adopter \
+             reaps it, and a gate asserting the tree is gone fails on the OS's schedule"
+        );
+
+        let _ = alive.kill();
+        let _ = alive.wait();
+        let mut departed = departed;
+        let _ = departed.wait();
     }
 }

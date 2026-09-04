@@ -1419,3 +1419,60 @@ fn the_schema_the_enum_and_the_hand_written_list_are_one_lifecycle_vocabulary() 
         );
     }
 }
+
+/// The harness doc's BEHAVIOURAL claim about this crate's screen, measured instead of cited (#691).
+///
+/// `docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:541` says the admission screen here is
+/// `content.contains("ghp_")` -- ONE prefix and NO tail requirement -- and `:562` records the
+/// divergence that follows: a bare `ghp_` is refused by this crate and NOT by `core/graph`, which
+/// needs a tail of at least 16.
+///
+/// **What the citation guard cannot see.** `every_cited_line_in_the_harness_doc_still_holds_its_symbol`
+/// proves the function NAME still sits at the promised coordinate. It says nothing about whether
+/// `ghp_` still matches or whether a tail became required, so a rewrite that kept the name and
+/// adopted the graph crate's rule would leave every citation green while the documented divergence
+/// silently disappeared. Citation rot and behaviour rot are different properties.
+///
+/// **The axis the existing suite never varied.** Measured across both owning crates before this
+/// cell was written: every `ghp_` literal in a test carried a tail of 26 to 37 characters. All of
+/// them satisfy BOTH detectors, so not one distinguishes them. Tail length is the entire content of
+/// the documented divergence, and it had no coverage on either side.
+///
+/// The direction is the reason this is a guard and not a curiosity: this crate refuses MORE, so the
+/// divergence is fail-safe. A change that made it refuse LESS would be a hole, and would show up
+/// here as the bare prefix being admitted.
+#[test]
+fn a_bare_prefix_with_no_tail_is_refused_here_as_the_harness_doc_claims() {
+    // ARRANGEMENT FIRST, and it is not decoration: without it "the candidate was refused" is true
+    // of a screen that refuses everything, and the cell would pass while saying nothing about
+    // `ghp_`.
+    let innocuous =
+        MemoryCandidate::draft(scope(), "an ordinary note with no token in it".to_owned());
+    let admitting_into = innocuous.scope().clone();
+    admit_memory_candidate(&innocuous, &admitting_into).expect(
+        "HARNESS-BROKE: a candidate carrying no secret prefix must be admitted, or the refusal below is unattributable",
+    );
+
+    // THE PREFIX SITS AT THE END, so the tail is zero bytes and that is visible in the fixture.
+    //
+    // An earlier version read `"the prefix is ghp_ and nothing follows"` under a comment claiming
+    // "four characters and nothing after them". Twenty characters followed. The cell still passed
+    // for the right reason -- this screen is `contains`, so what follows never mattered HERE -- but
+    // the comment's other half, that `core/graph` would not refuse the same string, was true only
+    // because the next byte was a SPACE and that crate's tail scan stops at the first byte outside
+    // `[A-Za-z0-9_-]`. A load-bearing fact about another crate, resting on an invisible byte, in a
+    // comment that by this PR's own design rule no cell here may test. Changing the fixture to
+    // `ghp_x` would have made it false with nothing failing anywhere. Found in review by
+    // GraphHelm ISSUES.
+    //
+    // What `core/graph` does with a tail-less prefix is ASSERTED, not claimed, by
+    // `a_tail_shorter_than_the_documented_minimum_is_not_refused_here` in that crate.
+    let bare = MemoryCandidate::draft(scope(), "a token prefix with no tail: ghp_".to_owned());
+    let admitting_into = bare.scope().clone();
+    let refusal = admit_memory_candidate(&bare, &admitting_into).expect_err(
+        "a bare `ghp_` with no tail must be refused HERE (docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:562)",
+    );
+
+    assert_eq!(refusal.code(), MemoryRefusalCode::SecretDetected);
+    assert_eq!(refusal.field(), MemoryField::Content);
+}

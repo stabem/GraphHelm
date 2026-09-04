@@ -1068,3 +1068,64 @@ fn canonical_content_rejects_values_over_each_shared_preflight_bound() {
     let too_large = serde_json::Value::String("x".repeat(64 * 1024 * 1024 + 1));
     assert!(canonical_content_bytes(&too_large).is_err());
 }
+
+/// The other half of the documented divergence, owned by the crate that implements it (#691).
+///
+/// `docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:542` says this crate requires a prefix **and** a
+/// tail minimum, and `:562` states the consequence: a bare `ghp_` is refused by
+/// `core/governor` and NOT here. `core/governor/tests/memory.rs` asserts its side; this asserts
+/// this one. Neither crate is made to know the other's rule -- each pins the behaviour the doc
+/// attributes to IT, which is what keeps this a behaviour test rather than a second copy of the
+/// oracle.
+///
+/// **The boundary is the assertion, not the example.** A cell that only showed a long tail being
+/// refused would pass against a detector with no tail rule at all -- which is precisely the graph
+/// crate turning into the governor crate, the change this divergence exists to notice. So the pair
+/// straddles the documented minimum: `prefix + 15` must pass and `prefix + 16` must not.
+///
+/// **WHICH condition these values discriminate, because there are two of similar shape.**
+/// `contains_prefixed_secret` has a total-length early-out (`text.len() < prefix.len() +
+/// minimum_tail`) AND a consecutive-run check that counts bytes after the prefix and breaks on the
+/// first one outside `[A-Za-z0-9_-]`. The values below are chosen to reach the SECOND: they sit
+/// either side of the run length, not either side of the total length. Anything that mutates only
+/// total length leaves these untouched -- which is exactly the mistake made while proving this
+/// cell, where a sabotage of overall length reddened nothing because the strings were long enough
+/// on both sides of it.
+///
+/// The charset is therefore load-bearing and is named in the message: widening the run to accept
+/// `.` or `/` would make `prefix + 15` pass again for an unrelated reason, and this cell would go
+/// on passing while measuring something else.
+#[test]
+fn a_tail_shorter_than_the_documented_minimum_is_not_refused_here() {
+    // ARRANGEMENT: the unmutated fixture validates, so a later Ok is a statement about the VALUE
+    // rather than about a validator that accepts anything, and a later Err is about the tail rather
+    // than about a fixture that was already invalid.
+    validate_persisted_projection(&fixture()).expect(
+        "HARNESS-BROKE: the unmutated fixture must validate before any mutation means anything",
+    );
+
+    let bare = mutated_fixture(|value| {
+        value["topology"]["labels"]["release"] = serde_json::json!("ghp_");
+    });
+    validate_persisted_projection(&bare).expect(
+        "a bare `ghp_` carries no tail, and this crate requires prefix + 16 (docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:562)",
+    );
+
+    let one_short = mutated_fixture(|value| {
+        value["topology"]["labels"]["release"] =
+            serde_json::json!(format!("ghp_{}", "a".repeat(15)));
+    });
+    validate_persisted_projection(&one_short).expect(
+        "fifteen [A-Za-z0-9_-] bytes is one short of the documented minimum run and must still pass",
+    );
+
+    let at_the_minimum = mutated_fixture(|value| {
+        value["topology"]["labels"]["release"] =
+            serde_json::json!(format!("ghp_{}", "a".repeat(16)));
+    });
+    assert_eq!(
+        validate_persisted_projection(&at_the_minimum).unwrap_err(),
+        graphhelm_graph::GraphError::InvalidProjection,
+        "sixteen consecutive [A-Za-z0-9_-] bytes reach the documented minimum run and must be refused"
+    );
+}

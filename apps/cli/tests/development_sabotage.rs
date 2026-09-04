@@ -970,16 +970,36 @@ fn backfill_same_line_gaps(citations: &mut Vec<Citation>, unreached: &mut Vec<Un
 /// that reads as an identifier. Concatenating the two before extraction (the defect this
 /// function replaces) would let the citation borrow `source_b`'s token and silently stop being
 /// unreachable; processing them as independent sources must not.
+/// **The positive control is the concatenation** (#761): a count of one pinned citation cannot
+/// tell "the boundary refused the borrow" from "there was never anything to borrow". Running the
+/// SAME two fixtures joined into one source must close the gap - that is the temptation existing,
+/// measured rather than assumed - and only then does the split result mean what it claims.
 #[test]
 fn citation_lookahead_does_not_cross_a_source_boundary() {
     let source_a = "core/runtime/src/retrieval.rs:12-26\n".to_owned();
     let source_b = "Synthetic borrowed_token from an unrelated fixture\n".to_owned();
+
+    let (joined_citations, joined_unreached, _, _) =
+        doc_citations_across_sources(&[format!("{source_a}{source_b}")], &never_verifies);
+    assert!(
+        joined_unreached.is_empty()
+            && joined_citations
+                .iter()
+                .any(|citation| source_b.contains(&citation.token)),
+        "ARRANGEMENT: joined into one source the citation MUST borrow a word from source_b, or \
+         the split case below refuses a borrow nothing was offering: {joined_citations:?} \
+         {joined_unreached:?}"
+    );
+
     let (_, unreached, _, _) = doc_citations_across_sources(&[source_a, source_b], &never_verifies);
     assert_eq!(
-        unreached.len(),
-        1,
+        unreached
+            .iter()
+            .map(|pin| (pin.path.as_str(), pin.first_line, pin.last_line))
+            .collect::<Vec<_>>(),
+        vec![("core/runtime/src/retrieval.rs", 12, 26)],
         "the trailing citation in source_a has no next line WITHIN its own source and must stay \
-         pinned unreachable, not borrow source_b's token"
+         pinned unreachable, not borrow source_b's token: {unreached:?}"
     );
 }
 
@@ -1029,10 +1049,27 @@ fn a_gap_does_not_backfill_across_a_section_boundary_even_if_verify_would_allow_
                   `core/graph/src/persistence.rs:736` names nothing identifier-shaped here.\n"
         .to_owned();
     let always_verifies = |_: &str, _: usize, _: &str| true;
+
+    // POSITIVE CONTROL (#761): the same two lines with the section separator REMOVED must close
+    // the gap. Without it, a count of one pinned citation cannot tell "the boundary refused the
+    // candidate" from "no candidate was ever offered" - a fixture whose neighbour word stopped
+    // being identifier-shaped would pass this cell while testing nothing.
+    let without_boundary = source.replace("---\n\n", "");
+    let (_, joined_unreached, _, _) =
+        doc_citations_across_sources(&[without_boundary], &always_verifies);
+    assert!(
+        joined_unreached.is_empty(),
+        "ARRANGEMENT: with no section boundary the neighbour word MUST close this gap, or the \
+         refusal below is refusing a candidate that does not exist: {joined_unreached:?}"
+    );
+
     let (_, unreached, _, _) = doc_citations_across_sources(&[source], &always_verifies);
     assert_eq!(
-        unreached.len(),
-        1,
+        unreached
+            .iter()
+            .map(|pin| (pin.path.as_str(), pin.first_line, pin.last_line))
+            .collect::<Vec<_>>(),
+        vec![("core/graph/src/persistence.rs", 736, 736)],
         "a word from the PRIOR section must not backfill a gap in the NEXT section, even when \
          every candidate would verify true: {unreached:?}"
     );
@@ -1055,10 +1092,36 @@ fn a_gap_does_not_close_when_its_section_verifies_more_than_one_candidate() {
             && line == 63
             && (candidate == "MemoryRefusalCode" || candidate == "SecretDetected")
     };
+    // POSITIVE CONTROL (#761): the ambiguity has to be REAL. With a `verify` that accepts only
+    // ONE of the two candidates, this same fixture must close the gap and carry that candidate.
+    //
+    // MEASURED, and narrower than its four siblings: unlike them, this cell's bare count was NOT
+    // blind. Damaging the fixture so the section names no identifier-shaped word costs the FIRST
+    // citation its token too, the pinned population goes to two, and the old `len() == 1` went
+    // red on its own (#761's sweep, half two). What the count still could not say is whether the
+    // two candidates were ever ambiguous rather than simply absent - which is what this adds.
+    let verify_one = |path: &str, line: usize, candidate: &str| {
+        path == "core/governor/tests/memory.rs" && line == 63 && candidate == "MemoryRefusalCode"
+    };
+    let (single_citations, single_unreached, _, _) =
+        doc_citations_across_sources(std::slice::from_ref(&source), &verify_one);
+    assert!(
+        single_unreached.is_empty()
+            && single_citations
+                .iter()
+                .any(|citation| citation.first == 63 && citation.token == "MemoryRefusalCode"),
+        "ARRANGEMENT: with only one candidate verifying, this fixture MUST close the gap - \
+         otherwise the refusal below is not about ambiguity: {single_citations:?} \
+         {single_unreached:?}"
+    );
+
     let (citations, unreached, _, _) = doc_citations_across_sources(&[source], &verify);
     assert_eq!(
-        unreached.len(),
-        1,
+        unreached
+            .iter()
+            .map(|pin| (pin.path.as_str(), pin.first_line, pin.last_line))
+            .collect::<Vec<_>>(),
+        vec![("core/governor/tests/memory.rs", 63, 63)],
         "two candidates both verify against the same line -- ambiguous, must stay pinned rather \
          than silently picking one: {unreached:?}"
     );
@@ -1098,14 +1161,34 @@ fn a_gap_closes_when_a_sibling_citation_names_the_same_exact_line() {
 /// single line specifically, and accepting it there is exactly the over-reach `backfill_same_line_gaps`
 /// exists to refuse -- the shape of the #610 regression (`memory.rs:512` borrowing
 /// `jpd_plugin.rs`'s token), reproduced deliberately here to prove the widening does not reopen it.
+///
+/// **The count alone could not tell this cell's two outcomes apart** (#761). `unreached.len() == 1`
+/// held when the rule correctly refused the range donor, and it held identically when the donor
+/// never parsed at all - a fixture whose excerpt shape broke would take the site out of every
+/// population and leave the pinned point as the only entry, reading exactly like success. So the
+/// donor's presence is asserted first, and the refusal is named by coordinate rather than counted.
 #[test]
 fn a_range_donor_does_not_backfill_a_narrower_point_inside_it() {
     let ranged = "core/graph/src/persistence.rs:730-732\n real_token_lives_here\n".to_owned();
     let point = "core/graph/src/persistence.rs:731 nothing identifier-shaped follows\n".to_owned();
-    let (_, unreached, _, _) = doc_citations_across_sources(&[ranged, point], &never_verifies);
+    let (citations, unreached, _, _) =
+        doc_citations_across_sources(&[ranged, point], &never_verifies);
+    assert!(
+        citations
+            .iter()
+            .any(|citation| citation.path == "core/graph/src/persistence.rs"
+                && citation.first == 730
+                && citation.last == 732
+                && citation.token == "real_token_lives_here"),
+        "ARRANGEMENT: the range donor MUST have parsed and carried its token, or this cell is \
+         refusing a donation nobody offered: {citations:?}"
+    );
     assert_eq!(
-        unreached.len(),
-        1,
+        unreached
+            .iter()
+            .map(|pin| (pin.path.as_str(), pin.first_line, pin.last_line))
+            .collect::<Vec<_>>(),
+        vec![("core/graph/src/persistence.rs", 731, 731)],
         "a point citation inside an unrelated range's span must stay pinned, not borrow the \
          range's token for a line the range never verified on its own: {unreached:?}"
     );
@@ -1113,14 +1196,31 @@ fn a_range_donor_does_not_backfill_a_narrower_point_inside_it() {
 
 /// A gap must NOT close from a sibling at the same line number in a DIFFERENT file: path is part
 /// of the coordinate, and matching on line alone would let one file's symbol answer for another's.
+///
+/// Same shape, same blindness, same remedy as the range-donor cell above (#761): the donor is
+/// asserted present before the refusal is read, because a donor that vanished from the
+/// population leaves the same count behind as a donor that was correctly refused.
 #[test]
 fn a_gap_does_not_backfill_across_a_different_path_at_the_same_line() {
     let resolved = "core/graph/src/persistence.rs:296 fn unrelated_token -> bool\n".to_owned();
     let gap = "core/governor/src/memory.rs:296 screens with\nno symbol on this line\n".to_owned();
-    let (_, unreached, _, _) = doc_citations_across_sources(&[resolved, gap], &never_verifies);
+    let (citations, unreached, _, _) =
+        doc_citations_across_sources(&[resolved, gap], &never_verifies);
+    assert!(
+        citations
+            .iter()
+            .any(|citation| citation.path == "core/graph/src/persistence.rs"
+                && citation.first == 296
+                && citation.token == "unrelated_token"),
+        "ARRANGEMENT: the resolved citation MUST have parsed and carried its token, or nothing \
+         was ever able to cross paths here: {citations:?}"
+    );
     assert_eq!(
-        unreached.len(),
-        1,
+        unreached
+            .iter()
+            .map(|pin| (pin.path.as_str(), pin.first_line, pin.last_line))
+            .collect::<Vec<_>>(),
+        vec![("core/governor/src/memory.rs", 296, 296)],
         "a resolved citation at persistence.rs:296 must not backfill an unrelated gap at \
          memory.rs:296 -- same line number, different file: {unreached:?}"
     );

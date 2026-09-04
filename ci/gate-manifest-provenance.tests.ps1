@@ -1371,8 +1371,13 @@ try {
     #   the two CAPTURES, which are the single reading this rule is built on;
     #   the two INDEX GUARDS, which protect a write git gives no atomic form for -- declared with
     #   their residue in ci/gate.ps1 and in this suite's worktree cell.
-    $allowedIdentityReads = @('$gatedBranchAtStart = (& git symbolic-ref', '$gatedHeadAtStart = (& git rev-parse HEAD',
-        '$branchAtIndexTime = (& git symbolic-ref', '$branchAfterTouch = (& git symbolic-ref',
+    # THE FOUR NAMES MOVED IN #762 AND THE PIN MOVED WITH THEM, deliberately and no wider. Each read
+    # is now a CAPTURE whose exit code is read before the value is reduced, so the spelling is
+    # `$xOutput = @(& git ...)` rather than `$x = (& git ... | Select-Object -First 1)`. The
+    # allow-list still names four specific variables: widening it to a pattern would have been the
+    # cheap way through this failure and would have retired the guard rather than moved it.
+    $allowedIdentityReads = @('$gatedBranchOutput = @(& git symbolic-ref', '$gatedHeadOutput = @(& git rev-parse HEAD',
+        '$branchAtIndexOutput = @(& git symbolic-ref', '$branchAfterTouchOutput = @(& git symbolic-ref',
         '$headNow = (git rev-parse HEAD)')
     $strayIdentityReads = @(($gateText -split "`n") | Where-Object {
             $line = $_
@@ -1787,7 +1792,11 @@ try {
     # Two commands, so a checkout between them yields a branch and a sha that never described the
     # same state -- and every later guard compares against that pair as though they did. There is no
     # primitive that reads both at once, so the pair is read and then CHECKED.
-    $snapshotWired = '(?s)\$branchValueAtStart = \(& git rev-parse[\s\S]{0,400}?\$branchValueAtStart[\s\S]{0,120}?\$gatedHeadAtStart[\s\S]{0,600}?exit 1'
+    # The capture is now `@(& git ...)` and the reduction is a separate statement (#762), so the
+    # window between the assignment and the comparison grew by one line. The BOUNDS are what make
+    # this a wiring assertion rather than two unrelated greps, so they are widened by the size of
+    # the inserted statement and not to a number that would match any file.
+    $snapshotWired = '(?s)\$branchValueOutput = @\(& git rev-parse[\s\S]{0,400}?\$branchValueAtStart[\s\S]{0,220}?\$gatedHeadAtStart[\s\S]{0,600}?exit 1'
     Assert-True -Condition ($gateText -cmatch $snapshotWired) `
         -Message 'the captured branch is checked against the captured head, and a mismatch refuses the run'
 

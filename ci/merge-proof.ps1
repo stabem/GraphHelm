@@ -608,11 +608,29 @@ $parentEarly = if ($parentEarlyProbe.exitCode -eq 0 -and $parentEarlyProbe.lines
 $previousEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
+    # 762-DELIBERATE-STOP: $rawPaths -- the bound on what is READ is worth more than the exit code,
+    # so the stop stays and the code is read only when we did not cause it. See below the finally.
     $rawPaths = @(& git -C $RepositoryRoot ls-tree -r --name-only --full-tree $Head -- $StorePrefix.TrimEnd('/') 2>$null |
             Select-Object -First ($MaxManifests + 1))
     $listingExit = $LASTEXITCODE
 } finally { $ErrorActionPreference = $previousEap }
-if ($listingExit -ne 0) {
+# AND THE EXIT CODE IS ONLY READ WHEN WE DID NOT STOP THE COMMAND OURSELVES (#762). The streaming
+# above is deliberate and stays: `Select-Object -First` bounds what is READ rather than what
+# survives, which is the whole reason an untrusted store cannot choose how much this machine spends.
+# But stopping a pipeline TERMINATES the native command feeding it, and on PowerShell 7 that leaves
+# `$LASTEXITCODE` at -1 with the listing correct -- so reading it unconditionally reported "could
+# not list, fetch the head first" for a store whose real defect was being too large. Two refusals
+# that both fail closed, one of them naming the wrong cause and sending the operator to fetch a head
+# they already have.
+#
+# THE GENERAL RECIPE FOR #762 -- capture, read the code, then reduce -- IS WRONG HERE, because
+# capturing first is exactly the unbounded read the comment above exists to prevent. The two
+# requirements genuinely conflict, and the shape that satisfies both is the one already used for the
+# tip listing below: a stop we performed on purpose is not a failure to diagnose. `$tipIsPure`
+# conjoins `-not $tipOverflow` with its exit code and was never reachable by this defect; this is
+# the same structure, made explicit.
+$listingStoppedByUs = ($rawPaths.Count -gt $MaxManifests)
+if (-not $listingStoppedByUs -and $listingExit -ne 0) {
     Write-Broke -Reason "could not list $StorePrefix at ${Head}. Fetch the head first"
 }
 $manifests = @()
@@ -735,6 +753,8 @@ $tipOverflow = $false
 $previousEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
+    # 762-DELIBERATE-STOP: $rawTip -- same trade as the store listing. `$tipIsPure` conjoins
+    # `-not $tipOverflow` with this exit code, so a stop we performed cannot read as a git failure.
     $rawTip = @(& git -C $RepositoryRoot diff-tree --no-commit-id --name-status -r $Head 2>$null |
             Select-Object -First ($MaxTipEntries + 1))
     $tipExit = $LASTEXITCODE

@@ -1121,10 +1121,17 @@ function Publish-RunManifest {
             # AND THE FACT BEING OBSERVED ARE DIFFERENT STATES, and one non-zero exit cannot carry
             # both. The re-read is diagnostic and happens AFTER the act, so it decides no
             # publication -- it only decides which true sentence to record.
-            $refNow = (& git rev-parse --verify --quiet "$branchRef" 2>$null | Select-Object -First 1)
+            # CAPTURED, THEN THE EXIT CODE, THEN REDUCED (#762). `Select-Object -First` stops the
+            # pipeline as soon as it has its item, and stopping a pipeline TERMINATES the native
+            # command feeding it: on PowerShell 7 that leaves `$LASTEXITCODE` at -1 with the VALUE
+            # correct. Reading the code after the stop reports a failure that did not happen, and
+            # here that failure means "the branch moved", which turns a healthy run RED.
+            $refNowOutput = @(& git rev-parse --verify --quiet "$branchRef" 2>$null)
+            $refNowExit = $LASTEXITCODE
+            $refNow = $refNowOutput | Select-Object -First 1
             # The compare-and-swap's own comparison: the one place where an approximate comparer
             # would let the record be written against a ref that had moved.
-            $refMoved = ($LASTEXITCODE -ne 0 -or
+            $refMoved = ($refNowExit -ne 0 -or
                 -not [string]::Equals(([string]$refNow).Trim(), $HeadSha, [System.StringComparison]::Ordinal))
             # THE REFUSAL IS A VERDICT, NOT A LOG LINE. The compare-and-swap failing means the
             # branch moved during the run, which is the same fact the start-versus-end comparison
@@ -1207,8 +1214,11 @@ function Publish-RunManifest {
         # Skipping is safe where publishing was not: the worst case becomes one path staged in the
         # gate's own store, with the remedy printed. The publication has already happened and the
         # commit is correct; only the courtesy touch is withheld.
-        $branchAtIndexTime = (& git symbolic-ref --quiet HEAD 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -ne 0 -or
+        # Captured before reduced, see #762 at the compare-and-swap above.
+        $branchAtIndexOutput = @(& git symbolic-ref --quiet HEAD 2>$null)
+        $branchAtIndexExit = $LASTEXITCODE
+        $branchAtIndexTime = $branchAtIndexOutput | Select-Object -First 1
+        if ($branchAtIndexExit -ne 0 -or
             -not [string]::Equals(([string]$branchAtIndexTime).Trim(), $branchRef, [System.StringComparison]::Ordinal)) {
             Write-Host ("[gate] the run manifest is committed on $branchRef, and this worktree has since moved to " +
                 "$(([string]$branchAtIndexTime).Trim()) -- the index was NOT touched, because staging the gate's file " +
@@ -1233,8 +1243,11 @@ function Publish-RunManifest {
             # their next unqualified commit REMOVES the record this whole ticket exists to keep. That
             # failure needs no race at all -- just an ordinary commit -- so trading a racy nuisance
             # for a routine erasure would be the worse bargain.
-            $branchAfterTouch = (& git symbolic-ref --quiet HEAD 2>$null | Select-Object -First 1)
-            if ($LASTEXITCODE -eq 0 -and
+            # Captured before reduced, see #762 at the compare-and-swap above.
+            $branchAfterTouchOutput = @(& git symbolic-ref --quiet HEAD 2>$null)
+            $branchAfterTouchExit = $LASTEXITCODE
+            $branchAfterTouch = $branchAfterTouchOutput | Select-Object -First 1
+            if ($branchAfterTouchExit -eq 0 -and
                 -not [string]::Equals(([string]$branchAfterTouch).Trim(), $branchRef, [System.StringComparison]::Ordinal)) {
                 & git reset --quiet HEAD -- "$storePrefix$fileName" 2>$null | Out-Null
                 Write-Host ("[gate] this worktree moved to $(([string]$branchAfterTouch).Trim()) while the index was " +
@@ -1785,14 +1798,24 @@ $script:manifestReconcileFailed = $null
 # The check does not close the window -- something can still move between the check and the first
 # stage -- but the compare-and-swap at publication is what makes that residue harmless: it refuses
 # unless the branch still holds the captured sha at the moment of writing.
-$gatedBranchAtStart = (& git symbolic-ref --quiet HEAD 2>$null | Select-Object -First 1)
-$gatedBranchAtStart = if ($LASTEXITCODE -eq 0 -and $gatedBranchAtStart) { ([string]$gatedBranchAtStart).Trim() } else { $null }
-$gatedHeadAtStart = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
-$gatedHeadAtStart = if ($LASTEXITCODE -eq 0 -and $gatedHeadAtStart) { ([string]$gatedHeadAtStart).Trim() } else { $null }
+# THE STARTUP SNAPSHOT IS WHERE THIS COSTS THE MOST (#762): all three reads below run on every
+# single invocation, so under PowerShell 7 the gate would refuse to start on a healthy checkout.
+# Capture, read the exit code, and only then reduce -- nothing that can STOP a pipeline may sit
+# between a native command and the read of its exit code.
+$gatedBranchOutput = @(& git symbolic-ref --quiet HEAD 2>$null)
+$gatedBranchExit = $LASTEXITCODE
+$gatedBranchAtStart = $gatedBranchOutput | Select-Object -First 1
+$gatedBranchAtStart = if ($gatedBranchExit -eq 0 -and $gatedBranchAtStart) { ([string]$gatedBranchAtStart).Trim() } else { $null }
+$gatedHeadOutput = @(& git rev-parse HEAD 2>$null)
+$gatedHeadExit = $LASTEXITCODE
+$gatedHeadAtStart = $gatedHeadOutput | Select-Object -First 1
+$gatedHeadAtStart = if ($gatedHeadExit -eq 0 -and $gatedHeadAtStart) { ([string]$gatedHeadAtStart).Trim() } else { $null }
 
 if ($gatedBranchAtStart -and $gatedHeadAtStart) {
-    $branchValueAtStart = (& git rev-parse --verify --quiet $gatedBranchAtStart 2>$null | Select-Object -First 1)
-    if ($LASTEXITCODE -ne 0 -or
+    $branchValueOutput = @(& git rev-parse --verify --quiet $gatedBranchAtStart 2>$null)
+    $branchValueExit = $LASTEXITCODE
+    $branchValueAtStart = $branchValueOutput | Select-Object -First 1
+    if ($branchValueExit -ne 0 -or
         -not [string]::Equals(([string]$branchValueAtStart).Trim(), $gatedHeadAtStart, [System.StringComparison]::Ordinal)) {
         Write-Host ("[gate] the branch and the head read at startup do not describe one state: $gatedBranchAtStart " +
             "holds $(([string]$branchValueAtStart).Trim()) while HEAD read $gatedHeadAtStart. Something moved between " +

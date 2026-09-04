@@ -25,6 +25,7 @@ $ErrorActionPreference = 'Continue'
 $PinnedSuites = @(
     'classify-run.tests.ps1',
     'closing-keywords.tests.ps1',
+    'exit-code-shape.tests.ps1',
     'gate-manifest-provenance.tests.ps1',
     'gate-postgres-evidence.tests.ps1',
     'gate-run-overlap.tests.ps1',

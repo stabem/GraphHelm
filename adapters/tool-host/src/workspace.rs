@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use graphhelm_tool_broker::path::RelativePath;
 
-use crate::process::{CancelHold, CancelSignal, HostError, SupervisedOutcome, run_supervised};
+use crate::process::{
+    CancelHold, CancelSignal, HostError, SupervisedOutcome, run_supervised, scrub_environment,
+};
 
 /// Retry backoffs for [`Tier1Workspace::remove`]: a freshly written tree can hold transient
 /// Permission-denied locks on Windows (indexer, antivirus), and a single-shot removal WILL
@@ -179,6 +181,15 @@ impl Tier1Workspace {
         // real one: it needs an existing root, and this is what creates it. What #617 changed is
         // that not-reusing it no longer means not being reachable.
         let mut command = Command::new("git");
+        // SCRUBBED FIRST, then the git-specific variables below, which win (#491). Provisioning
+        // ran with the parent's WHOLE environment: `git worktree add` performs a checkout, a
+        // checkout runs any configured clean/smudge FILTER, and a filter is an arbitrary program
+        // that could read whatever the host happened to hold -- tokens, passphrases, profile
+        // paths. `core.hooksPath` closes the hook door and left the filter door open.
+        //
+        // The removal path's redirected HOME already demonstrated the intended posture; this is
+        // the rest of it.
+        scrub_environment(&mut command);
         command
             .arg("-c")
             .arg(format!("core.hooksPath={}", git_safe(&no_hooks)))
@@ -276,6 +287,10 @@ impl Tier1Workspace {
                 std::thread::sleep(*backoff);
             }
             let mut prune = Command::new("git");
+            // The third spawn, and it is easy to miss because it is a fallback: the same scrub
+            // applies (#491). A spawn that runs only when something already went wrong is exactly
+            // the one that gets a weaker posture by accident.
+            scrub_environment(&mut prune);
             prune
                 .arg("-C")
                 .arg(git_safe(&self.project))
@@ -308,6 +323,9 @@ impl Tier1Workspace {
         // remove` that wedges is then killable by the same mechanism as anything else, instead
         // of being the one spawn nothing can reach.
         let mut command = Command::new("git");
+        // Same posture as provisioning, for the same reason: `worktree remove --force` deletes a
+        // checked-out tree and git may consult configuration to do it (#491).
+        scrub_environment(&mut command);
         command
             .arg("-C")
             .arg(git_safe(&self.project))

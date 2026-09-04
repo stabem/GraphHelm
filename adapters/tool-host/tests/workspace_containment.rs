@@ -206,3 +206,75 @@ fn resolve_accepts_a_not_yet_existing_file_inside_the_workspace() {
     assert!(!target.exists());
     workspace.remove().unwrap();
 }
+
+/// A configured checkout FILTER runs during `git worktree add`, and it must not see the host's
+/// environment (#491).
+///
+/// **The hostile arrangement is the one the ticket names, not a proxy for it.** `core.hooksPath`
+/// pointed at an empty directory closes the HOOK door; a `filter.<driver>.smudge` is a different
+/// door and it opens during the checkout `worktree add` performs. The filter is an arbitrary
+/// program, configured by the project rather than by us, and before this fix it inherited whatever
+/// the parent process happened to hold.
+///
+/// The filter here writes its own environment into the new worktree and passes the content
+/// through, so the leak is observable as a file rather than inferred.
+///
+/// **The ARRANGEMENT assertion is what stops this passing vacuously**, and it is the whole reason
+/// the cell is worth having: a filter that never ran leaves no file, and "the probe is not in a
+/// file that does not exist" is true of every possible implementation. So the file must exist
+/// FIRST, and only then is its content a verdict.
+#[test]
+fn a_checkout_filter_does_not_see_the_hosts_environment() {
+    const PROBE: &str = "GH_TOOLHOST_LEAK_PROBE";
+    const SECRET: &str = "a-value-no-filter-should-ever-read";
+
+    let (_dir, project) = scratch_repo();
+    // The filter is configured in the PROJECT's own repository, which is the threat model: the
+    // repository being provisioned is untrusted.
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(&project)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "scratch")
+            .env("GIT_AUTHOR_EMAIL", "scratch@test.invalid")
+            .env("GIT_COMMITTER_NAME", "scratch")
+            .env("GIT_COMMITTER_EMAIL", "scratch@test.invalid")
+            .status()
+            .unwrap();
+        assert!(status.success(), "HARNESS-BROKE: git {args:?} failed");
+    };
+    std::fs::write(project.join(".gitattributes"), "src/lib.rs filter=leak\n").unwrap();
+    // Runs with the new worktree as its working directory, so the relative path lands there.
+    // `cat` passes the blob through, so the checkout still produces the real file.
+    git(&["config", "filter.leak.smudge", "env > leaked.txt; cat"]);
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "attributes"]);
+
+    // SAFETY: single-threaded at this point in the cell, and the value is removed below.
+    unsafe { std::env::set_var(PROBE, SECRET) };
+    let staging = tempfile::tempdir().unwrap();
+    let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
+    let leaked = workspace.root().join("leaked.txt");
+    let dumped = std::fs::read_to_string(&leaked).ok();
+    unsafe { std::env::remove_var(PROBE) };
+
+    let dumped = dumped.unwrap_or_else(|| {
+        panic!(
+            "HARNESS-BROKE: the smudge filter never ran, so {leaked:?} does not exist and the \
+             absence below would be true of every implementation, including one that leaks"
+        )
+    });
+    assert!(
+        !dumped.is_empty(),
+        "HARNESS-BROKE: the filter ran but dumped nothing, so this cell has no environment to \
+         inspect"
+    );
+    assert!(
+        !dumped.contains(PROBE),
+        "the checkout filter saw the host's environment: {PROBE} reached a program the project \
+         configured, and a filter is arbitrary code chosen by the repository being provisioned"
+    );
+    workspace.remove().unwrap();
+}

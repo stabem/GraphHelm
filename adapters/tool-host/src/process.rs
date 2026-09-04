@@ -784,6 +784,27 @@ fn drain_readers(
     }
 }
 
+/// Clear a command's inherited environment and re-admit only the allowlist.
+///
+/// **The same list the tool child uses, shared rather than copied** (#491). A second copy of an
+/// allowlist is a second oracle: it drifts, and the drift is silent because both spellings keep
+/// working until the day one of them is short a name. So `workspace.rs`'s provisioning and removal
+/// spawns call this instead of listing names again.
+///
+/// **What it does NOT do, and the difference is deliberate.** `run_in_workspace` composes `PATH`
+/// from the caller's prepend directories before admitting it, because a tool may need to find a
+/// pinned executable. Provisioning needs `git` findable and nothing else, so the ambient `PATH` is
+/// admitted unchanged. Anything a caller wants set beyond the allowlist is set AFTER this returns
+/// and wins, which is how the git-specific variables at the call sites survive.
+pub(crate) fn scrub_environment(command: &mut std::process::Command) {
+    command.env_clear();
+    for name in INHERITED {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+}
+
 const INHERITED: &[&str] = &[
     "PATH",
     "PATHEXT",

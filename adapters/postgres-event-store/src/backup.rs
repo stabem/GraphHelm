@@ -310,6 +310,7 @@ enum UnavailableStage {
     JobSetup,
     PipeRead,
     ProcessResume,
+    ProcessTerminate,
     ProcessWait,
     Random,
     TaskJoin,
@@ -327,6 +328,7 @@ impl UnavailableStage {
             Self::JobSetup => "process.job.setup",
             Self::PipeRead => "process.pipe.read",
             Self::ProcessResume => "process.resume",
+            Self::ProcessTerminate => "process.terminate",
             Self::ProcessWait => "process.wait",
             Self::Random => "random.source",
             Self::TaskJoin => "task.join",
@@ -4127,6 +4129,9 @@ struct ProcessWatchdog {
     state: Arc<(Mutex<bool>, Condvar)>,
     timed_out: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
+    /// #805: set when a termination sweep hit its pass limit with descendants still appearing.
+    /// Shared with the watchdog thread, which cannot return a value of its own.
+    swept_incomplete: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     completed: bool,
 }
@@ -4155,6 +4160,8 @@ impl ProcessWatchdog {
         let watched = Arc::clone(&state);
         let timeout_flag = Arc::clone(&timed_out);
         let cancellation_flag = Arc::clone(&cancelled);
+        let swept_incomplete = Arc::new(AtomicBool::new(false));
+        let swept_flag = Arc::clone(&swept_incomplete);
         let group_for_timeout = process_group_for_thread(process_group);
         let thread = std::thread::spawn(move || {
             let (lock, condition) = &*watched;
@@ -4162,13 +4169,17 @@ impl ProcessWatchdog {
             let mut completed = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             while !*completed {
                 if cancellation_flag.load(Ordering::Acquire) {
-                    terminate_process(process_id, group_for_timeout);
+                    if sweep_left_descendants(&terminate_process(process_id, group_for_timeout)) {
+                        swept_flag.store(true, Ordering::Release);
+                    }
                     return;
                 }
                 let now = Instant::now();
                 if now >= deadline {
                     timeout_flag.store(true, Ordering::Release);
-                    terminate_process(process_id, group_for_timeout);
+                    if sweep_left_descendants(&terminate_process(process_id, group_for_timeout)) {
+                        swept_flag.store(true, Ordering::Release);
+                    }
                     return;
                 }
                 let wait = deadline
@@ -4187,16 +4198,19 @@ impl ProcessWatchdog {
             state,
             timed_out,
             cancelled,
+            swept_incomplete,
             thread: Some(thread),
             completed: false,
         })
     }
 
     fn terminate(&mut self) {
-        terminate_process(
+        if sweep_left_descendants(&terminate_process(
             self.process_id,
             process_group_for_thread(self.process_group),
-        );
+        )) {
+            self.swept_incomplete.store(true, Ordering::Release);
+        }
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
         }
@@ -4210,10 +4224,12 @@ impl ProcessWatchdog {
             Duration::from_secs(24 * 60 * 60),
         );
         // A successful leader must not be allowed to leave pipe-owning descendants behind.
-        terminate_process(
+        if sweep_left_descendants(&terminate_process(
             self.process_id,
             process_group_for_thread(self.process_group),
-        );
+        )) {
+            self.swept_incomplete.store(true, Ordering::Release);
+        }
         self.child.take();
         self.finish_inner();
         // #81: these two flags were fused into one value here, and the fusion is exactly
@@ -4225,6 +4241,12 @@ impl ProcessWatchdog {
             Err(unavailable(UnavailableStage::Cancellation))
         } else if self.timed_out.load(Ordering::Acquire) {
             Err(BackupError::DeadlineElapsed)
+        } else if self.swept_incomplete.load(Ordering::Acquire) {
+            // #805: the sweep ran out of passes while descendants were still appearing, so the
+            // leader's exit status does not mean the tree is gone. Reported LAST so it never
+            // masks a cancel or a deadline, both of which are facts about why the work stopped;
+            // this one is a fact about what the stop left behind.
+            Err(unavailable(UnavailableStage::ProcessTerminate))
         } else {
             status
         }
@@ -4268,7 +4290,7 @@ impl Drop for ProcessWatchdog {
 //
 // The wrappers below are kept rather than inlined at the ~15 call sites, so this move changes no
 // call site at all and the error mapping lives in exactly one place.
-use graphhelm_process_tree::{ProcessGroup, ProcessTreeError};
+use graphhelm_process_tree::{ProcessGroup, ProcessTreeError, TerminationOutcome};
 
 fn configure_process_group(command: &mut std::process::Command) {
     graphhelm_process_tree::configure(command);
@@ -4293,8 +4315,20 @@ fn close_process_group(group: &mut ProcessGroup) {
     graphhelm_process_tree::close(group);
 }
 
-fn terminate_process(process_id: u32, group: ProcessGroup) {
-    graphhelm_process_tree::terminate(process_id, group);
+/// Kills the tree and RETURNS what the sweep managed, rather than dropping it (#805).
+///
+/// `BoundReached` is the only outcome this crate treats as a failure: it means descendants were
+/// still appearing when the sweep ran out of passes, so "the tree is gone" would be a claim the
+/// call cannot support. `SweepUnavailable` is NOT a failure -- it is the process-tree crate
+/// declaring a platform limit it cannot exceed, and turning a documented limit into a backup error
+/// would fail every host without `/proc`.
+fn terminate_process(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
+    graphhelm_process_tree::terminate(process_id, group)
+}
+
+/// Whether an outcome means descendants may still be running.
+const fn sweep_left_descendants(outcome: &TerminationOutcome) -> bool {
+    matches!(outcome, TerminationOutcome::BoundReached { .. })
 }
 
 #[cfg(test)]
@@ -6846,4 +6880,47 @@ fn io_error(_: std::io::Error) -> BackupError {
 
 fn invalid_backup(_: std::io::Error) -> BackupError {
     BackupError::InvalidBackup
+}
+
+#[cfg(test)]
+mod termination_outcome_policy {
+    use super::sweep_left_descendants;
+    use graphhelm_process_tree::TerminationOutcome;
+
+    /// #805 gave `terminate` a `#[must_use]` outcome and this crate dropped it, which said "the
+    /// tree is gone" on a sweep that had not finished. Propagating it forced a POLICY: which
+    /// outcomes mean descendants may still be running.
+    ///
+    /// The policy is not obvious and it is not symmetric, which is why it is pinned rather than
+    /// left to the one `matches!` that implements it:
+    ///
+    /// * `BoundReached` IS a failure -- the sweep ran out of passes while descendants were still
+    ///   appearing, so the leader's exit status does not mean the tree is gone.
+    /// * `SweepUnavailable` is NOT -- it is the process-tree crate declaring a platform limit
+    ///   (no `/proc`, no `PR_SET_CHILD_SUBREAPER`) rather than claiming a property it cannot
+    ///   deliver. Treating a documented limit as a backup failure would fail every such host,
+    ///   turning an honest disclosure into an outage.
+    ///
+    /// Both negative cases are asserted, not just the interesting one: a predicate that answered
+    /// `true` for everything would satisfy the `BoundReached` case alone and look correct.
+    #[test]
+    fn only_a_bounded_sweep_means_descendants_may_remain() {
+        assert!(
+            sweep_left_descendants(&TerminationOutcome::BoundReached {
+                passes: 8,
+                remaining: 3,
+            }),
+            "a sweep that hit its bound with descendants still appearing was read as a clean tree"
+        );
+        assert!(
+            !sweep_left_descendants(&TerminationOutcome::Complete),
+            "CONTROL: a complete sweep was read as leaving descendants, so the assertion above \
+             would pass for a predicate that is simply always true"
+        );
+        assert!(
+            !sweep_left_descendants(&TerminationOutcome::SweepUnavailable),
+            "a platform that cannot sweep was read as a failed backup: the crate is declaring a \
+             limit it cannot exceed, and every host without /proc would fail its backups"
+        );
+    }
 }

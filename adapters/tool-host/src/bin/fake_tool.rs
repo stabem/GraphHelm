@@ -130,6 +130,50 @@ fn main() {
             }
             std::thread::sleep(std::time::Duration::from_secs(3600));
         }
+        // #748: the same fixture, with the grandchild LEAVING the process group before it does
+        // anything else.  in  runs after fork and before exec, so the escape is
+        // complete before the grandchild has written a byte -- which is the shape the issue asks
+        // for, and the shape an escaping tool would really have.
+        //
+        // Unix only, and deliberately not mirrored on Windows: a job object holds every process
+        // its members create, and leaving one needs CREATE_BREAKAWAY_FROM_JOB plus a job that
+        // permits it. There is nothing to escape with.
+        #[cfg(unix)]
+        "spawn-escaping-grandchild" => {
+            use std::os::unix::process::CommandExt as _;
+
+            let report_to = arguments
+                .next()
+                .expect("spawn-escaping-grandchild needs a loopback address to report to");
+            #[allow(clippy::zombie_processes)]
+            let grandchild = {
+                let mut command =
+                    std::process::Command::new(std::env::current_exe().expect("own path"));
+                command
+                    .arg("sleep")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                unsafe {
+                    command.pre_exec(|| {
+                        if libc::setsid() == -1 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        Ok(())
+                    });
+                }
+                command.spawn().expect("the escaping grandchild spawns")
+            };
+            {
+                let mut report = std::net::TcpStream::connect(report_to.as_str())
+                    .expect("the readiness channel accepts a connection");
+                report
+                    .write_all(grandchild.id().to_string().as_bytes())
+                    .expect("the grandchild id is reported");
+                report.flush().expect("the grandchild id is flushed");
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
         "sleep" => {
             std::thread::sleep(std::time::Duration::from_secs(3600));
         }

@@ -1182,3 +1182,105 @@ fn a_fixture_that_never_reports_is_refused_within_the_bound_rather_than_hanging(
          not in practice, which is the third colour #703 exists to keep out of the harness"
     );
 }
+
+/// #748, RED FIRST: a descendant that leaves the process group survives the stop.
+///
+/// `terminate` sends SIGKILL to the original process group. One `setsid` call, no privileges, and
+/// the descendant is no longer in it. Windows has no equivalent hole -- a job object holds every
+/// process its members create, and leaving one needs CREATE_BREAKAWAY_FROM_JOB plus a job that
+/// permits breakaway, which this job does not set.
+///
+/// **It fails toward a false GREEN**, which is the worse direction: the escapee survives, and if it
+/// redirected its streams the reader backstop sees a clean EOF, so the capture looks normal and the
+/// record reports a tree that is gone while it is not.
+///
+/// This is the TWIN of `the_stop_kills_the_whole_tree_and_not_only_the_direct_child`, and the only
+/// difference is one call in the fixture: the grandchild runs `setsid` in `pre_exec`, so it is out
+/// of the group before it has written a byte. Every instrument is deliberately the same -- the same
+/// readiness socket, the same identity capture, the same `wait_until_gone`, the same
+/// OBSERVER_MISSING refusal. If this reddens while its twin stays green, the difference IS the
+/// escape and cannot be the method.
+#[cfg(unix)]
+#[test]
+fn a_descendant_that_left_the_process_group_is_still_stopped() {
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let root = workspace.path().to_path_buf();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the readiness listener has an address")
+        .to_string();
+
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+    let handle = {
+        let root = root.clone();
+        let signal = signal.clone();
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &["spawn-escaping-grandchild".to_owned(), report_address],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    // Generous: the deadline must NOT be what stops this call.
+                    timeout: Duration::from_secs(120),
+                    max_output_bytes: 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    const READY_PATIENCE: Duration = Duration::from_secs(20);
+    let reported = wait_for_reported_grandchild(listener, READY_PATIENCE);
+    let identity = reported.map(graphhelm_process_tree::ProcessIdentity::capture);
+
+    signal.cancel();
+    let _ = handle.join().expect("the call thread returns");
+
+    let Some(grandchild) = reported else {
+        panic!(
+            "HARNESS-BROKE: the fixture never reported a grandchild id in {READY_PATIENCE:?}; \
+             nothing here measures an escape"
+        );
+    };
+
+    const REAP_PATIENCE: Duration = Duration::from_secs(30);
+
+    // The same refusal the twin makes, for the same reason: where the platform has no identity,
+    // `kill(pid, 0)` reads a ZOMBIE as alive (#715), so the pid probe would decide this on the
+    // operating system's reaping schedule. Judging with an instrument a filed defect says lies is
+    // worse than not judging.
+    let Some(handle) = identity
+        .as_ref()
+        .and_then(|captured| captured.as_ref().ok())
+    else {
+        panic!(
+            "OBSERVER_MISSING: no ProcessIdentity for the grandchild {grandchild}, and the pid \
+             probe reads a zombie as alive (#715), so this run has no honest way to decide whether \
+             the escapee was stopped"
+        );
+    };
+
+    let survived = !handle.wait_until_gone(REAP_PATIENCE).unwrap_or_else(|_| {
+        panic!(
+            "HARNESS-BROKE: the wait on the grandchild's identity failed; this run decides nothing \
+             about the escape"
+        )
+    });
+
+    // Reaped through the IDENTITY before asserting, so a survivor does not outlive the suite and
+    // sleep for an hour on the host that ran it.
+    if survived {
+        let _ = handle.terminate();
+    }
+
+    assert!(
+        !survived,
+        "a grandchild that called setsid was still running {REAP_PATIENCE:?} after the stop: the \
+         kill went to the original process group and the escapee had already left it"
+    );
+}

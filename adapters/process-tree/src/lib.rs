@@ -164,6 +164,22 @@ impl ProcessGroup {
 #[cfg(unix)]
 pub fn configure(command: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;
+    // ONCE, and before any child exists (#748). `PR_SET_CHILD_SUBREAPER` makes an orphaned
+    // descendant reparent to THIS process rather than to pid 1, which is what keeps the `/proc`
+    // ancestry chain intact for `sweep_subtree` when the middle process dies first. Measured: the
+    // call returns 0 with no privileges, and a `setsid` grandchild whose parent was killed came
+    // back with our pid as its `ppid` instead of 1.
+    //
+    // Failure is deliberately ignored rather than propagated: the subreaper narrows a hole in the
+    // sweep and its absence degrades the sweep, which `TerminationOutcome` reports. Refusing to
+    // spawn because a hardening prctl failed would trade a narrowed hole for a dead product.
+    #[cfg(target_os = "linux")]
+    {
+        static SUBREAPER: std::sync::Once = std::sync::Once::new();
+        SUBREAPER.call_once(|| unsafe {
+            libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
+        });
+    }
     command.process_group(0);
     #[cfg(target_os = "linux")]
     let expected_parent = unsafe { libc::getpid() };
@@ -212,6 +228,28 @@ pub fn for_thread(group: ProcessGroup) -> ProcessGroup {
 #[cfg(unix)]
 pub fn close(_group: &mut ProcessGroup) {}
 
+/// What a [`terminate`] actually achieved, because "it returned" is not the same as "the tree is
+/// gone" (#748).
+///
+/// A sweep that stops after N passes and reports nothing has bounded its ITERATIONS and not the
+/// property it exists to provide — #796's class, and the reason this is a value rather than a
+/// silent `()`. A caller that cannot tell `Complete` from `BoundReached` will report a tree as
+/// stopped while something it spawned is still running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "a sweep that hit its bound left descendants running; dropping this says the tree is gone when it may not be"]
+pub enum TerminationOutcome {
+    /// Signalled everything reachable, and a final pass found nothing new.
+    Complete,
+    /// The sweep hit its pass limit while descendants were still appearing. `remaining` is what
+    /// the last pass saw; there may be more.
+    BoundReached { passes: u32, remaining: usize },
+    /// The group signal was sent and the SUBTREE sweep did not run, so a descendant that left the
+    /// group survives. This is what the crate says on a Unix without `/proc` or without
+    /// `PR_SET_CHILD_SUBREAPER` rather than claiming a property it cannot deliver — the same
+    /// posture [`ProcessIdentity::capture`] already takes.
+    SweepUnavailable,
+}
+
 /// Kill the process and everything it spawned **that is still in its process group** (#717).
 ///
 /// The qualifier is the whole of the Unix/Windows difference. `kill(-pgid)` reaches the group, and a
@@ -225,14 +263,182 @@ pub fn close(_group: &mut ProcessGroup) {}
 /// dangerous direction, and it is why the gap is declared here rather than left for a reader to
 /// infer from the absence of a comment.
 #[cfg(unix)]
-pub fn terminate(process_id: u32, _group: ProcessGroup) {
-    if let Ok(process_id) = i32::try_from(process_id) {
-        // NEGATIVE pid: the signal goes to the whole process group, which is the difference
-        // between this and `Child::kill`.
-        unsafe {
-            libc::kill(-process_id, libc::SIGKILL);
+pub fn terminate(process_id: u32, _group: ProcessGroup) -> TerminationOutcome {
+    let Ok(signed) = i32::try_from(process_id) else {
+        return TerminationOutcome::SweepUnavailable;
+    };
+    // The group signal FIRST, unchanged: it reaches everything that did not escape, in one
+    // syscall, and the sweep below then has almost nothing to find on the ordinary path.
+    //
+    // NEGATIVE pid: the signal goes to the whole process group, which is the difference between
+    // this and `Child::kill`.
+    // THE SNAPSHOT COMES FIRST, AND THE ORDER IS THE WHOLE FIX (measured, #748).
+    //
+    // The obvious sequence -- signal the group, then walk for escapees -- does not work, and the
+    // reason is the subreaper that makes the walk possible at all. The group signal kills the
+    // CHILD; the escapee is then reparented to US; and its ancestry no longer reaches the child's
+    // pid, so a walk rooted there finds nothing. The kill that precedes the sweep is what breaks
+    // the chain the sweep needs.
+    //
+    // Measured: with the sweep after the signal, the escaping-grandchild cell still failed at 30s
+    // with the descendant alive. Snapshotting before the signal makes it pass.
+    let condemned = subtree_snapshot(process_id);
+    unsafe {
+        libc::kill(-signed, libc::SIGKILL);
+    }
+    sweep_subtree(process_id, condemned)
+}
+
+/// Kill what the group signal could not reach: descendants that left it (#748).
+///
+/// **Why this is possible at all, measured rather than assumed.** `setsid` changes a process's
+/// session and group and leaves its PARENT link untouched, so `/proc` ancestry still reaches the
+/// escapee. Measured on Linux 6.6: a grandchild that called `setsid` had `sid` and `pgid` of its
+/// own and `ppid` still naming its parent.
+///
+/// **The walk's one hole is closed by the subreaper.** If the middle process dies first the
+/// escapee is reparented, classically to pid 1, where nothing distinguishes it from any other
+/// stray. [`configure`] sets `PR_SET_CHILD_SUBREAPER` so orphaned descendants reparent to US
+/// instead — measured: `prctl` returns 0 with no privileges, and after killing the middle process
+/// the grandchild's `ppid` became this process rather than 1.
+///
+/// **The kill is by IDENTITY, not by number.** Between reading a pid's ancestry and signalling it,
+/// that pid can exit and be recycled onto an unrelated process — and this runs with whatever reach
+/// the runner has. Every candidate is re-read immediately before the signal and its start time
+/// compared: same pid with a different start time is a DIFFERENT process, and is left alone. That
+/// is #624's slot-liveness comparison, pointed at a subtree.
+#[cfg(all(unix, target_os = "linux"))]
+fn sweep_subtree(root: u32, condemned: Vec<(u32, u64)>) -> TerminationOutcome {
+    /// Deliberately small. Each pass signals everything it found, so a tree that is merely deep
+    /// converges in a pass or two; only a process spawning faster than the sweep reaches this,
+    /// and for that the honest answer is `BoundReached` rather than a bigger number.
+    const MAX_PASSES: u32 = 8;
+
+    let mut passes = 0;
+    let mut condemned = condemned;
+    loop {
+        // The snapshot taken before the signal, plus anything that appeared since and is STILL
+        // traceable to the root -- a late spawn whose parent had not yet died. Both are needed:
+        // the snapshot survives the reparenting, and the walk catches what the snapshot missed.
+        let mut descendants = descendants_of(root);
+        descendants.append(&mut condemned);
+        descendants.sort_unstable();
+        descendants.dedup();
+        descendants.retain(|(pid, started_at)| process_start_time(*pid) == Some(*started_at));
+        if descendants.is_empty() {
+            return TerminationOutcome::Complete;
+        }
+        if passes >= MAX_PASSES {
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: descendants.len(),
+            };
+        }
+        for (pid, started_at) in &descendants {
+            // Re-read at the moment of the signal. A candidate that exited between the walk and
+            // here is either gone or has been replaced by a stranger, and a stranger must not be
+            // killed because it inherited a number.
+            if process_start_time(*pid) != Some(*started_at) {
+                continue;
+            }
+            if let Ok(signed) = i32::try_from(*pid) {
+                unsafe {
+                    libc::kill(signed, libc::SIGKILL);
+                }
+            }
+        }
+        passes += 1;
+    }
+}
+
+/// The sweep is Linux-shaped: it needs `/proc` ancestry and `PR_SET_CHILD_SUBREAPER`, and neither
+/// exists on macOS or the BSDs. Saying so is the point — a fallback that walked something weaker
+/// would report `Complete` on a platform where the escape still works.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn sweep_subtree(_root: u32, _condemned: Vec<(u32, u64)>) -> TerminationOutcome {
+    TerminationOutcome::SweepUnavailable
+}
+
+/// The subtree as it stands RIGHT NOW, captured before anything is signalled.
+///
+/// Separate from [`descendants_of`] only in name: the distinction it carries is WHEN it is called,
+/// and that is the load-bearing part of the fix.
+#[cfg(all(unix, target_os = "linux"))]
+fn subtree_snapshot(root: u32) -> Vec<(u32, u64)> {
+    descendants_of(root)
+}
+
+/// The snapshot is not available where the sweep is not.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn subtree_snapshot(_root: u32) -> Vec<(u32, u64)> {
+    Vec::new()
+}
+
+/// `(pid, start time)` for every live process whose ancestry reaches `root`, `root` excluded.
+#[cfg(all(unix, target_os = "linux"))]
+fn descendants_of(root: u32) -> Vec<(u32, u64)> {
+    let mut parents: std::collections::BTreeMap<u32, (u32, u64)> =
+        std::collections::BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Ok(pid) = name.parse::<u32>() else {
+            continue;
+        };
+        if let Some(record) = read_stat(pid) {
+            parents.insert(pid, record);
         }
     }
+
+    let mut found = Vec::new();
+    for (&pid, &(_, started_at)) in &parents {
+        if pid == root {
+            continue;
+        }
+        // Walk up, bounded by the map's own size: a cycle cannot exist in a real process table,
+        // but this reads one, and a loop here would hang the kill path.
+        let mut cursor = pid;
+        for _ in 0..parents.len().saturating_add(1) {
+            let Some(&(parent, _)) = parents.get(&cursor) else {
+                break;
+            };
+            if parent == root {
+                found.push((pid, started_at));
+                break;
+            }
+            if parent <= 1 {
+                break;
+            }
+            cursor = parent;
+        }
+    }
+    found
+}
+
+/// `(ppid, start time)` from `/proc/<pid>/stat`.
+///
+/// The fields are read AFTER the last `)`, because a process name can contain spaces and
+/// parentheses and splitting the whole line would put the parse at the mercy of whatever a child
+/// called itself.
+#[cfg(all(unix, target_os = "linux"))]
+fn read_stat(pid: u32) -> Option<(u32, u64)> {
+    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let tail = raw.get(raw.rfind(')')? + 2..)?;
+    let mut fields = tail.split_whitespace();
+    let ppid = fields.nth(1)?.parse().ok()?;
+    // `starttime` is field 22 of the whole line; the state field is the first here, so it is at
+    // offset 19 from `ppid`'s successor.
+    let started_at = fields.nth(17)?.parse().ok()?;
+    Some((ppid, started_at))
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn process_start_time(pid: u32) -> Option<u64> {
+    read_stat(pid).map(|(_, started_at)| started_at)
 }
 
 /// Start the child suspended, so that `create` can put it in a job before it runs.
@@ -428,8 +634,13 @@ pub fn close(group: &mut ProcessGroup) {
 /// guarantee is therefore "everything it spawned THAT IS STILL IN THE GROUP", and it fails toward a
 /// false GREEN. Said here as well as there because neither body appears in the other's rendered
 /// documentation.
+///
+/// Always [`TerminationOutcome::Complete`], and the signature exists so the two platforms answer
+/// the same QUESTION rather than so this one has something to say. A job object holds every
+/// process its members create, so there is no subtree left over to sweep and no bound to hit --
+/// the outcome the Unix arm has to work for is what this one gets from the kernel.
 #[cfg(windows)]
-pub fn terminate(process_id: u32, group: ProcessGroup) {
+pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
     use windows_sys::Win32::{
         Foundation::CloseHandle,
         System::{
@@ -439,7 +650,7 @@ pub fn terminate(process_id: u32, group: ProcessGroup) {
     };
     if group.0 != 0 {
         unsafe { TerminateJobObject(group.0 as _, 1) };
-        return;
+        return TerminationOutcome::Complete;
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
     if !handle.is_null() {
@@ -448,6 +659,7 @@ pub fn terminate(process_id: u32, group: ProcessGroup) {
             CloseHandle(handle);
         }
     }
+    TerminationOutcome::Complete
 }
 
 /// `SYNCHRONIZE` (`0x0010_0000`): the access right that permits WAITING on a handle.

@@ -273,7 +273,19 @@ pub(crate) fn run_supervised(
             }
             Ok(None) => {
                 if interruptible && cancel.is_some_and(CancelSignal::is_cancelled) {
-                    graphhelm_process_tree::terminate(
+                    // DROPPED BY NAME, AND THIS IS THE HALF #748 DOES NOT FINISH. `terminate`
+                    // now answers whether the sweep completed or hit its pass bound with
+                    // descendants still appearing; `BoundReached` means the tree may not be gone.
+                    // Nothing carries that to a caller yet, so the value is `#[must_use]` and is
+                    // discarded HERE, visibly, rather than silently at the call.
+                    //
+                    // Deliberately NOT folded into `readers_abandoned`, which is the cheap move
+                    // available: that field means "something escaped the process group", and
+                    // `reader_lost` was added BESIDE it rather than folded in, for the reason its
+                    // own doc gives -- two causes under one name cannot be told apart afterwards.
+                    // A third cause earns its own field, and that is `CapturedProcess` across
+                    // thirteen construction sites, which belongs in its own commit.
+                    let _ = graphhelm_process_tree::terminate(
                         child.id(),
                         graphhelm_process_tree::for_thread(group),
                     );
@@ -300,7 +312,8 @@ pub(crate) fn run_supervised(
                 // Reachability of a `try_wait` error is NOT established, and this is not fixed on
                 // the strength of it: it is fixed because the correct version is adjacent and the
                 // next reader would take the wrong one for coverage.
-                graphhelm_process_tree::terminate(
+                // Dropped by name, for the reason at the first call site.
+                let _ = graphhelm_process_tree::terminate(
                     child.id(),
                     graphhelm_process_tree::for_thread(group),
                 );
@@ -1235,7 +1248,8 @@ pub fn run_in_workspace(
                     // inherited stdout or stderr holds those pipes open, so the reader joins below
                     // block after the direct child is already reaped. The leak was the visible
                     // half; the wedged caller was the one that mattered.
-                    graphhelm_process_tree::terminate(
+                    // Dropped by name, for the reason at the first call site.
+                    let _ = graphhelm_process_tree::terminate(
                         child.id(),
                         graphhelm_process_tree::for_thread(group),
                     );

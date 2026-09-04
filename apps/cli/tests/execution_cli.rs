@@ -2222,3 +2222,102 @@ fn no_execution_verb_takes_scope_arguments() {
         }
     }
 }
+
+struct WallClock;
+impl graphhelm_protocols::Clock for WallClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+
+#[derive(Default)]
+struct Ids(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for Ids {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-scope-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
+}
+
+fn open_store(events: &Path) -> graphhelm_events::LocalEventRepository {
+    graphhelm_events::LocalEventRepository::open(
+        events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap()
+}
+
+/// The scope `addressable_scope` derives for `execution`, spelled out by hand.
+///
+/// Deliberately NOT built from `WORKSPACE`/`PROJECT`: an expectation computed from the constants
+/// under test agrees with whatever rule the code happens to implement, which is a mirror rather
+/// than an oracle. These two literals are the addressing rule, and changing them IS a change to
+/// it -- so a rename should turn this red and be re-decided, not silently followed.
+fn scope_the_id_derives(execution: &str) -> graphhelm_protocols::RepositoryScope {
+    graphhelm_protocols::RepositoryScope::new(
+        graphhelm_protocols::WorkspaceId::parse("workspace-local").unwrap(),
+        graphhelm_protocols::ProjectId::parse("project-local").unwrap(),
+        Some(graphhelm_protocols::ExecutionId::parse(execution).unwrap()),
+    )
+}
+
+/// #775: stream ids are unique per REPOSITORY, and the reason is that nothing ever chooses a scope.
+///
+/// `addressable_scope` (`apps/cli/src/commands/execution/mod.rs:196`) does not select a scope for
+/// an id, it DERIVES one from it: constant workspace, constant project, and the execution id
+/// itself as the third component. A function cannot return two scopes for one id, so no two
+/// streams it produces can share an id -- and every production append to this store takes its
+/// scope from it, directly at `start.rs:153` or through `resolve_stream`/`load_projection` at
+/// `signal.rs:162` and `amend.rs:62`.
+///
+/// **That is the entire reason the id-only `find`s in `serve/monitor.rs:597` and
+/// `serve/wake.rs:95,213` resolve the right execution.** It held as a consequence and was written
+/// down nowhere. This asserts it over the streams the SHIPPED VERBS create.
+///
+/// **WHAT THIS CELL PINS, EXACTLY: the scope derivation on the `start` path.** It invokes one
+/// verb, twice, against a fresh store. A SEVENTH write site that chose its own scope would never
+/// be invoked here, its streams would never exist, and this loop would iterate two still-correct
+/// entries and pass. So this does not redden for "any writer picks its own scope" -- an earlier
+/// draft of this comment claimed it did, which is a green cell being read as coverage it does not
+/// have.
+///
+/// The structural half -- that `start`, `signal`, `amend` and the driver all reach
+/// `addressable_scope`, and that `events::scope` has only read-path callers -- is an argument in
+/// the PR body, not an assertion here, and nothing re-reads it when a site is added. That gap is
+/// filed rather than papered over. What holds today is that the derivation above is the ONLY
+/// reason those three
+/// readers answer about a different execution than the `/v1` verbs do.
+#[test]
+fn every_stream_the_shipped_verbs_create_is_scoped_by_its_own_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({ "implementation": "success", "deploy": "success" }),
+    );
+
+    // Two, not one: a single stream cannot show that two ids stay apart.
+    start(&events, &fixtures, "supervised", "exec_alpha");
+    start(&events, &fixtures, "supervised", "exec_beta");
+
+    let streams = open_store(&events).list_streams().unwrap();
+    let ids: Vec<&str> = streams.iter().map(|s| s.stream_id.as_str()).collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "ARRANGEMENT: the two starts did not leave two streams, so nothing below is measured: {ids:?}"
+    );
+
+    for stream in &streams {
+        assert_eq!(
+            stream.scope,
+            scope_the_id_derives(&stream.stream_id),
+            "stream `{}` is scoped by something other than its own id, so `(scope, stream_id)` now \
+             carries more than `stream_id` and an id-only `find` can reach the wrong execution",
+            stream.stream_id
+        );
+    }
+}

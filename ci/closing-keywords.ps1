@@ -46,8 +46,38 @@
     built for, with the sign flipped -- there the field reported the intended closure and missed the
     accidental one, here it reports none at all.
 
-    Both directions say the same thing. That field is not one of the two halves and must never be
+    Both directions say the same thing. That field is not one of the halves and must never be
     allowed to answer alone.
+
+    EVERY TEXT THAT DECIDES A CLOSURE HAS ITS OWN SCOPE CONDITION, AND NO TWO ARE THE SAME. This
+    table is the point of the program, and it is worth more than any single rule derived from it,
+    because the rules keep turning out to be about one instance:
+
+      TEXT                        WHO READS IT           SCOPED TO            HOW IT GOES BLIND
+      ------------------------    -------------------    -----------------    -----------------------
+      closingIssuesReferences     the PR page, bots      the DEFAULT branch   silent on any stacked PR
+      the PR BODY                 this program           nothing              --
+      gh --json commits           this program           the BASE BRANCH      blind below the base
+      the PR TITLE                this program           nothing              --
+
+    The middle column is the one that bites, and it bites in a specific way: the answer changes
+    under a git operation that touches NEITHER THE CODE NOR THE INTENT. Retarget a stacked pull
+    request and the commit list grows; this program's verdict can go from green to red with no
+    edit to anything a human wrote.
+
+    So the program REFUSES a pull request whose base is not the merge target rather than reporting
+    a green it cannot back -- see `Test-MergeTargetBase`, and #779 for the measurement. The rule
+    that follows, for anyone running this by hand: RUN IT AFTER THE RETARGET, NEVER BEFORE.
+
+    THE TITLE WAS THE THIRD BLIND SPOT AND IT WAS THIS PROGRAM'S OWN. A squash's default SUBJECT
+    is the pull request title plus " (#N)" -- measured on this repository, where #767, #770 and
+    #613 landed with a subject exactly equal to their title. A closing keyword in a title fires,
+    and until #792 this program read only the body and the commits. Nothing in 200 pull requests
+    here has ever carried one, so it was a gap and not a wound; it is closed because "no instance
+    yet" is not a property of the instrument.
+
+    Which is the whole lesson, stated once: THREE AUTHORITATIVE-SOUNDING SOURCES, THREE DIFFERENT
+    BLIND SPOTS, AND THE FIELD NAMED AFTER THE JOB IS THE LEAST TRUSTWORTHY OF THEM.
 
 .PARAMETER Number
     The pull request to read.
@@ -149,7 +179,11 @@ param(
     # reads the binder's complaint as a fact about their pull request. `-Closes none` survives all
     # four; see `ConvertTo-IntendedClosures`.
     [Parameter(Mandatory)] [AllowEmptyCollection()] [AllowEmptyString()] [string[]] $Closes,
-    [string] $Repository
+    [string] $Repository,
+    # The branch a squash of this pull request would LAND ON. A parameter rather than the constant
+    # 'main' because it is one side of a comparison this program now REFUSES on, and a comparison
+    # whose other side is hard-coded cannot be reached by a cell (#792).
+    [string] $MergeTarget = 'main'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -317,7 +351,65 @@ function Test-PullRequestPayload {
             reason = 'the answer carries ZERO commits, and every pull request has at least one'
         }
     }
+    if ($names -notcontains 'title') {
+        return [ordered]@{ ok = $false; reason = 'the answer carries no `title` field' }
+    }
+    if ($names -notcontains 'baseRefName') {
+        return [ordered]@{ ok = $false; reason = 'the answer carries no `baseRefName` field' }
+    }
+    # An empty base is the wrong SHAPE and never a pull request with no base. Unlike `body`, which
+    # is legitimately empty when nobody wrote a description, every pull request targets a branch.
+    if ([string]::IsNullOrWhiteSpace([string]$Payload.baseRefName)) {
+        return [ordered]@{
+            ok     = $false
+            reason = 'the answer carries an EMPTY `baseRefName`, and every pull request targets a branch'
+        }
+    }
     return [ordered]@{ ok = $true; reason = '' }
+}
+
+function Test-MergeTargetBase {
+    <#
+        Is the pull request's base the branch a squash would LAND ON -- and therefore, is the
+        commit list this program reads the one that would actually be carried?
+
+        `gh pr view --json commits` is computed by GitHub AGAINST THE BASE BRANCH. On a stacked
+        pull request whose base is not the merge target, the list STOPS at that base and this
+        program is blind to every commit below it. Measured on #779 (2026-09-04), whose base
+        branch `issue-708-reader-silence-grace` still existed after its own pull request had
+        squash-merged into main:
+
+            as it stood                    5 commits returned   fired {617}        GREEN
+            base retargeted, NOT rebased   8 commits returned   fired {617, 708}   red
+            rebased onto main, pushed      5 commits returned   fired {617}        green, correct
+
+        `Closes #708` sat in the body of a commit the endpoint could not see, and #708 was
+        already CLOSED. So the gate answered GREEN in a state where merging was wrong, and the
+        operator's NEXT REQUIRED ACTION -- retargeting, without which nothing reaches main -- is
+        what changed the answer.
+
+        A green that expires on the next git operation is not a weaker green. It is an answer to a
+        question nobody asked, and reporting it is the exact failure this program exists to
+        prevent: an instrument silent about its own scope reforms the doubt that would have made
+        someone look. So this REFUSES rather than warns.
+
+        ORDINAL, because git branch names are case-sensitive and PowerShell's `-eq` is not. Nor is
+        `-ceq`: case-sensitivity and culture-awareness are ORTHOGONAL, and only the second one is
+        what makes a zero-weight character compare equal to nothing at all (#753).
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Base,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $MergeTarget
+    )
+
+    if ([string]::Equals($Base, $MergeTarget, [System.StringComparison]::Ordinal)) {
+        return [ordered]@{ ok = $true; reason = '' }
+    }
+    return [ordered]@{
+        ok     = $false
+        reason = ("its base is '$Base' and not '$MergeTarget', so the commit list gh returns stops " +
+            "at that base and this program cannot see what lies below it")
+    }
 }
 
 function Read-PullRequestTexts {
@@ -339,17 +431,17 @@ function Read-PullRequestTexts {
     param([Parameter(Mandatory)] [AllowNull()] $Answer)
 
     if ($null -eq $Answer -or $Answer.exitCode -ne 0) {
-        return [ordered]@{ ok = $false; reason = 'gh could not read the pull request'; body = ''; commits = '' }
+        return [ordered]@{ ok = $false; reason = 'gh could not read the pull request'; body = ''; commits = ''; title = ''; base = '' }
     }
     $payload = $null
     try {
         $payload = $Answer.text | ConvertFrom-Json
     } catch {
-        return [ordered]@{ ok = $false; reason = "gh's answer did not parse as JSON"; body = ''; commits = '' }
+        return [ordered]@{ ok = $false; reason = "gh's answer did not parse as JSON"; body = ''; commits = ''; title = ''; base = '' }
     }
     $shape = Test-PullRequestPayload -Payload $payload
     if (-not $shape.ok) {
-        return [ordered]@{ ok = $false; reason = $shape.reason; body = ''; commits = '' }
+        return [ordered]@{ ok = $false; reason = $shape.reason; body = ''; commits = ''; title = ''; base = '' }
     }
     # Both halves of a commit message. GitHub links from the subject as well as the body, and
     # #746's offending keyword was in a body while its intended one was in a subject -- reading
@@ -360,6 +452,8 @@ function Read-PullRequestTexts {
         reason  = ''
         body    = [string]$payload.body
         commits = $commitText
+        title   = [string]$payload.title
+        base    = [string]$payload.baseRefName
     }
 }
 
@@ -379,15 +473,28 @@ function Get-ClosureVerdict {
     param(
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $BodyText,
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $CommitText,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $TitleText,
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Intended
     )
 
     $fromBody = Get-ClosingReferences -Text $BodyText
     $fromCommits = Get-ClosingReferences -Text $CommitText
-    $comparison = Compare-ClosureIntent -Union @(@($fromBody) + @($fromCommits)) -Intended $Intended
+    # THE TITLE IS A DECIDING TEXT AND THIS PROGRAM USED TO BE BLIND TO IT. A squash's default
+    # SUBJECT is the pull request title plus " (#N)" -- measured on this repository, where #767,
+    # #770 and #613 all landed with subject exactly equal to their title (#774 differs only
+    # because its merger hand-wrote one). A closing keyword in a title therefore fires, and
+    # neither of the two texts this program read would have carried it.
+    #
+    # Nothing in the 200 pull requests on this repository has ever had one, so this closes a gap
+    # rather than a wound, and that is stated so the next reader does not go looking for the
+    # incident.
+    $fromTitle = Get-ClosingReferences -Text $TitleText
+    $union = @(@($fromBody) + @($fromCommits) + @($fromTitle))
+    $comparison = Compare-ClosureIntent -Union $union -Intended $Intended
     return [ordered]@{
         body       = @($fromBody)
         commits    = @($fromCommits)
+        title      = @($fromTitle)
         unexpected = @($comparison.unexpected)
         missing    = @($comparison.missing)
     }
@@ -425,7 +532,7 @@ if (-not $stated.ok) {
 }
 $intended = @($stated.numbers)
 
-$arguments = @('pr', 'view', "$Number", '--json', 'body,commits')
+$arguments = @('pr', 'view', "$Number", '--json', 'body,commits,title,baseRefName')
 if ($Repository) { $arguments += @('--repo', $Repository) }
 $read = Read-PullRequestTexts -Answer (Invoke-Gh -Arguments $arguments)
 if (-not $read.ok) {
@@ -433,20 +540,41 @@ if (-not $read.ok) {
         "text was measured. An absence that arrived as a failure must never be read as a finding.") -ForegroundColor Magenta
     exit 2
 }
+# BEFORE any measurement, because the texts below are only worth reading if they are the texts a
+# squash would carry. See Test-MergeTargetBase: gh computes the commit list against the BASE, so a
+# pull request stacked on something other than the merge target hides every commit below it.
+#
+# This exits 1 rather than 2. It is a finding ABOUT THE PULL REQUEST -- it is not in a state that
+# can be merged correctly -- and not an instrument that failed to run. A 2 invites a caller to
+# treat it as "skipped".
+$target = Test-MergeTargetBase -Base $read.base -MergeTarget $MergeTarget
+if (-not $target.ok) {
+    Write-Host ""
+    Write-Host ("[closing] REFUSED: pull request $Number cannot be gated as it stands, because " +
+        "$($target.reason).") -ForegroundColor Red
+    Write-Host ("           Retargeting alone does NOT fix this: it changes what GitHub COMPARES " +
+        "against, not what the branch CARRIES. Rebase onto the merge target first --") -ForegroundColor Red
+    Write-Host ("             git rebase --onto origin/$MergeTarget <the old base's head> <this branch>") -ForegroundColor Red
+    Write-Host ("           then push, retarget, and run this again. RUN IT AFTER, NEVER BEFORE: " +
+        "the answer changes with the base.") -ForegroundColor Red
+    exit 1
+}
+
 $bodyText = $read.body
 $commitText = $read.commits
 
-$verdict = Get-ClosureVerdict -BodyText $bodyText -CommitText $commitText -Intended $intended
+$verdict = Get-ClosureVerdict -BodyText $bodyText -CommitText $commitText -TitleText $read.title -Intended $intended
 
 $show = { param($values) if (@($values).Count -eq 0) { '(none)' } else { (@($values) | ForEach-Object { "#$_" }) -join ', ' } }
 Write-Host ""
 Write-Host "[closing] pull request $Number" -ForegroundColor Cyan
+Write-Host "  title    : $(& $show $verdict.title)   <- the squash's SUBJECT line"
 Write-Host "  body     : $(& $show $verdict.body)"
 Write-Host "  commits  : $(& $show $verdict.commits)   <- the text a SQUASH carries"
 Write-Host "  intended : $(& $show $intended)"
 
 if ($verdict.unexpected.Count -eq 0 -and $verdict.missing.Count -eq 0) {
-    Write-Host "[closing] the union of both texts equals the stated intent." -ForegroundColor Green
+    Write-Host "[closing] the union of all three texts equals the stated intent." -ForegroundColor Green
     exit 0
 }
 

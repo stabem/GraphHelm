@@ -13,7 +13,7 @@
 #
 # Measured on Windows PowerShell 5.1.26100.9168.
 
-$ExpectedAssertionCount = 41
+$ExpectedAssertionCount = 52
 $ErrorActionPreference = 'Continue'
 $script:total = 0
 $script:failures = 0
@@ -185,7 +185,7 @@ try {
     # produced empty texts, an empty intent, and the verdict "the union of both texts equals the
     # stated intent". A green over nothing at all.
 
-    $good = '{"body":"Closes #1","commits":[{"messageHeadline":"h","messageBody":"b"}]}' | ConvertFrom-Json
+    $good = ('{"body":"Closes #1","commits":[{"messageHeadline":"h","messageBody":"b"}],' + '"title":"fix: an ordinary title","baseRefName":"main"' + '}') | ConvertFrom-Json
     Assert-True -Condition (Test-PullRequestPayload -Payload $good).ok `
         -Message 'CONTROL: a real answer passes, or the refusals below are a function that refuses everything'
 
@@ -215,11 +215,32 @@ try {
     Assert-True -Condition ((-not $zero.ok) -and $zero.reason -cmatch 'ZERO commits') `
         -Message 'zero commits is HARNESS-BROKE and says so, because every pull request has at least one'
 
+    # THE TWO FIELDS #792 ADDED, each refused BY NAME. Both are fetched now -- the title because
+    # a squash's subject is the title and a keyword there fires, the base because gh computes the
+    # commit list against it. An answer missing either is the wrong shape, exactly as for `body`.
+    $noTitle = ('{"body":"Closes #1","commits":[{"messageHeadline":"h","messageBody":"b"}],"baseRefName":"main"}') | ConvertFrom-Json
+    $titleGone = Test-PullRequestPayload -Payload $noTitle
+    Assert-True -Condition ((-not $titleGone.ok) -and $titleGone.reason -cmatch 'title') `
+        -Message 'an answer with no title field is refused, and the refusal names the title'
+
+    $noBase = ('{"body":"Closes #1","commits":[{"messageHeadline":"h","messageBody":"b"}],"title":"t"}') | ConvertFrom-Json
+    $baseGone = Test-PullRequestPayload -Payload $noBase
+    Assert-True -Condition ((-not $baseGone.ok) -and $baseGone.reason -cmatch 'baseRefName') `
+        -Message 'an answer with no baseRefName field is refused, and the refusal names it'
+
+    # NOT the same as an empty body, and the asymmetry is the point. A pull request with no
+    # DESCRIPTION is ordinary; a pull request with no BASE does not exist, so an empty one is the
+    # instrument answering wrong rather than a fact about the pull request.
+    $blankBase = ('{"body":"Closes #1","commits":[{"messageHeadline":"h","messageBody":"b"}],"title":"t","baseRefName":""}') | ConvertFrom-Json
+    $baseBlank = Test-PullRequestPayload -Payload $blankBase
+    Assert-True -Condition ((-not $baseBlank.ok) -and $baseBlank.reason -cmatch 'EMPTY') `
+        -Message 'an EMPTY baseRefName is refused too: every pull request targets a branch'
+
     # THE CONTROL THAT KEEPS THIS FROM BEING OVER-STRICT, and it is the one that matters most.
     # An EMPTY body is legal -- somebody wrote a pull request without a description -- and closes
     # nothing. An ABSENT body means the answer is the wrong shape. Collapsing the two would trade a
     # false green for a false refusal, and a check that refuses legitimate work gets switched off.
-    $emptyBody = '{"body":"","commits":[{"messageHeadline":"h","messageBody":"Closes #2"}]}' | ConvertFrom-Json
+    $emptyBody = ('{"body":"","commits":[{"messageHeadline":"h","messageBody":"Closes #2"}],' + '"title":"fix: an ordinary title","baseRefName":"main"' + '}') | ConvertFrom-Json
     Assert-True -Condition (Test-PullRequestPayload -Payload $emptyBody).ok `
         -Message 'an EMPTY body is legal and is NOT refused: absent and empty are different answers'
 
@@ -246,7 +267,7 @@ try {
     Assert-True -Condition (-not $hollow.ok) `
         -Message 'a successful call that carried NEITHER text refuses -- measured green before this existed'
 
-    $answer = '{"body":"Closes #1","commits":[{"messageHeadline":"fix: a","messageBody":"Closes #2"}]}'
+    $answer = '{"body":"Closes #1","commits":[{"messageHeadline":"fix: a","messageBody":"Closes #2"}],' + '"title":"fix: an ordinary title","baseRefName":"main"' + '}'
     $good = Read-PullRequestTexts -Answer ([ordered]@{ exitCode = 0; text = $answer })
     Assert-True -Condition ($good.ok -and $good.body -ceq 'Closes #1') `
         -Message 'CONTROL: a real answer succeeds and carries the body verbatim'
@@ -357,7 +378,7 @@ Write-Output ('ok=' + $stated.ok + ' numbers=[' + (@($stated.numbers) -join ',')
     # #717` and the comparison would have flagged it -- and the issue still closed, because the
     # program only ever handed one of the two texts to them. Every cell above this one would pass
     # over a version that read the body alone. Counting conjuncts is not testing them.
-    $verdict746 = Get-ClosureVerdict -BodyText $body746 -CommitText $commits746 -Intended @('735')
+    $verdict746 = Get-ClosureVerdict -BodyText $body746 -CommitText $commits746 -TitleText '' -Intended @('735')
     Assert-Set -Actual $verdict746.unexpected -Expected @('717') `
         -Message 'and the whole decision over BOTH texts catches #717 -- the closure that actually fired'
     Assert-Set -Actual $verdict746.body -Expected @('735') `
@@ -409,6 +430,59 @@ Write-Output ('ok=' + $stated.ok + ' numbers=[' + (@($stated.numbers) -join ',')
     $ordered = Compare-ClosureIntent -Union @('10', '9', '735') -Intended @()
     Assert-True -Condition ((@($ordered.unexpected) -join ',') -ceq '9,10,735') `
         -Message "the report sorts numerically (got [$(@($ordered.unexpected) -join ',')])"
+    Write-Host ''
+    Write-Host '-- the BASE BRANCH, which scopes the commit list (#792) --' -ForegroundColor Cyan
+
+    # gh computes `--json commits` against the BASE. A pull request stacked on anything other than
+    # the merge target hides every commit below that base, so the program refuses rather than
+    # reporting a green it cannot back. Measured on #779: 5 commits from the old base, 8 after the
+    # retarget, and `Closes #708` sat in the sixth.
+    $onTarget = Test-MergeTargetBase -Base 'main' -MergeTarget 'main'
+    Assert-True -Condition $onTarget.ok `
+        -Message 'a pull request based on the merge target is gateable'
+
+    $stacked = Test-MergeTargetBase -Base 'issue-708-reader-silence-grace' -MergeTarget 'main'
+    Assert-True -Condition (-not $stacked.ok) `
+        -Message 'a pull request based on ANOTHER BRANCH is refused, because the commit list stops there'
+    # The reason must name BOTH sides. A refusal that says only "wrong base" sends the operator to
+    # look up what it should have been, and this program is the thing that knows.
+    Assert-True -Condition ($stacked.reason -like "*issue-708-reader-silence-grace*" -and $stacked.reason -like "*main*") `
+        -Message 'and the refusal names the base it FOUND and the one it WANTED'
+
+    # ORDINAL, both cells. Git branch names are case-sensitive, so `Main` is not `main` and a
+    # comparison that says otherwise would gate a branch that does not exist.
+    $cased = Test-MergeTargetBase -Base 'Main' -MergeTarget 'main'
+    Assert-True -Condition (-not $cased.ok) `
+        -Message 'a branch differing only in CASE is refused: git branch names are case-sensitive'
+
+    # THE CELL THAT REDDENS IF `Ordinal` IS EVER DOWNGRADED TO `-eq`. U+FE00 is a variation
+    # selector: it has ZERO WEIGHT under culture-aware comparison, so PowerShell's `-eq` -- and
+    # `-ceq` too, since case-sensitivity and culture-awareness are ORTHOGONAL -- reports this name
+    # EQUAL to 'main'. The guard would then fail OPEN on a branch that is not main, which is
+    # precisely the direction an attacker picks and the defect #753 is about.
+    $zeroWeight = Test-MergeTargetBase -Base "main$([char]0xFE00)" -MergeTarget 'main'
+    Assert-True -Condition (-not $zeroWeight.ok) `
+        -Message 'a ZERO-WEIGHT character does not make a branch name equal to main (ordinal, not -eq)'
+
+    Write-Host ''
+    Write-Host "-- the TITLE is the squash's SUBJECT line, and it decides (#792) --" -ForegroundColor Cyan
+
+    # A squash's default subject is the pull request TITLE plus " (#N)" -- measured on this
+    # repository, where #767, #770 and #613 all landed with a subject exactly equal to their title.
+    # So a closing keyword in a title FIRES, and until #792 this program read neither it nor
+    # anything that would have carried it. Nothing in 200 pull requests here has ever had one, so
+    # this closes a gap rather than a wound; "no instance yet" is not a property of the instrument.
+    $titleOnly = Get-ClosureVerdict -BodyText 'Refs #700' -CommitText 'chore: tidy' -TitleText 'fix: closes #701' -Intended @()
+    Assert-Set -Actual $titleOnly.unexpected -Expected @('701') `
+        -Message 'a closure carried ONLY by the title is caught: the squash subject is a deciding text'
+    Assert-Set -Actual $titleOnly.title -Expected @('701') `
+        -Message 'and the title half is reported apart, so the operator can see WHICH text carried it'
+
+    # The common case must not have moved. Every pull request on the board has a title, almost none
+    # of them carry a keyword, and a check that flagged those would be switched off.
+    $noTitle = Get-ClosureVerdict -BodyText 'Closes #735' -CommitText 'fix: work`n`nCloses #735' -TitleText 'fix(735): an ordinary title with no keyword next to a number' -Intended @('735')
+    Assert-True -Condition ($noTitle.unexpected.Count -eq 0 -and $noTitle.missing.Count -eq 0 -and $noTitle.title.Count -eq 0) `
+        -Message 'an ordinary title contributes nothing, so the usual pull request still passes'
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

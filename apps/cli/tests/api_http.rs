@@ -624,7 +624,7 @@ const CLIENT_REQUEST_DEADLINE: Duration = Duration::from_secs(45);
 /// progress and flake red on correct code under real scheduling load). A byte count doesn't have
 /// that failure mode: however the data was batched into syscalls, the number of bytes that actually
 /// arrived before the deadline fired is the same real number either way.
-/// `phase` names WHICH of `read_within_deadline`'s (or `check_total_deadline`'s) own checks
+/// `phase` names WHICH of `read_within_deadline`'s (or `write_within_deadline`'s) own checks
 /// produced this error -- distinct call sites, not a free-text label (Codex, #740 review, eighth
 /// round, `:5415`): a test asserting only on `bytes_received` cannot tell "the top-of-loop check
 /// caught it before any read was attempted" apart from "the EOF arm's own re-check caught it after
@@ -633,6 +633,36 @@ const CLIENT_REQUEST_DEADLINE: Duration = Duration::from_secs(45);
 /// DIFFERENT, unrelated-but-also-correct path instead. Asserting on `phase` turns that silent
 /// vacuous green into a loud, investigable one: the wrong phase means the cell's own arrangement
 /// missed its target, not that production code is broken.
+/// Which half of a request a deadline error is about (#743).
+///
+/// ONE parameter rather than two strings, because the two words it produces have to agree: a
+/// message saying "bytes received ... per-write guard" describes a transfer that never happened,
+/// and two independent `&str` parameters make that spelling available. The enum makes it
+/// unrepresentable.
+#[derive(Clone, Copy)]
+enum Transfer {
+    Read,
+    Write,
+}
+
+impl Transfer {
+    /// What happened to the bytes the message counts.
+    fn moved(self) -> &'static str {
+        match self {
+            Self::Read => "received",
+            Self::Write => "written",
+        }
+    }
+
+    /// The syscall the per-syscall guard bounds.
+    fn syscall(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+        }
+    }
+}
+
 fn total_deadline_error(
     what: &str,
     started: Instant,
@@ -640,10 +670,12 @@ fn total_deadline_error(
     per_read_guard: Duration,
     bytes_received: usize,
     phase: &str,
+    transfer: Transfer,
 ) -> std::io::Error {
     // H, #740 review: "read(s)" was literal parenthesised text, not real pluralization, and the
     // fixed trailing clause claimed "several successful reads" even when the count is 0 or 1 --
-    // both reachable (a pre-flight `check_total_deadline` call always reports 0; a slow-starting
+    // both reachable (a write loop's own top-of-loop check reports 0 before anything is sent; a
+    // slow-starting
     // drip could expire after exactly one byte). Pluralize on the real count instead of asserting
     // a specific magnitude the message did not observe.
     let plural = if bytes_received == 1 { "" } else { "s" };
@@ -651,12 +683,14 @@ fn total_deadline_error(
         std::io::ErrorKind::TimedOut,
         format!(
             "HARNESS-BROKE: {what} did not complete within its {total_deadline:?} TOTAL request \
-             deadline ({phase}, elapsed {:?}) after {bytes_received} byte{plural} received, each \
-             read individually within its {per_read_guard:?} per-read guard -- the total budget \
-             ran out across that progress rather than any single read stalling on its own (#738). \
-             Not distinguishable from the client side whether that is real load or a server \
-             trickling data on purpose.",
-            started.elapsed()
+             deadline ({phase}, elapsed {:?}) after {bytes_received} byte{plural} {moved}, each \
+             {syscall} individually within its {per_read_guard:?} per-{syscall} guard -- the total \
+             budget ran out across that progress rather than any single {syscall} stalling on its \
+             own (#738). Not distinguishable from the client side whether that is real load or a \
+             server trickling data on purpose.",
+            started.elapsed(),
+            moved = transfer.moved(),
+            syscall = transfer.syscall()
         ),
     )
 }
@@ -705,6 +739,7 @@ fn read_within_deadline(
                 per_read_guard,
                 bytes_received,
                 "checked before starting a read",
+                Transfer::Read,
             ));
         }
         // `set_read_timeout` returns `Err(InvalidInput)` on a literal zero Duration (does not
@@ -733,6 +768,7 @@ fn read_within_deadline(
                         per_read_guard,
                         bytes_received,
                         "checked at end-of-stream",
+                        Transfer::Read,
                     ));
                 }
                 return Ok(raw);
@@ -762,6 +798,7 @@ fn read_within_deadline(
                         per_read_guard,
                         bytes_received,
                         "checked once a read timed out",
+                        Transfer::Read,
                     ));
                 }
                 return Err(harness_broke_error(error, what, started, this_read_budget));
@@ -770,36 +807,108 @@ fn read_within_deadline(
     }
 }
 
-/// The write-side half of the total deadline (#738): "total per request" means the WHOLE request,
-/// not only the read half. This is a pre-flight guard ONLY -- it bounds the time BEFORE a write
-/// attempt starts, not the write's own completion, unlike `read_within_deadline`'s loop, which
-/// re-checks and re-arms on every syscall. That asymmetry is disclosed, not hidden (Codex, #740
-/// review, P2): a `write_all` call that itself makes slow partial progress -- possible in general
-/// for a payload larger than the socket send buffer against a peer that drains it slowly -- could
-/// still run past `total_deadline` by up to `per_read_guard`, the same shape #738's read-side
-/// defect had. Accepted here rather than built out to a symmetric write loop because every write
-/// in this suite today is a small, single-syscall payload (a JSON body or a header block, never
-/// streamed) that completes in one `write_all` call well under `per_read_guard` regardless of
-/// load -- the vulnerable case cannot occur with this suite's own current traffic. Filed as #743
-/// (write-side deadline enforcement) rather than built speculatively for a payload shape nothing
-/// here produces.
-fn check_total_deadline(
+/// The write-side half of the total deadline (#738, #743), and the MIRROR of
+/// `read_within_deadline` rather than a pre-flight check in front of `write_all`.
+///
+/// **What this replaces and why.** `check_total_deadline` bounded the time BEFORE a write attempt
+/// started and then handed `write_all` the socket's own full `per_write_guard`, unchecked again
+/// until the next call. A clock verified before a blocking call bounds when the call BEGINS and
+/// nothing after it -- so a `write_all` making slow partial progress (a payload larger than the
+/// socket send buffer, against a peer that drains it slowly) could run past `total_deadline` by up
+/// to the whole guard. That is the same shape #738's read-side defect had, disclosed on #740's
+/// review and filed as #743 rather than fixed there.
+///
+/// The cure is the one `read_within_deadline` already uses: a manual loop over PARTIAL syscalls,
+/// re-checking the remaining budget and re-arming `set_write_timeout` to
+/// `min(per_write_guard, remaining)` before each one, so the write itself can never overrun past
+/// `total_deadline` by more than its own last, now-tiny, window. `write_all` is one call that
+/// loops internally with no seam to check anything between its own writes, which is what made this
+/// axis unenforceable at all.
+///
+/// **One thing it deliberately does NOT mirror: there is no completion re-check.**
+/// `read_within_deadline` re-verifies the deadline in its `Ok(0)` arm because EOF is the one path
+/// that returns straight through. A completed write has no equivalent path worth guarding: every
+/// caller in this suite follows a write with `read_within_deadline`, whose top-of-loop check
+/// catches an already-expired deadline immediately and reports it as `checked before starting a
+/// read`. Adding a second check here would not change WHETHER the breach is reported, only WHICH
+/// phase reports it -- and `phase` is an assertion target for cells built to exercise one specific
+/// path (#740's eighth round). Silently moving which check fires first is how those cells go
+/// vacuously green.
+///
+/// `ErrorKind::Interrupted` is retried, not failed -- same reasoning as the read loop, and
+/// `write_all`'s own stdlib implementation retries it too.
+fn write_within_deadline(
+    stream: &mut TcpStream,
     what: &str,
     started: Instant,
     total_deadline: Duration,
-    per_read_guard: Duration,
+    per_write_guard: Duration,
+    payload: &[u8],
 ) -> std::io::Result<()> {
-    if Instant::now() >= started + total_deadline {
-        // No read has been attempted yet at a pre-flight check -- `0` is the real byte count, not
-        // a placeholder.
-        return Err(total_deadline_error(
-            what,
-            started,
-            total_deadline,
-            per_read_guard,
-            0,
-            "checked before writing",
-        ));
+    let deadline = started + total_deadline;
+    // BYTES, not `write()` syscalls, for the same reason the read half counts bytes (Codex, #740
+    // review, second round): TCP preserves the byte stream and not write boundaries, so a syscall
+    // count is scheduler- and transport-dependent while a byte count is a fact about what left.
+    let mut bytes_written: usize = 0;
+    while bytes_written < payload.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(total_deadline_error(
+                what,
+                started,
+                total_deadline,
+                per_write_guard,
+                bytes_written,
+                "checked before starting a write",
+                Transfer::Write,
+            ));
+        }
+        // Same floor and the same declared consequence as the read half: `set_write_timeout`
+        // refuses a literal zero Duration, and this minimum WIDENS the socket's own timeout past
+        // what `remaining` allowed. The widening is bounded by one millisecond and is why the
+        // caller's following read re-checks rather than trusting this loop's exit.
+        let this_write_budget = remaining.min(per_write_guard).max(Duration::from_millis(1));
+        stream.set_write_timeout(Some(this_write_budget))?;
+        match stream.write(&payload[bytes_written..]) {
+            // A zero-length write on a non-empty slice is the stdlib's own `WriteZero` condition:
+            // the peer is not accepting and never will within this call. Reporting it as a
+            // deadline breach would name the wrong cause.
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    format!(
+                        "HARNESS-BROKE: {what} wrote 0 bytes of the {} still outstanding without \
+                         an error -- the peer is not accepting and this is not a deadline breach",
+                        payload.len() - bytes_written
+                    ),
+                ));
+            }
+            Ok(n) => bytes_written += n,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                // `this_write_budget < per_write_guard` means `remaining` was the binding
+                // constraint on THIS write's socket timeout, so a timeout here is the total
+                // deadline expiring mid-write rather than one write stalling on its own budget.
+                // A non-timeout error is never the deadline's fault regardless of which budget was
+                // smaller, and goes to `harness_broke_error` untouched.
+                let is_timeout = matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                );
+                if is_timeout && this_write_budget < per_write_guard {
+                    return Err(total_deadline_error(
+                        what,
+                        started,
+                        total_deadline,
+                        per_write_guard,
+                        bytes_written,
+                        "checked once a write timed out",
+                        Transfer::Write,
+                    ));
+                }
+                return Err(harness_broke_error(error, what, started, this_write_budget));
+            }
+        }
     }
     Ok(())
 }
@@ -918,22 +1027,6 @@ fn harness_broke_error(
             this_process_test_concurrency()
         ),
     )
-}
-
-/// `harness_broke_error` for `post_request`'s own panic-not-Result style (see that function's
-/// doc comment for why it panics directly rather than threading a `Result` through its 59
-/// callers): unwraps `result`, panicking with the re-coloured message on a timeout and the
-/// original `{error}` for anything else, same split as the `Result`-returning path.
-fn unwrap_or_harness_broke<T>(
-    result: std::io::Result<T>,
-    what: &str,
-    started: Instant,
-    guard: Duration,
-) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => panic!("{}", harness_broke_error(error, what, started, guard)),
-    }
 }
 
 /// H review, #729: the doc comment above claims `harness_broke_error` is a DISCRIMINATOR --
@@ -1129,20 +1222,14 @@ fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
         request.push_str(&format!("Authorization: Bearer {token}\r\n"));
     }
     request.push_str("\r\n");
-    check_total_deadline(
+    write_within_deadline(
+        &mut stream,
         &format!("writing the request to {url}"),
         started,
         CLIENT_REQUEST_DEADLINE,
         CLIENT_IO_HANG_GUARD,
+        request.as_bytes(),
     )?;
-    stream.write_all(request.as_bytes()).map_err(|error| {
-        harness_broke_error(
-            error,
-            &format!("writing the request to {url}"),
-            started,
-            CLIENT_IO_HANG_GUARD,
-        )
-    })?;
 
     let raw = read_within_deadline(
         &mut stream,
@@ -1503,32 +1590,24 @@ fn post_request(
         request.push_str(&format!("{name}: {value}\r\n"));
     }
     request.push_str("\r\n");
-    check_total_deadline(
+    write_within_deadline(
+        &mut stream,
         &format!("writing the request headers to {url}"),
         started,
         CLIENT_REQUEST_DEADLINE,
         CLIENT_IO_HANG_GUARD,
+        request.as_bytes(),
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    unwrap_or_harness_broke(
-        stream.write_all(request.as_bytes()),
-        &format!("writing the request headers to {url}"),
-        started,
-        CLIENT_IO_HANG_GUARD,
-    );
-    check_total_deadline(
+    write_within_deadline(
+        &mut stream,
         &format!("writing the request body to {url}"),
         started,
         CLIENT_REQUEST_DEADLINE,
         CLIENT_IO_HANG_GUARD,
+        &payload,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    unwrap_or_harness_broke(
-        stream.write_all(&payload),
-        &format!("writing the request body to {url}"),
-        started,
-        CLIENT_IO_HANG_GUARD,
-    );
 
     let raw = read_within_deadline(
         &mut stream,
@@ -5175,7 +5254,7 @@ fn drip_server(gap: Duration, bytes: &'static [u8]) -> String {
 
 /// Connects to a fake server, matching the connect half of `raw_request`/`post_request` exactly
 /// (`split_url` -> `to_socket_addrs` -> `connect_with_retry`) -- used by cells that call
-/// `read_within_deadline`/`check_total_deadline` directly, with their own small deadlines,
+/// `read_within_deadline`/`write_within_deadline` directly, with their own small deadlines,
 /// instead of going through `raw_request` and paying the real `CLIENT_REQUEST_DEADLINE` budget in
 /// wall time on every run (H, #740 review).
 fn connect_to(base: &str) -> TcpStream {
@@ -5186,6 +5265,131 @@ fn connect_to(base: &str) -> TcpStream {
         .next()
         .unwrap();
     connect_with_retry(&address).unwrap()
+}
+
+/// A peer that accepts a connection and then never drains it, so a large write fills the socket
+/// buffers and blocks mid-payload.
+///
+/// The mirror of `drip_server` for the write half. It holds the accepted stream without reading:
+/// the client's send buffer and this peer's receive buffer fill (tens of kilobytes on loopback),
+/// the first `write` returns a large PARTIAL count, and every write after it blocks. That is the
+/// shape #743 is about -- not a peer that refuses from byte zero, which the per-write guard alone
+/// already covers, but one that takes some bytes and then stops.
+///
+/// `hold` keeps the socket open rather than dropping it: a closed peer answers with a reset, which
+/// is a different error on a different path and would exercise nothing about the deadline.
+fn stalled_reader_server(hold: Duration) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        // Never read. Holding the binding is the whole behaviour.
+        std::thread::sleep(hold);
+        drop(stream);
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A write against a peer that has stopped draining must fail bounded by the TOTAL deadline, not
+/// by the per-write guard's own full window (#743).
+///
+/// The defect this replaces: `check_total_deadline` verified the clock BEFORE the write attempt
+/// and then handed `write_all` the socket's full `per_write_guard`, unchecked again until the next
+/// call. A clock verified before a blocking call bounds when the call BEGINS and nothing after it,
+/// so the real worst case was `total_deadline + per_write_guard` -- the same arithmetic #738 found
+/// on the read side, one syscall over.
+///
+/// **The arrangement is MEASURED, and the measurement changed it twice.** The obvious version --
+/// hand `write_within_deadline` a payload larger than any socket buffer and let it block part-way
+/// -- does not work on this platform:
+///
+/// - 4 MiB in ONE `write` call to a peer that never reads: accepted, `Ok`, no block.
+/// - 64 MiB in ONE call: also accepted, in 5.35 ms. That is memory bandwidth, not a network, so
+///   Winsock is queueing a large blocking send rather than bounding it by the receive window.
+/// - the SAME peer, written in 1 MiB chunks: the first chunk lands and the second blocks, timing
+///   out after 406 ms.
+///
+/// So the peer's capacity is real (~1 MiB here) and a single large `send` does not meet it. The
+/// cell therefore fills the socket with chunked writes on the raw stream FIRST, and only then puts
+/// `write_within_deadline` in front of a socket that is already refusing.
+///
+/// **What that costs, declared rather than papered over: `bytes_written` is 0 in this
+/// arrangement**, so this cell cannot also assert partial progress. The lower bound the read-side
+/// twin carries -- "> 0 proves this is not a blocked-from-zero peer" -- has no counterpart here,
+/// because a blocked-from-zero peer is exactly what filling the buffer produces. What separates
+/// this from "the per-write guard alone would have caught it" is the PHASE instead: `checked once
+/// a write timed out` is only reachable when `remaining` was the binding constraint on the
+/// socket's own timeout, which is the whole of #743. Under the old code the same arrangement
+/// returns a `harness_broke_error` after the full 30 s guard.
+#[test]
+fn a_write_that_cannot_proceed_is_bounded_by_the_total_deadline_not_the_per_write_guard() {
+    let total_deadline = Duration::from_millis(300);
+    let per_write_guard = CLIENT_IO_HANG_GUARD; // production's own value; unshrunk on purpose
+    // Outlives the deadline by a wide margin, so the peer is still stalled when the client bails
+    // -- a peer that went away first would end this with a reset instead of the deadline.
+    let base = stalled_reader_server(Duration::from_secs(10));
+    let mut stream = connect_to(&base);
+
+    // ARRANGEMENT: fill the pair's buffers with chunked writes until one refuses. Chunked because
+    // a single large send is queued rather than bounded (see the doc above). A short timeout
+    // here so the fill itself cannot become the test's runtime.
+    stream
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let chunk = vec![b'x'; 1024 * 1024];
+    let mut filled: usize = 0;
+    let fill_started = Instant::now();
+    loop {
+        match stream.write(&chunk) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => break,
+        }
+        assert!(
+            fill_started.elapsed() < Duration::from_secs(30),
+            "HARNESS-BROKE: the peer accepted {filled} bytes without ever refusing, so the socket \
+             is not in the state this cell needs and nothing below is about the deadline"
+        );
+    }
+    assert!(
+        filled > 0,
+        "HARNESS-BROKE: the peer refused the very first chunk, so the connection is not healthy \
+         and the refusal below would be about the connection rather than the deadline"
+    );
+
+    let started = Instant::now();
+    let error = write_within_deadline(
+        &mut stream,
+        "writing to a stalled peer",
+        started,
+        total_deadline,
+        per_write_guard,
+        &chunk,
+    )
+    .expect_err("a socket that just refused a chunk cannot have taken another");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("TOTAL request deadline"),
+        "expected the TOTAL deadline to be what bounded this, got: {message}"
+    );
+    // The PHASE is the discriminator, not the byte count (see the doc above). This phase is only
+    // reachable when the remaining total budget -- not `per_write_guard` -- was the binding
+    // constraint on the socket's own timeout.
+    assert!(
+        message.contains("checked once a write timed out"),
+        "expected the total budget to be what ended the write; another phase means this cell's \
+         arrangement missed its target rather than that the code is wrong: {message}"
+    );
+    // A write's error must not describe itself in the read half's vocabulary -- that names a
+    // transfer that never happened, and it is what a shared `total_deadline_error` produces if the
+    // `Transfer` argument is wrong.
+    assert!(
+        message.contains("written") && message.contains("per-write guard"),
+        "a write's deadline error must not report bytes RECEIVED past a per-READ guard: {message}"
+    );
 }
 
 /// A drip slower than the per-read guard but never silent must still fail bounded by the TOTAL

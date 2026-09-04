@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Default)]
@@ -382,14 +385,180 @@ const MINIMUM_DRAIN: Duration = Duration::from_secs(1);
 /// Reusing the deadline removes both. The drain ends when the invocation was always going to end,
 /// so the total is bounded by the timeout the caller chose plus the floor -- never a multiple of it.
 ///
-/// This is still NOT the whole fix, and the remaining gap is the one a clock cannot close: the right
-/// bound expires on SILENCE rather than on elapsed time. A tests runner's workers are descendants
-/// and their output IS the point, so a drain that ends while bytes are still arriving cuts a
-/// legitimate capture no matter which instant is chosen. That needs the readers to report progress
-/// rather than only a result -- #708's design, and the same protocol change #726 needs.
+/// This is the CEILING, and it is no longer the only bound. The gap a clock cannot close -- a drain
+/// that ends while bytes are still arriving cuts a legitimate capture no matter which instant is
+/// chosen -- is closed by `drain_readers` above, which ends its wait on SILENCE and reaches this
+/// deadline only when a stream never goes quiet. The readers report progress for that (#708), which
+/// is also the protocol #726 needs; this function still answers the different question of how long
+/// the whole drain may take.
 #[must_use]
 fn drain_deadline(invocation_deadline: Instant, now: Instant) -> Instant {
     invocation_deadline.max(now + MINIMUM_DRAIN)
+}
+
+/// How long a still-unfinished stream may report NOTHING before the drain stops waiting on it.
+///
+/// This is the "expires on silence rather than on elapsed time" half of #708, and it is the only
+/// part of that design that trades anything away, so the trade is written here rather than left to
+/// be discovered.
+///
+/// It is reachable only after the direct child has been reaped. A reader still blocked at that
+/// point means a descendant outlived the kill and is holding the pipe. Two things it could be
+/// doing: writing -- progress keeps arriving, the grace keeps resetting, and nothing is cut -- or
+/// producing nothing. Five seconds of nothing is the line, and it is drawn well past any
+/// scheduling hiccup a loaded host produces: the failure this whole path exists for took 22
+/// seconds to report, so the resolution needed here is seconds, not milliseconds.
+///
+/// **The known limit, and it is a real one:** a descendant can be legitimately silent. A tests
+/// runner's worker that spends thirty seconds compiling before it prints is exactly that, and this
+/// grace cuts it at five. What that costs is bounded, and it is NOT a regression against today: on
+/// this path today's code waits out the whole drain budget and then discards the entire capture, so
+/// the bytes this cuts short are bytes today loses anyway unless the descendant happens to close
+/// the pipe before the deadline. What it buys is the rest of the capture arriving at all, and the
+/// call returning in seconds instead of in a full timeout. The hard deadline still bounds
+/// everything above it; this only ever ends the wait EARLIER.
+const READER_SILENCE_GRACE: Duration = Duration::from_secs(5);
+
+/// How often the drain samples the progress counters while it waits.
+///
+/// The same 50 ms the child poll uses. It is a sampling rate, not a timeout: nothing is decided by
+/// it, and halving or doubling it changes only how promptly a silence is noticed.
+const DRAIN_POLL: Duration = Duration::from_millis(50);
+
+/// How long the readers get to answer once the group has been released.
+///
+/// Releasing the job closes the descendant's ends of the pipes, so a reader that was blocked in
+/// `read` returns at once and sends what it had. This is the wait for that answer, and it is short
+/// because it is not waiting for work -- only for a thread to be scheduled after an EOF it has
+/// already been handed.
+const POST_RELEASE_GRACE: Duration = Duration::from_secs(2);
+
+/// What the drain came back with.
+struct DrainedReaders {
+    stdout: (Vec<u8>, bool),
+    stderr: (Vec<u8>, bool),
+    /// A reader had to be forced to EOF by releasing the group, whether or not it then answered.
+    ///
+    /// The flag keeps the meaning it had before #708 -- SOMETHING ESCAPED THE KILL -- rather than
+    /// narrowing to "we captured nothing". Those are different facts and only one of them is about
+    /// this code: a partial capture recovered after a forced release is still an escape, and a
+    /// caller reading this flag is asking about containment, not about byte counts.
+    abandoned: bool,
+    /// Whether the drain already released the group, so the caller does not release it twice.
+    released: bool,
+}
+
+/// Wait for both readers, and on expiry force EOF and keep whatever had drained.
+///
+/// **The shape #708 describes, and the reason the old one lost data.** A reader answers only at
+/// EOF, and EOF needs every writer end closed. A descendant that outlived the tree kill holds one
+/// open, so the wait expires -- and the previous code then substituted an EMPTY buffer for that
+/// stream and released the group afterwards. The bytes existed; the reader was holding them; the
+/// only thing missing was a second wait after the release that would have collected them.
+///
+/// So: wait, and if the wait ends with a stream still pending, release the group FIRST and then
+/// wait again, briefly. The release is what turns a held pipe into an EOF, which is what turns a
+/// blocked reader into an answer.
+///
+/// **Why the release cannot simply happen sooner.** The job object carries `KILL_ON_JOB_CLOSE`, so
+/// releasing it kills whatever still holds the pipe. Doing that while a descendant is mid-write
+/// truncates a capture that was arriving. That is precisely why the first wait ends on SILENCE and
+/// not on a clock: a stream that has produced nothing for `silence_grace` is one where releasing
+/// costs nothing, and a stream still producing keeps resetting its own grace and is never cut.
+///
+/// `release` is a callback rather than the group itself so this function can be exercised with
+/// hand-driven channels. The escape it exists to handle cannot be staged on a platform whose job
+/// object has no breakaway (#717), so the seam is how the mechanism gets a red at all.
+fn drain_readers(
+    stdout: (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>),
+    stderr: (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>),
+    hard_deadline: Instant,
+    silence_grace: Duration,
+    poll: Duration,
+    post_release_grace: Duration,
+    release: &mut dyn FnMut(),
+) -> DrainedReaders {
+    let mut pending = [Some(stdout), Some(stderr)];
+    let mut answers: [Option<(Vec<u8>, bool)>; 2] = [None, None];
+    let mut seen = [0_u64; 2];
+    let mut last_change = [Instant::now(); 2];
+
+    loop {
+        for index in 0..pending.len() {
+            let Some((receiver, progress)) = pending[index].as_ref() else {
+                continue;
+            };
+            match receiver.recv_timeout(poll) {
+                Ok(answer) => {
+                    answers[index] = Some(answer);
+                    pending[index] = None;
+                }
+                // A sender dropped without answering means the reader thread is gone and no answer
+                // is coming. Stop waiting on it. It is not pending, and it is not an escape
+                // either, so it must not set the flag.
+                Err(RecvTimeoutError::Disconnected) => pending[index] = None,
+                Err(RecvTimeoutError::Timeout) => {
+                    let bytes = progress.load(Ordering::Relaxed);
+                    if bytes != seen[index] {
+                        seen[index] = bytes;
+                        last_change[index] = Instant::now();
+                    }
+                }
+            }
+        }
+        if pending.iter().all(Option::is_none) {
+            break;
+        }
+        let now = Instant::now();
+        if now >= hard_deadline {
+            break;
+        }
+        // EVERY still-pending stream, not any one of them. stderr is silent for most of a normal
+        // run, so an any-of test would release the group on a healthy call whose stdout is still
+        // streaming -- the exact truncation this grace exists to avoid, arrived at from the other
+        // direction.
+        let all_silent = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| slot.is_some())
+            .all(|(index, _)| now.duration_since(last_change[index]) >= silence_grace);
+        if all_silent {
+            break;
+        }
+    }
+
+    let mut abandoned = false;
+    let mut released = false;
+    if pending.iter().any(Option::is_some) {
+        // The escape is already established here: a reader is still blocked after the child was
+        // reaped. Flag it NOW rather than after the second wait, so a recovered partial capture
+        // still reports the containment failure that produced it.
+        abandoned = true;
+        released = true;
+        release();
+        let post = Instant::now() + post_release_grace;
+        for index in 0..pending.len() {
+            let Some((receiver, _)) = pending[index].take() else {
+                continue;
+            };
+            if let Ok(answer) =
+                receiver.recv_timeout(post.saturating_duration_since(Instant::now()))
+            {
+                answers[index] = Some(answer);
+            }
+        }
+    }
+
+    let [stdout, stderr] = answers;
+    DrainedReaders {
+        // An unanswered stream is empty and NOT marked truncated: `truncated` means the capture
+        // dropped bytes it had read, and a reader that never answered read nothing this call can
+        // account for. `abandoned` is the field that says the capture is incomplete.
+        stdout: stdout.unwrap_or_else(|| (Vec::new(), false)),
+        stderr: stderr.unwrap_or_else(|| (Vec::new(), false)),
+        abandoned,
+        released,
+    }
 }
 
 const INHERITED: &[&str] = &[
@@ -694,6 +863,18 @@ pub fn run_in_workspace(
     // stop waiting on one is to stop listening -- which is what the deadline below does.
     let reader = |mut pipe: Box<dyn Read + Send>| {
         let (sender, receiver) = std::sync::mpsc::channel();
+        // The reader answers ONCE, at EOF. That is what makes "still busy" and "wedged" the same
+        // observation from outside, and #708 is the consequence: a drain that can only wait, and
+        // on expiry throws the whole capture away. The counter is the second observable -- bytes
+        // seen so far -- and it is what lets the drain below tell a stream that is producing from
+        // one that has gone quiet.
+        //
+        // A counter rather than a progress MESSAGE per chunk, and the difference is a leak: this
+        // channel is unbounded and nobody drains it until the wait starts, so a chatty stream
+        // would queue one allocation per 8 KiB read for the whole run. An atomic that the reader
+        // stores into and the drain samples costs one word and cannot grow.
+        let progress = Arc::new(AtomicU64::new(0));
+        let reported = Arc::clone(&progress);
         std::thread::spawn(move || {
             // #177 tail half: keep the HEAD *and* the TAIL, eliding the middle.
             //
@@ -718,6 +899,10 @@ pub fn run_in_workspace(
                 match pipe.read(&mut chunk) {
                     Ok(0) | Err(_) => break,
                     Ok(count) => {
+                        // Published BEFORE the bytes are filed, so the drain's view of "something
+                        // arrived" can never lag the work. `Relaxed` is right: the only consumer
+                        // asks whether the value CHANGED, never what it orders against.
+                        reported.fetch_add(count as u64, Ordering::Relaxed);
                         let mut rest = &chunk[..count];
                         let room = head_cap.saturating_sub(head.len());
                         if room > 0 {
@@ -781,7 +966,7 @@ pub fn run_in_workspace(
             // one, and it ends here rather than outliving the call with an answer nobody wants.
             let _ = sender.send((kept, truncated));
         });
-        receiver
+        (receiver, progress)
     };
     let stdout_reader = reader(Box::new(stdout_pipe));
     let stderr_reader = reader(Box::new(stderr_pipe));
@@ -844,24 +1029,34 @@ pub fn run_in_workspace(
     // that something escaped the job, and `readers_abandoned` carries it rather than being folded
     // into `truncated` -- fusing two causes into one flag is the defect #177 was about.
     let reader_deadline = drain_deadline(deadline, Instant::now());
-    let mut readers_abandoned = false;
-    let mut collect = |receiver: std::sync::mpsc::Receiver<(Vec<u8>, bool)>| {
-        let remaining = reader_deadline.saturating_duration_since(Instant::now());
-        match receiver.recv_timeout(remaining) {
-            Ok(answer) => answer,
-            Err(_) => {
-                readers_abandoned = true;
-                (Vec::new(), false)
-            }
-        }
+    // The group is released by the DRAIN, not here, and the order is the whole safety of it. On
+    // Windows the job object carries `KILL_ON_JOB_CLOSE`, so closing it while a descendant still
+    // holds a pipe kills that descendant out from under a reader that is mid-read. The drain
+    // releases only once every still-pending stream has gone silent -- which is exactly the state
+    // in which killing the holder costs nothing -- or once the deadline above has passed anyway.
+    //
+    // #708: and once it has released, it waits AGAIN, briefly. Forcing the EOF is what lets a
+    // blocked reader answer at all, and the previous code did it in the other order: it gave up on
+    // the reader, substituted an empty buffer, and only then released the group. The bytes existed
+    // and the reader was holding them.
+    let drained = {
+        let mut release = || graphhelm_process_tree::close(&mut group);
+        drain_readers(
+            stdout_reader,
+            stderr_reader,
+            reader_deadline,
+            READER_SILENCE_GRACE,
+            DRAIN_POLL,
+            POST_RELEASE_GRACE,
+            &mut release,
+        )
     };
-    let (stdout, stdout_truncated) = collect(stdout_reader);
-    let (stderr, stderr_truncated) = collect(stderr_reader);
-
-    // Released after the readers, never before: on Windows the job object carries
-    // `KILL_ON_JOB_CLOSE`, so closing it while a descendant still holds a pipe would kill that
-    // descendant out from under a reader that is mid-read. The order is the whole safety of it.
-    graphhelm_process_tree::close(&mut group);
+    if !drained.released {
+        graphhelm_process_tree::close(&mut group);
+    }
+    let (stdout, stdout_truncated) = drained.stdout;
+    let (stderr, stderr_truncated) = drained.stderr;
+    let readers_abandoned = drained.abandoned;
 
     Ok(CapturedProcess {
         exit_code: exit_status.and_then(|status| status.code()),
@@ -889,8 +1084,357 @@ fn elision_marker(elided: u64) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MINIMUM_DRAIN, drain_deadline};
+    use super::{DrainedReaders, MINIMUM_DRAIN, drain_deadline, drain_readers};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc::{Receiver, Sender, channel};
     use std::time::{Duration, Instant};
+
+    /// A stand-in for one pipe reader: the channel it answers on, and the counter it bumps.
+    ///
+    /// Hand-driven on purpose. The state `drain_readers` exists for -- a descendant that outlived
+    /// the tree kill and is holding a pipe open -- cannot be staged on Windows, whose job object
+    /// has no breakaway (#717), and staging it on Unix means sabotaging the kill. So the mechanism
+    /// is exercised at the seam instead of through the escape, and what these cells measure is the
+    /// WAIT PROTOCOL, not the containment failure that reaches it. `tests/process_isolation.rs`
+    /// owns that end.
+    struct FakeReader {
+        sender: Sender<(Vec<u8>, bool)>,
+        receiver: Option<Receiver<(Vec<u8>, bool)>>,
+        progress: Arc<AtomicU64>,
+    }
+
+    impl FakeReader {
+        fn new() -> Self {
+            let (sender, receiver) = channel();
+            Self {
+                sender,
+                receiver: Some(receiver),
+                progress: Arc::new(AtomicU64::new(0)),
+            }
+        }
+
+        fn stream(&mut self) -> (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>) {
+            (
+                self.receiver.take().expect("the stream is taken once"),
+                Arc::clone(&self.progress),
+            )
+        }
+
+        fn answer(&self, bytes: &[u8], truncated: bool) {
+            self.sender
+                .send((bytes.to_vec(), truncated))
+                .expect("the drain is still listening");
+        }
+    }
+
+    /// Short, because every assertion below is about the OUTCOME rather than about how long it
+    /// took. A slow host makes these cells slower, never redder.
+    const GRACE: Duration = Duration::from_millis(200);
+    const POLL: Duration = Duration::from_millis(10);
+    const POST: Duration = Duration::from_secs(2);
+
+    fn far_deadline() -> Instant {
+        Instant::now() + Duration::from_secs(120)
+    }
+
+    /// The normal path: both readers answer, nothing is forced, the group is not released here.
+    ///
+    /// CONTROL for every cell below. Without it, a `drain_readers` that released on every call
+    /// would satisfy the forced-EOF cell and look like the fix.
+    #[test]
+    fn two_readers_that_answer_are_collected_without_releasing_the_group() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+        out.answer(b"stdout bytes", false);
+        err.answer(b"stderr bytes", true);
+
+        let mut released = 0_u32;
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            far_deadline(),
+            GRACE,
+            POLL,
+            POST,
+            &mut || released += 1,
+        );
+
+        assert_eq!(
+            released, 0,
+            "a healthy call must not release the group early"
+        );
+        assert!(
+            !drained.released && !drained.abandoned,
+            "a healthy call reports neither a release nor an escape"
+        );
+        assert_eq!(drained.stdout, (b"stdout bytes".to_vec(), false));
+        assert_eq!(drained.stderr, (b"stderr bytes".to_vec(), true));
+    }
+
+    /// #708, the byte-keeping half: a stream that answers only once the group is released still
+    /// has its capture KEPT.
+    ///
+    /// Before this change the drain gave up on such a reader, substituted an EMPTY buffer, and
+    /// released the group afterwards -- so the bytes the reader was holding died with the call.
+    /// The release callback here sends the partial, which is what closing the job really does:
+    /// it shuts the descendant's end, the blocked `read` returns 0, and the reader sends what it
+    /// had.
+    #[test]
+    fn a_silent_stream_is_forced_to_eof_and_its_partial_capture_survives() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+        err.answer(b"stderr finished", false);
+        // It read something, then stalled: the capture that today would be thrown away.
+        out.progress.store(9, Ordering::Relaxed);
+
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            far_deadline(),
+            GRACE,
+            POLL,
+            POST,
+            &mut || out.answer(b"partial!!", false),
+        );
+
+        assert!(
+            drained.released,
+            "a stream still pending after its silence grace must have the group released for it"
+        );
+        assert_eq!(
+            drained.stdout,
+            (b"partial!!".to_vec(), false),
+            "the bytes the reader was holding must survive the forced EOF; an empty buffer here is \
+             the defect #708 names"
+        );
+        assert_eq!(
+            drained.stderr,
+            (b"stderr finished".to_vec(), false),
+            "the stream that answered normally is untouched by the other one being forced"
+        );
+        assert!(
+            drained.abandoned,
+            "a recovered PARTIAL capture is still an escape: the flag reports containment, not \
+             byte counts"
+        );
+    }
+
+    /// #708's refinement: the grace expires on SILENCE, not on elapsed time.
+    ///
+    /// A descendant that is legitimately still writing must never be cut, and a flat grace cuts
+    /// it. This reader says nothing on its channel for well over the grace while its counter keeps
+    /// moving, exactly as a tests runner's worker does, and only then answers.
+    ///
+    /// The cell can be voided by the host rather than by the code: if the bumper thread is
+    /// descheduled for longer than the grace, the drain is RIGHT to release and the run has
+    /// measured the scheduler. It says so in its own words instead of failing, because a false red
+    /// here would read as "the silence reset does not work".
+    #[test]
+    fn a_stream_that_keeps_producing_is_never_cut_by_the_silence_grace() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+        err.answer(b"", false);
+
+        let progress = Arc::clone(&out.progress);
+        let widest_gap = Arc::new(AtomicU64::new(0));
+        let observed = Arc::clone(&widest_gap);
+        let answer = out.sender.clone();
+        let busy = std::thread::spawn(move || {
+            let mut last = Instant::now();
+            // Comfortably longer than GRACE, so a drain that ignored the counter would have
+            // released several times over by the end of it.
+            let until = last + GRACE * 4;
+            while Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+                let now = Instant::now();
+                let gap = u64::try_from(now.duration_since(last).as_millis()).unwrap_or(u64::MAX);
+                observed.fetch_max(gap, Ordering::Relaxed);
+                last = now;
+                progress.fetch_add(4096, Ordering::Relaxed);
+            }
+            // It finishes on its own, the way a descendant that was merely SLOW does. Without
+            // this the stream falls silent at the end and the release that follows is correct --
+            // the cell would then be measuring its own arrangement rather than the reset.
+            let _ = answer.send((b"finished on its own".to_vec(), false));
+        });
+
+        let mut released = 0_u32;
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            far_deadline(),
+            GRACE,
+            POLL,
+            POST,
+            &mut || released += 1,
+        );
+        busy.join().expect("the producing thread returns");
+
+        let gap = widest_gap.load(Ordering::Relaxed);
+        let grace_ms = u64::try_from(GRACE.as_millis()).unwrap_or(u64::MAX);
+        if released > 0 && gap >= grace_ms {
+            // Not a verdict: the producer really did go silent for longer than the grace, so
+            // releasing was correct and this run measured the host, not the mechanism.
+            eprintln!(
+                "HARNESS-BROKE: the producing thread was descheduled for {gap}ms against a {grace_ms}ms \
+                 grace, so this run decides nothing about the silence reset"
+            );
+            return;
+        }
+        assert_eq!(
+            released, 0,
+            "a stream whose byte counter kept moving was cut anyway: the grace is expiring on \
+             elapsed time rather than on silence (widest observed gap {gap}ms against a \
+             {grace_ms}ms grace)"
+        );
+        assert!(
+            !drained.abandoned,
+            "nothing escaped, so nothing is abandoned"
+        );
+        assert_eq!(
+            drained.stdout,
+            (b"finished on its own".to_vec(), false),
+            "the slow stream's own answer must be the one kept"
+        );
+    }
+
+    /// The hard deadline still bounds a stream that never goes silent.
+    ///
+    /// The silence grace only ever ends the wait EARLIER. Without this, a descendant writing
+    /// forever would hold the call open past the caller's own budget -- the defect
+    /// `drain_deadline` was written to close, reintroduced one layer up.
+    #[test]
+    fn a_stream_that_never_goes_silent_is_still_bounded_by_the_deadline() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+        err.answer(b"", false);
+
+        let progress = Arc::clone(&out.progress);
+        let stop = Arc::new(AtomicU64::new(0));
+        let watch = Arc::clone(&stop);
+        let busy = std::thread::spawn(move || {
+            while watch.load(Ordering::Relaxed) == 0 {
+                progress.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(300);
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            deadline,
+            // A grace it can never reach, so ONLY the deadline can end this wait.
+            Duration::from_secs(3600),
+            POLL,
+            Duration::from_millis(50),
+            &mut || {},
+        );
+        stop.store(1, Ordering::Relaxed);
+        busy.join().expect("the producing thread returns");
+
+        assert!(
+            drained.released && drained.abandoned,
+            "the deadline must end the wait and force the EOF, or a forever-writing descendant \
+             holds the call open past the caller's budget"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the drain ran for {:?}, which is not bounded by its deadline",
+            started.elapsed()
+        );
+    }
+
+    /// One silent stream must not release the group while the OTHER one is still producing.
+    ///
+    /// This is the `all` in the silence test rather than an `any`, and it needs its own cell
+    /// because the two spellings agree on every arrangement where only one stream is pending.
+    /// stderr is quiet for most of a healthy run: an any-of test would release the group -- and on
+    /// Windows kill whatever holds the pipe -- while stdout was mid-stream, which is the exact
+    /// truncation the silence grace exists to prevent, reached from the opposite direction.
+    #[test]
+    fn a_quiet_stream_does_not_release_the_group_while_the_other_is_still_producing() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+
+        let progress = Arc::clone(&out.progress);
+        let noisy = out.sender.clone();
+        let quiet = err.sender.clone();
+        let busy = std::thread::spawn(move || {
+            let until = Instant::now() + GRACE * 4;
+            while Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+                progress.fetch_add(4096, Ordering::Relaxed);
+            }
+            // Both end on their own. stderr never said a word until here -- it was pending and
+            // silent for the whole run, which is what an any-of test would have released on.
+            let _ = noisy.send((b"stdout finished".to_vec(), false));
+            let _ = quiet.send((Vec::new(), false));
+        });
+
+        let mut released = 0_u32;
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            far_deadline(),
+            GRACE,
+            POLL,
+            POST,
+            &mut || released += 1,
+        );
+        busy.join().expect("the producing thread returns");
+
+        assert_eq!(
+            released, 0,
+            "a stream that was silent the whole time released the group while the other was \
+             still producing: the silence test is an any-of where it must be an all-of"
+        );
+        assert!(!drained.abandoned);
+        assert_eq!(drained.stdout, (b"stdout finished".to_vec(), false));
+    }
+
+    /// A reader that answers NEITHER before nor after the release is reported, not guessed at.
+    ///
+    /// This is the outcome the old code produced for every abandoned stream, and it stays
+    /// reachable: an empty capture, `truncated` false because no bytes were dropped that this call
+    /// can account for, and `abandoned` true because the capture is incomplete.
+    #[test]
+    fn a_reader_that_never_answers_yields_an_empty_capture_flagged_as_abandoned() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+        err.answer(b"", false);
+
+        let DrainedReaders {
+            stdout,
+            abandoned,
+            released,
+            ..
+        } = drain_readers(
+            streams.0,
+            streams.1,
+            far_deadline(),
+            GRACE,
+            POLL,
+            Duration::from_millis(50),
+            &mut || {},
+        );
+
+        assert!(released && abandoned);
+        assert_eq!(
+            stdout,
+            (Vec::new(), false),
+            "an unanswered stream is empty and NOT marked truncated: truncated means bytes were \
+             read and dropped, and none were"
+        );
+    }
 
     /// The defect this replaced: the drain used to start a fresh clock, so a call that spent almost
     /// all of its budget and then hit a held pipe could take nearly TWICE its timeout to return.

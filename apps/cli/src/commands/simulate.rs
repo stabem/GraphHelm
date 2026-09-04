@@ -1,9 +1,6 @@
 use std::path::Path;
 
-use graphhelm_protocols::{
-    ActorId, ExecutionId, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope,
-    WorkspaceId,
-};
+use graphhelm_protocols::{ActorId, OpaqueId, PersistedActor, PersistedActorType};
 use graphhelm_simulation::{SimulationFixtures, SimulationServices};
 
 use crate::commands::{SystemClock, UuidIds, event_store, owner, publish_loaded, repository_error};
@@ -38,16 +35,22 @@ pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
             return Outcome::domain("graph.simulate", vec![error]).with_warnings(warnings);
         }
     };
+    // THE ADDRESSING RULE IS CALLED, NOT RESTATED (#820, enforcing #560). This spelled the rule
+    // out -- the two constants plus the id as the third component -- while `addressable_scope` is
+    // the one place allowed to know it. The two spellings agreed, which is what a duplicated ORACLE
+    // does right up until the constants move; then this writer addresses streams that the three
+    // id-only lookups in `serve` cannot find.
+    //
+    // `let ... else` rather than `expect`: `Failure` carries no `Debug`, and the branch is
+    // unreachable for the same reason the previous `expect` was -- the id came off a graph that
+    // `load_graph` and `publish_loaded` have both already accepted.
+    let Ok(scope) = super::execution::addressable_scope(&version.graph().metadata.execution_id)
+    else {
+        panic!("validated graph execution id is wire-safe")
+    };
     let services = SimulationServices {
         event_repository: &store,
-        scope: RepositoryScope::new(
-            WorkspaceId::parse("workspace-local").expect("constant workspace id is valid"),
-            ProjectId::parse("project-local").expect("constant project id is valid"),
-            Some(
-                ExecutionId::parse(&version.graph().metadata.execution_id)
-                    .expect("validated graph execution id is wire-safe"),
-            ),
-        ),
+        scope,
         stream_id: OpaqueId::parse(&version.graph().metadata.execution_id)
             .expect("validated graph execution id is wire-safe"),
         actor: PersistedActor::new(

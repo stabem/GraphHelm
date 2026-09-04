@@ -739,3 +739,172 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
         "the defect itself must still be caught"
     );
 }
+
+/// The addressing rule has ONE home, and a production `RepositoryScope` must not spell it out
+/// (#820, enforcing the rule #560 recorded).
+///
+/// `addressable_scope` (`src/commands/execution/mod.rs`) says it in its own doc: **"Every consumer
+/// of this rule must call THIS function (#560)."** That rule was written after the rule had been
+/// restated where `resolve_stream` needed it and `execution list` enumerated the repository
+/// without it, so the index offered rows the rest of the API could not answer for. The rule was
+/// stated and never enforced, which is why this cell exists rather than a second comment.
+///
+/// **Why the addressing rule is load-bearing and not a formatting preference.** Three readers
+/// locate a stream by id alone and take the first match -- `serve/monitor.rs`, and `serve/wake.rs`
+/// twice. They are correct only because no two streams can share a `stream_id`, and that holds
+/// only because the scope is DERIVED from the id rather than chosen: `(scope, stream_id)` then
+/// carries no more information than `stream_id`. A second, hand-written spelling of the rule is a
+/// duplicated ORACLE. It does not diverge loudly the way a duplicated mechanism does; it agrees
+/// until the day the constants move, and then one writer addresses streams the readers cannot find.
+///
+/// **The subject is CONSTRUCTION, not appending, and that is a correction to this ticket's first
+/// framing.** The obvious sweep -- every `append_atomic` site takes its scope from
+/// `addressable_scope` -- cannot be written: measured across the tree, the production append sites
+/// are 15 across five crates, and every one outside `apps/cli` takes its scope from a parameter or
+/// a struct field (`core/runtime/src/driver.rs`, `core/governor/src/apply.rs`,
+/// `core/events/src/sweep.rs`, `core/simulation/src/engine.rs`). "Comes from a parameter" is also
+/// true of a site that chose its own scope and passed it down, so as an assertion it accepts
+/// exactly what it exists to reject. Appends PROPAGATE a scope; only a construction CHOOSES one.
+///
+/// **Keying on the type is what makes the one earned exclusion free.** `src/commands/development.rs`
+/// builds a `DevelopmentScope` from the same two literals and is not a violation: different type,
+/// no repository, nothing persisted -- its own doc says so. A guard keyed on the literals alone
+/// accuses it. Keyed on `RepositoryScope::new`, it never sees it, and no special case has to be
+/// written down and maintained.
+///
+/// **The rule's own home is NOT excluded, and an earlier version of this cell excluded it.**
+/// `addressable_scope` builds from the named constants, so it never matches the pattern -- which
+/// means the exclusion removed nothing and cost the coverage of the one file where a second
+/// hand-spelling is most likely to be written, by someone who assumes being at the rule's home
+/// makes them exempt. Measured both ways in review: identical, zero offenders either side. The
+/// literals live there only as the `const` declarations at the top, 144 lines from the nearest
+/// construction, and the test-module construction below them uses different values entirely.
+///
+/// The precondition that stood under that exclusion is the instructive part. It asserted the home
+/// was IN the population -- proving the SCAN reached it -- and passed happily while the exclusion
+/// excluded nothing, because being scanned and being matched are different properties. A control
+/// one step to the side of the property it is guarding reads exactly like the real thing.
+#[test]
+fn no_production_repository_scope_spells_the_addressing_rule_by_hand() {
+    let scanned = sources();
+    let production: Vec<(String, String)> = scanned
+        .iter()
+        .filter(|(path, _)| path.starts_with("src/"))
+        .cloned()
+        .collect();
+
+    // ---- THE MATCHER FIRST, because after this lands it is the only thing left that can fail.
+    //
+    // The two preconditions below prove the SCAN ran. Neither proves the matcher can still FIND a
+    // violation, and once `simulate.rs` is fixed `offenders` is empty forever: a window that is too
+    // small, an edited literal and a spelling that no longer matches all produce the same green as
+    // a clean tree. Raised in review, and it is the same hole I had to declare on a sibling guard --
+    // a hand-chosen window that today's single offender never exercised.
+    let at_one = vec![sample("src/fake.rs", 1)];
+    assert_eq!(
+        addressing_rule_offenders(&at_one).len(),
+        1,
+        "HARNESS-BROKE: the matcher does not recognise a literal on the line after the construction"
+    );
+
+    // SIX AND SEVEN ARE WRITTEN OUT, NOT DERIVED FROM `ARGUMENT_LINES`. Computed from the
+    // constant under test they move with it: shrinking the window to 2 kept both canaries green,
+    // measured. An expectation built from the value it is meant to pin is a mirror.
+    let at_window_edge = vec![sample("src/fake.rs", 6)];
+    assert_eq!(
+        addressing_rule_offenders(&at_window_edge).len(),
+        1,
+        "HARNESS-BROKE: the matcher misses a literal on the LAST line it claims to read, so the window is smaller than {ARGUMENT_LINES}"
+    );
+
+    // DECLARED LIMIT, asserted rather than described: one line past the window is INVISIBLE. The
+    // real offender put its literals at +1 and +2, so no value between 2 and 6 was ever
+    // distinguished by this tree -- the number is chosen, not measured. Errs wide on purpose: a
+    // window too NARROW fails open and silently, and this cell says exactly where the edge is.
+    let past_the_window = vec![sample("src/fake.rs", 7)];
+    assert!(
+        addressing_rule_offenders(&past_the_window).is_empty(),
+        "the window is {ARGUMENT_LINES} lines and a literal beyond it is not seen; if this now fails the window grew and the comment above is stale"
+    );
+
+    // TYPE KEYING, converted from a paragraph into an assertion. `src/commands/development.rs`
+    // builds a `DevelopmentScope` from these same two literals and is not a violation -- different
+    // type, no repository, nothing persisted. This is why the guard keys on `RepositoryScope::new`
+    // rather than on the literals, and why that exclusion needs no maintained special case.
+    let other_type = vec![(
+        "src/fake.rs".to_owned(),
+        "let scope = DevelopmentScope {\nworkspace_id: WorkspaceId::parse(\"workspace-local\"),\nproject_id: ProjectId::parse(\"project-local\"),\n};".to_owned(),
+    )];
+    assert!(
+        addressing_rule_offenders(&other_type).is_empty(),
+        "a DevelopmentScope built from the same literals is a different type and must not be accused"
+    );
+
+    // And the RULE'S OWN HOME passes for the right reason rather than by its path exclusion:
+    // `addressable_scope` builds from the named constants, so it never matches the pattern.
+    let via_constants = vec![(
+        "src/fake.rs".to_owned(),
+        "RepositoryScope::new(\nWorkspaceId::parse(WORKSPACE),\nProjectId::parse(PROJECT),\n)"
+            .to_owned(),
+    )];
+    assert!(
+        addressing_rule_offenders(&via_constants).is_empty(),
+        "a construction from the named constants is the rule being CALLED, not restated"
+    );
+
+    // ---- and only now the real tree.
+
+    // Presence control for an absence guard: an empty population makes the assertion below pass
+    // while measuring nothing.
+    assert!(
+        !production.is_empty(),
+        "precondition: the walk must have returned production sources, or the absence asserted below is the absence of a SCAN"
+    );
+
+    let offenders = addressing_rule_offenders(&production);
+
+    assert!(
+        offenders.is_empty(),
+        "these build a RepositoryScope from the addressing rule's literals instead of calling `addressable_scope`, which is a second oracle for the rule that makes three id-only stream lookups correct. Call `super::execution::addressable_scope` instead:\n{}",
+        offenders.join("\n")
+    );
+}
+
+const ARGUMENT_LINES: usize = 6;
+
+/// The matcher, lifted out of the cell so it can be fed text and shown to still work.
+///
+/// A guard whose only input is the repository can only be observed on the day it fires. This one
+/// is meant never to fire again, so its own health has to be measurable without one.
+fn addressing_rule_offenders(sources: &[(String, String)]) -> Vec<String> {
+    const LITERALS: [&str; 2] = ["\"workspace-local\"", "\"project-local\""];
+
+    sources
+        .iter()
+        .flat_map(|(path, text)| {
+            let lines: Vec<&str> = text.lines().collect();
+            let mut hits = Vec::new();
+            for (number, line) in lines.iter().enumerate() {
+                if line.trim_start().starts_with("//") || !line.contains("RepositoryScope::new(") {
+                    continue;
+                }
+                let end = (number + 1 + ARGUMENT_LINES).min(lines.len());
+                let arguments = lines[number..end].join("\n");
+                if LITERALS.iter().any(|literal| arguments.contains(literal)) {
+                    hits.push(format!("{path}:{}: {}", number + 1, line.trim_start()));
+                }
+            }
+            hits
+        })
+        .collect()
+}
+
+/// A construction whose literal sits `offset` lines below it, for exercising the window.
+fn sample(path: &str, offset: usize) -> (String, String) {
+    let mut text = String::from("let scope = RepositoryScope::new(\n");
+    for _ in 1..offset {
+        text.push_str("// filler that carries no literal\n");
+    }
+    text.push_str("WorkspaceId::parse(\"workspace-local\"),\n);");
+    (path.to_owned(), text)
+}

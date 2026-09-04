@@ -305,6 +305,70 @@ function Test-ExactDirectory {
     return $true
 }
 
+function Find-ReparsePointSegment {
+    <#
+        The first segment of this repository-relative path whose entry on disk is a REPARSE POINT
+        -- a junction, a directory symlink, a mount point -- or $null when none of them is.
+
+        This program's whole contract is "what does the repository say about these paths", and a
+        path whose parent has been replaced is no longer answering for the repository.
+        `Test-Path`, `File::Exists` and `File::Open` all TRAVERSE a reparse point without saying
+        so, so the program read through it and reported on whatever was on the other side: a file
+        outside the checkout named as one of its scripts, or a real script masked by one that is
+        not there. That is "nothing to do where something is wrong" arriving by a different route,
+        which is the failure this program was cut down to avoid (#698).
+
+        A prefix comparison against the repository root is NOT enough and is not what this does: a
+        junction INSIDE the root resolves to a path under the root and passes such a check while
+        still pointing somewhere the index never named. Every segment is asked about its own
+        attributes instead, from the root down.
+
+        The LAST segment is walked like the others rather than special-cased. A tracked path
+        replaced by a link is the same defect one level in, and giving it its own branch would give
+        it a branch no cell here reaches: `New-Item -ItemType Junction` builds a directory link
+        without administrator rights, a file symlink does not.
+
+        An entry whose attributes cannot be read is NOT reported as a reparse point. Answering here
+        would hand the operator the wrong reason: the read below already has named refusals for a
+        path that is missing or cannot be opened, and each of them says something true that this
+        one would not.
+
+        The cache is keyed by the repository-relative prefix, so the directories shared by a
+        thousand scripts are asked about once. It is passed in rather than held here because a
+        function that remembers between calls is one whose verdict depends on call order.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $Root,
+        [Parameter(Mandatory)] [string] $RelativePath,
+        [hashtable] $Cache
+    )
+
+    $walked = ''
+    $current = $Root
+    # ORDINAL, like every other comparison in this file (#753). A segment that is a lone
+    # zero-weight code point compares -eq to the empty string, so the culture form DROPPED it --
+    # and a dropped segment is a segment this guard never asks about, which is the reparse-point
+    # check failing OPEN on exactly the path shape an attacker would choose.
+    foreach ($segment in @($RelativePath -split '/' | Where-Object { -not (Test-SameText $_ '') })) {
+        $walked = if (Test-SameText $walked '') { $segment } else { $walked + '/' + $segment }
+        $current = Join-Path $current $segment
+        if ($null -ne $Cache -and $Cache.ContainsKey($walked)) {
+            if ($Cache[$walked]) { return $walked }
+            continue
+        }
+        $isReparsePoint = $false
+        try {
+            $attributes = [System.IO.File]::GetAttributes($current)
+            $isReparsePoint = (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+        } catch {
+            $isReparsePoint = $false
+        }
+        if ($null -ne $Cache) { $Cache[$walked] = $isReparsePoint }
+        if ($isReparsePoint) { return $walked }
+    }
+    return $null
+}
+
 function Get-DistinctScopeSpellings {
     <#
         The distinct spellings of the first `$Depth` segments, compared CASE-SENSITIVELY.
@@ -497,6 +561,10 @@ if ($probe.exitCode -ne 0) {
     exit 2
 }
 $repositoryRoot = $probe.lines[0]
+# Shared by the -Path guard and the per-file guard, so the directories a thousand scripts have
+# in common are asked about once. Declared here rather than inside either, because a cache a
+# function keeps for itself makes its verdict depend on how many times it has been called.
+$reparseCache = @{}
 
 # THE WRITE PATH IS NOT IN THIS PULL REQUEST, and the refusal is here -- before any enumeration,
 # any read, any decision -- so there is no arrangement in which this program writes.
@@ -565,6 +633,16 @@ if ($Path) {
     }
 }
 if ($normalisedPath) {
+    # A junction in the SCOPE redirects the whole sweep, so it is refused before the probes rather
+    # than once per file: `-Path lib` where `lib` is a link enumerates the index under `lib` and
+    # then reads every one of those paths through the link. Refusing here means no probe, no
+    # enumeration and no read happens against a scope this program cannot answer for.
+    $taintedScope = Find-ReparsePointSegment -Root $repositoryRoot -RelativePath $normalisedPath -Cache $reparseCache
+    if ($null -ne $taintedScope) {
+        Fail ("-Path '$Path' is reached through '$taintedScope', which is a reparse point (a " +
+            "junction, symlink or mount point). What is on the other side of it is not what the " +
+            "index names, so this program cannot answer for it. Name a path inside the checkout.")
+    }
     $exact = Read-BoundedGit -GitArgs @('-C', $repositoryRoot, 'ls-files', '-z', '--', ":(literal)$normalisedPath")
     # A FAILED probe is not an empty one. `$exact.exitCode -eq 0` is required before the emptiness
     # is believed, because a transient failure returns empty output too -- and reading that as "the
@@ -761,6 +839,7 @@ $MaxScriptBytes = 8MB
 # budget in core/protocols, and for the same reason -- a per-item limit says nothing about a total.
 $MaxRetainedBytes = 256MB
 $dirty = @()
+$redirected = @()
 $oversize = @()
 $notNormalised = @()
 $unsupported = @()
@@ -769,6 +848,15 @@ foreach ($file in $files) {
     # BEFORE anything is judged about it, including whether it exists.
     if (-not (Test-InSet $covered $file.path)) { continue }
 
+    # BEFORE Test-Path, because Test-Path is one of the three calls that traverse a reparse point
+    # without saying so. Asked per file and not only for the scope: the enumeration comes from the
+    # INDEX, so a path whose parent was replaced after the checkout is listed exactly like any
+    # other and there is no earlier moment at which it looks different.
+    $tainted = Find-ReparsePointSegment -Root $repositoryRoot -RelativePath $file.path -Cache $reparseCache
+    if ($null -ne $tainted) {
+        $redirected += "$($file.path) [reached through the reparse point '$tainted']"
+        continue
+    }
     $full = Join-Path $repositoryRoot $file.path
     if (-not (Test-Path -LiteralPath $full)) {
         $dirty += "$($file.path) [missing from the working tree]"
@@ -924,6 +1012,16 @@ foreach ($file in $files) {
         }
     }
 }
+# FIRST of the refusals, because it is the only one that says the program was not looking at the
+# repository at all. The others describe a file this run really did read; this one describes bytes
+# that came from somewhere the index never named, and reporting any verdict about those -- even a
+# refusal in another bucket's words -- would be a claim about the wrong file.
+if ($redirected.Count -gt 0) {
+    Fail ("these tracked scripts are reached through a reparse point (a junction, symlink or mount " +
+        "point), so what is on the other side is not what the index names and this program cannot " +
+        "answer for them. Restore the real directory, or narrow the run with -Path:`n  " +
+        ($redirected -join "`n  "))
+}
 if ($unsupported.Count -gt 0) {
     Fail ("these tracked scripts are UTF-16, whose CRLF this program cannot see and would silently " +
         "report as already normalised. Convert them to UTF-8 first, or exempt them, but do not " +
@@ -990,6 +1088,9 @@ foreach ($p in $notCovered) { Write-Host "  skipped (rule does not cover it)  $p
 # So every enumerated path the rule covers must land in exactly one bucket, and anything left over
 # is REPORTED BY NAME and makes the run non-zero. This survives any future narrowing of the
 # program: whatever the buckets become, the residue is still the thing nobody looked at.
+# $redirected is deliberately absent: a non-empty one has already exited above, so listing it here
+# would be a line that can never run. The residue check is about buckets a path can land in and
+# still reach this point.
 $classified = @($normalized + $alreadyLf + $notCovered +
     ($dirty + $oversize + $notNormalised + $unsupported | ForEach-Object { ($_ -split ' \[')[0] }))
 $unclassified = @($files | Where-Object { -not (Test-InSet $classified $_.path) } | ForEach-Object { $_.path })

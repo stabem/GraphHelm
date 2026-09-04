@@ -16,7 +16,7 @@
 # #676 records `git checkout --force` behaving differently on 2.43.0, so a cell that asserts what
 # the RECIPE does is a claim about a git version and says so.
 
-$ExpectedAssertionCount = 99
+$ExpectedAssertionCount = 111
 # 'Continue', not 'Stop'. This suite RUNS the failing recipe on purpose, and under Windows
 # PowerShell 5.1 a native command's redirected stderr becomes a NativeCommandError that 'Stop'
 # promotes to a terminating error -- so `git checkout` printing "did not match any file" would kill
@@ -943,6 +943,167 @@ Write-Output ("notab=" + (& $KeepScriptRecord "a record with no tab at all"))
         -Message "the run REFUSES rather than reporting a broken instrument (exit $($climb.exitCode); before this change the probe's non-zero exit read as HARNESS-BROKE, 2)"
     Assert-True -Condition ($climb.text -cmatch 'climbs above the repository root' -and $climb.text -cmatch [regex]::Escape('../outside')) `
         -Message 'and says why, naming the path the operator typed'
+
+    # ---- #698: a parent directory replaced by a junction, and the program reporting on what is on
+    # the other side of it.
+    #
+    # `Test-Path`, `File::Exists` and `File::Open` all TRAVERSE a reparse point without saying so,
+    # so the enumeration came from the index and the bytes came from somewhere else. The verdict it
+    # produced is the dangerous one -- not a wrong refusal but "already LF", a clean bill of health
+    # for a file that still holds CRLF on the other side of the link.
+    #
+    # `New-Item -ItemType Junction` needs no administrator rights, which is why the cell is a
+    # junction and not a symlink. A machine that cannot build one cannot verify this guard at all,
+    # so that is HARNESS-BROKE rather than a pass: nothing would have been measured.
+    Write-Host ''
+    Write-Host '-- a path reached through a junction is refused, not reported on --' -ForegroundColor Cyan
+    $linked = New-Fixture -Name 'linked'
+    [System.IO.Directory]::CreateDirectory((Join-Path $linked 'real')) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $linked 'real/inside.sh'), "echo one`necho two`n", $Latin1)
+    Push-Location $linked
+    try {
+        & git add -A 2>&1 | Out-Null
+        & git commit -m linked --quiet 2>&1 | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $linked 'real/inside.sh'), "echo one`r`necho two`r`n", $Latin1)
+    } finally { Pop-Location }
+
+    # The negative control runs FIRST, on this same fixture before the junction exists. Without it a
+    # guard that refused every path would pass the two assertions below and look like a fix.
+    $ordinary = Invoke-Program -Repo $linked
+    Assert-True -Condition ($ordinary.exitCode -eq 0 -and (Test-Reported -Text $ordinary.text -Path 'real/inside.sh')) `
+        -Message "CONTROL: with an ordinary directory the same path is reported, not refused (exit $($ordinary.exitCode))"
+
+    # The decoy is byte-identical to the INDEX blob, so the program reading through the junction
+    # sees a file that is already LF and says so. A decoy with different content would have been
+    # caught by the uncommitted-edit refusal for the wrong reason, and a refusal is not the failure
+    # this cell is about.
+    [System.IO.Directory]::CreateDirectory((Join-Path $linked 'decoy')) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $linked 'decoy/inside.sh'), "echo one`necho two`n", $Latin1)
+    Rename-Item -LiteralPath (Join-Path $linked 'real') -NewName 'real-actual'
+    $junction = Join-Path $linked 'real'
+    $madeJunction = $null -ne (New-Item -ItemType Junction -Path $junction -Value (Join-Path $linked 'decoy') -ErrorAction SilentlyContinue)
+    if (-not $madeJunction) {
+        Write-Host 'HARNESS-BROKE: this machine would not create a junction, so the reparse-point guard was not measured' -ForegroundColor Magenta
+        exit 2
+    }
+    try {
+        Assert-True -Condition ([System.IO.File]::ReadAllText((Join-Path $linked 'real/inside.sh')) -cnotmatch "`r`n") `
+            -Message 'ARRANGEMENT: the junction really redirects -- the tracked path now reads the decoy, which is LF'
+        Assert-True -Condition ([System.IO.File]::ReadAllText((Join-Path $linked 'real-actual/inside.sh')) -cmatch "`r`n") `
+            -Message 'ARRANGEMENT: while the file the repository actually has still holds CRLF, so a clean bill of health is a lie'
+
+        $through = Invoke-Program -Repo $linked
+        Assert-True -Condition ($through.exitCode -eq 1) `
+            -Message "the run REFUSES rather than reporting on the other side (exit $($through.exitCode))"
+        Assert-True -Condition ($through.text -cmatch 'reparse point' -and $through.text -cmatch [regex]::Escape("real/inside.sh") -and $through.text -cmatch "'real'") `
+            -Message 'and names both the tracked path and the segment that redirected it'
+        Assert-True -Condition ($through.text -cnotmatch 'already LF') `
+            -Message 'and does NOT reach the summary that called it already LF: the refusal lands before any verdict'
+
+        # The scope half of the same question. A junction NAMED by -Path redirects the whole sweep,
+        # so it is refused before the probes rather than once per file.
+        $scoped = Invoke-Program -Repo $linked -ExtraArgs @('-Path', 'real')
+        Assert-True -Condition ($scoped.exitCode -eq 1) `
+            -Message "a -Path that names a junction is refused too (exit $($scoped.exitCode))"
+        Assert-True -Condition ($scoped.text -cmatch 'reparse point' -and $scoped.text -cmatch "-Path 'real'") `
+            -Message 'and says so as a scope refusal, before any probe or enumeration runs'
+        # ---- The walk ASKED about the zero-weight segment: observed at the seam, no filesystem.
+        #
+        # The cells on the base branch establish that -eq and -ceq disagree with an ordinal
+        # comparison about a zero-weight code point. That is a claim about the COMPARISON. What this
+        # guard promises is that it asks about EVERY SEGMENT, which is a different subject, and the
+        # gap between the two is where the defect lived.
+        #
+        # The cache is the observation point, and it works because the function takes it rather than
+        # holding one: it is keyed by the repository-relative prefix, so a segment that was asked
+        # about leaves its key behind and a segment that was dropped does not. Under the old
+        # comparison the middle segment never appears. (Method from the GraphHelm ISSUES 4 lane.)
+        #
+        # No filesystem: an attributes read on a path that does not exist throws, is caught, and is
+        # cached as "not a reparse point" -- so the walk still visits every segment and the cache
+        # still records what it visited.
+        $guardSeam = Join-Path $fixtureRoot 'guard-seam.ps1'
+        $guardStart = $programText.IndexOf('function Find-ReparsePointSegment {')
+        $guardEnd = $programText.IndexOf('function Get-DistinctScopeSpellings {')
+        if ($guardStart -lt 0 -or $guardEnd -le $guardStart) {
+            Write-Host 'HARNESS-BROKE: Find-ReparsePointSegment was not found between its anchors' -ForegroundColor Magenta
+            exit 2
+        }
+        [System.IO.File]::WriteAllText($guardSeam, $OrdinalHelpers +
+            $programText.Substring($guardStart, $guardEnd - $guardStart) + @'
+
+$vs = [string][char]0x0FE00
+$cache = @{}
+$null = Find-ReparsePointSegment -Root 'C:\does-not-exist' -RelativePath ("a/" + $vs + "/b") -Cache $cache
+Write-Output ('asked=' + (($cache.Keys | Sort-Object) -join '|'))
+'@, $Latin1)
+        $guardOut = (@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $guardSeam 2>&1 |
+                    ForEach-Object { [string]$_ }) -join "`n")
+        $vsKey = 'a/' + [string][char]0x0FE00
+        Assert-True -Condition ($guardOut -cmatch [regex]::Escape($vsKey)) `
+            -Message 'the walk ASKED about a zero-weight segment -- it left its key in the cache instead of being dropped'
+        Assert-True -Condition ($guardOut -cmatch [regex]::Escape($vsKey + '/b')) `
+            -Message 'and carried it into the prefix of the segment below, so the path it asks about is the path it was given'
+
+        # ---- The segment the walk used to DROP (#753 in #698's own guard).
+        #
+        # `Find-ReparsePointSegment` filtered its segments with `$_ -ne ''`, and a segment that is a
+        # lone zero-weight code point compares -eq to the empty string. So it was dropped from the
+        # walk, the guard never asked about it, and the traversal this whole pull request refuses
+        # went through -- on exactly the path shape somebody would pick to defeat it. The guard
+        # failing OPEN, in the guard's own file.
+        #
+        # NTFS accepts the name and git tracks the path (measured: `d<U+FE00>/a.sh` appears in
+        # `git ls-files`), so this is constructible rather than theoretical.
+        $weightless = New-Fixture -Name 'weightless'
+        $vs = [string][char]0x0FE00
+        # A LONE zero-weight segment, not "d$vs". The first version of this cell used a letter
+        # followed by the code point -- which is not empty-equivalent, so nothing dropped it and the
+        # cell passed under the sabotage it was written to catch. Measured, not reasoned: the
+        # sabotage reddened the seam cells and left this one green until the name changed.
+        $weightlessDir = Join-Path $weightless $vs
+        [System.IO.Directory]::CreateDirectory($weightlessDir) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $weightlessDir 'inside.sh'), "echo one`necho two`n", $Latin1)
+        Push-Location $weightless
+        try {
+            & git add -A 2>&1 | Out-Null
+            & git commit -m weightless --quiet 2>&1 | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $weightlessDir 'inside.sh'), "echo one`r`necho two`r`n", $Latin1)
+        } finally { Pop-Location }
+
+        # -z, so git does not apply core.quotePath and hand back an escaped spelling of the name --
+        # the same reason the program itself reads with -z. Asserting the PATH rather than a count:
+        # a count is satisfied by the fixture's own two files and would have passed without the
+        # zero-weight path ever being tracked, which is exactly what it did on the first run.
+        $trackedRaw = (& git -C $weightless ls-files -z) -join ''
+        $weightlessPath = [string][char]0x0FE00 + "/inside.sh"
+        Assert-True -Condition ($trackedRaw -cmatch [regex]::Escape($weightlessPath)) `
+            -Message 'ARRANGEMENT: git really tracks a path THROUGH a zero-weight directory name'
+
+        # Replace that directory with a junction, exactly as the cell above does with an ASCII name.
+        [System.IO.Directory]::CreateDirectory((Join-Path $weightless 'decoy')) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $weightless 'decoy/inside.sh'), "echo one`necho two`n", $Latin1)
+        Rename-Item -LiteralPath $weightlessDir -NewName "actual$vs"
+        $weightlessJunction = Join-Path $weightless $vs
+        $madeSecond = $null -ne (New-Item -ItemType Junction -Path $weightlessJunction -Value (Join-Path $weightless 'decoy') -ErrorAction SilentlyContinue)
+        if (-not $madeSecond) {
+            Write-Host 'HARNESS-BROKE: a junction with a zero-weight name could not be created' -ForegroundColor Magenta
+            exit 2
+        }
+        try {
+            $weightlessRun = Invoke-Program -Repo $weightless
+            Assert-True -Condition ($weightlessRun.exitCode -eq 1 -and $weightlessRun.text -cmatch 'reparse point') `
+                -Message "the guard walks a zero-weight segment instead of dropping it, and refuses (exit $($weightlessRun.exitCode))"
+        } finally {
+            [System.IO.Directory]::Delete($weightlessJunction)
+        }
+
+    } finally {
+        # The reparse point is removed by itself, before the suite's own recursive delete reaches
+        # it. Directory.Delete on a junction removes the LINK; a recursive remove that followed it
+        # would be deleting through it, which is the very behaviour this cell exists to name.
+        [System.IO.Directory]::Delete($junction)
+    }
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

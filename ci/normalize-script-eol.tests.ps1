@@ -16,7 +16,7 @@
 # #676 records `git checkout --force` behaving differently on 2.43.0, so a cell that asserts what
 # the RECIPE does is a claim about a git version and says so.
 
-$ExpectedAssertionCount = 111
+$ExpectedAssertionCount = 120
 # 'Continue', not 'Stop'. This suite RUNS the failing recipe on purpose, and under Windows
 # PowerShell 5.1 a native command's redirected stderr becomes a NativeCommandError that 'Stop'
 # promotes to a terminating error -- so `git checkout` printing "did not match any file" would kill
@@ -609,30 +609,93 @@ try {
         -Message 'and nobody is sent to renormalise a file that has no line endings to normalise'
 
     Write-Host ''
-    Write-Host '-- without -DryRun the program refuses, before anything is read --' -ForegroundColor Cyan
-    $repo = New-Fixture -Name 'nowrite'
-    $before = [System.IO.File]::ReadAllBytes((Join-Path $repo 'a.sh'))
-    $result = Invoke-Program -Repo $repo -NoDryRun
-    Assert-True -Condition ($result.exitCode -eq 1) `
-        -Message "the write mode refuses (exit 1, got $($result.exitCode))"
-    Assert-True -Condition ($result.text -cmatch '#693') `
-        -Message 'and names where the write half went, so the refusal is a direction and not a dead end'
-    # BYTES, not length. A regression that rewrote the file to different bytes of the same length --
-    # which is exactly what a CRLF-to-LF conversion is NOT, but a partial one could be -- passed a
-    # length comparison. The message said "byte-for-byte" and the predicate did not check that.
+    Write-Host '-- without -DryRun the program WRITES, and verifies what it wrote --' -ForegroundColor Cyan
     #
-    # ARMED, NOT DISCRIMINATING, and saying so: with no write path in this pull request nothing can
-    # make this fail, so it is a guard placed for #693 rather than evidence here. It becomes a real
-    # cell the moment the write half lands.
+    # This cell used to assert the OPPOSITE: #677 shipped the diagnosis alone and refused here, and
+    # the byte-comparison below carried the label "ARMED for #693: nothing here can write, so this
+    # cannot fail yet". #693 is this change, so the arming condition is met and the assertion is
+    # inverted rather than deleted. It is worth saying which cell was rewritten and why: a test that
+    # certified an interim refusal is exactly the kind that gets quietly dropped when the refusal
+    # goes, taking its byte-level comparison with it.
+    $repo = New-Fixture -Name 'write'
+    $before = [System.IO.File]::ReadAllBytes((Join-Path $repo 'a.sh'))
+    Assert-True -Condition (($before -contains 13) -and ((Get-WorktreeEol -Repo $repo -File 'a.sh') -eq 'crlf')) `
+        -Message 'ARRANGEMENT: the fixture starts with CR bytes on disk and git agrees it is crlf'
+
+    $result = Invoke-Program -Repo $repo -NoDryRun
+    Assert-True -Condition ($result.exitCode -eq 0) `
+        -Message "the write mode succeeds (exit $($result.exitCode))"
+    Assert-True -Condition ($result.text -cmatch 'normalised\s+a\.sh' -and $result.text -cnotmatch 'would normalise\s+a\.sh') `
+        -Message 'and reports the PAST tense, which a run that had not written would be lying with'
+
+    # git's own eol column, not this suite's opinion of the bytes. `git status` was clean before and
+    # is clean after -- that is the whole reason #676 needs a program -- so the instrument has to be
+    # the one that can tell.
+    Assert-True -Condition ((Get-WorktreeEol -Repo $repo -File 'a.sh') -eq 'lf') `
+        -Message 'and git now reads the working tree as lf'
+
+    # BYTES, not length. A partial conversion is different bytes of the same length, which a length
+    # comparison passes. The content must be exactly the CRLF content with the CRs removed -- not
+    # merely CR-free, which an empty file also is.
     $after = [System.IO.File]::ReadAllBytes((Join-Path $repo 'a.sh'))
-    $identical = $after.Length -eq $before.Length
-    if ($identical) {
-        for ($i = 0; $i -lt $before.Length; $i++) {
-            if ($after[$i] -ne $before[$i]) { $identical = $false; break }
+    $expected = [System.Text.Encoding]::GetEncoding(28591).GetBytes(
+        [System.Text.Encoding]::GetEncoding(28591).GetString($before).Replace("`r`n", "`n"))
+    $exact = $after.Length -eq $expected.Length
+    if ($exact) {
+        for ($i = 0; $i -lt $expected.Length; $i++) {
+            if ($after[$i] -ne $expected[$i]) { $exact = $false; break }
         }
     }
-    Assert-True -Condition $identical `
-        -Message 'and the file is byte-for-byte as it was (ARMED for #693: nothing here can write, so this cannot fail yet)'
+    Assert-True -Condition $exact `
+        -Message 'and the bytes are the previous bytes with CR removed, byte for byte -- not merely CR-free'
+
+    # THE VERIFIER RAN AND SAID SO. Without this the cell passes over a program that wrote correctly
+    # and skipped its own verification, which is the state #676 names as the one worth having: the
+    # write is the easy half, and "did it land" is the question `git status` cannot answer.
+    Assert-True -Condition ($result.text -cmatch 'verified: every rewritten file now reads w/lf') `
+        -Message 'and the run says its verification re-read observed the result'
+
+    # No sidecar survives the happy path. The staging file, the backup and the rescue file are all
+    # GUID-named, so a leak is invisible to `git status` -- untracked content this program created
+    # and did not clean up, in a checkout it just told the operator is correct.
+    $sidecars = @(Get-ChildItem -LiteralPath $repo -Filter '*.eol-*' -Force -ErrorAction SilentlyContinue)
+    Assert-True -Condition ($sidecars.Count -eq 0) `
+        -Message "and leaves no .eol-tmp, .eol-backup or .eol-rescued behind (found $($sidecars.Count))"
+
+    Write-Host ''
+    Write-Host '-- the replacement does not clobber a sidecar it did not create --' -ForegroundColor Cyan
+    #
+    # The first version staged through a PREDICTABLE name and truncated whatever already had it. A
+    # file called `a.sh.eol-migration.tmp` is legal in a repository, does not end in `.sh`, and is
+    # therefore invisible to every check above -- so the program would have destroyed a file it was
+    # never asked to look at. The staging name now carries a GUID and is opened CreateNew, which
+    # throws rather than truncating.
+    $repo = New-Fixture -Name 'sidecar'
+    $bystander = Join-Path $repo 'a.sh.eol-migration.tmp'
+    [System.IO.File]::WriteAllText($bystander, 'THE BYSTANDER', $Latin1)
+    $result = Invoke-Program -Repo $repo -NoDryRun
+    Assert-True -Condition ($result.exitCode -eq 0) `
+        -Message "the run succeeds with an unrelated sidecar present (exit $($result.exitCode))"
+    Assert-True -Condition ((Test-Path -LiteralPath $bystander) -and ([System.IO.File]::ReadAllText($bystander) -ceq 'THE BYSTANDER')) `
+        -Message 'and the bystander file is untouched, content and all'
+
+    Write-Host ''
+    Write-Host '-- a run that converts nothing still verifies what it classified --' -ForegroundColor Cyan
+    #
+    # The verifier covers ALREADY-LF paths too, and this is the cell that keeps it that way. The
+    # classification comes from bytes read earlier in the run; a checkout filter or an editor
+    # writing CRLF after that read would leave the file skipped on a stale snapshot, and a run that
+    # converted nothing else would then skip verification entirely and report success twice over --
+    # once in the summary, once by exiting 0.
+    $repo = New-Fixture -Name 'nothing'
+    [System.IO.File]::WriteAllText((Join-Path $repo 'a.sh'), "echo one`necho two`n", $Latin1)
+    $result = Invoke-Program -Repo $repo -NoDryRun
+    Assert-True -Condition ($result.exitCode -eq 0) `
+        -Message "a run with nothing to convert succeeds (exit $($result.exitCode))"
+    Assert-True -Condition ($result.text -cmatch 'normalised 0 file\(s\); 1 already LF') `
+        -Message 'and reports one already-LF file and no conversions'
+    Assert-True -Condition ($result.text -cmatch 'verified: every rewritten file now reads w/lf') `
+        -Message 'and STILL verifies, because an already-LF classification is a claim about the disk too'
 
     # THE CLASS CELL, and the one that survives any future narrowing of this program.
     #

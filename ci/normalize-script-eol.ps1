@@ -31,18 +31,22 @@
        file in the same directory and moved over the original, so a failure mid-run leaves either
        the old file or the new one -- never nothing.
 
-    WHAT IT DOES NOT DO AT ALL, IN THIS FORM: it does not write. Without `-DryRun` it REFUSES,
-    before any enumeration or read. The half that writes is tracked in #693, on branch
-    `issue-676-write-mode`, and the five answers above describe what it will do when that lands --
-    they are the design under review there, not behaviour available here.
+    IT VERIFIES ITSELF AFTERWARDS, and that is the last of the five: `git status` was clean before
+    the run and is clean after, so it cannot answer whether anything landed. The check is git's own
+    `--eol` columns, re-read after the work, over every path this run rewrote AND every path it
+    classified as already-LF -- and each of those must be OBSERVED in the re-read, not merely
+    un-contradicted by it.
 
-    It also does not touch the index, run `checkout`, stage anything, or look at untracked files.
+    It does not touch the index, run `checkout`, stage anything, or look at untracked files.
 
 .PARAMETER DryRun
-    REQUIRED in this form. Reports what would change and changes nothing; without it the program
-    refuses and points at #693. The exit codes are the diagnosis's own: 0 when every covered path
-    got a verdict, 1 for a refusal or an unclassified residue, and 2 when the instrument itself
-    could not be trusted.
+    Reports what would change and changes nothing. Without it the program writes, after every
+    refusal above has passed.
+
+    The exit codes: 0 when every covered path got a verdict and, in write mode, the verification
+    re-read confirmed it; 1 for a refusal or an unclassified residue; and 2 when the instrument
+    itself could not be trusted -- which now includes a verification re-read that did not report a
+    path this run rewrote.
 
 .PARAMETER Path
     Restrict the sweep to paths under this directory (repository-relative). Default: the whole
@@ -566,22 +570,16 @@ $repositoryRoot = $probe.lines[0]
 # function keeps for itself makes its verdict depend on how many times it has been called.
 $reparseCache = @{}
 
-# THE WRITE PATH IS NOT IN THIS PULL REQUEST, and the refusal is here -- before any enumeration,
-# any read, any decision -- so there is no arrangement in which this program writes.
+# THE WRITE PATH IS IN THIS PROGRAM NOW (#693), and every refusal above it still runs first.
 #
-# #676 measures the damage the copy-paste recipe does, and all of it lives in the WRITING: a
-# deleted file that is never restored, an edit destroyed with `git status` clean afterwards. That
-# danger earns its own review with its own surface rather than arriving as the second half of a
-# change a reviewer has already read past.
+# #677 shipped the diagnosis alone and refused here, so that the danger #676 measures -- all of
+# which lives in the WRITING -- would get its own review rather than arriving as the second half of
+# a change a reviewer had already read past. This is that review. Nothing in the diagnosis moved:
+# the enumeration, the bounds, the four refusals and the reparse-point guard decide exactly as they
+# did, and the write happens only after all of them have passed.
 #
-# The code that writes exists, is green, and carries 28 resolved review findings: branch
-# `issue-676-write-mode`, tracked in #693. Cutting it out reduces DEFECT, not observation --
-# everything below still names every case the recipe destroys.
-if (-not $DryRun) {
-    Fail ("write mode is not in this pull request, which ships the diagnosis only. Re-run with " +
-        "-DryRun to see what would change. The write half is tracked in #693, on branch " +
-        "issue-676-write-mode.")
-}
+# `-DryRun` stays the way to ask what WOULD change, and it is still the only mode that touches
+# nothing.
 
 # `git ls-files --eol -z` emits NUL-separated records; within a record the three attribute columns
 # are separated from the path by a TAB. Measured on git 2.47.1 before relying on it: an unmatched
@@ -1068,11 +1066,121 @@ foreach ($file in $files) {
     $converted = $text.Replace("`r`n", "`n")
     if (Test-SameText $converted $text) { $alreadyLf += $file.path; continue }
 
+    if (-not $DryRun) {
+        # Write beside the target, then REPLACE it. Three review findings turned out to be one
+        # defect in the first version -- write to a predictable `.eol-migration.tmp`, delete the
+        # original, move -- and one primitive answers all three:
+        #
+        #   a predictable staging name silently TRUNCATES a file that already has it, and that
+        #   file is legal in the repository and does not end in .sh, so no check above sees it;
+        #   the explicit Delete opens a window where the path does not exist, which is the state
+        #   this program promises never to reach -- an ACL, an antivirus or a race between the two
+        #   calls leaves exactly the mode-5 outcome by a different route;
+        #   and a Move puts the STAGING file's metadata on the path, discarding the original's
+        #   ACLs, DOS attributes and alternate data streams. A byte-clean migration that silently
+        #   drops an operator's permissions is not clean.
+        #
+        # `File.Replace` transfers the source's CONTENT onto the destination while the destination
+        # keeps its own identity and metadata, and there is no moment with the path absent. The
+        # staging file is created with CreateNew, which THROWS rather than truncating if the name
+        # is taken, and its name carries a GUID so the collision is not predictable in the first
+        # place.
+        $staging = "$full.$([guid]::NewGuid().ToString('N')).eol-tmp"
+        $bytesOut = $Latin1.GetBytes($converted)
+        # The staging file is created and written inside a try whose CLEANUP covers the write, not
+        # only the stream. A full volume or a quota makes the write throw after CreateNew has
+        # already made the file, and 'Stop' then ends the run -- leaving a partial GUID-named
+        # sidecar in the operator's checkout that nothing would ever explain. The flag is cleared
+        # only once the replacement has succeeded.
+        $stagingReplaced = $false
+        try {
+            $stream = [System.IO.File]::Open($staging, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+            try { $stream.Write($bytesOut, 0, $bytesOut.Length) } finally { $stream.Dispose() }
+
+            # A BACKUP PATH, not a null one. Between the read that vetted these bytes and this call
+            # there is a window in which an editor can save the file, and the dirty check above
+            # cannot see an edit that had not happened when it ran. `File.Replace` hands the
+            # destination's exact predecessor to the backup path as PART OF THE SAME OPERATION, so
+            # the bytes about to be overwritten are captured rather than lost, and can be compared
+            # with the bytes that were vetted. Differ, and the operator saved during the run: the
+            # backup goes back and the program refuses.
+            $backup = "$full.$([guid]::NewGuid().ToString('N')).eol-backup"
+            try {
+                [System.IO.File]::Replace($staging, $full, $backup)
+            } catch {
+                # Replace failed with the original intact. Take the staging file away rather than
+                # leaving a sidecar the next run would have to reason about, and refuse: a partial
+                # migration that keeps going is how a sweep loses track of what it did.
+                Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue
+                Fail "could not replace $($file.path): $($_.Exception.Message). The original is untouched."
+            }
+            # RAW BYTES, because this comparison is about identity rather than line endings.
+            # Bounded like every other read. Another process growing the target past the ceiling
+            # between the vetted read and the replace would have its oversized content captured
+            # into the backup, and reading THAT unbounded defeats the guard from the one direction
+            # nothing else covers.
+            $backupInfo = New-Object System.IO.FileInfo($backup)
+            if ($backupInfo.Length -gt $MaxScriptBytes) {
+                Fail ("$($file.path) grew past the $MaxScriptBytes-byte bound while it was being " +
+                    "replaced. Its previous content is at:`n  $backup`nNothing further was read or " +
+                    "written; move that file back by hand once you know which version you want.")
+            }
+            $predecessor = [System.IO.File]::ReadAllBytes($backup)
+            # INTEGERS, so the culture never enters: `-eq` on two `[int]` is numeric, and
+            # #759's detector lists it because it inspects the OPERATOR and not the operand types.
+            # Left as it is, and said so, because a non-zero detector count on this file otherwise
+            # reads as unfinished work and invites someone to "fix" a comparison that is correct.
+            $unchanged = $predecessor.Length -eq $bytes.Length
+            if ($unchanged) {
+                for ($i = 0; $i -lt $bytes.Length; $i++) {
+                    if ($predecessor[$i] -ne $bytes[$i]) { $unchanged = $false; break }
+                }
+            }
+            if (-not $unchanged) {
+                # The rollback needs a backup of its own. Whatever is on disk at THIS instant may
+                # be a second save that arrived while the first was being detected, and a null
+                # backup here would discard it permanently -- the rollback destroying an edit is
+                # the same defect as the write destroying one, one step later. So the current
+                # bytes are captured to a named file, the predecessor goes back, and the refusal
+                # TELLS THE OPERATOR WHERE THEIR VERSION IS. Nothing this program writes is ever
+                # the last copy of anything.
+                $rescued = "$full.$([guid]::NewGuid().ToString('N')).eol-rescued"
+                [System.IO.File]::Replace($backup, $full, $rescued)
+                $already = if ($normalized.Count -gt 0) {
+                    "`n$($normalized.Count) file(s) were already rewritten before this happened, and " +
+                    "they are NOT rolled back:`n  " + ($normalized -join "`n  ")
+                } else {
+                    ''
+                }
+                Fail ("$($file.path) changed on disk between the check and the write, so the bytes this " +
+                    "run vetted are not the bytes it was about to overwrite. The file has been put back " +
+                    "as this run found it, and whatever was on disk at the moment of the rollback was " +
+                    "saved to:`n  $rescued`nCompare the two, keep the one you want, delete the other, " +
+                    "and re-run." + $already)
+            }
+            # NOT SilentlyContinue. A predecessor copy left inside the checkout is untracked content
+            # this program created and then failed to clean up; exiting 0 with a "verified" summary
+            # while it sits there makes the summary false. Antivirus and open handles are exactly
+            # the conditions that cause it, so it is reported by name.
+            try {
+                [System.IO.File]::Delete($backup)
+            } catch {
+                Fail ("$($file.path) was normalised, but its predecessor copy could not be removed: " +
+                    "$($_.Exception.Message)`n  $backup`nDelete it by hand once nothing is holding it. " +
+                    "The file itself is correct; the checkout is not clean.")
+            }
+            $stagingReplaced = $true
+        } finally {
+            if (-not $stagingReplaced) { Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue }
+        }
+    }
     $normalized += $file.path
 }
 
-# Always 'would': this program does not write, and a past tense would say it had.
-$verb = 'would normalise'
+# The tense is the RESULT, not the intent. `would normalise` under -DryRun and `normalised` after a
+# write: a run that says the past tense has already done it, and the verifier below is what earns
+# the claim.
+$verb = if ($DryRun) { 'would normalise' } else { 'normalised' }
 Write-Host ''
 Write-Host "[eol] $verb $($normalized.Count) file(s); $($alreadyLf.Count) already LF; $($notCovered.Count) not covered by the rule." -ForegroundColor Cyan
 foreach ($p in $normalized) { Write-Host "  $verb  $p" }
@@ -1105,4 +1213,55 @@ if ($unclassified.Count -gt 0) {
 # $covered, not $files: an extension-matching file the attribute exempts is not a covered path,
 # and counting it here overstated what this run actually judged.
 Write-Host "[eol] every covered path has a verdict: $($covered.Count) classified, none left over." -ForegroundColor Green
+
+# Files classified as ALREADY LF are verified too, and that is why this runs even when nothing was
+# converted. The classification comes from bytes read earlier; a checkout filter or an editor
+# writing CRLF after that read would have the file skipped on a stale snapshot, and a run that
+# converted nothing else would then skip the verifier entirely and report success twice over.
+$mustReadLf = @($normalized + $alreadyLf)
+if ($DryRun -or $mustReadLf.Count -eq 0) { exit 0 }
+
+# The instrument, run again AFTER the work. `git status` cannot answer this question -- it was
+# clean before and is clean after -- so the check is git's own eol columns, which is also what a
+# reviewer should ask for rather than a clean status (#676).
+#
+# Through `Read-BoundedGit` with the SAME predicate the enumeration used, not through the
+# unbounded `Invoke-Git` the first version of this block reached for: a verifier that re-reads the
+# whole listing unbounded is the one place a bound would be most embarrassing to be missing, since
+# it runs after the program has already written to the operator's checkout (#699).
+$after = Read-BoundedGit -GitArgs $eolArgs -KeepRecord $KeepScriptRecord
+if ($after.overflowed -or $after.exitCode -ne 0) {
+    Write-Host '[eol] HARNESS-BROKE: the verification re-run of git ls-files did not answer, so nothing here observed the result.' -ForegroundColor Magenta
+    exit 2
+}
+$stillCrlf = @()
+$seen = @()
+foreach ($record in @($after.records)) {
+    $tab = $record.IndexOf("`t")
+    if ($tab -lt 0) { continue }
+    $path = $record.Substring($tab + 1)
+    if (Test-InSet $mustReadLf $path) {
+        $seen += $path
+        # `w/none` as well as `w/lf`, the same reading as the index test above: a file with no
+        # line endings has none to be wrong. Requiring `w/lf` made the verifier declare
+        # HARNESS-BROKE over an empty script -- the strictest possible complaint about a file
+        # that is exactly as it should be.
+        if ($record.Substring(0, $tab) -cnotmatch 'w/(lf|none)') { $stillCrlf += $path }
+    }
+}
+# The verifier's own vacuity control. Every check above quantifies over what the re-run RETURNED,
+# and all of them are trivially satisfied by an empty answer -- so a verifier that saw nothing
+# would print "verified" in the loudest possible way. Each normalised path must be OBSERVED, not
+# merely not-contradicted.
+$unobserved = @($mustReadLf | Where-Object { -not (Test-InSet $seen $_) })
+if ($unobserved.Count -gt 0) {
+    Write-Host "[eol] HARNESS-BROKE: these were rewritten and the verification re-run did not report them at all, so nothing confirmed the result:`n  $($unobserved -join "`n  ")" -ForegroundColor Magenta
+    exit 2
+}
+if ($stillCrlf.Count -gt 0) {
+    Write-Host "[eol] HARNESS-BROKE: these must read as LF and git says otherwise -- either a write did not land, or a file classified as already-LF changed underneath this run:`n  $($stillCrlf -join "`n  ")" -ForegroundColor Magenta
+    exit 2
+}
+
+Write-Host '[eol] verified: every rewritten file now reads w/lf.' -ForegroundColor Green
 exit 0

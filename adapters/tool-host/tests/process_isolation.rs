@@ -4,6 +4,8 @@
 //! where the workspace is.
 
 use std::collections::BTreeMap;
+use std::io::Read as _;
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::time::Duration;
 
@@ -11,6 +13,52 @@ use graphhelm_tool_host::process::{CapturedProcess, ProcessLimits, run_in_worksp
 
 fn fake_tool() -> String {
     env!("CARGO_BIN_EXE_fake_tool").to_owned()
+}
+
+/// The grandchild's id, waited on as an EVENT and still bounded (#727).
+///
+/// The fixture used to write the id into a file, which a test can only ask about again later --
+/// so the wait was 400 sleeps of 50 ms and the normal path's duration was set by the poll
+/// interval rather than by the fixture. On a loaded gate the window expired and the cell reported
+/// HARNESS-BROKE: the right colour, and still a run that decided nothing.
+///
+/// A connection is something a test can block on, so the wait returns the instant the id exists.
+/// The bound stays, because #703's whole thesis is that a wait made deterministic by being
+/// unbounded reintroduces the third colour -- `cargo test` has no per-test timeout, so a fixture
+/// that never reports would become a suite that never returns rather than a refusal anyone can
+/// read. What changed is that the bound is now only ever REACHED when nothing was reported at
+/// all; it no longer decides the normal path.
+///
+/// `None` is that refusal, and it is the caller's job to say HARNESS-BROKE about it rather than to
+/// read it as a verdict about a tree kill.
+fn wait_for_reported_grandchild(listener: TcpListener, patience: Duration) -> Option<u32> {
+    let address = listener
+        .local_addr()
+        .expect("the listener knows its own address");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let accepting = std::thread::spawn(move || {
+        let reported = listener.accept().ok().and_then(|(mut stream, _)| {
+            // The reader carries the same bound. Without it a fixture that connects and then never
+            // writes parks this thread forever -- the hang moved rather than removed, one layer
+            // further in and harder to see than the one being fixed.
+            stream.set_read_timeout(Some(patience)).ok()?;
+            let mut text = String::new();
+            stream.read_to_string(&mut text).ok()?;
+            text.trim().parse::<u32>().ok()
+        });
+        let _ = sender.send(reported);
+    });
+
+    let answer = receiver.recv_timeout(patience).ok().flatten();
+    if answer.is_none() {
+        // A thread still parked in `accept` is woken by connecting to it, rather than left to leak
+        // for the life of the process. #726 is the same shape one layer out: an abandoned reader
+        // is not a reaped one, and a test suite that leaks a thread per refusal is a suite whose
+        // later cells run in a machine it damaged itself.
+        let _ = TcpStream::connect(address);
+    }
+    let _ = accepting.join();
+    answer
 }
 
 fn limits() -> ProcessLimits {
@@ -905,8 +953,9 @@ fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
 /// because the fixtures could not express it, not because anyone argued it away.
 ///
 /// The grandchild reports its OWN id, because the host never held a handle to it: that is the whole
-/// difficulty, and it is why the fixture writes the id to a file instead of the test reading it from
-/// anywhere in the host.
+/// difficulty, and it is why the fixture reports the id out of band instead of the test reading it
+/// from anywhere in the host. It reports over a socket rather than into a file so the wait can be
+/// an event rather than a poll -- see `wait_for_reported_grandchild` and #727.
 ///
 /// **The CANCELLATION is the trigger, and the choice is about determinism rather than semantics.**
 /// Both stop conditions go through the same two lines, so the subject is identical either way; the
@@ -919,10 +968,15 @@ fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
 #[test]
 fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
     let workspace = tempfile::tempdir().unwrap();
-    // OUTSIDE the workspace: the host removes the workspace after the call, and evidence that
-    // vanishes with the subject cannot be read afterwards.
-    let evidence = tempfile::tempdir().unwrap();
-    let pid_path = evidence.path().join("grandchild.pid");
+    // Bound BEFORE the fixture is spawned, because its address is what the fixture is told to
+    // report to. It replaces a file in a second temporary directory that existed only so the
+    // evidence would outlive the workspace the host deletes after the call -- an id that never
+    // lands on disk has nothing to outlive.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the readiness listener has an address")
+        .to_string();
 
     // The stop is triggered by READINESS, not by a clock (Codex, on #703). The first version gave
     // the call a two-second deadline and hoped the fixture had spawned its grandchild and written
@@ -935,19 +989,16 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
     // subject changes: only who decides when.
     let signal = graphhelm_tool_host::process::CancelSignal::new();
     let handle = {
-        let (root, pid_path, signal) = (
+        let (root, report_address, signal) = (
             workspace.path().to_path_buf(),
-            pid_path.clone(),
+            report_address.clone(),
             signal.clone(),
         );
         std::thread::spawn(move || {
             run_in_workspace(
                 &root,
                 &fake_tool(),
-                &[
-                    "spawn-grandchild".to_owned(),
-                    pid_path.display().to_string(),
-                ],
+                &["spawn-grandchild".to_owned(), report_address],
                 &BTreeMap::new(),
                 &[],
                 None,
@@ -961,28 +1012,23 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
         })
     };
 
-    // Readiness is the grandchild's id appearing, which is an observable the fixture already
-    // produces. Bounded, and an exhausted bound is HARNESS-BROKE naming the limit rather than a red
-    // about the kill.
-    const READY_POLL: Duration = Duration::from_millis(50);
-    const READY_ATTEMPTS: u32 = 400;
-    let mut reported = None;
+    // Readiness is the grandchild's id ARRIVING, which the fixture now reports over a socket the
+    // test blocks on. Bounded, and an exhausted bound is HARNESS-BROKE naming the limit rather than
+    // a red about the kill.
+    //
+    // The bound is generous BECAUSE it is not the mechanism, exactly as the reap patience below is:
+    // the wait returns the instant the id arrives, so on the passing path its size costs nothing.
+    // Its predecessor was 400 sleeps of 50 ms, and there the size WAS the mechanism -- the normal
+    // path paid at least one interval, and a loaded gate could exhaust the window while the tree
+    // kill was perfectly correct (#727).
+    const READY_PATIENCE: Duration = Duration::from_secs(20);
     // The identity is captured HERE, while the grandchild is certainly alive, and held across the
     // kill. A numeric pid is recyclable: probing it after the kill can report an unrelated
     // replacement as alive, and killing it then terminates a stranger on a busy host (Codex, on
     // #703). On Windows an open handle keeps the kernel object -- and therefore the pid -- from
     // being reused for as long as this binding lives, which is what makes the reap below safe.
-    let mut identity = None;
-    for _ in 0..READY_ATTEMPTS {
-        if let Ok(text) = std::fs::read_to_string(&pid_path)
-            && let Ok(id) = text.trim().parse::<u32>()
-        {
-            identity = Some(graphhelm_process_tree::ProcessIdentity::capture(id));
-            reported = Some(id);
-            break;
-        }
-        std::thread::sleep(READY_POLL);
-    }
+    let reported = wait_for_reported_grandchild(listener, READY_PATIENCE);
+    let identity = reported.map(graphhelm_process_tree::ProcessIdentity::capture);
 
     signal.cancel();
     let captured = handle
@@ -992,9 +1038,8 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
 
     let Some(grandchild) = reported else {
         panic!(
-            "HARNESS-BROKE: the fixture never reported a grandchild id in {:?}; nothing here \
-             measures a tree kill",
-            READY_POLL * READY_ATTEMPTS
+            "HARNESS-BROKE: the fixture never reported a grandchild id in {READY_PATIENCE:?}; \
+             nothing here measures a tree kill"
         );
     };
 
@@ -1091,5 +1136,49 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
          left everything it spawned running, reparented and holding whatever the workspace held. \
          Still alive {:?} after the kill, waited for as an event rather than sampled",
         REAP_PATIENCE
+    );
+}
+
+/// #727: a fixture that never reports is REFUSED inside the bound, rather than hanging.
+///
+/// This is the half of the closing criterion that the tree-kill cell above cannot show, because
+/// there the fixture always reports. Without it, "the wait is bounded" is a claim about a branch
+/// nothing exercises -- and an unreachable bound is a comment, not a guard.
+///
+/// It is driven at the seam rather than through the fixture: the patience is an argument, so this
+/// runs in a quarter of a second instead of buying a twenty-second tax on every gate. The subject
+/// is the same function the cell above calls; only the number differs.
+///
+/// The elapsed-time assertions are deliberately one-sided in strength. The LOWER bound is exact
+/// -- `recv_timeout` cannot return early, so returning before the patience would mean the wait is
+/// not waiting. The UPPER bound is generous to the point of being uninteresting, because its job
+/// is only to tell "bounded" from "hung": `cargo test` has no per-test timeout, so the failure it
+/// exists to catch is a suite that never returns, and a cell that is tight here would fail on a
+/// loaded gate for the scheduler's reasons rather than for this code's.
+#[test]
+fn a_fixture_that_never_reports_is_refused_within_the_bound_rather_than_hanging() {
+    const PATIENCE: Duration = Duration::from_millis(250);
+    // Bound and then never connected to. This is the arrangement: a listener nobody speaks to is
+    // exactly the state a fixture that died before spawning its grandchild leaves behind.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+
+    let started = std::time::Instant::now();
+    let reported = wait_for_reported_grandchild(listener, PATIENCE);
+    let elapsed = started.elapsed();
+
+    assert!(
+        reported.is_none(),
+        "nothing connected, so there is no id to report -- {reported:?} would be an id invented \
+         by the wait itself"
+    );
+    assert!(
+        elapsed >= PATIENCE,
+        "the wait returned in {elapsed:?}, before its own {PATIENCE:?}: a bound that fires early \
+         is not a bound, and the tree-kill cell would refuse while its fixture was still starting"
+    );
+    assert!(
+        elapsed < Duration::from_secs(30),
+        "the wait took {elapsed:?} against a {PATIENCE:?} patience. It is bounded on paper and \
+         not in practice, which is the third colour #703 exists to keep out of the harness"
     );
 }

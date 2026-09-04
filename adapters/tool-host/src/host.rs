@@ -400,8 +400,11 @@ impl ToolHost {
                 _ => Err(HostError::TierViolation),
             },
             IsolationTier::Tier1 => {
-                let workspace =
-                    Tier1Workspace::provision(&self.config.workspace, &self.next_call_id())?;
+                let workspace = Tier1Workspace::provision(
+                    &self.config.workspace,
+                    &self.next_call_id(),
+                    Some(&self.cancel),
+                )?;
                 let result = match call {
                     ToolCall::Repository(RepositoryAction::ApplyPatch { patch }) => {
                         RepositoryTool::apply_patch(

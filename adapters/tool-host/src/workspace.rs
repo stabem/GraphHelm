@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use graphhelm_tool_broker::path::RelativePath;
 
-use crate::process::HostError;
+use crate::process::{CancelHold, CancelSignal, HostError, SupervisedOutcome, run_supervised};
 
 /// Retry backoffs for [`Tier1Workspace::remove`]: a freshly written tree can hold transient
 /// Permission-denied locks on Windows (indexer, antivirus), and a single-shot removal WILL
@@ -100,6 +100,15 @@ impl WorkspaceConfig {
 pub struct Tier1Workspace {
     root: PathBuf,
     project: PathBuf,
+    /// The counted span that makes `cancel` wait for this workspace's TEARDOWN (#617).
+    ///
+    /// Taken in `provision` and released when `remove` returns, so the in-flight count never
+    /// reaches zero between the tool child being reaped and the `git worktree remove` that
+    /// follows it. Counted per child instead, the count hit zero at the reap, `cancel` returned,
+    /// and the removal spawned afterwards -- outside the promise it had just answered.
+    ///
+    /// `None` when the caller passed no signal, which is every direct test caller.
+    hold: Option<CancelHold>,
 }
 
 impl Tier1Workspace {
@@ -114,7 +123,11 @@ impl Tier1Workspace {
     /// # Errors
     /// [`HostError::Prepare`]/[`HostError::Spawn`] on filesystem or git failure; the git
     /// output never travels into the error (redaction-safe by construction).
-    pub fn provision(config: &WorkspaceConfig, call_id: &str) -> Result<Self, HostError> {
+    pub fn provision(
+        config: &WorkspaceConfig,
+        call_id: &str,
+        cancel: Option<&CancelSignal>,
+    ) -> Result<Self, HostError> {
         // Defense in depth: the id flows into a path join, so its shape is pinned even though
         // today's only caller is internal — "../x" must never become a staging escape.
         let id_ok = !call_id.is_empty()
@@ -136,19 +149,37 @@ impl Tier1Workspace {
         let no_hooks = config.staging.join(format!("ghtool-{call_id}-nohooks"));
         std::fs::create_dir_all(&no_hooks).map_err(|source| HostError::Prepare { source })?;
 
+        // The span opens BEFORE the first spawn and closes in `remove`, so a cancellation
+        // arriving at any point between them finds a non-zero count and waits (#617). A signal
+        // that is already raised refuses here rather than provisioning a workspace for a call
+        // that will not run -- the same fail-closed answer `attach` gives, for the same reason.
+        let hold = match cancel {
+            Some(signal) => match signal.hold() {
+                Some(hold) => Some(hold),
+                None => {
+                    let _ = std::fs::remove_dir_all(&no_hooks);
+                    return Err(HostError::Cancelled);
+                }
+            },
+            None => None,
+        };
+
         // The provision git runs under the SAME scrubbed config posture as execution
         // (process.rs): user-level config must not shape the checkout the scrubbed tools
         // will then judge — an autocrlf smudge here makes every text file look dirty to
         // `git apply --index` there ("does not match index"), because the smudged worktree
         // no longer re-hashes to its index entry once the filter is gone. Consistency of
         // config IS the correctness condition, so HOME points at the empty no-hooks scratch.
-        // #180/#609: these provisioning spawns are OUTSIDE `CancelSignal`. The reason is the one
-        // above -- `run_in_workspace` needs an existing root and this is what creates it -- and the
-        // consequence is stated rather than left to be discovered: a cancellation arriving mid
-        // provision does not stop this `git`. It is bounded by its own exit and happens before the
-        // call a caller would cancel, so the window is small; it is not zero, and nothing here
-        // pretends it is.
-        let status = Command::new("git")
+        // #617: this spawn IS inside `CancelSignal` now, and it is the INTERRUPTIBLE one. A
+        // cancellation arriving mid-provision kills the tree: nothing downstream has run, so
+        // there is nothing to leave half-done, and a workspace nobody will use is waste. Removal
+        // takes the opposite policy for the opposite reason -- see `remove`.
+        //
+        // The reason `run_in_workspace` itself cannot be reused here is unchanged and still the
+        // real one: it needs an existing root, and this is what creates it. What #617 changed is
+        // that not-reusing it no longer means not being reachable.
+        let mut command = Command::new("git");
+        command
             .arg("-c")
             .arg(format!("core.hooksPath={}", git_safe(&no_hooks)))
             .arg("-C")
@@ -163,13 +194,22 @@ impl Tier1Workspace {
             .env("USERPROFILE", &no_hooks)
             .env("XDG_CONFIG_HOME", no_hooks.join("xdg"))
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|source| HostError::Spawn { source })?;
+            .stderr(std::process::Stdio::null());
+        let outcome = run_supervised(&mut command, cancel, true)?;
         // The no-hooks directory's whole role ends when `worktree add` returns; removing it
         // here keeps the staging area's contract simple — after a call completes, staging is
         // empty again (the Task 7 broker asserts exactly that).
         let _ = std::fs::remove_dir_all(&no_hooks);
+        let status = match outcome {
+            SupervisedOutcome::Finished(status) => status,
+            SupervisedOutcome::Cancelled => {
+                // The killed `worktree add` may have left a partial directory and a registration
+                // in the project. Neither is this call's to keep, and neither is worth a second
+                // failure path: best-effort, because the outcome is already decided.
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(HostError::Cancelled);
+            }
+        };
         if !status.success() {
             return Err(HostError::Config {
                 rule: "git worktree add refused the provision",
@@ -181,6 +221,7 @@ impl Tier1Workspace {
         Ok(Self {
             root,
             project: config.project.clone(),
+            hold,
         })
     }
 
@@ -208,6 +249,12 @@ impl Tier1Workspace {
     /// then an error — the semantics survive the retries; only transient lock friction is
     /// absorbed.
     ///
+    /// **Not interruptible, and counted (#617).** A cancellation must WAIT for this rather than
+    /// stop it: killing a `git worktree remove` halfway leaves the tree on disk, and this
+    /// module's own contract calls a leaked workspace a leaked write capability. The counted
+    /// span taken in `provision` is released at the end of this function, which is what makes
+    /// `CancelSignal::cancel` wait for the teardown its own cancellation caused.
+    ///
     /// # Errors
     /// [`HostError::Config`] if the tree still exists after every attempt.
     pub fn remove(self) -> Result<(), HostError> {
@@ -228,16 +275,22 @@ impl Tier1Workspace {
                 }
                 std::thread::sleep(*backoff);
             }
-            let _ = Command::new("git")
+            let mut prune = Command::new("git");
+            prune
                 .arg("-C")
                 .arg(git_safe(&self.project))
                 .args(["worktree", "prune"])
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+                .stderr(std::process::Stdio::null());
+            let _ = run_supervised(&mut prune, None, false);
         }
-        if self.root.exists() {
+        let exists = self.root.exists();
+        // Released HERE, explicitly, and after the last filesystem answer this function needs.
+        // Letting it fall out of scope would work today and would break the moment anyone adds a
+        // line below it, because the release is the thing that lets `cancel` return.
+        drop(self.hold);
+        if exists {
             return Err(HostError::Config {
                 rule: "the workspace could not be removed",
             });
@@ -248,7 +301,14 @@ impl Tier1Workspace {
     fn try_git_remove(&self) -> bool {
         // Same scrubbed posture as provision, for the same reason; the redirected HOME may
         // not exist, which git treats as "no user config" — exactly the point.
-        Command::new("git")
+        //
+        // `run_supervised` with `interruptible = false`: this is the half a cancellation must
+        // not cut. It still goes through the supervised path rather than `Command::status` so
+        // the child is in a job object like every other spawn in this crate -- a `git worktree
+        // remove` that wedges is then killable by the same mechanism as anything else, instead
+        // of being the one spawn nothing can reach.
+        let mut command = Command::new("git");
+        command
             .arg("-C")
             .arg(git_safe(&self.project))
             .args(["worktree", "remove", "--force"])
@@ -257,10 +317,11 @@ impl Tier1Workspace {
             .env("HOME", self.root.join(".home"))
             .env("USERPROFILE", self.root.join(".home"))
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+            .stderr(std::process::Stdio::null());
+        matches!(
+            run_supervised(&mut command, None, false),
+            Ok(SupervisedOutcome::Finished(status)) if status.success()
+        )
     }
 }
 

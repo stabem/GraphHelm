@@ -58,7 +58,7 @@ fn provisioned(call_id: &str) -> (tempfile::TempDir, tempfile::TempDir, Tier1Wor
     let (project_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
-    let workspace = Tier1Workspace::provision(&config, call_id).unwrap();
+    let workspace = Tier1Workspace::provision(&config, call_id, None).unwrap();
     (project_dir, staging, workspace)
 }
 

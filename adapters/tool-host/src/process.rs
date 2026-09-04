@@ -168,6 +168,147 @@ impl CancelSignal {
             }
         }
     }
+
+    /// Register a SPAN the cancellation must wait out, rather than a single spawn (#617).
+    ///
+    /// `attach` counts one child from spawn to reap. That is the right unit for
+    /// [`run_in_workspace`] and the wrong one for a workspace, whose teardown runs AFTER the
+    /// tool child has been killed -- which is exactly when a caller that just cancelled is
+    /// waiting on `cancel`. Counted per child, the count reaches zero when the tool child is
+    /// reaped, `cancel` returns, and the `git worktree remove` starts afterwards: the promise
+    /// "a cancelled execution leaves no live child" is kept by the letter and broken by the
+    /// clock.
+    ///
+    /// A hold spans provision-to-removal, so the count never reaches zero in that window and
+    /// `cancel` waits for the teardown it caused. It shares `attach`'s critical section and its
+    /// fail-closed refusal for the same reason: a span that begins after `cancel` read the count
+    /// would be invisible to the caller `cancel` already answered.
+    pub(crate) fn hold(&self) -> Option<CancelHold> {
+        let mut count = self.0.in_flight.lock().ok()?;
+        if self.0.raised.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        *count += 1;
+        drop(count);
+        Some(CancelHold {
+            signal: self.clone(),
+        })
+    }
+}
+
+/// One counted span, released when it is dropped.
+///
+/// Owns a clone of the signal rather than borrowing it, because the span outlives every
+/// individual call frame that could hold a reference: it is created inside `provision` and
+/// released inside `remove`.
+pub(crate) struct CancelHold {
+    signal: CancelSignal,
+}
+
+impl std::fmt::Debug for CancelHold {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CancelHold")
+    }
+}
+
+impl Drop for CancelHold {
+    fn drop(&mut self) {
+        self.signal.leave();
+    }
+}
+
+/// How a supervised spawn ended.
+#[derive(Debug)]
+pub(crate) enum SupervisedOutcome {
+    Finished(std::process::ExitStatus),
+    /// The cancellation reached it and the tree was killed and reaped.
+    Cancelled,
+}
+
+/// Spawn, then poll -- so a blocking `Command::status` is not the only thing between a
+/// cancellation and the process it is meant to reach (#617).
+///
+/// `Command::status` blocks, which is why `workspace.rs` had no place to notice a signal. The
+/// shape here is [`run_in_workspace`]'s, reduced to what a status-only spawn needs: the same
+/// suspended-start-then-job-object preparation, the same 50 ms poll, the same kill-as-a-TREE.
+///
+/// **`interruptible` is a policy the caller owns, and the two callers want opposite answers.**
+/// Provisioning may be killed: it runs before the tool does, and a workspace nobody will use is
+/// waste. Removal may NOT: killing a `git worktree remove` halfway leaves the tree on disk, and
+/// this module's own contract calls a leaked workspace a leaked write capability. So removal is
+/// COUNTED but never cut -- `cancel` waits for it instead of stopping it, which is the whole
+/// difference between the two words.
+pub(crate) fn run_supervised(
+    command: &mut std::process::Command,
+    cancel: Option<&CancelSignal>,
+    interruptible: bool,
+) -> Result<SupervisedOutcome, HostError> {
+    graphhelm_process_tree::configure(command);
+    let mut child = command
+        .spawn()
+        .map_err(|source| HostError::Spawn { source })?;
+
+    // Same refusal as `run_in_workspace`: on Windows this call is also what RESUMES the suspended
+    // child, so a failure here leaves a child that cannot be killed as a tree. Refuse rather than
+    // proceed with a weaker guarantee, and reap on the way out.
+    let mut group = match graphhelm_process_tree::create(&child) {
+        Ok(group) => group,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(HostError::ProcessGroup {
+                rule: match error {
+                    graphhelm_process_tree::ProcessTreeError::JobSetup => "job_setup",
+                    graphhelm_process_tree::ProcessTreeError::ProcessResume => "process_resume",
+                },
+            });
+        }
+    };
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                graphhelm_process_tree::close(&mut group);
+                return Ok(SupervisedOutcome::Finished(status));
+            }
+            Ok(None) => {
+                if interruptible && cancel.is_some_and(CancelSignal::is_cancelled) {
+                    graphhelm_process_tree::terminate(
+                        child.id(),
+                        graphhelm_process_tree::for_thread(group),
+                    );
+                    let _ = child.wait();
+                    return Ok(SupervisedOutcome::Cancelled);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(source) => {
+                // KILLED AND REAPED, not merely released. `close` is not a kill on both
+                // platforms: on Windows the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so
+                // closing it does end the members, but on unix `close` is a NO-OP -- so the first
+                // version of this arm returned an error having left the child running, closed the
+                // only handle `terminate` could still have reached it through, and left nothing
+                // able to reap it. Neither platform got the `wait`, so unix also kept a zombie.
+                //
+                // The two sibling arms both clean up -- the create-failure arm twelve lines up
+                // kills and waits, and `run_in_workspace`'s equivalent falls through to the common
+                // reap instead of returning. This was the only exit that returned with a live
+                // child, and it looked correct because `close` appears in the success arm three
+                // lines away, where the child has already exited. (Found by a peer reviewing
+                // PR #779.)
+                //
+                // Reachability of a `try_wait` error is NOT established, and this is not fixed on
+                // the strength of it: it is fixed because the correct version is adjacent and the
+                // next reader would take the wrong one for coverage.
+                graphhelm_process_tree::terminate(
+                    child.id(),
+                    graphhelm_process_tree::for_thread(group),
+                );
+                let _ = child.wait();
+                return Err(HostError::Spawn { source });
+            }
+        }
+    }
 }
 
 impl Clone for CancelSignal {
@@ -469,6 +610,21 @@ struct DrainedReaders {
 /// `release` is a callback rather than the group itself so this function can be exercised with
 /// hand-driven channels. The escape it exists to handle cannot be staged on a platform whose job
 /// object has no breakaway (#717), so the seam is how the mechanism gets a red at all.
+///
+/// **DECLARED GAP, measured rather than reasoned: the TREE half of the kill above has no cell at
+/// this site.** Downgrading `terminate(child.id(), for_thread(group))` to `child.kill()` -- #618's
+/// original defect, at a new site -- leaves all sixteen `graphhelm-tool-host` suites green. The
+/// reason is the arrangement, not the assertions: neither caller here produces a descendant.
+/// Provisioning runs `git worktree add` with `core.hooksPath` pointed at an empty directory
+/// precisely so it cannot, and removal runs `git worktree remove`. So the property is real, and
+/// nothing at THIS site can currently observe it.
+///
+/// Where it IS observed: `run_in_workspace`, through
+/// `tests/process_isolation.rs::the_stop_kills_the_whole_tree_and_not_only_the_direct_child`,
+/// whose fixture spawns a grandchild on purpose. Both functions now perform the same three calls,
+/// so a regression in the crate's tree-kill discipline still reddens there -- but a regression in
+/// THIS copy of it would not. (Predicted by a peer reviewing PR #779; the prediction was run and
+/// held.)
 fn drain_readers(
     stdout: (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>),
     stderr: (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>),
@@ -1094,7 +1250,7 @@ fn elision_marker(elided: u64) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DrainedReaders, MINIMUM_DRAIN, drain_deadline, drain_readers};
+    use super::{CancelSignal, DrainedReaders, MINIMUM_DRAIN, drain_deadline, drain_readers};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::{Receiver, Sender, channel};
@@ -1146,6 +1302,31 @@ mod tests {
 
     fn far_deadline() -> Instant {
         Instant::now() + Duration::from_secs(120)
+    }
+
+    /// A raised signal refuses a HOLD, and this cell exists because the integration one does not
+    /// separate the two ways a provision can end in `Cancelled`.
+    ///
+    /// Measured, not supposed: deleting the raised-flag check from `hold` leaves
+    /// `a_raised_signal_refuses_a_new_provision` GREEN. With the check gone the span is granted,
+    /// `provision` goes on to spawn, and `run_supervised` -- interruptible, signal already raised
+    /// -- kills it on the first poll and returns `Cancelled` anyway. Same error, different
+    /// mechanism, and an assertion on the error cannot tell them apart. So the refusal gets a cell
+    /// whose subject is `hold` itself.
+    #[test]
+    fn a_raised_signal_refuses_a_hold_and_an_unraised_one_grants_it() {
+        let signal = CancelSignal::new();
+        assert!(
+            signal.hold().is_some(),
+            "CONTROL: an unraised signal must grant the span, or the refusal below is a function that never grants anything"
+        );
+
+        signal.cancel();
+
+        assert!(
+            signal.hold().is_none(),
+            "a span begun after the cancellation read the count is invisible to the caller cancel already answered"
+        );
     }
 
     /// The normal path: both readers answer, nothing is forced, the group is not released here.

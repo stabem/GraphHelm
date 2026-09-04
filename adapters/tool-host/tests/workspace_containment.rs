@@ -39,7 +39,7 @@ fn provision_creates_a_detached_worktree_and_remove_cleans_it_up() {
     let (_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
-    let workspace = Tier1Workspace::provision(&config, "call-1").unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
     assert!(
         workspace.root().join("src/lib.rs").is_file(),
         "the worktree carries the project"
@@ -111,7 +111,7 @@ fn provisioning_never_runs_repository_hooks() {
     .unwrap();
     let staging = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
-    let workspace = Tier1Workspace::provision(&config, "call-1").unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
     assert!(
         !marker.exists(),
         "the repository's post-checkout hook ran during provisioning"
@@ -125,7 +125,7 @@ fn resolve_contains_paths_and_refuses_a_junction_escape() {
     let staging = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
-    let workspace = Tier1Workspace::provision(&config, "call-1").unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
 
     let fine = workspace.resolve(&rel("src/lib.rs")).unwrap();
     assert!(fine.starts_with(workspace.root()));
@@ -161,7 +161,7 @@ fn a_malformed_call_id_is_refused_before_any_filesystem_action() {
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
     for bad in ["", "../x", "UPPER", "a b", "x/y", &"a".repeat(65)] {
         assert!(
-            Tier1Workspace::provision(&config, bad).is_err(),
+            Tier1Workspace::provision(&config, bad, None).is_err(),
             "{bad:?} must be refused"
         );
     }
@@ -179,7 +179,7 @@ fn provision_leaves_nothing_in_staging_but_the_workspace_itself() {
     let (_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
-    let workspace = Tier1Workspace::provision(&config, "call-1").unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
     let entries: Vec<_> = std::fs::read_dir(staging.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -200,7 +200,7 @@ fn resolve_accepts_a_not_yet_existing_file_inside_the_workspace() {
     let (_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
-    let workspace = Tier1Workspace::provision(&config, "call-1").unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
     let target = workspace.resolve(&rel("src/new_file.rs")).unwrap();
     assert!(target.starts_with(workspace.root()));
     assert!(!target.exists());

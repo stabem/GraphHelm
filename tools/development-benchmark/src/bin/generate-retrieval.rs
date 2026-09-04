@@ -166,7 +166,7 @@ fn run() -> Result<(), String> {
     let workspace_staging = arguments.staging.join("workspaces");
     let config = WorkspaceConfig::validated(&scratch_project, &workspace_staging, &[])
         .map_err(|error| format!("workspace config: {error}"))?;
-    let workspace = Tier1Workspace::provision(&config, "generate-retrieval")
+    let workspace = Tier1Workspace::provision(&config, "generate-retrieval", None)
         .map_err(|error| format!("workspace provision: {error}"))?;
     let pinned = pin_snapshot(&arguments.store, workspace.root())
         .map_err(|error| format!("pin_snapshot: {error}"))?;

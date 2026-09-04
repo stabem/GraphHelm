@@ -1142,3 +1142,163 @@ fn a_const_discriminator_proves_nothing_when_an_instance_could_omit_it() {
         );
     }
 }
+
+/// A document whose top-level `oneOf` branches carry their discriminator two `properties` hops
+/// down (`kind.type`) and declare no `type`/`required` of their own -- `event-envelope`'s own
+/// shape (D-049), reproduced here at fixture scale. `branches` becomes the document's own root
+/// `oneOf`; the rest (`type`, `required: ["kind"]`, `properties.kind` `$ref`-ing a SEPARATE
+/// `$defs/tag` union whose two branches both require `type`) stays identical between baseline and
+/// candidate in every test below, so the only diff `compare_value` walks is the `oneOf` keyword
+/// itself.
+fn nested_discriminator_document(branches: Value) -> Value {
+    json!({
+        "type": "object",
+        "required": ["kind"],
+        "properties": {"kind": {"$ref": "#/$defs/tag"}},
+        "$defs": {
+            "tag": {
+                "oneOf": [
+                    {"type": "object", "required": ["type"], "properties": {"type": {"const": "a"}}},
+                    {"type": "object", "required": ["type"], "properties": {"type": {"const": "b"}}},
+                ],
+            },
+        },
+        "oneOf": branches,
+    })
+}
+
+fn nested_kind_branch(tag: &str) -> Value {
+    json!({"properties": {"kind": {"properties": {"type": {"const": tag}}}}})
+}
+
+/// D-049's reopening, cell 1: two nested discriminators that genuinely cannot overlap must PROVE.
+///
+/// Neither branch declares `type` or `required` locally -- exactly the shape the flat
+/// `discriminators_are_disjoint` proof is silent on, and exactly why this union sat pinned as
+/// unprovable class B in `tests/union_provability.rs` (D-049) until this proof existed. Without the
+/// fix this asserts `CompatibilityClass::Breaking` ("oneOf overlap unprovable"); the fix must turn
+/// it `Compatible`.
+#[test]
+fn a_nested_discriminator_addition_at_the_document_root_is_compatible_because_the_tags_cannot_overlap()
+ {
+    let baseline = nested_discriminator_document(json!([nested_kind_branch("a")]));
+    let candidate =
+        nested_discriminator_document(json!([nested_kind_branch("a"), nested_kind_branch("c")]));
+
+    let report = compare(baseline, candidate);
+    assert_change(
+        &report,
+        CompatibilityClass::Compatible,
+        SemverImpact::Minor,
+        "GHC103_COMPATIBLE_CHANGE",
+        "/oneOf",
+    );
+    assert!(
+        !report
+            .changes
+            .iter()
+            .any(|change| change.candidate_summary.contains("unprovable")),
+        "a genuinely disjoint nested-discriminator addition still read as unprovable: {:?}",
+        report.changes
+    );
+}
+
+/// D-049's reopening, cell 2: two nested discriminators sharing the SAME tag must stay
+/// unprovable and BREAKING -- the cell that stops a rubber-stamp implementation.
+///
+/// A prover that only ran cell 1 above could be `true` unconditionally and still pass it. This new
+/// candidate branch shares its `kind.type` const with the baseline's OWN existing branch -- a real
+/// overlap, not a duplicate: it is NOT the same branch (a sibling property differs, so its
+/// fingerprint does not match the baseline branch and the trivial "already exists" path is not
+/// what is under test here), it is a second, distinct way to reach `kind.type == "a"`. Nothing sound
+/// can certify that disjoint from the original `"a"` branch, and this must stay `Breaking` before
+/// and after the nested-discriminator proof lands.
+#[test]
+fn a_nested_discriminator_sharing_an_existing_tag_stays_unprovable_and_breaking() {
+    let mut overlapping_branch = nested_kind_branch("a");
+    overlapping_branch
+        .as_object_mut()
+        .unwrap()
+        .insert("description".into(), json!("a second way to tag \"a\""));
+
+    let baseline = nested_discriminator_document(json!([nested_kind_branch("a")]));
+    let candidate =
+        nested_discriminator_document(json!([nested_kind_branch("a"), overlapping_branch]));
+
+    let report = compare(baseline, candidate);
+    assert_change(
+        &report,
+        CompatibilityClass::Breaking,
+        SemverImpact::Major,
+        "GHC003_BREAKING_CHANGE",
+        "/oneOf",
+    );
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.pointer == "/oneOf"
+                && change.candidate_summary.contains("unprovable")),
+        "a genuinely overlapping nested-discriminator addition was certified disjoint: {:?}",
+        report.changes
+    );
+}
+
+/// D-049's reopening, cell 3 (K's review of #758): the referenced inner union must ITSELF be
+/// constrained to objects, or the propagated `required` proves nothing.
+///
+/// `properties.<name>.const` and `required` are no-ops on a non-object instance -- the same #627
+/// argument `branch_is_object_only` exists for at the flat level. `nested_discriminator_document`'s
+/// `$defs/tag` always declares `"type": "object"` on every branch, which is what makes cells 1 and 2
+/// above sound; this fixture drops that from BOTH `$defs/tag` itself and every one of its branches,
+/// keeping only `required: ["type"]`. A `kind` value that is a bare STRING then trivially clears
+/// `required` (a no-op on a non-object) and matches every branch of `$defs/tag` regardless of its
+/// `type` const, so `kind.type.const` constrains nothing and the two top-level branches below --
+/// otherwise identical to cell 1's genuinely-disjoint pair -- must NOT be certified disjoint. Before
+/// the object-only check in `document_required_nested_pairs`, this fixture went green on the
+/// strength of `$defs/tag`'s branches merely REQUIRING `type`, exactly the gap K's review named:
+/// today's real `$defs/eventKind` happens to have every branch declare `"type": "object"`, but
+/// nothing here required it, so a hypothetical branch that didn't would have reopened #627's hole
+/// with nothing to catch it. This cell is that hypothetical branch, built by hand.
+#[test]
+fn a_nested_discriminator_addition_is_not_certified_when_the_inner_union_admits_non_objects() {
+    let untyped_inner_document = |branches: Value| {
+        json!({
+            "type": "object",
+            "required": ["kind"],
+            "properties": {"kind": {"$ref": "#/$defs/tag"}},
+            "$defs": {
+                "tag": {
+                    "oneOf": [
+                        {"required": ["type"], "properties": {"type": {"const": "a"}}},
+                        {"required": ["type"], "properties": {"type": {"const": "b"}}},
+                    ],
+                },
+            },
+            "oneOf": branches,
+        })
+    };
+
+    let baseline = untyped_inner_document(json!([nested_kind_branch("a")]));
+    let candidate =
+        untyped_inner_document(json!([nested_kind_branch("a"), nested_kind_branch("c")]));
+
+    let report = compare(baseline, candidate);
+    assert_change(
+        &report,
+        CompatibilityClass::Breaking,
+        SemverImpact::Major,
+        "GHC003_BREAKING_CHANGE",
+        "/oneOf",
+    );
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.pointer == "/oneOf"
+                && change.candidate_summary.contains("unprovable")),
+        "a nested-discriminator addition was certified disjoint through an inner union that does \
+         not itself constrain its instances to objects: {:?}",
+        report.changes
+    );
+}

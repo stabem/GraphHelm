@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     CatalogResources, MAX_JSON_DEPTH, canonical_json,
-    reference::{resolve_reference, resolved_schema_references},
+    reference::{referenced_value, resolve_reference, resolved_schema_references},
 };
 
 const BREAKING_CODE: &str = "GHC003_BREAKING_CHANGE";
@@ -911,6 +911,7 @@ impl Comparison<'_> {
                     baseline,
                     candidate,
                     &left,
+                    pointer,
                 )
             {
                 self.breaking(
@@ -1082,6 +1083,7 @@ fn composition_set(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn one_of_additions_are_disjoint(
     baseline_resources: &CatalogResources,
     candidate_resources: &CatalogResources,
@@ -1089,6 +1091,7 @@ fn one_of_additions_are_disjoint(
     baseline: Option<&Value>,
     candidate: Option<&Value>,
     baseline_fingerprints: &BTreeSet<Vec<u8>>,
+    pointer: &str,
 ) -> bool {
     let Some(baseline_branches) = baseline.and_then(Value::as_array) else {
         return false;
@@ -1096,6 +1099,14 @@ fn one_of_additions_are_disjoint(
     let Some(candidate_branches) = candidate.and_then(Value::as_array) else {
         return false;
     };
+    // D-049's fourth widening, gated on the fourth widening's own precondition: a propagated
+    // constraint is sound only when it comes from the schema object IMMEDIATELY ENCLOSING this
+    // exact `oneOf`, in both baseline and candidate. `pointer == "/oneOf"` is that check -- it is
+    // true only for the document's OWN root combinator, the one JSON Schema's implicit AND binds
+    // to that document's own sibling `type` and `required` keywords. Anywhere else (nested under a
+    // `$defs` entry, inside `allOf`, ...) the enclosing object is not the document root and this
+    // argument does not hold, so `nested_discriminators_are_disjoint` is never reached from there.
+    let top_level = pointer == "/oneOf";
     candidate_branches.iter().all(|candidate_branch| {
         let Some(fingerprint) =
             normalized_schema_bytes(candidate_resources, owner, candidate_branch, 0)
@@ -1105,9 +1116,183 @@ fn one_of_additions_are_disjoint(
         baseline_fingerprints.contains(&fingerprint)
             || baseline_branches.iter().all(|baseline_branch| {
                 normalized_schema_bytes(baseline_resources, owner, baseline_branch, 0).is_some()
-                    && branches_are_provably_disjoint(baseline_branch, candidate_branch)
+                    && (branches_are_provably_disjoint(baseline_branch, candidate_branch)
+                        || (top_level
+                            && nested_discriminators_are_disjoint(
+                                baseline_resources,
+                                candidate_resources,
+                                owner,
+                                baseline_branch,
+                                candidate_branch,
+                            )))
             })
     })
+}
+
+/// D-049's reopening: `discriminators_are_disjoint` extended one `$ref` hop for a discriminator an
+/// ENCLOSING document makes required rather than each branch declaring it locally.
+///
+/// `event-envelope`'s top-level union is the case this exists for: 44 branches with no `type` and
+/// no `required` of their own, whose disjointness is really established by a conjunction of three
+/// separate places -- the document's own sibling `"type": "object"`, its sibling `required` naming
+/// `kind`, and `kind`'s `$ref` to a SEPARATE, already well-formed `oneOf` (`$defs/eventKind`) whose
+/// every branch requires `type`. JSON Schema's implicit AND binds a `oneOf` to its own enclosing
+/// schema's other keywords even though no branch repeats them, so treating `kind` as required (from
+/// the document's own `required` array) and `kind.type` as required (because EVERY branch of the
+/// union `kind` resolves to agrees on it) is sound without editing any of the 44 branches.
+///
+/// Kept as a SEPARATE function from `discriminators_are_disjoint` rather than folded into it,
+/// because the precondition is different in kind, not degree: the flat proof reads two branches in
+/// isolation, this one reads the document each branch sits inside, and mixing the two would hide
+/// which proof actually fired when one of them is later found unsound.
+fn nested_discriminators_are_disjoint(
+    baseline_resources: &CatalogResources,
+    candidate_resources: &CatalogResources,
+    owner: &str,
+    left: &Value,
+    right: &Value,
+) -> bool {
+    let Some(left_pairs) = document_required_nested_pairs(baseline_resources, owner) else {
+        return false;
+    };
+    let Some(right_pairs) = document_required_nested_pairs(candidate_resources, owner) else {
+        return false;
+    };
+    // Both sides, not either: D-049 names this explicitly ("in both baseline and candidate"). A
+    // constraint the CANDIDATE document dropped (say, a future PR un-requiring `kind`) must not
+    // keep certifying disjointness on the strength of what the baseline alone still says.
+    left_pairs.intersection(&right_pairs).any(|(outer, inner)| {
+        let path = [outer.as_str(), inner.as_str()];
+        match (const_at_path(left, &path), const_at_path(right, &path)) {
+            // Same restriction as `discriminators_are_disjoint`: STRING consts only, since JSON
+            // Schema's `const` compares by value (`1` == `1.0`) where `serde_json::Number`'s
+            // `PartialEq` does not agree, and a tagged union tags with strings regardless.
+            (Some(Value::String(left_tag)), Some(Value::String(right_tag))) => {
+                left_tag != right_tag
+            }
+            _ => false,
+        }
+    })
+}
+
+/// `(outer, inner)` name pairs a document's own shape makes globally required for any `oneOf`
+/// branch enumerated at ITS root -- found structurally, not by name, so this reads any document
+/// with the same shape rather than one hardcoded to `kind`/`type`.
+///
+/// `None` when the document is not object-only at its root: that is the other half of the
+/// implicit-AND argument this proof rests on. A non-object instance matches no branch's
+/// `properties`/`required` at all, object or not, so the propagated `type` must hold before any
+/// propagated `required` name means anything.
+///
+/// A pair `(outer, inner)` qualifies when `outer` is in the document's own top-level `required`
+/// array (so every instance of the document carries it), `properties.<outer>` is a `$ref` to some
+/// OTHER schema, that schema CONSTRAINS ITS OWN INSTANCES TO OBJECTS, and it is itself a `oneOf`
+/// whose branches EVERY ONE locally requires `inner`. The requiredness half is
+/// `discriminators_are_disjoint`'s own soundness argument applied one level up: if every branch of
+/// a union requires a name, that name is required by any instance satisfying the union, independent
+/// of which branch actually matched.
+///
+/// **The object-only half is a SEPARATE link this proof needs and is not a restatement of the
+/// caller's own `top_level` check.** `top_level` establishes that the OUTER document -- `kind`'s
+/// container -- accepts only objects; it says nothing about what `kind`'s OWN value may be.
+/// `properties.<name>.const` and `required` are no-ops on a non-object instance (the same #627
+/// argument `branch_is_object_only` exists for at the flat level), so unless the value at `kind` is
+/// itself constrained to `object`, an instance where `kind` is a bare string satisfies every branch
+/// of `eventKind` whose `required: ["type"]` it trivially clears, and `kind.type.const` constrains
+/// nothing. Accepted when the referenced schema itself declares `"type": "object"`, OR when every
+/// one of its `oneOf` branches does -- the same closure `common` is already built from, so checking
+/// it costs one more pass over branches already in hand, not a new one (K's review of #758, finding
+/// the flat proof's own `object_only` was never propagated to this reference hop: today's 44
+/// `eventKind` branches all happen to declare `"type": "object"`, but `eventKind` itself does not
+/// REQUIRE it, so a 45th branch omitting it would reopen #627's hole here with nothing to catch it
+/// -- `branches_are_provably_disjoint`'s own `object_only` check is bypassed on this path, since
+/// `nested_discriminators_are_disjoint` is an ALTERNATIVE proof, not an addition to it).
+fn document_required_nested_pairs(
+    resources: &CatalogResources,
+    owner: &str,
+) -> Option<BTreeSet<(String, String)>> {
+    let document = resources.schemas.get(owner)?;
+    if document.get("type").and_then(Value::as_str) != Some("object") {
+        return None;
+    }
+    let required = document.get("required").and_then(Value::as_array)?;
+    let properties = document.get("properties").and_then(Value::as_object)?;
+    let mut pairs = BTreeSet::new();
+    for outer in required.iter().filter_map(Value::as_str) {
+        let Some(reference) = properties
+            .get(outer)
+            .and_then(|property_schema| property_schema.get("$ref"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Ok(resolved) = resolve_reference(resources, owner, reference) else {
+            continue;
+        };
+        let Ok((_, target)) = referenced_value(resources, &resolved) else {
+            continue;
+        };
+        let Some(branches) = target.get("oneOf").and_then(Value::as_array) else {
+            continue;
+        };
+        if branches.is_empty() {
+            continue;
+        }
+        // LINK 2 (K's review of #758): the referenced union must itself be constrained to
+        // objects, either at its own root or unanimously by its branches, or `kind.type.const`
+        // constrains nothing on a `kind` value that is not an object at all.
+        //
+        // ONE READER FOR BOTH HALVES. The first version asked `target.get("type").as_str() ==
+        // Some("object")` here and `branch_is_object_only` there -- two answers to one question,
+        // and only the second complete: `as_str` returns None for the ARRAY spelling
+        // `"type": ["object"]`, which is valid JSON Schema and exactly equivalent, while
+        // `branch_is_object_only` goes through `type_value_set` and handles both. A target is a
+        // schema object like any branch, so it reads with the same function and the duplication
+        // goes with it. The gap was latent -- no schema under `schemas/` uses the array form
+        // today, and its direction was a false REFUSAL rather than a false certification -- but it
+        // was the shape this change exists to correct, one line above the correction.
+        // (Found by an adversarial re-read that asked what the FILE already knows how to do that
+        // the CHANGE does not, rather than whether each stated link is sound.)
+        //
+        // DECLARED LIMIT, inherited rather than introduced: `allOf: [{"type": "object"}]` and a
+        // `$ref` resolving to an object constraint are missed here too, because
+        // `branch_is_object_only` misses them. That is a property of this file's type reader, and
+        // it fails toward refusing a certification rather than granting one.
+        let target_object_only =
+            branch_is_object_only(target) || branches.iter().all(branch_is_object_only);
+        if !target_object_only {
+            continue;
+        }
+        let mut common: Option<BTreeSet<&str>> = None;
+        for branch in branches {
+            let names = required_property_names(branch);
+            common = Some(match common {
+                None => names,
+                Some(existing) => existing.intersection(&names).copied().collect(),
+            });
+        }
+        pairs.extend(
+            common
+                .into_iter()
+                .flatten()
+                .map(|inner| (outer.to_owned(), inner.to_owned())),
+        );
+    }
+    Some(pairs)
+}
+
+/// The constant a branch pins at a nested `properties` path, if it pins one at all -- the general
+/// reader `const_of_property` is the depth-1 case of. Walks `properties` keyword pairs down the
+/// given path (`["kind", "type"]` reads `branch.properties.kind.properties.type.const`), which is
+/// what a discriminator two `properties` hops deep looks like once resolved through no `$ref` at
+/// all: the top-level `oneOf` branches in `event-envelope` write `kind`'s nested shape inline.
+fn const_at_path<'a>(branch: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let (first, rest) = path.split_first()?;
+    let mut current = branch.get("properties")?.as_object()?.get(*first)?;
+    for name in rest {
+        current = current.get("properties")?.as_object()?.get(*name)?;
+    }
+    current.get("const")
 }
 
 /// Nothing can satisfy both branches, by either proof this module can carry out.
@@ -1180,10 +1365,7 @@ fn discriminators_are_disjoint(left: &Value, right: &Value) -> bool {
     //
     // Exactly `{object}`, not "contains object": a branch typed `["object", "string"]` overlaps its
     // sibling on every string for the same reason.
-    let object_only = |branch: &Value| {
-        branch_type_set(branch).is_some_and(|types| types.len() == 1 && types.contains("object"))
-    };
-    if !object_only(left) || !object_only(right) {
+    if !branch_is_object_only(left) || !branch_is_object_only(right) {
         return false;
     }
     let shared_requirements: BTreeSet<&str> = required_property_names(left)
@@ -1227,6 +1409,15 @@ fn const_of_property<'a>(
         .as_object()?
         .get(name)?
         .get("const")
+}
+
+/// Exactly `{"object"}`, not "contains object" -- shared by `discriminators_are_disjoint` (each
+/// branch, locally) and `document_required_nested_pairs` (the inner union's branches, one `$ref`
+/// hop out). A branch typed `["object", "string"]`, or untyped, says nothing about a non-object
+/// instance, so `required`/`properties` are no-ops for it and it overlaps its sibling on every
+/// value outside `object` no matter how distinct their tags read (Codex P1 on PR #627).
+fn branch_is_object_only(branch: &Value) -> bool {
+    branch_type_set(branch).is_some_and(|types| types.len() == 1 && types.contains("object"))
 }
 
 fn branch_types_are_disjoint(left: &Value, right: &Value) -> bool {

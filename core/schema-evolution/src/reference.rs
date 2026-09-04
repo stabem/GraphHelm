@@ -274,7 +274,10 @@ fn normalize_url_path(directory: &str, relative: &str) -> Result<String, ()> {
     Ok(format!("{origin}://{}", segments.join("/")))
 }
 
-fn referenced_value<'a>(
+/// Resolves an already-ABSOLUTE reference (as `resolve_reference` returns) to its owning schema
+/// name and the `Value` it points at. `pub(crate)` because the discriminator-disjointness proof in
+/// `compatibility.rs` needs the actual target document, not just its resolved reference string.
+pub(crate) fn referenced_value<'a>(
     resources: &'a CatalogResources,
     absolute: &str,
 ) -> Result<(&'a str, &'a Value), ()> {

@@ -135,18 +135,37 @@ export interface GraphTopology {
 /** Who a mutation is recorded as. `owner` is the person at the keyboard; `agent` is the WebMCP
  * adapter acting on the agent's behalf. The two are never conflated - a click by the operator
  * that an agent asked for is still the AGENT's action, and the log must say so. */
+/** An actor this Studio SENDS: the two identities it can act as. Narrow on purpose - a request
+ * never claims to be the runtime or a human it is not. */
 export interface Actor {
   id: string;
   type: "owner" | "agent";
 }
 
+/** The wire's actor vocabulary - `$defs.actor.properties.type.enum` in
+ * `schemas/event-envelope.schema.json`. Restated as a type here because a JSON import yields
+ * `string[]`, not literals; `client.ts` pins this union against the schema's enum at runtime,
+ * so the two cannot drift silently (PR #662 review, client.ts:684). */
+export type WireActorType = "owner" | "human" | "agent" | "system";
+
+/** An actor as the LEDGER recorded it. Evidence reports what the record holds, and the record
+ * may name the runtime (an immediate pause is appended by the driver) or a human - so this is
+ * the wire's whole vocabulary, never the narrow request type. */
+export interface RecordedActor {
+  id: string;
+  type: WireActorType;
+}
+
 /** What a write tool returns: enough to decide whether the journey actually happened, without
  * the caller having to re-read anything. */
 export interface MutationEvidence {
-  action: "start" | "pause" | "approve" | "resume" | "signal";
+  action: "start" | "pause" | "approve" | "resume" | "signal" | "cancel" | "sweep" | "amendBudget";
   executionId: string;
   node: string | null;
-  actor: Actor;
+  /** The actor as RECORDED (or, on a refusal, as sent): the wire's whole vocabulary, because the
+   * ledger may attribute an outcome to the runtime or a human - never narrowed to the request
+   * type by a cast (PR #662 review). */
+  actor: RecordedActor;
   /** The idempotency key this logical action used. Safe to publish: it is a caller-minted
    * correlation id, never a credential, and it is what makes a retry auditable. */
   idempotencyKey: string;

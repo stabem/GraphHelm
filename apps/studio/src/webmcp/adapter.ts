@@ -1,5 +1,6 @@
 /**
- * The WebMCP adapter: ten site tools over the SAME `RuntimeClient` the page's own buttons use.
+ * The WebMCP adapter: thirteen site tools over the SAME `RuntimeClient` the page's own buttons
+ * use.
  *
  * WHAT THIS FILE IS NOT. It is not a second operational path. There is no request built here, no
  * actor chosen here, no idempotency key minted here, no diagnostic interpreted here - every one
@@ -24,18 +25,24 @@
  * the sealed words - the same three moves the human interface makes with its composer, its
  * message box and its thread.
  *
- * `cancel` IS DELIBERATELY ABSENT. It is the one destructive verb on this API, and the operator
- * journey this Studio delivers - see which run needs you, hold it, unblock it, let it run - does
- * not need it. Exposing a destructive tool "for completeness" is how a tool surface acquires a
- * verb nobody asked an agent to be able to reach.
+ * `cancel` WAS DELIBERATELY ABSENT from the first slice, and its guard test demanded an argument
+ * before it could appear. The argument (Phase 2, #105): the operator now has action buttons for
+ * every execution verb the API exposes, cancel behind an explicit confirmation - and parity is
+ * the phase's contract, so an agent reaches the same verb through a tool whose first word is
+ * DESTRUCTIVE and whose call still passes the host's own confirmation prompt. A verb the page
+ * offers and the tool surface hides would not be safety, only asymmetry.
  */
 
 import { MAX_OBJECTIVE_LENGTH, draftGraph, newExecutionId } from "../graph/draft";
 import {
   MAX_MESSAGE_LENGTH,
+  MAX_NODE_TIMEOUT_SECONDS,
+  MIN_NODE_TIMEOUT_SECONDS,
   OPERATOR_ACTOR,
   RuntimeClient,
+  TIMESTAMP_PATTERN,
   WEBMCP_ACTOR,
+  isPersistedTimestamp,
   newIdempotencyKey,
   RuntimeError,
   DisconnectedError,
@@ -134,6 +141,64 @@ const EXECUTION_ID_FIELD = {
   maxLength: 128,
   description: "The execution stream id, exactly as graphhelm_list_executions reports it.",
 };
+
+/**
+ * THE HEAD THE AGENT OBSERVED rides as `If-Match` (L's follow-up on #662, App.tsx:1615 - the
+ * same rule the dock applies to the head it rendered). The adapter renders nothing, so it cannot
+ * know what the agent saw; the agent says so, from the `headSequence` of the status or events it
+ * last read. Present -> sent, and the Runtime refuses the verb if the run moved since. Absent ->
+ * the client's fallback (its own pre-read). A present value of the wrong shape is REFUSED, never
+ * dropped - dropping it would turn "act on what I saw" into "act on whatever is there now".
+ * Two write tools are outside this rule on purpose: start_task (no stream exists yet) and
+ * send_message (a message answers by replyTo, not by head).
+ */
+const IF_MATCH_FIELD = {
+  type: "integer",
+  minimum: 0,
+  description:
+    "Optional: the headSequence you last observed for this execution (from graphhelm_get_execution_status or _events). Sent as If-Match; the Runtime refuses the verb if the run has moved since you looked. Omit to act on the run's current head.",
+};
+
+/**
+ * A RETRY CARRIES THE KEY OF THE ATTEMPT IT RETRIES (PR #662 review, adapter.ts:439). An attempt
+ * that came back `unknown` after committing hands the agent its `idempotencyKey` in the evidence;
+ * calling again with that key is what lets the Runtime answer `recognizedRetry` and the client
+ * verify the ORIGINAL decision - without it every call minted a fresh key and a retry became a
+ * distinct request against a run that was already paused. Absent -> minted here, as before.
+ * Present -> passed through untouched. Malformed -> refused, never replaced by a mint: a mint
+ * would silently turn "retry my attempt" into "make a new one". The bound mirrors the Runtime's
+ * own `IDEMPOTENCY_HEADER_MAX_LEN` (serve/mod.rs, 64 - a Rust const this file cannot import).
+ */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 64;
+const IDEMPOTENCY_KEY_FIELD = {
+  type: "string",
+  minLength: 1,
+  maxLength: MAX_IDEMPOTENCY_KEY_LENGTH,
+  description:
+    "Optional: to RETRY an earlier attempt that came back 'unknown', pass the idempotencyKey from that attempt's evidence, verbatim - the Runtime then recognizes the retry and the result is verified against the original decision. Omit for a new attempt (a fresh key is minted).",
+};
+
+function keyOf(input: Record<string, unknown>): string {
+  if (input.idempotencyKey === undefined) return newIdempotencyKey();
+  const value = input.idempotencyKey;
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+    throw new RuntimeError(
+      `idempotencyKey must be the key from an earlier attempt's evidence (a non-empty string of at most ${MAX_IDEMPOTENCY_KEY_LENGTH} characters), or be omitted for a new attempt.`,
+      0,
+      [],
+    );
+  }
+  return value;
+}
+
+function ifMatchOf(input: Record<string, unknown>): { ifMatch?: number } {
+  if (input.ifMatch === undefined) return {};
+  const value = input.ifMatch;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new RuntimeError("ifMatch must be a non-negative integer headSequence you observed, or be omitted.", 0, []);
+  }
+  return { ifMatch: value };
+}
 
 /**
  * Registers the seven tools and returns the handle that removes them again.
@@ -380,15 +445,35 @@ export function registerStudioTools(
     {
       name: `${TOOL_PREFIX}pause_execution`,
       description:
-        "Record a cooperative hold: no further node is dispatched until the execution is resumed. WRITES a pause decision to the append-only log, attributed to the Studio's WebMCP adapter as an agent (not as the owner). Returns the head before and after, the re-read status, and the directly attributable decision event - check the returned 'result' field: 'succeeded', 'refused', or 'unknown'.",
-      inputSchema: closed({ executionId: EXECUTION_ID_FIELD }, ["executionId"]),
+        "Pause an execution - TWO DISTINCT VERBS, chosen by 'mode'. 'graceful' (the default, and what an omitted mode means): a cooperative hold - nothing new is dispatched, work already in flight finishes and is joined, and the execution exits by quiescence; WRITES to the append-only log attributed to the Studio's WebMCP adapter as an agent (not as the owner) and returns the directly attributable decision event. 'immediate': INTERRUPTS work in flight; every interrupted node is recorded before the pause folds. VERIFIED DIFFERENTLY: immediate pause is signalled on the cancel channel and the runtime appends the pause event asynchronously under the caller's identity (this adapter, as an agent), so success is confirmed by the run reading 'paused' AND by that pause event read back from the log - the returned 'actor' is the one the append-only record holds (read back, not repeated from the request) and 'newEvents' carries that pause event. Check the returned 'result' field either way: 'succeeded', 'refused', or 'unknown'.",
+      inputSchema: closed(
+        {
+          executionId: EXECUTION_ID_FIELD,
+          mode: {
+            type: "string",
+            enum: ["graceful", "immediate"],
+            description:
+              "Which pause. Omit for graceful. 'immediate' interrupts in-flight work - choose it knowingly.",
+          },
+          ifMatch: IF_MATCH_FIELD,
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
+        },
+        ["executionId"],
+      ),
       annotations: { readOnlyHint: false, untrustedContentHint: true },
       execute: guarded(`${TOOL_PREFIX}pause_execution`, async (input) => {
         const id = requiredId(input);
-        const evidence = await client.pause(id, {
-          actor: WEBMCP_ACTOR,
-          idempotencyKey: newIdempotencyKey(),
-        });
+        // The interrupting verb is reachable ONLY by the exact word: an unrecognized mode is
+        // refused rather than folded onto either behavior - a typo must not pick a pause.
+        const mode = input.mode === undefined ? "graceful" : input.mode;
+        if (mode !== "graceful" && mode !== "immediate") {
+          throw new RuntimeError('mode must be "graceful" or "immediate".', 0, []);
+        }
+        const options = { actor: WEBMCP_ACTOR, idempotencyKey: keyOf(input), ...ifMatchOf(input) };
+        const evidence =
+          mode === "immediate"
+            ? await client.pauseImmediately(id, options)
+            : await client.pause(id, options);
         requireLiveSession();
         // Selection follows the RESULT, never the request: a refusal (a nonexistent id above
         // all) must not walk the page off the operator's run (PR #467 review, all four
@@ -406,6 +491,8 @@ export function registerStudioTools(
         {
           executionId: EXECUTION_ID_FIELD,
           node: { type: "string", minLength: 1, maxLength: 128, description: "The node id, as it appears in the attention reasons." },
+          ifMatch: IF_MATCH_FIELD,
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
         },
         ["executionId", "node"],
       ),
@@ -418,7 +505,8 @@ export function registerStudioTools(
         }
         const evidence = await client.approve(id, node, {
           actor: WEBMCP_ACTOR,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey: keyOf(input),
+          ...ifMatchOf(input),
         });
         requireLiveSession();
         if (evidence.result !== "refused") hooks.onSelect(id);
@@ -435,6 +523,8 @@ export function registerStudioTools(
           executionId: EXECUTION_ID_FIELD,
           file: { type: "string", minLength: 1, maxLength: 512, description: "Graph file path on the Runtime host." },
           fixtures: { type: "string", minLength: 1, maxLength: 512, description: "Optional deterministic fixtures file path on the Runtime host." },
+          ifMatch: IF_MATCH_FIELD,
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
         },
         ["executionId", "file"],
       ),
@@ -448,7 +538,8 @@ export function registerStudioTools(
         const evidence = await client.resume(id, file, {
           fixtures: typeof input.fixtures === "string" ? input.fixtures : undefined,
           actor: WEBMCP_ACTOR,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey: keyOf(input),
+          ...ifMatchOf(input),
         });
         requireLiveSession();
         if (evidence.result !== "refused") hooks.onSelect(id);
@@ -538,6 +629,7 @@ export function registerStudioTools(
             description:
               "Optional: the id of the signal this message answers (the signalId in a signal_recorded event's payload).",
           },
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
         },
         ["executionId", "message"],
       ),
@@ -554,12 +646,132 @@ export function registerStudioTools(
         }
         const evidence = await client.signal(id, message, {
           actor: WEBMCP_ACTOR,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey: keyOf(input),
           ...(typeof input.to === "string" && input.to.length > 0 ? { to: input.to } : {}),
           ...(typeof input.replyTo === "string" && input.replyTo.length > 0
             ? { replyTo: input.replyTo }
             : {}),
         });
+        requireLiveSession();
+        if (evidence.result !== "refused") hooks.onSelect(id);
+        hooks.onMutation(evidence);
+        return { result: evidence, outcome: outcomeOf(evidence), detail: describe(evidence) };
+      }),
+    },
+    {
+      name: `${TOOL_PREFIX}cancel_execution`,
+      description:
+        "DESTRUCTIVE: cancel an execution. Every node not yet in a terminal state is recorded Cancelled and the execution completes as 'cancelled' - there is no undo on an append-only log. Confirm with the person before calling this unless they explicitly asked for the cancellation. WRITES to the append-only log, attributed to the Studio's WebMCP adapter as an agent (not as the owner). Returns the head before and after, the re-read status, and the directly attributable decision event - check the returned 'result' field before reporting the run as cancelled.",
+      inputSchema: closed({ executionId: EXECUTION_ID_FIELD, ifMatch: IF_MATCH_FIELD, idempotencyKey: IDEMPOTENCY_KEY_FIELD }, ["executionId"]),
+      annotations: { readOnlyHint: false, untrustedContentHint: true },
+      execute: guarded(`${TOOL_PREFIX}cancel_execution`, async (input) => {
+        const id = requiredId(input);
+        const evidence = await client.cancel(id, {
+          actor: WEBMCP_ACTOR,
+          idempotencyKey: keyOf(input),
+          ...ifMatchOf(input),
+        });
+        requireLiveSession();
+        if (evidence.result !== "refused") hooks.onSelect(id);
+        hooks.onMutation(evidence);
+        return { result: evidence, outcome: outcomeOf(evidence), detail: describe(evidence) };
+      }),
+    },
+    {
+      name: `${TOOL_PREFIX}sweep_execution`,
+      description:
+        "Evaluate the execution's customs stages now and journal the result - the maintenance verb behind the attention verdict's freshness. 'asOf' is optional and absent means now, read from the STORE's clock; a future instant is refused by the verb itself. WRITES a sweep record to the append-only log, attributed to the Studio's WebMCP adapter as an agent (not as the owner). Returns the head before and after and the directly attributable decision event - check the returned 'result' field.",
+      inputSchema: closed(
+        {
+          executionId: EXECUTION_ID_FIELD,
+          asOf: {
+            type: "string",
+            minLength: 20,
+            maxLength: 30,
+            pattern: TIMESTAMP_PATTERN,
+            description: "Optional instant to evaluate as of, in the Runtime's own timestamp form: UTC, Z-terminated (2026-09-02T10:00:00Z) - no offsets, no impossible dates, at most nine fraction digits. OMIT for the store's own now; an invalid value is refused, never treated as now.",
+          },
+          ifMatch: IF_MATCH_FIELD,
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
+        },
+        ["executionId"],
+      ),
+      annotations: { readOnlyHint: false, untrustedContentHint: true },
+      execute: guarded(`${TOOL_PREFIX}sweep_execution`, async (input) => {
+        const id = requiredId(input);
+        // A PRESENT asOf is validated or refused - never dropped. Dropping `""` turned "sweep
+        // as of X" into "sweep now", a different operation that journals and can spend
+        // overdue-exception episodes (PR #662 review, adapter.ts:629).
+        if (input.asOf !== undefined) {
+          if (typeof input.asOf !== "string" || !isPersistedTimestamp(input.asOf)) {
+            throw new RuntimeError("asOf must be a UTC instant in the Runtime's own form, Z-terminated (for example 2026-09-02T10:00:00Z), or be omitted for the store's own now.", 0, []);
+          }
+        }
+        const evidence = await client.sweep(id, {
+          actor: WEBMCP_ACTOR,
+          idempotencyKey: keyOf(input),
+          ...(typeof input.asOf === "string" ? { asOf: input.asOf } : {}),
+          ...ifMatchOf(input),
+        });
+        requireLiveSession();
+        if (evidence.result !== "refused") hooks.onSelect(id);
+        hooks.onMutation(evidence);
+        return { result: evidence, outcome: outcomeOf(evidence), detail: describe(evidence) };
+      }),
+    },
+    {
+      name: `${TOOL_PREFIX}amend_node_budget`,
+      description:
+        "Declare a silence bound for one node - the remedy the attention verdict itself offers when a node's silence could not be judged for want of a declared budget. 'seconds' is the operator's (or your principal's) own decision and has NO default anywhere on this path. 'computedAtSequence' is where the verdict computed the remedy - copy it from graphhelm_get_attention's silenceUnevaluated entry, never invent it. WRITES a form amendment to the append-only log, attributed to the Studio's WebMCP adapter as an agent (not as the owner). Returns the directly attributable decision event - check the returned 'result' field.",
+      inputSchema: closed(
+        {
+          executionId: EXECUTION_ID_FIELD,
+          node: { type: "string", minLength: 1, maxLength: 128, description: "The node the bound applies to." },
+          seconds: {
+            type: "integer",
+            minimum: MIN_NODE_TIMEOUT_SECONDS,
+            maximum: MAX_NODE_TIMEOUT_SECONDS,
+            description: "The silence bound, in seconds - a decision, not a default; bounded by the persisted envelope's own schema.",
+          },
+          computedAtSequence: {
+            type: "integer",
+            minimum: 0,
+            description: "The sequence the verdict was computed at, from the remedy itself.",
+          },
+          ifMatch: IF_MATCH_FIELD,
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
+        },
+        ["executionId", "node", "seconds", "computedAtSequence"],
+      ),
+      annotations: { readOnlyHint: false, untrustedContentHint: true },
+      execute: guarded(`${TOOL_PREFIX}amend_node_budget`, async (input) => {
+        const id = requiredId(input);
+        const node = input.node;
+        if (typeof node !== "string" || node.length === 0 || node.length > 128) {
+          throw new RuntimeError("node must be a non-empty identifier of at most 128 characters.", 0, []);
+        }
+        const seconds = input.seconds;
+        if (
+          typeof seconds !== "number" ||
+          !Number.isSafeInteger(seconds) ||
+          seconds < MIN_NODE_TIMEOUT_SECONDS ||
+          seconds > MAX_NODE_TIMEOUT_SECONDS
+        ) {
+          throw new RuntimeError(
+            `seconds must be an integer between ${MIN_NODE_TIMEOUT_SECONDS} and ${MAX_NODE_TIMEOUT_SECONDS} (the envelope schema's bound).`,
+            0,
+            [],
+          );
+        }
+        const at = input.computedAtSequence;
+        if (typeof at !== "number" || !Number.isSafeInteger(at) || at < 0) {
+          throw new RuntimeError("computedAtSequence must be a non-negative integer.", 0, []);
+        }
+        const evidence = await client.amendBudget(
+          id,
+          { node, seconds, computedAtSequence: at },
+          { actor: WEBMCP_ACTOR, idempotencyKey: keyOf(input), ...ifMatchOf(input) },
+        );
         requireLiveSession();
         if (evidence.result !== "refused") hooks.onSelect(id);
         hooks.onMutation(evidence);

@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { resetPanelCaches } from "./components/panel";
 import type { RuntimeClient } from "./runtime/client";
+import { MAX_NODE_TIMEOUT_SECONDS } from "./runtime/client";
 import type { MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 
@@ -121,6 +122,10 @@ function stubClient(overrides: Record<string, unknown> = {}) {
       node: "implementation",
     })),
     resume: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "resume" as const })),
+    pauseImmediately: vi.fn(async () => PAUSED_EVIDENCE),
+    cancel: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "cancel" as const })),
+    sweep: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "sweep" as const })),
+    amendBudget: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "amendBudget" as const, node: "judge" })),
     // In the BASE stub, not only in the overrides that use them: a method a test reaches for
     // through `client.startTask` has to exist on the returned type, and one that appears only
     // when overridden does not.
@@ -352,7 +357,7 @@ describe("operator actions", () => {
   it("records a button press as the owner and shows the verified evidence", async () => {
     const client = stubClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: /^pause$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /pause · finish in-flight/i }));
 
     await waitFor(() => expect(client.pause).toHaveBeenCalled());
     const [, options] = client.pause.mock.calls[0] as unknown as [string, { actor: { type: string } }];
@@ -362,9 +367,11 @@ describe("operator actions", () => {
 
   /** Resume still never fires without a path — but instead of sitting disabled with its excuse
    * in a tooltip a disabled button never shows, it walks the person to the box. The mutation
-   * gate is asserted in "resume with no path walks you to the box". */
+   * gate is asserted in "resume with no path walks you to the box". Opened PAUSED: Phase 2's
+   * legality map disables resume on a running run, so the path gate is only reachable where
+   * resume is legal at all. */
   it("never resumes without a graph path", async () => {
-    const client = stubClient();
+    const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })) });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
     expect(client.resume).not.toHaveBeenCalled();
@@ -380,21 +387,210 @@ describe("operator actions", () => {
       })),
     });
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: /^pause$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /pause · finish in-flight/i }));
     expect(await screen.findByText(/do not treat this as done/i)).toBeInTheDocument();
+  });
+
+  /** Phase 2 (#105): the runtime's TWO pauses are two buttons with two promises, and the
+   * interrupting one reaches the client through its own method - never a default. */
+  it("keeps the two pauses apart: interrupt fires its own verb", async () => {
+    const client = stubClient();
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: /pause now · interrupt/i }));
+    await waitFor(() => expect(client.pauseImmediately).toHaveBeenCalled());
+    expect(client.pause).not.toHaveBeenCalled();
+  });
+
+  /** THE HEAD THE DOCK RENDERED rides as If-Match (L's follow-up on #662, App.tsx:1615): the
+   * operator's button is the caller that must send the head it displayed. Rendered 13, the
+   * stream at 14 by the time the click lands -> the client is called with ifMatch 13, the
+   * Runtime's conflict comes back refused, and the REASON is on screen, nothing interrupted. */
+  it("pins every dock verb to the head it rendered, and shows the conflict when the run moved", async () => {
+    const client = stubClient({
+      pauseImmediately: vi.fn(async () => ({
+        ...PAUSED_EVIDENCE,
+        actor: { id: "studio-operator", type: "owner" as const },
+        result: "refused" as const,
+        headAfter: 14,
+        statusAfter: null,
+        newEvents: [],
+        diagnostics: [
+          { code: "GHCLI409_PRECONDITION_FAILED", message: "If-Match 13 does not match the current head 14 - the run moved since you looked", path: "/If-Match", severity: "error", source: "serve" },
+        ],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: /pause now · interrupt/i }));
+    await waitFor(() => expect(client.pauseImmediately).toHaveBeenCalled());
+    const optionsOf = (calls: unknown[][], index: number) =>
+      (calls[0] as unknown as Array<{ ifMatch?: number }>)[index];
+    expect(optionsOf(vi.mocked(client.pauseImmediately).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
+    expect(await screen.findByText(/the run moved since you looked/)).toBeInTheDocument();
+
+    // The same head on the other verbs the dock fires against the rendered run.
+    await userEvent.click(screen.getByRole("button", { name: "sweep" }));
+    await waitFor(() => expect(client.sweep).toHaveBeenCalled());
+    expect(optionsOf(vi.mocked(client.sweep).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
+    await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
+    await waitFor(() => expect(client.pause).toHaveBeenCalled());
+    expect(optionsOf(vi.mocked(client.pause).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
+    const why = await screen.findByLabelText("Why this run needs you");
+    await userEvent.click(within(why).getByRole("button", { name: /approve implementation/i }));
+    await waitFor(() => expect(client.approve).toHaveBeenCalled());
+    expect(optionsOf(vi.mocked(client.approve).mock.calls, 2).ifMatch).toBe(STATUS.headSequence);
+  });
+
+  /** Cancel is destructive on an append-only log, so the first press only ASKS - in the page,
+   * where this test can walk the question - and "keep running" backs out without a call. */
+  it("cancels only through the in-place confirmation", async () => {
+    const client = stubClient();
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: /cancel…/i }));
+    expect(client.cancel).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /keep running/i }));
+    expect(client.cancel).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /cancel…/i }));
+    await userEvent.click(screen.getByRole("button", { name: /yes, cancel it/i }));
+    await waitFor(() => expect(client.cancel).toHaveBeenCalled());
+  });
+
+  /** An armed cancel must die with the session: disconnect() did not reset it and openWith()'s
+   * connection-level pick bypasses select(), so a reconnect - possibly to another Runtime -
+   * opened with "yes, cancel it" one click away (PR #662 review, P1). */
+  it("disarms the cancel confirmation across a disconnect and reconnect", async () => {
+    const client = stubClient();
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: /cancel…/i }));
+    expect(screen.getByRole("button", { name: /yes, cancel it/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }));
+    await screen.findByLabelText(/bearer token/i);
+    await userEvent.type(screen.getByLabelText(/bearer token/i), "local-token");
+    await userEvent.click(screen.getByRole("button", { name: /connect/i }));
+    await screen.findByLabelText("Projects");
+
+    expect(screen.queryByRole("button", { name: /yes, cancel it/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /cancel…/i })).toBeInTheDocument();
+    expect(client.cancel).not.toHaveBeenCalled();
+  });
+
+  /** The armed confirmation follows the recomputed legality: a poll tick that finishes the run
+   * while the question stands withdraws the "yes" - the outer button then wears the reason, and
+   * nothing is sent (PR #662 review, App.tsx:1687). */
+  it("withdraws the cancel confirmation when a poll finishes the run", async () => {
+    // The TEST decides when the run finishes - after the confirmation is armed - so the poll
+    // cannot win the race against a slow click and flip the run before the question is asked.
+    let finished = false;
+    const client = stubClient({
+      getStatus: vi.fn(async () =>
+        finished
+          ? { ...STATUS, status: "completed", attention: "can_sleep", attentionReasons: [] }
+          : { ...STATUS },
+      ),
+    });
+    render(
+      <App
+        createClient={() => client as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={40}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: /cancel…/i }));
+    expect(screen.getByRole("button", { name: /yes, cancel it/i })).toBeInTheDocument();
+
+    // Now the run finishes underneath the open question; the next poll tick brings it.
+    finished = true;
+    await waitFor(() => expect(screen.queryByRole("button", { name: /yes, cancel it/i })).not.toBeInTheDocument());
+    const cancel = screen.getByRole("button", { name: /cancel…/i });
+    expect(cancel).toBeDisabled();
+    expect(cancel.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
+    expect(client.cancel).not.toHaveBeenCalled();
+  });
+
+  it("sweeps on request", async () => {
+    const client = stubClient();
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: /^sweep$/i }));
+    await waitFor(() => expect(client.sweep).toHaveBeenCalled());
+  });
+
+  /** A verb the state makes illegal renders disabled WITH ITS REASON on the wrapping span -
+   * a disabled button never shows its own title, and a live button that bounces off the API's
+   * refusal would pretend (Phase 2 honesty rule). */
+  it("disables pause and cancel on a finished run, each wearing why", async () => {
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, status: "completed", attention: "can_sleep", attentionReasons: [] })),
+    });
+    await open(client);
+    const pause = await screen.findByRole("button", { name: /pause · finish in-flight/i });
+    expect(pause).toBeDisabled();
+    expect(pause.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
+    const cancel = screen.getByRole("button", { name: /cancel…/i });
+    expect(cancel).toBeDisabled();
+    expect(cancel.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
+  });
+
+  /** The attention verdict's own remedy, served where it stands: a silence with a
+   * declareNodeBudget remedy gets an input and a button, seconds is the OPERATOR's number
+   * (no default anywhere on the path), and computedAtSequence is copied from the verdict. */
+  it("offers the declare-budget remedy and sends the operator's own seconds", async () => {
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({
+        ...STATUS,
+        silenceUnevaluated: [
+          {
+            scope: "node",
+            node: "judge",
+            reason: "no_declared_budget",
+            remedy: {
+              remedy: "declareNodeBudget",
+              node: "judge",
+              observedSilenceSeconds: 240,
+              computedAtSequence: 13,
+            },
+          },
+        ],
+      })),
+    });
+    await open(client);
+    const seconds = await screen.findByLabelText(/silence budget for judge/i);
+    const declare = screen.getByRole("button", { name: /declare budget for judge/i });
+    expect(declare).toBeDisabled();
+    // One over the envelope schema's bound: the button stays OFF wearing the reason, and the
+    // client is never asked (PR #662 review, App.tsx:1743) - the bound is imported, not typed.
+    await userEvent.type(seconds, String(MAX_NODE_TIMEOUT_SECONDS + 1));
+    expect(declare).toBeDisabled();
+    expect(declare).toHaveAttribute("title", expect.stringContaining(String(MAX_NODE_TIMEOUT_SECONDS)));
+    expect(seconds).toHaveAttribute("max", String(MAX_NODE_TIMEOUT_SECONDS));
+    expect(client.amendBudget).not.toHaveBeenCalled();
+    await userEvent.clear(seconds);
+    await userEvent.type(seconds, "900");
+    await userEvent.click(declare);
+    await waitFor(() =>
+      expect(client.amendBudget).toHaveBeenCalledWith(
+        "demo-deploy",
+        { node: "judge", seconds: 900, computedAtSequence: 13 },
+        expect.anything(),
+      ),
+    );
   });
 });
 
 describe("the shared surface", () => {
   it("stays silent about site tools, and the page still works, without a model context", async () => {
     await open(stubClient(), null);
-    expect(screen.getByRole("button", { name: /^pause$/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /pause · finish in-flight/i })).toBeEnabled();
     // No chips and no announcement: the absence of tools is not an error to report.
     expect(document.querySelector(".toolchips")).toBeNull();
     expect(screen.queryByText("no site tools")).not.toBeInTheDocument();
   });
 
-  it("registers the ten site tools once a connection exists, and not before", async () => {
+  it("registers the thirteen site tools once a connection exists, and not before", async () => {
     const { modelContext, registered } = fakeModelContext();
     render(
       <App
@@ -410,7 +606,7 @@ describe("the shared surface", () => {
     await userEvent.click(screen.getByRole("button", { name: /connect/i }));
     await screen.findByLabelText("Projects");
 
-    expect(registered).toHaveLength(10);
+    expect(registered).toHaveLength(13);
     expect(await screen.findByText("pause_execution")).toBeInTheDocument();
   });
 
@@ -836,6 +1032,47 @@ describe("the attention verdict explains itself", () => {
     expect(call[1]).toBe("implementation");
   });
 
+  /** An immediate pause that interrupted a node leaves it `Blocked`/`Interrupted`; the Runtime
+   * refuses resume until it is triaged, and approve IS the triage (PR #662 review,
+   * legality.ts:66). So: resume off with the reason, approve offered on that node, and once the
+   * approval lands and the list empties, resume comes back on. */
+  it("gates resume on triage after an immediate pause, offers approve on the interrupted node, and frees resume once triaged", async () => {
+    let triaged = false;
+    const client = stubClient({
+      getStatus: vi.fn(async () =>
+        triaged
+          ? { ...STATUS, status: "paused", attention: "can_sleep", attentionReasons: [], untriagedInterruptions: [], headSequence: 15 }
+          : {
+              ...STATUS,
+              status: "paused",
+              attentionReasons: [{ kind: "untriaged_interruption", node: "implementation" }],
+              untriagedInterruptions: ["implementation"],
+              headSequence: 14,
+            },
+      ),
+      approve: vi.fn(async () => {
+        triaged = true;
+        return { ...PAUSED_EVIDENCE, action: "approve" as const, node: "implementation", headBefore: 14, headAfter: 15 };
+      }),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+
+    const resume = await screen.findByRole("button", { name: "resume" });
+    expect(resume).toBeDisabled();
+    expect(resume.parentElement?.getAttribute("title")).toMatch(/triage/i);
+    expect(resume.parentElement?.getAttribute("title")).toContain("implementation");
+
+    const why = await screen.findByLabelText("Why this run needs you");
+    expect(within(why).getByText(/implementation was interrupted/)).toBeInTheDocument();
+    await userEvent.click(within(why).getByRole("button", { name: /approve implementation/i }));
+    await waitFor(() => expect(client.approve).toHaveBeenCalled());
+    const call = vi.mocked(client.approve).mock.calls[0] as unknown as [string, string];
+    expect(call[1]).toBe("implementation");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "resume" })).toBeEnabled());
+  });
+
   it("names the missing model when a node waits for input and nothing is wired", async () => {
     const client = stubClient({
       getStatus: vi.fn(async () => ({
@@ -1165,7 +1402,9 @@ describe("controls that act instead of excusing", () => {
   });
 
   it("resume with no path walks you to the box instead of sitting disabled with an excuse", async () => {
-    const client = stubClient();
+    // Paused, because Phase 2's legality map disables resume anywhere else - the walk-to-box
+    // only exists where the verb is legal at all.
+    const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })) });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
@@ -1723,7 +1962,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
     await userEvent.type(box, "oi");
     await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
     await screen.findByRole("alert");
-    await userEvent.click(screen.getByRole("button", { name: /^pause$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await screen.findByText(/paused — done/i);
 
     await userEvent.click(screen.getByRole("button", { name: /demo-calm/ }));

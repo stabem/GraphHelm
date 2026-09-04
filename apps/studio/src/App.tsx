@@ -25,6 +25,8 @@ import { AlertTriangle, LayoutGrid, LoaderCircle, LogOut, RefreshCw } from "luci
 
 import {
   DisconnectedError,
+  MAX_NODE_TIMEOUT_SECONDS,
+  MIN_NODE_TIMEOUT_SECONDS,
   RuntimeClient,
   RuntimeError,
   OPERATOR_ACTOR,
@@ -65,6 +67,14 @@ import { AddProject } from "./components/addproject";
 import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
 import { readable, verdictOf } from "./components/format";
+import { actionLegality } from "./components/legality";
+
+/** Whether a typed budget is one the client (and the envelope schema behind it) will accept. */
+function budgetSecondsLegal(typed: string | undefined): boolean {
+  if (typed === undefined || typed.trim() === "") return false;
+  const seconds = Number(typed);
+  return Number.isSafeInteger(seconds) && seconds >= MIN_NODE_TIMEOUT_SECONDS && seconds <= MAX_NODE_TIMEOUT_SECONDS;
+}
 
 /** Big enough that the board sees the whole roster on a normal run, and still one page. */
 const EVENT_PAGE_SIZE = 200;
@@ -174,6 +184,11 @@ export default function App({
   /** The Runtime's own model list, read once per draft. `null` while it is being read. */
   const [routes, setRoutes] = useState<RouteChoice | null>(null);
   const [composeError, setComposeError] = useState("");
+  /** The cancel button's in-place confirmation: destructive on an append-only log means no
+   * undo, so the first press only asks. Per run - `select()` withdraws the question. */
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  /** The operator's typed seconds per remedy node - a decision being composed, not a default. */
+  const [remedySeconds, setRemedySeconds] = useState<Record<string, string>>({});
   const [board, setBoard] = useState<BoardState>(emptyBoard);
 
   const [webmcp, setWebmcp] = useState<WebMcpAvailability>("unavailable");
@@ -408,6 +423,10 @@ export default function App({
       setSaying(null);
       setSayError(null);
       setEvidence(null);
+      // An armed cancel confirmation and half-typed budget seconds are questions about ONE
+      // run; carrying either across a switch would aim them at the wrong one.
+      setConfirmCancel(false);
+      setRemedySeconds({});
       setTalkOpen(true);
       const stored = loadBoard(id);
       setBoard(stored);
@@ -716,6 +735,10 @@ export default function App({
       if (first) {
         selectedRef.current = first.executionId;
         setSelected(first.executionId);
+        // A connection-level selection bypasses select(); it carries select()'s own resets for
+        // the state that must never outlive a run switch (PR #662 review, P1).
+        setConfirmCancel(false);
+        setRemedySeconds({});
         const stored = loadBoard(first.executionId);
         setBoard(stored);
         setGraphFile(stored.graphFile);
@@ -814,6 +837,10 @@ export default function App({
     setStatus(null);
     setEvents(null);
     setEvidence(null);
+    // An armed cancel and half-typed budget seconds die with the session (PR #662 review, P1):
+    // the next connection - possibly another Runtime - must open with nothing armed.
+    setConfirmCancel(false);
+    setRemedySeconds({});
     setActivity(null);
     setTools([]);
     setWebmcp("unavailable");
@@ -1065,18 +1092,73 @@ export default function App({
     };
   }, [eventList, envelopes]);
 
+  // The armed cancel confirmation follows the RECOMPUTED legality: a poll tick or a WebMCP write
+  // can finish the run while the question stands, and a "yes" that would only bounce off the
+  // Runtime's refusal is withdrawn - the outer button then wears the reason (PR #662 review).
+  // ABOVE the connect gate's early return, like every hook: a hook after a conditional return
+  // took the whole page down (92 red cells in one run - measured, not imagined).
+  const cancelIllegal = actionLegality(status).cancel !== undefined;
+  useEffect(() => {
+    if (cancelIllegal) setConfirmCancel(false);
+  }, [cancelIllegal]);
+
   if (!connected) {
     return <Connect onConnect={(token) => void connect(token)} busy={connecting} error={error} />;
   }
 
   const verdict = status ? verdictOf(status.attention) : null;
+  /** What each dock verb may claim right now, and the reason for each it may not. */
+  const legality = actionLegality(status);
+  /**
+   * THE HEAD THE DOCK RENDERED rides as `If-Match` on every verb fired against the run on
+   * screen (L's follow-up on #662, App.tsx:1615). The precondition exists so that "an interrupt
+   * aimed at the run the operator SAW must not interrupt work that began after they looked"
+   * (#681, #695) - and the operator's own button is exactly the caller that must supply the
+   * head it displayed. Without it every click took the client's fallback, a fresher pre-read,
+   * and the guard passed by construction. The value is the status THIS render painted for THIS
+   * run - the observation the click is a judgement on - never a later poll's; the handlers
+   * below close over it. Omitted (not fabricated) when nothing is rendered: those verbs are
+   * disabled anyway. `start` (no stream exists yet) and `say` (a message answers by replyTo,
+   * not by head; pinning it would refuse a reply whenever the run spoke since the last poll)
+   * are the two verbs deliberately outside this rule.
+   */
+  const ifMatchRendered: { ifMatch?: number } =
+    status !== null && status.executionId === selected && Number.isSafeInteger(status.headSequence)
+      ? { ifMatch: status.headSequence }
+      : {};
+  /** The declareNodeBudget remedies the attention verdict itself offered. An entry whose
+   * `computedAtSequence` is absent is NOT offered: a remedy that cannot be placed in the
+   * history is refused by the API, and a button that walks into that refusal would pretend. */
+  const budgetRemedies = (status?.silenceUnevaluated ?? []).flatMap((entry) => {
+    if (entry === null || typeof entry !== "object") return [];
+    const remedy = (entry as { remedy?: unknown }).remedy;
+    if (remedy === null || typeof remedy !== "object") return [];
+    const shaped = remedy as {
+      remedy?: unknown;
+      node?: unknown;
+      observedSilenceSeconds?: unknown;
+      computedAtSequence?: unknown;
+    };
+    if (shaped.remedy !== "declareNodeBudget") return [];
+    if (typeof shaped.node !== "string" || shaped.node.length === 0) return [];
+    if (typeof shaped.computedAtSequence !== "number") return [];
+    return [{
+      node: shaped.node,
+      observedSilenceSeconds: typeof shaped.observedSilenceSeconds === "number" ? shaped.observedSilenceSeconds : 0,
+      computedAtSequence: shaped.computedAtSequence,
+    }];
+  });
   const blocking =
     status?.attentionReasons
       .map((reason) => (typeof reason.node === "string" ? reason.node : null))
       .filter((candidate): candidate is string => candidate !== null) ?? [];
+  // Two kinds are approvable, not one (PR #662 review, legality.ts:66): a node blocked for
+  // cause, and a node an immediate pause INTERRUPTED (`untriaged_interruption`) - the Runtime's
+  // `approve.rs:15` on the latter is the triage act `resume_preconditions` waits for, so it
+  // is the one action that unblocks resume.
   const approvable =
     status?.attentionReasons
-      .filter((reason) => reason.kind === "blocked_node")
+      .filter((reason) => reason.kind === "blocked_node" || reason.kind === "untriaged_interruption")
       .map((reason) => (typeof reason.node === "string" ? reason.node : null))
       .filter((candidate): candidate is string => candidate !== null) ?? [];
   const approveTarget =
@@ -1325,10 +1407,12 @@ export default function App({
                     const firstWaiting = status.attentionReasons.findIndex(
                       (candidate) => candidate.kind === "waiting_input_node",
                     );
-                    if (kind === "blocked_node" && node !== null) {
+                    if ((kind === "blocked_node" || kind === "untriaged_interruption") && node !== null) {
                       return (
                         <span key={key}>
-                          {node} is blocked
+                          {kind === "untriaged_interruption"
+                            ? `${node} was interrupted and awaits triage - approving it is the triage`
+                            : `${node} is blocked`}
                           <button
                             type="button"
                             disabled={busy}
@@ -1337,6 +1421,7 @@ export default function App({
                                 client.approve(selected, node, {
                                   actor: OPERATOR_ACTOR,
                                   idempotencyKey: newIdempotencyKey(),
+                                  ...ifMatchRendered,
                                 }),
                               )
                             }
@@ -1518,21 +1603,46 @@ export default function App({
             {/* THE CREW STANDS ON THE BOARD ITSELF - draggable blobs the Board renders, so
               * agents and nodes share one scene. Selection still lives here. */}
 
+            {/* THE DOCK (Phase 2, #105): every execution verb the API exposes that belongs on
+              * this screen. A verb the current state makes illegal renders DISABLED with its
+              * reason - the reason rides a wrapping span's title, because a disabled button
+              * never shows its own (the channel the resume fix below already condemned), and
+              * `actionLegality` is the one place that judgement lives. */}
             <div className="dock">
-              <button
-                type="button"
-                onClick={() =>
-                  void runMutation((client) =>
-                    client.pause(selected, {
-                      actor: OPERATOR_ACTOR,
-                      idempotencyKey: newIdempotencyKey(),
-                    }),
-                  )
-                }
-                disabled={busy}
-              >
-                pause
-              </button>
+              <span title={legality.pause ?? "Nothing new starts; work already in flight finishes and is joined — the run exits by quiescence."}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void runMutation((client) =>
+                      client.pause(selected, {
+                        actor: OPERATOR_ACTOR,
+                        idempotencyKey: newIdempotencyKey(),
+                        ...ifMatchRendered,
+                      }),
+                    )
+                  }
+                  disabled={busy || legality.pause !== undefined}
+                >
+                  pause · finish in-flight
+                </button>
+              </span>
+              <span title={legality.pause ?? "Interrupts work in flight; every interrupted node is recorded before the pause folds."}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void runMutation((client) =>
+                      client.pauseImmediately(selected, {
+                        actor: OPERATOR_ACTOR,
+                        idempotencyKey: newIdempotencyKey(),
+                        ...ifMatchRendered,
+                      }),
+                    )
+                  }
+                  disabled={busy || legality.pause !== undefined}
+                >
+                  pause now · interrupt
+                </button>
+              </span>
               <button
                 type="button"
                 className="act"
@@ -1541,6 +1651,7 @@ export default function App({
                     client.approve(selected, approveTarget, {
                       actor: OPERATOR_ACTOR,
                       idempotencyKey: newIdempotencyKey(),
+                      ...ifMatchRendered,
                     }),
                   )
                 }
@@ -1556,43 +1667,164 @@ export default function App({
                   approval.
                 </p>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  // A control that names its own missing ingredient goes and fetches it: with
-                  // no path, resume walks the person to the box instead of sitting disabled
-                  // with its excuse in a tooltip a disabled button never shows.
-                  if (graphFile.trim().length === 0) {
-                    setFileFocusNonce((nonce) => nonce + 1);
-                    return;
+              <span title={legality.resume}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // A control that names its own missing ingredient goes and fetches it: with
+                    // no path, resume walks the person to the box instead of sitting disabled
+                    // with its excuse in a tooltip a disabled button never shows.
+                    if (graphFile.trim().length === 0) {
+                      setFileFocusNonce((nonce) => nonce + 1);
+                      return;
+                    }
+                    void runMutation((client) =>
+                      client.resume(selected, graphFile.trim(), {
+                        actor: OPERATOR_ACTOR,
+                        idempotencyKey: newIdempotencyKey(),
+                        ...ifMatchRendered,
+                      }),
+                    );
+                  }}
+                  disabled={busy || legality.resume !== undefined}
+                  title={
+                    graphFile.trim().length === 0
+                      ? "resume re-reads the graph file — click to point at it"
+                      : undefined
                   }
-                  void runMutation((client) =>
-                    client.resume(selected, graphFile.trim(), {
-                      actor: OPERATOR_ACTOR,
-                      idempotencyKey: newIdempotencyKey(),
-                    }),
-                  );
-                }}
-                disabled={busy}
-                title={
-                  graphFile.trim().length === 0
-                    ? "resume re-reads the graph file — click to point at it"
-                    : undefined
-                }
-              >
-                resume
-              </button>
+                >
+                  resume
+                </button>
+              </span>
+              <span title={legality.sweep ?? "Evaluate this run's customs stages now and journal the result."}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void runMutation((client) =>
+                      client.sweep(selected, {
+                        actor: OPERATOR_ACTOR,
+                        idempotencyKey: newIdempotencyKey(),
+                        ...ifMatchRendered,
+                      }),
+                    )
+                  }
+                  disabled={busy || legality.sweep !== undefined}
+                >
+                  sweep
+                </button>
+              </span>
+              {/* CANCEL CONFIRMS IN PLACE. Destructive on an append-only log means no undo, so
+                * the first press only ASKS - the verb fires from a second, explicit press, and
+                * "keep running" backs out. No browser confirm(): the question and its answer
+                * belong to the page, where a test can walk them. */}
+              {confirmCancel ? (
+                <span className="confirm-cancel">
+                  <span>cancel this run? every unfinished node is recorded Cancelled — no undo.</span>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => {
+                      setConfirmCancel(false);
+                      void runMutation((client) =>
+                        client.cancel(selected, {
+                          actor: OPERATOR_ACTOR,
+                          idempotencyKey: newIdempotencyKey(),
+                          ...ifMatchRendered,
+                        }),
+                      );
+                    }}
+                    disabled={busy || legality.cancel !== undefined}
+                    title={legality.cancel}
+                  >
+                    yes, cancel it
+                  </button>
+                  <button type="button" onClick={() => setConfirmCancel(false)}>
+                    keep running
+                  </button>
+                </span>
+              ) : (
+                <span title={legality.cancel ?? "Cancel this run — asks first; cancelling records every unfinished node as Cancelled."}>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => setConfirmCancel(true)}
+                    disabled={busy || legality.cancel !== undefined}
+                  >
+                    cancel…
+                  </button>
+                </span>
+              )}
             </div>
+
+            {/* THE VERDICT'S OWN REMEDY, offered where the verdict stands: each silence the
+              * attention read could not judge for want of a declared budget arrives with a
+              * declareNodeBudget remedy, and this is its socket. Seconds has NO default -
+              * the API refuses to invent one and so does this surface. */}
+            {budgetRemedies.length > 0 && (
+              <div className="dock remedies">
+                {budgetRemedies.map((remedy) => (
+                  <span key={remedy.node} className="remedy">
+                    <span>
+                      {remedy.node} has been silent {remedy.observedSilenceSeconds}s with no declared budget —
+                    </span>
+                    <input
+                      type="number"
+                      min={MIN_NODE_TIMEOUT_SECONDS}
+                      max={MAX_NODE_TIMEOUT_SECONDS}
+                      placeholder="seconds"
+                      aria-label={`Silence budget for ${remedy.node}, in seconds`}
+                      value={remedySeconds[remedy.node] ?? ""}
+                      onChange={(event) =>
+                        setRemedySeconds((previous) => ({ ...previous, [remedy.node]: event.target.value }))
+                      }
+                    />
+                    {/* Input bounds AND the button derive from the schema's own bound (imported):
+                      * a value the client would refuse must not be offered as a live action
+                      * (PR #662 review, App.tsx:1743). The reason rides the button's title. */}
+                    <button
+                      type="button"
+                      disabled={busy || !budgetSecondsLegal(remedySeconds[remedy.node])}
+                      title={
+                        budgetSecondsLegal(remedySeconds[remedy.node])
+                          ? undefined
+                          : `seconds must be an integer between ${MIN_NODE_TIMEOUT_SECONDS} and ${MAX_NODE_TIMEOUT_SECONDS} (the envelope schema's bound)`
+                      }
+                      onClick={() =>
+                        void runMutation((client) =>
+                          client.amendBudget(
+                            selected,
+                            {
+                              node: remedy.node,
+                              seconds: Number(remedySeconds[remedy.node]),
+                              computedAtSequence: remedy.computedAtSequence,
+                            },
+                            { actor: OPERATOR_ACTOR, idempotencyKey: newIdempotencyKey(), ...ifMatchRendered },
+                          ),
+                        )
+                      }
+                    >
+                      declare budget for {remedy.node}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             {evidence && (
               <p className={`act-note ${evidence.result === "succeeded" ? "proven" : "refused"}`}>
-                {({ approve: "Approved", pause: "Paused", resume: "Resumed", start: "Started" } as Record<string, string>)[
+                {({ approve: "Approved", pause: "Paused", resume: "Resumed", start: "Started", cancel: "Cancelled", sweep: "Swept", amendBudget: "Budget declared for" } as Record<string, string>)[
                   evidence.action
                 ] ?? evidence.action}
                 {evidence.node ? ` ${evidence.node}` : ""}{" — "}
                 {evidence.result === "succeeded" ? "done" : evidence.result} (log {evidence.headBefore}{" "}
                 → {evidence.headAfter ?? "?"})
                 {evidence.actor.type !== "owner" ? ` · by ${evidence.actor.type}:${evidence.actor.id}` : ""}
+                {/* A refusal says WHY, in the Runtime's words: a bare "refused" next to a button
+                  * the operator just pressed is a question, not an answer - and the If-Match
+                  * conflict is the refusal a person can only act on if they are told the run moved. */}
+                {evidence.result === "refused" && evidence.diagnostics[0] !== undefined
+                  ? ` · ${evidence.diagnostics[0].message}`
+                  : ""}
                 {evidence.result === "unknown"
                   ? " · the Runtime accepted it but the verification read failed — do not treat this as done"
                   : ""}

@@ -115,9 +115,19 @@ A browser's confirmation prompt for a site tool is **consent**, not authorship. 
 to an action the agent chose; recording it as `owner` would destroy the only distinction the audit
 log exists to preserve.
 
+**The immediate pause, stated rather than assumed (Phase 2, #105):** `{"mode": "immediate"}` is
+signalled on the cancel channel and the driver appends `execution_paused` later, asynchronously —
+since #681 the request's actor and idempotency key ride that channel (`ImmediateCancelRequest`),
+so the record names the caller like every other verb. The Studio does not take that on faith: it
+reads the pause event back and reports the actor the append-only record holds, whatever it says
+— which is how a regression on the Runtime side would surface as a visible mismatch rather than
+as a claim the evidence repeats.
+
 ## 6. Deliberate omissions
 
-- `cancel` is not a site tool. It is the destructive verb, and this journey does not need it.
+- `cancel` was not a site tool in the MVP. Phase 2 (#105) makes it one, behind two confirmations
+  (the page asks; the WebMCP host prompts) and a DESTRUCTIVE-first description — the contract change
+  is recorded as ADR-036 in `docs/reference/REFERENCE_STACK_AND_ADRS.md` §41.
 - No Graph DSL editor and no graph creation. The board DRAWS a run's graph and lets the operator
   arrange, annotate and draw on it; it never edits the graph itself. Editing one is a Graph Draft,
   which is a transactional, governed operation and not a canvas gesture.

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { RuntimeClient } from "../runtime/client";
+import { MAX_NODE_TIMEOUT_SECONDS, RuntimeClient, TIMESTAMP_PATTERN } from "../runtime/client";
 import type { MutationEvidence } from "../runtime/types";
 import {
   findModelContext,
@@ -61,10 +61,14 @@ function stubClient(overrides: Partial<Record<keyof RuntimeClient, unknown>> = {
     })),
     getEvents: vi.fn(async () => ({ head: 13, events: [] })),
     pause: vi.fn(async () => evidence("pause")),
+    pauseImmediately: vi.fn(async () => evidence("pause")),
     approve: vi.fn(async () => evidence("approve", "implementation")),
     resume: vi.fn(async () => evidence("resume")),
     startTask: vi.fn(async () => evidence("start")),
     signal: vi.fn(async () => evidence("signal")),
+    cancel: vi.fn(async () => evidence("cancel")),
+    sweep: vi.fn(async () => evidence("sweep")),
+    amendBudget: vi.fn(async () => evidence("amendBudget", "judge")),
     readEvidence: vi.fn(async () => ({
       evidenceId: "ev-1",
       mediaType: "application/json",
@@ -104,6 +108,9 @@ const EXPECTED_TOOLS = [
   "graphhelm_resume_execution",
   "graphhelm_start_task",
   "graphhelm_send_message",
+  "graphhelm_cancel_execution",
+  "graphhelm_sweep_execution",
+  "graphhelm_amend_node_budget",
 ];
 
 describe("feature detection", () => {
@@ -127,7 +134,7 @@ describe("feature detection", () => {
 });
 
 describe("registration", () => {
-  it("registers exactly the ten tools, each with a closed schema", () => {
+  it("registers exactly the thirteen tools, each with a closed schema", () => {
     const { modelContext, registered } = fakeModelContext();
     const result = registerStudioTools(stubClient(), hooks().value, { modelContext });
 
@@ -140,7 +147,7 @@ describe("registration", () => {
     }
   });
 
-  it("marks the five reads read-only and the five writes not", () => {
+  it("marks the five reads read-only and the eight writes not", () => {
     const { modelContext, registered } = fakeModelContext();
     registerStudioTools(stubClient(), hooks().value, { modelContext });
     const readOnly = registered.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name);
@@ -158,36 +165,44 @@ describe("registration", () => {
       "graphhelm_resume_execution",
       "graphhelm_start_task",
       "graphhelm_send_message",
+      "graphhelm_cancel_execution",
+      "graphhelm_sweep_execution",
+      "graphhelm_amend_node_budget",
     ]);
   });
 
-  it("offers only cooperative pause and describes attributable mutation evidence", () => {
+  /** The runtime distinguishes TWO pauses and the tool surface must not collapse them: graceful
+   * (nothing new starts; in-flight work finishes and is joined) is the default, and interrupting
+   * is only reachable by an EXPLICIT `mode: "immediate"` - never by omission. The description
+   * carries both promises so an agent chooses knowingly (Phase 2, #105). */
+  it("offers both pauses, the interrupting one only by explicit mode", () => {
     const { modelContext, registered } = fakeModelContext();
     registerStudioTools(stubClient(), hooks().value, { modelContext });
     const pause = registered.find((tool) => tool.name === "graphhelm_pause_execution")!;
-    const properties = pause.inputSchema.properties as Record<string, unknown>;
+    const properties = pause.inputSchema.properties as Record<string, { enum?: string[] }>;
 
-    expect(Object.keys(properties)).toEqual(["executionId"]);
-    expect(pause.description).not.toMatch(/immediate/i);
+    expect(Object.keys(properties)).toEqual(["executionId", "mode", "ifMatch", "idempotencyKey"]);
+    expect(properties.mode.enum).toEqual(["graceful", "immediate"]);
+    expect(pause.description).toMatch(/graceful/i);
+    expect(pause.description).toMatch(/immediate/i);
     for (const write of registered.filter((tool) => tool.annotations?.readOnlyHint === false)) {
-      expect(write.description).toContain("directly attributable decision event");
+      expect(write.description).toContain("attributable");
       expect(write.description).not.toContain("events actually appended");
     }
   });
 
-  /** `cancel` is the destructive verb this surface deliberately does not hand to an agent. A
-   * guard, not a comment: the day someone adds it, this fails and they have to argue for it.
-   *
-   * This list used to also forbid "signal" and "start" - correctly at the time, as SCOPE pins:
-   * the first slice offered neither. The exchange slice offers both on purpose (`start_task`,
-   * `send_message`), so those two names left the destructive list when the scope changed - by
-   * this edit, arguing for it here, which is exactly the ritual the guard exists to force. */
-  it("exposes no destructive verb", () => {
+  /** `cancel` WAS the destructive verb this surface deliberately withheld, and this guard is the
+   * ritual its own comment demanded: Phase 2 (#105) orders operator action buttons WITH WebMCP
+   * parity - the operator gets cancel behind a confirmation, and an agent's tool call passes the
+   * host's own confirmation prompt, so the parity does not skip the consent the page requires.
+   * The tool says DESTRUCTIVE in its first sentence; "delete" stays forbidden - nothing on this
+   * API erases, and no tool may imply it. */
+  it("exposes cancel as the one argued-for destructive verb, and nothing that erases", () => {
     const { modelContext, registered } = fakeModelContext();
     registerStudioTools(stubClient(), hooks().value, { modelContext });
-    for (const forbidden of ["cancel", "delete"]) {
-      expect(registered.some((tool) => tool.name.includes(forbidden))).toBe(false);
-    }
+    const cancel = registered.find((tool) => tool.name === "graphhelm_cancel_execution")!;
+    expect(cancel.description).toMatch(/destructive/i);
+    expect(registered.some((tool) => tool.name.includes("delete"))).toBe(false);
   });
 
   /** The agent gets `send_message`, and deliberately NOT a raw signal tool. A raw signal lets the
@@ -205,7 +220,90 @@ describe("registration", () => {
     // No `type`, no `severity`: the schema itself is what makes the pin unforgeable from the
     // agent's side. `to`/`replyTo` joined in schema 1.1.0 and are ADDRESSING, not control - the
     // Governor never reads them; the two fields that could steer stay unreachable.
-    expect(Object.keys(properties).sort()).toEqual(["executionId", "message", "replyTo", "to"]);
+    expect(Object.keys(properties).sort()).toEqual(["executionId", "idempotencyKey", "message", "replyTo", "to"]);
+  });
+
+  /** THE HEAD THE AGENT OBSERVED rides as If-Match (L's follow-up on #662): every write tool
+   * against an existing stream accepts `ifMatch` and passes it to the client untouched; a
+   * present value of the wrong shape is refused, never dropped; start_task and send_message
+   * stay outside the rule (no stream yet / a message answers by replyTo, not by head). */
+  it("passes the agent's observed head as ifMatch on every stream-bound write tool, and refuses a malformed one", async () => {
+    const client = stubClient();
+    const { modelContext, registered } = fakeModelContext();
+    registerStudioTools(client, hooks().value, { modelContext });
+    const named = (name: string) => registered.find((tool) => tool.name === `graphhelm_${name}`)!;
+    const cases: Array<[string, Record<string, unknown>, keyof typeof client]> = [
+      ["pause_execution", { executionId: "demo", mode: "immediate" }, "pauseImmediately"],
+      ["pause_execution", { executionId: "demo" }, "pause"],
+      ["approve_node", { executionId: "demo", node: "implementation" }, "approve"],
+      ["resume_execution", { executionId: "demo", file: "graph.yaml" }, "resume"],
+      ["cancel_execution", { executionId: "demo" }, "cancel"],
+      ["sweep_execution", { executionId: "demo" }, "sweep"],
+      ["amend_node_budget", { executionId: "demo", node: "judge", seconds: 900, computedAtSequence: 4 }, "amendBudget"],
+    ];
+    for (const [name, input, method] of cases) {
+      expect(Object.keys(named(name).inputSchema.properties as object)).toContain("ifMatch");
+      const reply = JSON.parse(await named(name).execute({ ...input, ifMatch: 10 }));
+      expect(reply.result).toBe("succeeded");
+      const calls = vi.mocked(client[method] as (...args: unknown[]) => unknown).mock.calls;
+      const options = calls[calls.length - 1][calls[calls.length - 1].length - 1] as { ifMatch?: number };
+      expect(options.ifMatch).toBe(10);
+    }
+    for (const name of ["start_task", "send_message"]) {
+      expect(Object.keys(named(name).inputSchema.properties as object)).not.toContain("ifMatch");
+    }
+    const before = vi.mocked(client.pauseImmediately).mock.calls.length;
+    const refused = JSON.parse(await named("pause_execution").execute({ executionId: "demo", mode: "immediate", ifMatch: "10" }));
+    expect(refused.ok).toBe(false);
+    expect(vi.mocked(client.pauseImmediately).mock.calls.length).toBe(before);
+  });
+
+  /** A RETRY CARRIES THE KEY OF THE ATTEMPT IT RETRIES (PR #662 review, adapter.ts:439): an
+   * immediate pause that came back `unknown` hands the agent its key in the evidence; calling
+   * again with that key reaches the client with the SAME key, so the Runtime can recognize the
+   * retry and the result is tied to the original attempt. Absent -> minted; malformed ->
+   * refused, never replaced by a mint. start_task keeps its own mint (it mints the execution
+   * id per call too, so a key alone cannot name the attempt it would retry). */
+  it("reuses the returned idempotencyKey on a retry, mints one when absent, refuses a malformed one", async () => {
+    let attempts = 0;
+    const client = stubClient({
+      pauseImmediately: vi.fn(async (_id: string, options: { idempotencyKey: string }) => {
+        attempts += 1;
+        return {
+          ...evidence("pause"),
+          idempotencyKey: options.idempotencyKey,
+          result: attempts === 1 ? ("unknown" as const) : ("succeeded" as const),
+        };
+      }),
+    });
+    const { modelContext, registered } = fakeModelContext();
+    registerStudioTools(client, hooks().value, { modelContext });
+    const pause = registered.find((tool) => tool.name === "graphhelm_pause_execution")!;
+
+    const first = JSON.parse(await pause.execute({ executionId: "demo", mode: "immediate" }));
+    expect(first.result).toBe("unknown");
+    const key: string = first.idempotencyKey;
+    expect(key.length).toBeGreaterThan(0);
+
+    const second = JSON.parse(await pause.execute({ executionId: "demo", mode: "immediate", idempotencyKey: key }));
+    expect(second.result).toBe("succeeded");
+    expect(second.idempotencyKey).toBe(key);
+    const calls = vi.mocked(client.pauseImmediately).mock.calls as unknown as Array<[string, { idempotencyKey: string }]>;
+    expect(calls[1][1].idempotencyKey).toBe(key);
+    expect(calls[0][1].idempotencyKey).toBe(key);
+
+    for (const malformed of ["", "k".repeat(65), 12]) {
+      const refused = JSON.parse(await pause.execute({ executionId: "demo", mode: "immediate", idempotencyKey: malformed }));
+      expect(refused.ok).toBe(false);
+    }
+    expect(vi.mocked(client.pauseImmediately).mock.calls.length).toBe(2);
+
+    for (const name of ["approve_node", "resume_execution", "send_message", "cancel_execution", "sweep_execution", "amend_node_budget"]) {
+      const tool = registered.find((candidate) => candidate.name === `graphhelm_${name}`)!;
+      expect(Object.keys(tool.inputSchema.properties as object)).toContain("idempotencyKey");
+    }
+    const start = registered.find((tool) => tool.name === "graphhelm_start_task")!;
+    expect(Object.keys(start.inputSchema.properties as object)).not.toContain("idempotencyKey");
   });
 
   it("falls back cleanly when the browser has no model context, and the page keeps working", () => {
@@ -407,6 +505,95 @@ describe("tool behaviour", () => {
     expect(hook.selected).toEqual(["demo"]);
   });
 
+  /** The two pauses route to two different client methods - the interrupting one is never
+   * reachable by default or by typo, only by the exact word. */
+  it("routes graceful and immediate pause to their own verbs, and refuses a third word", async () => {
+    const client = stubClient();
+    const tools = toolsOf(client, hooks());
+
+    await tools.get("graphhelm_pause_execution")!.execute({ executionId: "demo" });
+    expect(client.pause).toHaveBeenCalledTimes(1);
+    expect(client.pauseImmediately).not.toHaveBeenCalled();
+
+    await tools.get("graphhelm_pause_execution")!.execute({ executionId: "demo", mode: "graceful" });
+    expect(client.pause).toHaveBeenCalledTimes(2);
+
+    await tools.get("graphhelm_pause_execution")!.execute({ executionId: "demo", mode: "immediate" });
+    expect(client.pauseImmediately).toHaveBeenCalledTimes(1);
+
+    const reply = JSON.parse(
+      await tools.get("graphhelm_pause_execution")!.execute({ executionId: "demo", mode: "now" }),
+    );
+    expect(reply.ok).toBe(false);
+    expect(client.pauseImmediately).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes cancel, sweep and amend-budget through the client, inputs validated first", async () => {
+    const client = stubClient();
+    const tools = toolsOf(client, hooks());
+
+    await tools.get("graphhelm_cancel_execution")!.execute({ executionId: "demo" });
+    expect(client.cancel).toHaveBeenCalledWith("demo", expect.anything());
+
+    await tools.get("graphhelm_sweep_execution")!.execute({ executionId: "demo" });
+    expect(client.sweep).toHaveBeenCalledWith("demo", expect.anything());
+
+    await tools.get("graphhelm_amend_node_budget")!.execute({
+      executionId: "demo",
+      node: "judge",
+      seconds: 900,
+      computedAtSequence: 41,
+    });
+    expect(client.amendBudget).toHaveBeenCalledWith(
+      "demo",
+      { node: "judge", seconds: 900, computedAtSequence: 41 },
+      expect.anything(),
+    );
+
+    const refused = JSON.parse(
+      await tools.get("graphhelm_amend_node_budget")!.execute({ executionId: "demo", node: "judge", seconds: 0, computedAtSequence: 41 }),
+    );
+    expect(refused.ok).toBe(false);
+    expect(client.amendBudget).toHaveBeenCalledTimes(1);
+  });
+
+  /** INVALID INPUT IS A REFUSAL, NEVER ANOTHER OPERATION (PR #662 review, two threads of one
+   * class): an empty `asOf` used to be dropped and became "sweep now" - a different verb that
+   * journals and can spend overdue-exception episodes. */
+  it("refuses an empty or unparseable asOf instead of sweeping now", async () => {
+    const client = stubClient();
+    const tools = toolsOf(client, hooks());
+    for (const asOf of ["", "yesterday", "2026-09-02T10:00:00+01:00", "2026-02-30T10:00:00Z", "2026-09-02T99:99:99Z"]) {
+      const reply = JSON.parse(await tools.get("graphhelm_sweep_execution")!.execute({ executionId: "demo", asOf }));
+      expect(reply.ok, asOf).toBe(false);
+      expect(reply.error).toMatch(/Z-terminated/);
+    }
+    expect(client.sweep).not.toHaveBeenCalled();
+    await tools.get("graphhelm_sweep_execution")!.execute({ executionId: "demo", asOf: "2026-12-31T23:59:60Z" });
+    expect(client.sweep).toHaveBeenCalledWith("demo", expect.objectContaining({ asOf: "2026-12-31T23:59:60Z" }));
+    // The tool's constraint IS the schema's pattern, imported - not a hand-rolled format word.
+    const schema = tools.get("graphhelm_sweep_execution")!.inputSchema.properties as Record<string, { pattern?: string; format?: string }>;
+    expect(schema.asOf.pattern).toBe(TIMESTAMP_PATTERN);
+    expect(schema.asOf.format).toBeUndefined();
+  });
+
+  /** The seconds bound is the envelope schema's own (imported, not copied): one above it is
+   * refused HERE, with zero calls, instead of becoming the store's refusal one hop later. */
+  it("bounds seconds by the envelope schema - one over refuses locally, the maximum passes", async () => {
+    const client = stubClient();
+    const tools = toolsOf(client, hooks());
+    const over = JSON.parse(
+      await tools.get("graphhelm_amend_node_budget")!.execute({ executionId: "demo", node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS + 1, computedAtSequence: 41 }),
+    );
+    expect(over.ok).toBe(false);
+    expect(client.amendBudget).not.toHaveBeenCalled();
+    await tools.get("graphhelm_amend_node_budget")!.execute({ executionId: "demo", node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS, computedAtSequence: 41 });
+    expect(client.amendBudget).toHaveBeenCalledWith("demo", { node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS, computedAtSequence: 41 }, expect.anything());
+    const schema = tools.get("graphhelm_amend_node_budget")!.inputSchema.properties as Record<string, { maximum?: number }>;
+    expect(schema.seconds.maximum).toBe(MAX_NODE_TIMEOUT_SECONDS);
+    expect(MAX_NODE_TIMEOUT_SECONDS).toBe(315576000);
+  });
+
   /** The attention tool serves the SAME unanswered-question ledger the page's banner shows
    * (`graph/ledger.ts`): the agent learns WHAT the run is waiting to hear, and the signalId its
    * answer's replyTo must cite to settle the debt. */
@@ -476,14 +663,23 @@ describe("tool behaviour", () => {
     expect(hook.activity.at(-1)?.outcome).toBe("unknown");
   });
 
-  it("never forwards an untrusted immediate mode to the client", async () => {
+  /** This guard was born when the schema had no `mode` and a smuggled "immediate" had to die
+   * before the client. Phase 2 (#105) makes `mode` a declared, enum-closed field that routes to
+   * a DIFFERENT client method - so what the guard defends now is the seam it always defended:
+   * the word never rides into `client.pause`'s options (the graceful verb cannot be steered),
+   * and the interrupting verb is reached only through its own method. */
+  it("keeps mode out of the graceful verb's options - the two pauses stay separate methods", async () => {
     const client = stubClient();
     const tools = toolsOf(client, hooks());
     await tools.get("graphhelm_pause_execution")!.execute({ executionId: "demo", mode: "immediate" });
-
-    const options = vi.mocked(client.pause).mock.calls[0]?.[1];
+    expect(client.pause).not.toHaveBeenCalled();
+    const options = vi.mocked(client.pauseImmediately).mock.calls[0]?.[1];
     expect(options).toEqual(expect.objectContaining({ actor: { id: "studio-webmcp-adapter", type: "agent" } }));
     expect(options).not.toHaveProperty("mode");
+
+    await tools.get("graphhelm_pause_execution")!.execute({ executionId: "demo", mode: "graceful" });
+    const graceful = vi.mocked(client.pause).mock.calls[0]?.[1];
+    expect(graceful).not.toHaveProperty("mode");
   });
 
   it("refuses a malformed executionId with a named error instead of calling the client", async () => {

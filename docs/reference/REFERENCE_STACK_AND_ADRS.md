@@ -1154,3 +1154,47 @@ recorded rather than a silent contradiction in the higher-precedence register.
 **Relationship:** amends D-045 and the source-fallback clause of ADR-031 along one axis; leaves
 ADR-031's receipt vocabulary and reindex axis unchanged; depends on nothing in ADR-034 but follows
 its precedent for how a decision amendment is recorded.
+
+## 41. ADR-036 — `cancel` becomes a Studio site tool, behind two confirmations
+
+**Status:** accepted (product decision delegated by the owner, 2026-09-02; recorded on PR #662).
+
+**Context:** `docs/ux/STUDIO_MVP.md` §6 listed `cancel` as a deliberate omission from the WebMCP
+site tools — "the destructive verb, and this journey does not need it" — and the adapter carried a
+guard test that failed the day anyone added it, so that the addition would have to be argued. Phase 2
+of #105 orders the Studio to OPERATE: every execution verb the Public Runtime API exposes for the
+execution screen becomes an operator button, with WebMCP parity so an agent can do what the operator
+can. `cancel` is on that screen. The bot's review of #662 (adapter.ts:595) named the contradiction
+precisely: the higher-precedence subsystem specification still said "not a site tool" while the PR
+registered the tool and updated only the README. This ADR is the required record of that contract
+change; the guard test was rewritten with this argument, as its own comment demanded.
+
+**Decision:** `cancel` IS a Studio site tool (`graphhelm_cancel_execution`), under these guarantees:
+
+1. **Two confirmations, one per surface.** On the page, the first press only ASKS — the question and
+   its answer live in the page (no browser `confirm()`), and "keep running" backs out with zero calls.
+   Through WebMCP, the host's own tool-call confirmation prompt applies to every write tool, this one
+   included; parity does not skip the consent the page requires.
+2. **The tool says DESTRUCTIVE in its first word**, states that every unfinished node is recorded
+   Cancelled and that an append-only log has no undo, and instructs the agent to confirm with the
+   person unless they explicitly asked for the cancellation.
+3. **Attribution is preserved.** A cancel through the tool is recorded as `agent` /
+   `studio-webmcp-adapter`, never as the operator; the host's confirmation is consent, not authorship
+   (STUDIO_MVP §5).
+4. **The Runtime still refuses what it always refused.** `cancel.rs:62` rejects a run that is
+   already `completed`, `failed` or `cancelled`; the page renders the button disabled with that reason
+   (`components/legality.ts`, closed over the Runtime's seven states) and the tool relays the refusal
+   as `refused` with the diagnostic. Nothing here widens what the API accepts.
+5. **"delete" stays forbidden** — nothing on this API erases, and the adapter's guard test now pins
+   that no tool name may imply it.
+
+**Consequences:** STUDIO_MVP.md §6 no longer lists `cancel` as an omission and points here; the
+README's tool table carries the tool with its destructive marking. A future verb that is destructive
+in the same sense (there is none today) follows this ADR's shape or reopens it.
+
+**What this ADR does not establish:** any change to the Runtime's cancel semantics; any bulk or
+multi-run cancel; any tool that erases evidence, events or executions.
+
+**Relationship:** amends STUDIO_MVP.md §6 (Deliberate omissions) along one axis; consistent with
+D-039 (chat-first operation is an adapter over the Public Runtime API, never a second operational
+path) and with STUDIO_MVP §5 (agent actions are recorded as agents).

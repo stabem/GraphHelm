@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
@@ -185,6 +186,12 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy,
       watch: { usePolling: true, interval: 300 },
+      // The client reads bounds and the timestamp pattern out of `schemas/event-envelope.schema.json`
+      // at the repository root - imported, not copied, so they move with the schema. The dev
+      // server's default allow-list stops at this app's root; ONLY `<repo>/schemas` is opened for
+      // that read - not the repository root, which would expose `.git/` to the dev server
+      // (L's review of #662).
+      fs: { allow: [fileURLToPath(new URL("../../schemas", import.meta.url)), "."] },
     },
     preview: { host: "127.0.0.1", port: 4173, strictPort: true, proxy },
     test: {

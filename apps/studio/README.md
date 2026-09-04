@@ -33,15 +33,20 @@ and the MCP surface can also take.
 - **A live tail that tells the truth**: incremental paged reads, an events identity that only
   changes when the log does, and a rail badge that flips to "stale" when the Runtime stops
   answering instead of wearing "live" over aging data.
-- **Mutations, verified after the fact**: pause, approve, resume, start task, send message — each
-  re-read from the log before being reported as done.
+- **Mutations, verified after the fact**: pause (both of the runtime's pauses — graceful and
+  immediate), approve, resume, cancel (behind an in-place confirmation), sweep, amend a node's
+  silence budget, start task, send message — each re-read from the log before being reported as
+  done. A verb the current state makes illegal renders disabled with the reason; a button never
+  pretends.
 
 ## WebMCP site tools
 
 When the browser exposes a model-context surface (`document.modelContext` or
-`navigator.modelContext`), the Studio registers **ten tools** after a connection exists and
+`navigator.modelContext`), the Studio registers **thirteen tools** after a connection exists and
 removes them on disconnect. Support is optional: without it the page says so and every button
-keeps working — the human interface is complete on its own.
+keeps working — the human interface is complete on its own. Phase 2's rule is parity: every
+action button on the page has a page-tool twin, so an agent can do what the operator can — the
+destructive one says so in its first word and still passes the host's own confirmation prompt.
 
 | Tool | Effect |
 |---|---|
@@ -50,11 +55,14 @@ keeps working — the human interface is complete on its own.
 | `graphhelm_get_execution_status` | Read. Aggregate state and the sixteen lifecycle state counts. |
 | `graphhelm_get_execution_events` | Read. A page of the event log; exclusive `after` cursor. |
 | `graphhelm_read_evidence` | Read. Opens one sealed content item by id. |
-| `graphhelm_pause_execution` | **Write.** Holds dispatch. |
+| `graphhelm_pause_execution` | **Write.** The runtime's two pauses by explicit `mode`: `graceful` (default — in-flight work finishes and is joined) or `immediate` (interrupts). |
 | `graphhelm_approve_node` | **Write.** Readies one blocked or proposed node. |
 | `graphhelm_resume_execution` | **Write.** Lifts the hold, given the graph path on the Runtime host. |
 | `graphhelm_start_task` | **Write.** Starts a new supervised run from an objective. |
 | `graphhelm_send_message` | **Write.** Posts a signal into the run's thread, with optional `to` / `replyTo` addressing. |
+| `graphhelm_cancel_execution` | **Write, destructive.** Cancels the run; every unfinished node is recorded Cancelled. No undo on an append-only log. |
+| `graphhelm_sweep_execution` | **Write.** Evaluates the run's customs stages now (`asOf` optional) and journals the result. |
+| `graphhelm_amend_node_budget` | **Write.** Declares a silence budget for one node — the attention verdict's own remedy; `seconds` has no default anywhere on the path. |
 
 Every schema is closed (`additionalProperties: false`) with bounded inputs. **A write tool never
 claims success it has not verified**: each one reads the head, mutates, then reads the status and

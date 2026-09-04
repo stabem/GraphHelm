@@ -14,6 +14,8 @@
  * `JSON.stringify(client)` is exactly how a secret reaches a log by accident.
  */
 
+import envelopeSchema from "../../../../schemas/event-envelope.schema.json";
+
 import type {
   Actor,
   Diagnostic,
@@ -25,7 +27,9 @@ import type {
   GraphTopology,
   ModelRouteSummary,
   MutationEvidence,
+  RecordedActor,
   RuntimeEvent,
+  WireActorType,
 } from "./types";
 
 /** The actor id the human interface records. */
@@ -57,12 +61,78 @@ export const MAX_MESSAGE_LENGTH = 4000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
+
+/**
+ * The largest silence budget the persisted envelope admits, READ FROM THE SCHEMA rather than
+ * copied: `executionFormAmended.nodeTimeoutSeconds` is bounded there (PR #662 review), and a
+ * client that accepted any safe integer let a "valid" control turn into the store's refusal one
+ * hop later. If the schema moves, this moves with it; a copied number would not.
+ */
+const AMENDED_TIMEOUT_BOUNDS = (
+  envelopeSchema as {
+    $defs: { executionFormAmended: { properties: { nodeTimeoutSeconds: { additionalProperties: { minimum: number; maximum: number } } } } };
+  }
+).$defs.executionFormAmended.properties.nodeTimeoutSeconds.additionalProperties;
+export const MAX_NODE_TIMEOUT_SECONDS: number = AMENDED_TIMEOUT_BOUNDS.maximum;
+export const MIN_NODE_TIMEOUT_SECONDS: number = AMENDED_TIMEOUT_BOUNDS.minimum;
+
+/**
+ * The wire's actor vocabulary, READ FROM THE SCHEMA (`$defs.actor.properties.type.enum`). An
+ * actor read back from the ledger is accepted only if its type is in this set; anything else is
+ * REFUSED - never narrowed by a cast into a union it does not belong to (PR #662 review,
+ * client.ts:684: the driver's `system` was being cast to `owner | agent`, so the evidence's own
+ * type lied at runtime). `WireActorType` in types.ts restates the same enum as literals; the
+ * two are pinned together by a cell.
+ */
+export const ACTOR_TYPES: readonly string[] = (
+  envelopeSchema as { $defs: { actor: { properties: { type: { enum: string[] } } } } }
+).$defs.actor.properties.type.enum;
+
+function isWireActorType(value: string | null): value is WireActorType {
+  return value !== null && ACTOR_TYPES.includes(value);
+}
+
+/**
+ * The Runtime's own timestamp form, READ FROM THE SCHEMA (`$defs.timestamp.pattern`): UTC only,
+ * `Z`-terminated, at most nine fraction digits, and the leap second `23:59:60` admitted. The
+ * first version hand-rolled an RFC 3339 regex plus `Date.parse`, which accepted offsets and
+ * over-long fractions the wire contract refuses and rejected the leap second it permits -
+ * validation looser AND stricter than the contract at once (PR #662 review, client.ts:83).
+ * No `Date.parse` anywhere: it normalizes impossible dates instead of refusing them.
+ */
+export const TIMESTAMP_PATTERN: string = (
+  envelopeSchema as { $defs: { timestamp: { pattern: string } } }
+).$defs.timestamp.pattern;
+const TIMESTAMP_REGEX = new RegExp(TIMESTAMP_PATTERN);
+
+/** Days in a month, leap years included - the calendar check the pattern cannot express and
+ * `PersistedTimestamp` enforces on the Runtime side (`2026-02-30` is refused there). */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= lengths[month - 1];
+}
+
+/** An instant this client will relay as `asOf`: present means it matches the persisted timestamp
+ * contract exactly, or it is REFUSED - never dropped, never normalized. Dropping turned "sweep as
+ * of X" into "sweep now"; normalizing would turn an impossible date into a real one. */
+export function isPersistedTimestamp(value: string): boolean {
+  if (!TIMESTAMP_REGEX.test(value)) return false;
+  return isCalendarDay(Number(value.slice(0, 4)), Number(value.slice(5, 7)), Number(value.slice(8, 10)));
+}
 const MUTATION_KEY_SUFFIX: Record<MutationEvidence["action"], string> = {
   start: "started",
   pause: "paused",
   approve: "outcome",
   resume: "resumed",
   signal: "record",
+  // Phase 2 verbs, each suffix copied from the serve route's own `parse_mutation_headers` call
+  // (routes.rs) rather than guessed - the derived key is `{key}-{suffix}-{digest}` and a wrong
+  // word here would make every verification read zero attributable events.
+  cancel: "cancelled",
+  sweep: "sweep-performed",
+  amendBudget: "outcome",
 };
 
 const MUTATION_DECISION_KIND: Record<MutationEvidence["action"], string> = {
@@ -71,6 +141,9 @@ const MUTATION_DECISION_KIND: Record<MutationEvidence["action"], string> = {
   approve: "node_outcome_recorded",
   resume: "execution_resumed",
   signal: "signal_recorded",
+  cancel: "execution_completed",
+  sweep: "sweep_performed",
+  amendBudget: "execution_form_amended",
 };
 
 function isAttributableDecision(
@@ -420,21 +493,44 @@ export class RuntimeClient {
       "X-GraphHelm-Actor": actor.id,
       "X-GraphHelm-Actor-Type": actor.type,
     };
-    // Only pinned when there is a head to pin. `If-Match: 0` on a stream that has never been
-    // written is a claim about a sequence streams do not issue.
-    if (headBefore > 0) headers["If-Match"] = String(headBefore);
+    // ZERO IS AN OBSERVATION, NOT AN ABSENCE (PR #662 review, adapter.ts:157). The predecessor
+    // sent the header only when the head was above zero, on the belief that `If-Match: 0` claims
+    // a sequence streams never issue. The Runtime says otherwise: `current_head` is
+    // `history.last().map_or(0, ..)`, so a stream that resolves with no events answers exactly
+    // `Some(0)`, and it answers `None` only when the store cannot be read. A caller that observed
+    // an empty run and asks to be refused if anything appeared was therefore having its
+    // precondition dropped -- and a WebMCP caller could pass `ifMatch: 0` through a schema whose
+    // `minimum` is 0, be told the verb is guarded, and have it run unguarded against a stream
+    // created between the read and the write. A guard whose absence is invisible is worse than no
+    // guard, because its presence gets cited.
+    //
+    // `-1` above is the sentinel for "the caller named no head", and it is unreachable from
+    // outside: `ifMatchOf` refuses anything negative before it becomes an option. So a
+    // non-negative value here is always a head someone actually observed, and every one of them
+    // is sent.
+    if (headBefore >= 0) headers["If-Match"] = String(headBefore);
 
     let diagnostics: Diagnostic[] = [];
     let refused = false;
     let postAmbiguous = false;
     let confirmedHead: number | null = null;
     let recognizedRetry = false;
+    // Where the Runtime says this identity's decision already landed. Null means it said nothing
+    // usable, which is refused as proof rather than rounded down to "no retry" -- the same rule
+    // the immediate-pause path applies to the same field.
+    let recognizedRetryAt: number | null = null;
     try {
       const reply = await this.#request<{
         headSequence?: unknown;
-        idempotency?: { recognizedRetry?: unknown };
+        idempotency?: { recognizedRetry?: unknown; originalDecisionSequence?: unknown };
       }>({ method: "POST", path, body, headers });
       recognizedRetry = reply.idempotency?.recognizedRetry === true;
+      if (recognizedRetry) {
+        const sequence = reply.idempotency?.originalDecisionSequence;
+        if (typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence > 0) {
+          recognizedRetryAt = sequence;
+        }
+      }
       if (
         typeof reply.headSequence === "number" &&
         Number.isSafeInteger(reply.headSequence) &&
@@ -493,12 +589,46 @@ export class RuntimeClient {
         verified = false;
       }
       // A HEAD THAT DID NOT MOVE proves nothing by itself. When the pre-read already saw the
-      // committed head (a retry after the original landed), the confirmed head equals it, no
-      // event scan runs, and the old shape reported `succeeded` on zero evidence (PR #467
-      // review). Success without movement is claimed only when the Runtime itself says
-      // `recognizedRetry` - its own statement that this exact identity already committed.
+      // committed head (a retry after the original landed), the confirmed head equals it and no
+      // event scan runs, so the old shape reported `succeeded` on zero evidence (PR #467 review).
       if (confirmedHead !== null && confirmedHead === headBefore && !recognizedRetry) {
         verified = false;
+      }
+      // A RECOGNIZED RETRY IS A COORDINATE, NOT A VERDICT (PR #662 review, adapter.ts:178).
+      // `recognizedRetry` alone was accepted as the missing evidence, which made these seven
+      // verbs answer `succeeded` with an EMPTY `newEvents` while the response advertised
+      // verification against the original decision. The immediate-pause path was already fixed to
+      // read the decision back at `originalDecisionSequence`; this is the same rule for the rest,
+      // through the same attribution predicate the forward scan uses, so a retry cannot claim an
+      // event that belongs to another actor or another key.
+      //
+      // A retry whose coordinate is missing, unusable, or points at something this caller did not
+      // author degrades to `unknown`. That is not the same as failure: the mutation may well have
+      // committed. It is the honest report that this client could not read the proof, which is
+      // what `unknown` is for.
+      if (recognizedRetry && verified) {
+        const proof = recognizedRetryAt === null ? null : await this.#eventAt(id, recognizedRetryAt);
+        if (
+          proof !== null &&
+          isAttributableDecision(proof, action, node, actor, attributableKeyPrefix)
+        ) {
+          if (!newEvents.some((event) => event.sequence === proof.sequence)) {
+            newEvents.push(proof);
+          }
+        } else {
+          verified = false;
+          if (diagnostics.length === 0) {
+            diagnostics = [{
+              code: "",
+              severity: "error",
+              message: recognizedRetryAt === null
+                ? "The Runtime recognized this retry but returned no usable originalDecisionSequence; the proof is not accepted."
+                : "The Runtime recognized this retry, but no decision attributable to this actor and key was readable at the sequence it named.",
+              path: "/idempotency/originalDecisionSequence",
+              source: "studio",
+            }];
+          }
+        }
       }
     } catch (error) {
       if (error instanceof DisconnectedError) throw error;
@@ -543,6 +673,441 @@ export class RuntimeClient {
       `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/pause`,
       {},
       null,
+      options,
+    );
+  }
+
+  /**
+   * `POST /v1/executions/{id}/pause` with `{"mode": "immediate"}` - the runtime's OTHER pause.
+   *
+   * The graceful `pause` above lets in-flight work finish and exits by quiescence; this one
+   * interrupts it. The two are different promises to the operator and are two methods here so no
+   * call site can reach the interrupting one by a default.
+   *
+   * VERIFIED BY STATE, NOT BY EVENT - deliberately different from every other mutation: the
+   * immediate handler appends nothing itself (the DRIVER appends `execution_paused` under its own
+   * key once every in-flight node is recorded Interrupted, routes.rs), so there is no attributable
+   * decision event for this caller to find, and the handler's reply is the polled STATUS. The
+   * honest proof is therefore the state: `status === "paused"` on a fresh read is `succeeded`;
+   * anything else the poll window could not confirm is `unknown`, never optimism.
+   */
+  async pauseImmediately(
+    executionId: string,
+    options: MutationOptions = {},
+  ): Promise<MutationEvidence> {
+    const id = checkedId(executionId, "executionId");
+    const actor = options.actor ?? OPERATOR_ACTOR;
+    const idempotencyKey = options.idempotencyKey ?? newIdempotencyKey();
+    // THE IDENTITY OF A MUTATION IS (KEY, ACTOR), NEVER THE SHAPE OF AN EVENT (PR #662 review,
+    // client.ts:903). The Runtime records both on the pause it appends for this request - the
+    // derived key `{key}-paused-{digest}` and the actor the headers named - so "my pause" is the
+    // event carrying this prefix AND this actor, the same test #verifiedMutation applies to every
+    // other verb. A pause that merely IS a pause (another actor's, landed in the same interval,
+    // or the payload that won a race this request lost) is not this request's and is never
+    // reported as its evidence.
+    const keyPrefix = `${idempotencyKey}-${MUTATION_KEY_SUFFIX.pause}-`;
+    const isMine = (event: RuntimeEvent): boolean =>
+      event.kind === "execution_paused" &&
+      event.idempotencyKey?.startsWith(keyPrefix) === true &&
+      event.actorId === actor.id &&
+      event.actorType === actor.type;
+    const before = await this.getStatus(id);
+    let diagnostics: Diagnostic[] = [];
+    let refused = false;
+    // SUCCESS NEEDS TWO FACTS, not one (PR #662 review): the POST was CONFIRMED (a 2xx read
+    // back, not a transport error or a 5xx that a later read happens to follow), and the run was
+    // NOT ALREADY PAUSED before this call - otherwise `paused` afterwards proves nothing about
+    // this mutation. Either fact missing degrades to `unknown` with the reason as a diagnostic.
+    let posted = false;
+    const alreadyPaused = before.status === "paused";
+    // THE CALLER'S OBSERVED HEAD RIDES AS If-Match, like every other Studio mutation: an
+    // interrupt aimed at the run the operator SAW must not interrupt work that began after they
+    // looked. The head is the CALLER'S when they passed one (`options.ifMatch`) - the pre-read
+    // above is for verification (was the run already paused?), never a substitute for the
+    // precondition: replacing the head the caller observed with a fresher one the client just
+    // read turns the guard into one that always passes, which is worse than none because its
+    // presence gets cited (PR #662 review, client.ts:664; the #verifiedMutation rule). Only
+    // Since #681 the immediate branch runs through the same `run_idempotent_mutation` wrapper as
+    // the graceful one (routes.rs `pause` doc comment), so the precondition is honoured on both
+    // paths - the bypass this comment once recorded is gone. Zero is sent like any other observed
+    // head, for the reason written at the `#verifiedMutation` site: the Runtime reports an empty
+    // stream as head 0 and an unreadable one as no head at all, so pinning 0 fails CLOSED on a
+    // store it cannot read and refuses correctly on a stream something has since written.
+    const headBefore = options.ifMatch ?? before.headSequence;
+    const headers: Record<string, string> = {
+      "Idempotency-Key": idempotencyKey,
+      "X-GraphHelm-Actor": actor.id,
+      "X-GraphHelm-Actor-Type": actor.type,
+    };
+    if (headBefore >= 0) headers["If-Match"] = String(headBefore);
+    // A RECOGNIZED RETRY IS THE RUNTIME'S OWN PROOF (PR #662 review, client.ts:667): when the
+    // first POST committed and its reply was lost, the retry under the same key arrives after
+    // the run already reads paused - `alreadyPaused` is true and a scan after the pre-read head
+    // finds nothing new, so the old shape could only answer `unknown`. The wrapper replies
+    // `idempotency.recognizedRetry` with `originalDecisionSequence`; that sequence is where the
+    // pause event is read back instead (the regular path's rule, #verifiedMutation), and success
+    // no longer needs the run to have been running before THIS call.
+    let recognizedRetryAt: number | null = null;
+    try {
+      const reply = await this.#request<{
+        idempotency?: { recognizedRetry?: unknown; originalDecisionSequence?: unknown };
+      }>({
+        method: "POST",
+        path: `/v1/executions/${encodeURIComponent(id)}/pause`,
+        body: { mode: "immediate" },
+        headers,
+      });
+      posted = true;
+      if (reply.idempotency?.recognizedRetry === true) {
+        const sequence = reply.idempotency.originalDecisionSequence;
+        if (typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence > 0) {
+          recognizedRetryAt = sequence;
+        } else {
+          // A proof without a usable coordinate is refused as proof, not rounded to "no retry".
+          diagnostics = [{
+            code: "",
+            severity: "error",
+            message: "The Runtime recognized this retry but returned no usable originalDecisionSequence; the proof is not accepted.",
+            path: "/idempotency/originalDecisionSequence",
+            source: "studio",
+          }];
+        }
+      }
+    } catch (error) {
+      if (error instanceof DisconnectedError) throw error;
+      if (!(error instanceof RuntimeError)) throw error;
+      refused = error.httpStatus >= 400 && error.httpStatus < 500;
+      diagnostics = error.diagnostics.length > 0
+        ? error.diagnostics
+        : [{ code: "", severity: "error", message: error.message, path: "/", source: "studio" }];
+    }
+    let statusAfter: ExecutionStatus | null = null;
+    try {
+      statusAfter = await this.getStatus(id);
+    } catch (error) {
+      if (error instanceof DisconnectedError) throw error;
+    }
+    const pausedNow = statusAfter?.status === "paused";
+    // THE ACTOR IS READ BACK FROM THE LEDGER, NOT REPEATED FROM THE REQUEST (PR #662 review,
+    // adapter.ts:389, then client.ts:760). The immediate branch signals the cancel channel and
+    // the driver appends `execution_paused` later, asynchronously; since #681 the request's
+    // actor and idempotency key ride that channel (`ImmediateCancelRequest`, routes.rs), so the
+    // record names the caller. The evidence does not take that on faith: the pause event is
+    // READ BACK and its actor is what the evidence carries - the caller when the Runtime did
+    // its part, and whoever the record names if it ever stops. Success requires having found it.
+    // The scan runs until the head the re-read OBSERVED is exhausted - the bound is the model's
+    // (the head itself), not a page literal: a legal 1,024-node ready set can record 1,024
+    // Interrupted outcomes before the pause folds (bounds.rs MAX_READY_SET; driver.rs
+    // write_outcome loop), and a five-page cap turned a confirmed pause into `unknown`.
+    const observedHead = statusAfter?.headSequence ?? null;
+    let foundEvent: RuntimeEvent | null = null;
+    // A pause that was read but is NOT this request's - reported as such, never as evidence.
+    let foreignPause: RuntimeEvent | null = null;
+    if (recognizedRetryAt !== null) {
+      const at = await this.#pausedEventAt(id, recognizedRetryAt);
+      if (at === null) {
+        diagnostics = [
+          ...diagnostics,
+          {
+            code: "",
+            severity: "error",
+            message: `The Runtime named sequence ${recognizedRetryAt} as the original pause decision, but no execution_paused event was read there; the retry is not accepted as proof.`,
+            path: "/idempotency/originalDecisionSequence",
+            source: "studio",
+          },
+        ];
+      } else if (isMine(at)) {
+        foundEvent = at;
+      } else {
+        foreignPause = at;
+      }
+    } else if (posted && !refused) {
+      // The scan starts at the head the precondition named - the caller's when given - the
+      // same coordinate #verifiedMutation scans from; the pre-read is not consulted here either.
+      const scan = await this.#pausedEventAfter(id, headBefore, observedHead, isMine);
+      foundEvent = scan.mine;
+      foreignPause = scan.mine === null ? scan.foreign : null;
+    }
+    if (foundEvent === null && foreignPause !== null) {
+      diagnostics = [
+        ...diagnostics,
+        {
+          code: "",
+          severity: "error",
+          message: `a pause was found in the log but it is not this request's: sequence ${foreignPause.sequence} carries actor ${String(foreignPause.actorType)}:${String(foreignPause.actorId)} under key ${String(foreignPause.idempotencyKey)}; this request is ${actor.type}:${actor.id} under key prefix ${keyPrefix}`,
+          path: "/idempotency",
+          source: "studio",
+        },
+      ];
+    }
+    // THE LEDGER'S ACTOR, IN THE WIRE'S VOCABULARY. An event whose actor type is outside the
+    // schema's enum is not accepted as proof - refused, never narrowed by a cast into a union it
+    // does not belong to. Only a found event with a legal actor can carry `succeeded`.
+    const ledgerActor: RecordedActor | null =
+      foundEvent !== null && foundEvent.actorId !== null && isWireActorType(foundEvent.actorType)
+        ? { id: foundEvent.actorId, type: foundEvent.actorType }
+        : null;
+    const pausedEvent = ledgerActor !== null ? foundEvent : null;
+    if (foundEvent !== null && pausedEvent === null) {
+      diagnostics = [
+        ...diagnostics,
+        {
+          code: "",
+          severity: "error",
+          message: `The ledger's pause event carries an actor type outside the wire vocabulary (${String(foundEvent.actorType)}); it is not accepted as proof.`,
+          path: "/actor",
+          source: "studio",
+        },
+      ];
+    }
+    // A RECOGNIZED RETRY SUCCEEDS ON THE RECORD, NOT ON THE AGGREGATE (PR #662 review,
+    // client.ts:774): the pause the Runtime recognized was committed at N whatever the run did
+    // afterwards - another actor may have resumed it since, and `running` now says nothing
+    // against a pause proven at N. `pausedNow` decides only the path with no retry proof. When
+    // the run has moved on, the evidence says so: the resume that followed, by whom, where.
+    const provenRetry = recognizedRetryAt !== null && pausedEvent !== null ? recognizedRetryAt : null;
+    if (provenRetry !== null && statusAfter !== null && statusAfter.status !== "paused") {
+      const resumed = await this.#firstEventAfter(id, "execution_resumed", provenRetry, observedHead);
+      diagnostics = [
+        ...diagnostics,
+        {
+          code: "",
+          severity: "warning",
+          message:
+            resumed !== null
+              ? `your pause was committed at ${provenRetry}; the run was resumed afterwards by ${String(resumed.actorType)}:${String(resumed.actorId)} at ${resumed.sequence} (status now ${String(statusAfter.status)}, head ${String(observedHead)})`
+              : `your pause was committed at ${provenRetry}; the run has since moved on (status now ${String(statusAfter.status)}, head ${String(observedHead)}) - no resume event was read in between`,
+          path: "/execution",
+          source: "studio",
+        },
+      ];
+    }
+    let result: MutationEvidence["result"];
+    if (refused) {
+      result = "refused";
+    } else if (posted && pausedEvent !== null && (provenRetry !== null || (!alreadyPaused && pausedNow))) {
+      result = "succeeded";
+    } else {
+      result = "unknown";
+      if (alreadyPaused && recognizedRetryAt === null) {
+        diagnostics = [
+          ...diagnostics,
+          {
+            code: "",
+            severity: "error",
+            message: "The run was already paused before this call; the paused state proves nothing about it.",
+            path: "/execution",
+            source: "studio",
+          },
+        ];
+      } else if (!posted) {
+        diagnostics = [
+          ...diagnostics,
+          {
+            code: "",
+            severity: "error",
+            message: "The immediate pause was not confirmed by the Runtime; the later paused state may belong to someone else.",
+            path: "/execution",
+            source: "studio",
+          },
+        ];
+      }
+    }
+    if (ledgerActor !== null) {
+      diagnostics = [
+        ...diagnostics,
+        {
+          code: "",
+          severity: "warning",
+          message:
+            "immediate pause is signalled on the cancel channel and the runtime appends the pause event asynchronously - the actor reported here is the one read back from the append-only record, not repeated from the request.",
+          path: "/actor",
+          source: "studio",
+        },
+      ];
+    }
+    return {
+      action: "pause",
+      executionId: id,
+      node: null,
+      // Refused means nothing was appended: the identity that was SENT is the only truthful
+      // one. Otherwise the ledger's actor, and never the caller's, on this path.
+      actor: refused ? actor : (ledgerActor ?? actor),
+      idempotencyKey,
+      // A proven retry reports the ORIGINAL pause's heads: the record held N-1 just before the
+      // pause event and N once it landed. (N-1 is the head before the pause, not the original
+      // request's precondition - the record does not carry that.) Otherwise this call's own.
+      headBefore: provenRetry !== null ? provenRetry - 1 : headBefore,
+      headAfter: provenRetry !== null ? provenRetry : (statusAfter?.headSequence ?? null),
+      result,
+      statusAfter,
+      newEvents: pausedEvent === null ? [] : [pausedEvent],
+      diagnostics,
+    };
+  }
+
+  /** The first event of `kind` strictly after `after`, scanning until `until` is exhausted (or
+   * a short page ends the log when no head is known). `null` when none, or nothing readable. */
+  async #firstEventAfter(executionId: string, kind: string, after: number, until: number | null): Promise<RuntimeEvent | null> {
+    try {
+      let cursor = after;
+      while (until === null || cursor < until) {
+        const read = await this.getEvents(executionId, { after: cursor, limit: MAX_EVENT_LIMIT });
+        const found = read.events.find((event) => event.kind === kind);
+        if (found !== undefined) return found;
+        if (read.events.length === 0) return null;
+        const last = read.events[read.events.length - 1].sequence;
+        if (last <= cursor) return null;
+        cursor = last;
+        if (read.events.length < MAX_EVENT_LIMIT && until === null) return null;
+      }
+      return null;
+    } catch (error) {
+      if (error instanceof DisconnectedError) throw error;
+      return null;
+    }
+  }
+
+  /** The `execution_paused` at exactly `sequence` - the coordinate a recognized retry names as
+   * the original decision. Anything else at that sequence (or nothing readable) is `null`: the
+   * Runtime's proof is checked against the record, not repeated. This reads the SHAPE at the
+   * coordinate; whether the pause is this request's (key prefix + actor) is the caller's test. */
+  /** The event AT `sequence`, or null when the log does not have one there or cannot be read. */
+  async #eventAt(executionId: string, sequence: number): Promise<RuntimeEvent | null> {
+    try {
+      const page = await this.getEvents(executionId, { after: sequence - 1, limit: 1 });
+      const event = page.events[0];
+      return event !== undefined && event.sequence === sequence ? event : null;
+    } catch (error) {
+      if (error instanceof DisconnectedError) throw error;
+      return null;
+    }
+  }
+
+  async #pausedEventAt(executionId: string, sequence: number): Promise<RuntimeEvent | null> {
+    const event = await this.#eventAt(executionId, sequence);
+    return event !== null && event.kind === "execution_paused" ? event : null;
+  }
+
+  /** THIS request's `execution_paused` after `after` - the one `isMine` accepts (key prefix +
+   * actor, PR #662 review, client.ts:903) - scanning until `until` (the head the re-read
+   * observed) is exhausted, or until a short page says the log ends when no head is known. No
+   * page literal: the observed head IS the bound, so a pause folded behind any number of
+   * Interrupted records is found. `foreign` is the last pause read that is NOT this request's,
+   * reported only when no own pause was found, so the caller can say so instead of "nothing". */
+  async #pausedEventAfter(
+    executionId: string,
+    after: number,
+    until: number | null,
+    isMine: (event: RuntimeEvent) => boolean,
+  ): Promise<{ mine: RuntimeEvent | null; foreign: RuntimeEvent | null }> {
+    let foreign: RuntimeEvent | null = null;
+    try {
+      let cursor = after;
+      while (until === null || cursor < until) {
+        const read = await this.getEvents(executionId, { after: cursor, limit: MAX_EVENT_LIMIT });
+        for (const event of read.events) {
+          if (event.kind !== "execution_paused") continue;
+          if (isMine(event)) return { mine: event, foreign: null };
+          foreign = event;
+        }
+        if (read.events.length === 0) break;
+        const last = read.events[read.events.length - 1].sequence;
+        if (last <= cursor) break;
+        cursor = last;
+        if (read.events.length < MAX_EVENT_LIMIT && until === null) break;
+      }
+      return { mine: null, foreign };
+    } catch (error) {
+      if (error instanceof DisconnectedError) throw error;
+      return { mine: null, foreign };
+    }
+  }
+
+  /**
+   * `POST /v1/executions/{id}/cancel` - the destructive verb: every non-terminal node is recorded
+   * Cancelled and the execution completes as `cancelled`. No request body, mirroring the CLI.
+   * The CONFIRMATION lives on the surfaces (the page asks; a WebMCP host confirms tool calls) -
+   * this client only carries the verb.
+   */
+  async cancel(executionId: string, options: MutationOptions = {}): Promise<MutationEvidence> {
+    return this.#verifiedMutation(
+      "cancel",
+      executionId,
+      `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/cancel`,
+      {},
+      null,
+      options,
+    );
+  }
+
+  /** `POST /v1/executions/{id}/sweep` - evaluates the stream's customs stages and journals the
+   * result. `asOf` absent means now, read from the STORE's clock; the future is refused by the
+   * verb itself, so this surface deliberately re-checks nothing. */
+  async sweep(
+    executionId: string,
+    options: MutationOptions & { asOf?: string } = {},
+  ): Promise<MutationEvidence> {
+    const body: Record<string, string> = {};
+    // PRESENT MEANS VALID OR REFUSED - never silently absent. An empty or unparseable `asOf`
+    // used to be dropped, which turned "sweep as of X" into "sweep now": a different operation,
+    // one that journals and can spend overdue-exception episodes (PR #662 review).
+    if (options.asOf !== undefined) {
+      if (typeof options.asOf !== "string" || !isPersistedTimestamp(options.asOf)) {
+        throw new RuntimeError(
+          "asOf must be a UTC instant in the Runtime's own form, Z-terminated (for example 2026-09-02T10:00:00Z); offsets, impossible dates and fractions past nine digits are refused.",
+          0,
+          [],
+        );
+      }
+      body.asOf = options.asOf;
+    }
+    return this.#verifiedMutation(
+      "sweep",
+      executionId,
+      `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/sweep`,
+      body,
+      null,
+      options,
+    );
+  }
+
+  /**
+   * `POST /v1/executions/{id}/amend-budget` - the attention verdict's own remedy socket: declares
+   * a silence bound for one node. `seconds` is the operator's decision and has NO default here
+   * for the same reason the API gives it none - "absent means unknown" must not become "absent
+   * means 300s" through a client. `computedAtSequence` is where the remedy was computed, copied
+   * from the verdict itself, never invented.
+   */
+  async amendBudget(
+    executionId: string,
+    remedy: { node: string; seconds: number; computedAtSequence: number },
+    options: MutationOptions = {},
+  ): Promise<MutationEvidence> {
+    const nodeId = checkedId(remedy.node, "node");
+    // The schema's own bound, not any safe integer: the store refuses an envelope above it, and
+    // a control that accepted the value here only moved that refusal one hop later, where it
+    // reads as a failed (or unknown) mutation instead of a bad input (PR #662 review).
+    if (
+      !Number.isSafeInteger(remedy.seconds) ||
+      remedy.seconds < MIN_NODE_TIMEOUT_SECONDS ||
+      remedy.seconds > MAX_NODE_TIMEOUT_SECONDS
+    ) {
+      throw new RuntimeError(
+        `seconds must be an integer between ${MIN_NODE_TIMEOUT_SECONDS} and ${MAX_NODE_TIMEOUT_SECONDS} (the envelope schema's bound).`,
+        0,
+        [],
+      );
+    }
+    if (!Number.isSafeInteger(remedy.computedAtSequence) || remedy.computedAtSequence < 0) {
+      throw new RuntimeError("computedAtSequence must be a non-negative integer.", 0, []);
+    }
+    return this.#verifiedMutation(
+      "amendBudget",
+      executionId,
+      `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/amend-budget`,
+      { node: nodeId, seconds: remedy.seconds, computedAtSequence: remedy.computedAtSequence },
+      nodeId,
       options,
     );
   }

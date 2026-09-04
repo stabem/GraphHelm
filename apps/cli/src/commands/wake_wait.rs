@@ -488,6 +488,36 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     })
 }
 
+/// How long a read may take, given the caller's deadline and the current instant -- or `None`
+/// when the deadline has already passed.
+///
+/// NOT `cfg`-gated, and separate from its only call site, deliberately. The socket it serves exists
+/// only on Unix, so a cell for the decision could not run on the machines this fleet uses if the
+/// arithmetic lived inline. Extracting it does not make the wiring tested -- that is what the
+/// `#[cfg(unix)]` cell below is for -- but it does make the part that is easy to get wrong reachable.
+///
+/// `None` MEANS REFUSE, AND NEVER "no timeout". `set_read_timeout(Some(Duration::ZERO))` answers
+/// `Err(InvalidInput)` -- measured on 1.97.1, and pinned by a cell below rather than quoted -- so a
+/// caller that passed a zero budget down through `let _ = ...` would leave the socket with NO
+/// timeout at all. The deadline expiring would then widen the read to unbounded: this function's
+/// own defect, arriving through its own fix, and reported as a timeout that never fires.
+// COMPILED ON WINDOWS ONLY UNDER `test`. Its call site is the `cfg(not(windows))` arm, so a
+// Windows release build has no caller and `-D warnings` makes an unused function an error -- but
+// the cells below DO use it there, and they are the reason it was extracted. `any(not(windows),
+// test)` says exactly that, where `allow(dead_code)` would say something weaker and permanent.
+#[cfg(any(not(windows), test))]
+fn read_budget(
+    deadline: std::time::Instant,
+    now: std::time::Instant,
+) -> Option<std::time::Duration> {
+    let remaining = deadline.saturating_duration_since(now);
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining)
+    }
+}
+
 #[cfg(not(windows))]
 pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     use std::io::Read;
@@ -513,9 +543,30 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                let _ = std::fs::remove_file(&path);
+                // THE DEADLINE HAS TO REACH THE READ, and until #798 it did not. `accept` returns a
+                // socket that does NOT inherit the listener's `O_NONBLOCK` -- measured on
+                // Linux 6.6.87.2, AF_UNIX, via a raw `accept()` -- so this stream is BLOCKING even
+                // though `set_nonblocking(true)` was called on the listener above. With no read
+                // timeout set, a peer that connects and never writes held this call forever,
+                // whatever `timeout_seconds` said.
+                //
+                // The Windows arm of this same function has always been right: one
+                // `tokio::time::timeout` around both the connect and the read. This is that shape,
+                // spelled for a blocking socket.
+                let Some(budget) = read_budget(deadline, std::time::Instant::now()) else {
+                    return WaitEnd::TimedOut;
+                };
+                // NOT `let _ =`. Arming is what bounds the read, so an arming failure must not fall
+                // through into the unbounded read it exists to prevent -- that would be the defect
+                // again, reached through the error path of its own fix.
+                if stream.set_read_timeout(Some(budget)).is_err() {
+                    return WaitEnd::Unusable(
+                        "the rendezvous read could not be bounded".to_owned(),
+                    );
+                }
                 let mut sink = [0_u8; 64];
                 let rung = matches!(stream.read(&mut sink), Ok(read) if read > 0);
-                let _ = std::fs::remove_file(&path);
                 return if rung {
                     WaitEnd::Rung
                 } else {
@@ -534,5 +585,175 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
                 return WaitEnd::Unusable("the rendezvous accept failed".to_owned());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_budget;
+    use std::time::{Duration, Instant};
+
+    /// #798'S OWN RED, and it runs ONLY on Unix -- the platform where the defect is real and the
+    /// one this fleet does not run on. On Windows it is not compiled, so a green suite here says
+    /// NOTHING about it: its colour is unknown until someone runs it on Linux, and this comment
+    /// exists so nobody reads the suite's green as covering it.
+    ///
+    /// BOUNDED BY ITS OWN CHANNEL, not by the harness. The defect is a call that never returns and
+    /// `cargo test` has no per-test timeout, so against an unfixed tree this cell would HANG the
+    /// suite rather than redden it -- and a hang has no colour. `recv_timeout` turns "never
+    /// returned" into a failed assertion that names what happened.
+    ///
+    /// Twenty seconds against a one-second deadline: wide enough that a loaded host cannot make it
+    /// flake, narrow enough that a genuinely unbounded read cannot pass. The gap is deliberate --
+    /// this cell is about the difference between "late" and "never", not about precision.
+    #[cfg(unix)]
+    #[test]
+    fn a_connector_that_never_writes_cannot_hold_the_wait_past_its_deadline() {
+        use std::io::Read;
+        use std::os::unix::net::UnixStream;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after the epoch")
+            .as_nanos();
+        let id = format!("798-{}-{unique}", std::process::id());
+        let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
+        let path = std::path::Path::new(&runtime)
+            .join("graphhelm")
+            .join(format!("wake-{id}.sock"));
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let waiter_id = id.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(super::wait(&waiter_id, 1));
+        });
+
+        // The rendezvous is created BY `wait`, so wait for it to appear rather than racing it. This
+        // bound is a HARNESS guard: if the socket never shows up the arrangement failed and nothing
+        // below is about the deadline.
+        let arranging = Instant::now();
+        while !path.exists() {
+            assert!(
+                arranging.elapsed() < Duration::from_secs(10),
+                "HARNESS-BROKE: the rendezvous never appeared at {path:?}, so this cell never \
+                 reached the behaviour it is about"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // CONNECT AND SAY NOTHING. That is the whole arrangement: before #798 the accept succeeded,
+        // the loop was left, and the read blocked forever on a socket that never speaks. The stream
+        // is held to the end of the cell on purpose -- dropping it would close the peer and let the
+        // read return EOF, which is the one thing that would make an unfixed tree pass.
+        let mut held = UnixStream::connect(&path).expect("the rendezvous accepts a connection");
+
+        match receiver.recv_timeout(Duration::from_secs(20)) {
+            Ok(end) => assert!(
+                matches!(end, super::WaitEnd::TimedOut),
+                "a connector that never wrote must end as TimedOut, and never as a ring"
+            ),
+            Err(_) => panic!(
+                "wait did not return 20s after its 1s deadline: the read that follows accept is \
+                 observing no budget at all, which is #798"
+            ),
+        }
+
+        // THE WITNESS THAT THE READ WAS REACHED AT ALL, and without it this cell is vacuous
+        // (found by a peer reviewing #801). `TimedOut` is returned by TWO paths: the read after a
+        // successful accept -- the subject -- and the accept loop's own deadline check, which was
+        // ALREADY bounded before #798. `UnixStream::connect` returning Ok proves only that the
+        // kernel queued the connection in the backlog; it does not prove `accept` ever returned.
+        // So a green was consistent with the wrong path, which is the defect #740's phase
+        // assertion exists to remove, one function over.
+        //
+        // The rendezvous file is NOT a witness: `remove_file` runs on every exit from `wait`,
+        // including the accept-loop timeout, so "the socket is gone" cannot tell the two apart.
+        // Nor is elapsed time -- both paths end at the deadline.
+        //
+        // What DOES separate them is what the client sees, measured on Linux 6.6.87.2 (AF_UNIX):
+        //
+        //     accepted, then dropped       recv -> 0 bytes, a clean EOF
+        //     never accepted, listener closed with the connection still queued
+        //                                  recv -> ECONNRESET
+        //
+        // A clean EOF therefore proves this connection left the backlog, which only the accept
+        // that leads to the read can do.
+        let mut after = [0_u8; 8];
+        match held.read(&mut after) {
+            Ok(0) => {}
+            Ok(n) => panic!("the rendezvous sent {n} bytes back; it never writes to a ringer"),
+            Err(error) => panic!(
+                "the connection was never accepted ({error}), so `wait` returned from its accept \
+                 loop and this cell measured the path that was already bounded before #798, not \
+                 the read"
+            ),
+        }
+
+        drop(held);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_deadline_still_ahead_yields_the_time_that_is_left() {
+        let now = Instant::now();
+        let budget = read_budget(now + Duration::from_secs(30), now);
+        assert_eq!(budget, Some(Duration::from_secs(30)));
+    }
+
+    /// THE CELL THIS FUNCTION EXISTS FOR. A deadline that has arrived must REFUSE, not hand back a
+    /// zero budget: `set_read_timeout(Some(Duration::ZERO))` is an error, so a zero passed onward
+    /// leaves the socket unbounded and the read never returns. The failure direction of a mistake
+    /// here is the original defect, not a short wait.
+    #[test]
+    fn a_deadline_that_has_arrived_refuses_instead_of_yielding_zero() {
+        let now = Instant::now();
+        assert_eq!(read_budget(now, now), None);
+    }
+
+    /// `saturating_duration_since`, not subtraction: an already-passed deadline is ordinary here
+    /// (the accept loop can be scheduled out), and `Instant - Instant` would panic on underflow.
+    #[test]
+    fn a_deadline_already_passed_refuses_rather_than_underflowing() {
+        let now = Instant::now();
+        assert_eq!(read_budget(now, now + Duration::from_secs(5)), None);
+    }
+
+    /// The boundary is between zero and anything, not at some comfortable minimum: one nanosecond
+    /// of budget is still a bounded read, and rounding it up to a floor would spend budget the
+    /// caller did not grant.
+    #[test]
+    fn one_nanosecond_of_budget_is_still_a_bound() {
+        let now = Instant::now();
+        assert_eq!(
+            read_budget(now + Duration::from_nanos(1), now),
+            Some(Duration::from_nanos(1))
+        );
+    }
+
+    /// PINNED AGAINST THE REAL API, because the refusal above rests entirely on this being an
+    /// error. If a future std accepted a zero duration as "no timeout", the guard would still be
+    /// correct but its stated REASON would be wrong -- and if it accepted zero as "return
+    /// immediately", the guard would be unnecessary. Either way the next reader should find out
+    /// here rather than from a hang.
+    ///
+    /// A real socket, not a constructed value: this is a claim about the platform, and the only
+    /// instrument that can answer it is the platform.
+    #[test]
+    fn the_platform_refuses_a_zero_read_timeout() {
+        use std::net::{TcpListener, TcpStream};
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback listener");
+        let stream =
+            TcpStream::connect(listener.local_addr().expect("its address")).expect("a connection");
+        assert!(
+            stream.set_read_timeout(Some(Duration::ZERO)).is_err(),
+            "a zero read timeout is accepted by this platform, so read_budget's refusal needs a \
+             different justification than the one written at its definition"
+        );
+        assert!(
+            stream
+                .set_read_timeout(Some(Duration::from_millis(1)))
+                .is_ok(),
+            "a positive read timeout must be settable, or the fix cannot arm at all"
+        );
     }
 }

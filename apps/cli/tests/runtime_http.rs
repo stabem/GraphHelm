@@ -233,6 +233,46 @@ fn get_json(url: &str, token: Option<&str>) -> Value {
     json_body(&response)
 }
 
+/// The events tail's `data.events`, or a failure that says WHAT came back instead.
+///
+/// Every reader of this route used to do `["data"]["events"].as_array().unwrap()`. That erases the
+/// only thing a diagnosis needs: the route replies the standard four-key envelope for BOTH outcomes,
+/// so a refusal (`bad_request`, or a store error mapped through `respond_failure`) has no `data`
+/// member at all — and the `unwrap` then panics on `None` while naming neither the code nor the
+/// message the runtime actually sent.
+///
+/// The gate red on #752 is exactly that shape: `unwrap()` over `None` at a line number, on a cell
+/// that passes 12 runs out of 12 locally. **The failure was uninterpretable by construction** — it
+/// could not distinguish "the runtime refused" from "the runtime answered a different shape", which
+/// is the whole of the test-versus-product question. Printing the body costs one line and makes the
+/// next occurrence decide that question by itself.
+///
+/// **The dump is whole, and that is safe HERE for a reason that does not travel.** This route's
+/// refusal envelope is four keys and one diagnostic -- about thirteen lines -- so printing it costs
+/// nothing, and truncating it would be the very defect this helper exists to remove. A route that
+/// can answer a large payload needs a bound before it borrows this: the safety is a property of THIS
+/// route, not of the helper.
+///
+/// **`#[track_caller]` AND `Location::caller()` in the text, because the attribute alone does not
+/// work here.** Measured rather than assumed: on its own the attribute moves the reported line by
+/// its own displacement and nothing more, because the panic lives inside the closure, which the
+/// caller's location never reaches. Naming the location in the message is what puts back the
+/// discrimination the bare `unwrap()` gave for free: the gate used to say WHICH of the five readers
+/// failed, and a helper that reports its own line for all five trades one kind of information for
+/// another without restoring the first.
+#[track_caller]
+fn events_array<'reply>(reply: &'reply Value, url: &str) -> &'reply Vec<Value> {
+    let site = std::panic::Location::caller();
+    reply["data"]["events"].as_array().unwrap_or_else(|| {
+        panic!(
+            "at {}:{}: GET {url} replied no `data.events` array. The runtime's whole body was:
+{reply:#}",
+            site.file(),
+            site.line()
+        )
+    })
+}
+
 // -------------------------------------------------------------------------------------------
 // Fixtures shared by every test: a two-node Agent-only graph — every node type classifies as
 // Cognitive (`graphhelm_runtime::classify::work_kind`), so `serve::routes::drive_is_viable_for`
@@ -359,11 +399,9 @@ fn the_fixture_story_drives_async_and_parity_holds() {
     // The 05d driver's own hops (`node_outcome_recorded`) are attributed to the system actor,
     // matching the sync path's split — proof the async driver reused `PreparedDrive`'s scope
     // correctly rather than inventing a new one.
-    let events_url = format!("{base}/v1/executions/{execution}/events");
-    let tail = get_json(&format!("{events_url}?limit=100"), Some(&token));
-    let outcome = tail["data"]["events"]
-        .as_array()
-        .unwrap()
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=100");
+    let tail = get_json(&events_url, Some(&token));
+    let outcome = events_array(&tail, &events_url)
         .iter()
         .rev()
         .find(|event| event["kind"]["type"] == "node_outcome_recorded")
@@ -1809,11 +1847,9 @@ fn an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence() {
     assert_eq!(reply["data"]["nodeStateCounts"]["succeeded"], 2, "{reply}");
 
     // Every real outcome carries sealed evidence, readable from the store's own tail.
-    let events_reply = get_json(
-        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
-        Some(&token),
-    );
-    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let events_reply = get_json(&events_url, Some(&token));
+    let entries = events_array(&events_reply, &events_url);
     let outcome_refs = |node: &str| -> usize {
         entries
             .iter()
@@ -2148,11 +2184,9 @@ fn a_sealed_model_reply_can_be_read_back_as_the_text_the_provider_sent() {
     // event stream the way any reader would, rather than by reconstructing the id from the naming
     // convention: a test that rebuilds the id would keep passing if the recorded reference and the
     // stored blob ever stopped agreeing, which is one of the things this route must not do.
-    let events_reply = get_json(
-        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
-        Some(&token),
-    );
-    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let events_reply = get_json(&events_url, Some(&token));
+    let entries = events_array(&events_reply, &events_url);
     let reference = entries
         .iter()
         .filter(|entry| {
@@ -2343,11 +2377,9 @@ fn a_runtime_can_seal_a_message_with_a_keyring_and_no_credential_at_all() {
         "a keyring alone must be enough to record: {reply}"
     );
 
-    let events_reply = get_json(
-        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
-        Some(&token),
-    );
-    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let events_reply = get_json(&events_url, Some(&token));
+    let entries = events_array(&events_reply, &events_url);
     let reference = entries
         .iter()
         .filter(|entry| entry["kind"]["type"] == "signal_recorded")
@@ -2601,11 +2633,9 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
     assert_eq!(status, 200, "a sealed Runtime needs no path: {reply}");
 
     // The envelope sealed, and the message is readable by whoever is watching.
-    let events_reply = get_json(
-        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
-        Some(&token),
-    );
-    let entries = events_reply["data"]["events"].as_array().unwrap();
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let events_reply = get_json(&events_url, Some(&token));
+    let entries = events_array(&events_reply, &events_url);
     let reference = entries
         .iter()
         .filter(|entry| entry["kind"]["type"] == "signal_recorded")

@@ -89,7 +89,7 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
         started["ok"], true,
         "expected a successful startup: {started}"
     );
-    let address = started["data"]["address"].as_str().unwrap().to_owned();
+    let address = envelope_str(&started, "address", "the serve startup line").to_owned();
 
     let token = read_token(&token_path(events));
     let base = format!("http://{address}");
@@ -260,12 +260,61 @@ fn get_json(url: &str, token: Option<&str>) -> Value {
 /// discrimination the bare `unwrap()` gave for free: the gate used to say WHICH of the five readers
 /// failed, and a helper that reports its own line for all five trades one kind of information for
 /// another without restoring the first.
+/// The generalisation (#760): the KEY is a parameter, so a new route does not restart the cycle
+/// with its own bespoke `unwrap`.
+///
+/// `events_array` was built for one key while the envelope has a family of readers. One form per
+/// JSON type, both taking the key, is what stops the third one being written by hand.
+///
+/// **Measured, and it corrects the ticket's own framing.** #760 names `data.address` and
+/// `data.content` as the same hazard. They are not: both have an `assert_eq!(x["ok"], true, "{x}")`
+/// three to five lines above, which fires FIRST on a refusal and prints the whole body. The five
+/// `events` readers have no such guard -- zero of five -- which is why #756's defect was real and
+/// produced the #752 gate red.
+///
+/// So the distinguishing property is neither the key nor the route: it is WHETHER AN `ok`
+/// ASSERTION SITS BETWEEN THE REPLY AND THE READER. At a guarded site this form converts a
+/// different-SHAPE failure from an unnamed `None` into a named body; at an unguarded one it is the
+/// difference between a diagnosis and a line number.
+///
+/// **The dump stays WHOLE and unparsed, and that is the property a generalisation could most
+/// easily lose.** Extracting fields to explain a response assumes a shape, and the unknown shape is
+/// exactly what the old `unwrap` hid: a reader that parses in order to explain a reply it did not
+/// understand can fail the same way twice.
+///
+/// The size bound declared for `events_array` travels and is a property of the ROUTES, not of this
+/// form: these envelopes are four keys and one diagnostic. A route that can answer a large payload
+/// needs a bound before it borrows this.
+///
+/// `origin` is what PRODUCED the reply rather than strictly a URL, because one caller reads the
+/// serve process's own startup line and there is no request behind it.
+///
+/// **`#[track_caller]` AND `Location::caller()` in the text, because the attribute alone does not
+/// work here.** Measured rather than assumed: on its own the attribute moves the reported line by
+/// its own displacement and nothing more, because the panic lives inside the closure, which the
+/// caller's location never reaches. Naming the location in the message is what puts back the
+/// discrimination the bare `unwrap()` gave for free.
 #[track_caller]
-fn events_array<'reply>(reply: &'reply Value, url: &str) -> &'reply Vec<Value> {
+fn envelope_array<'reply>(reply: &'reply Value, key: &str, origin: &str) -> &'reply Vec<Value> {
     let site = std::panic::Location::caller();
-    reply["data"]["events"].as_array().unwrap_or_else(|| {
+    reply["data"][key].as_array().unwrap_or_else(|| {
         panic!(
-            "at {}:{}: GET {url} replied no `data.events` array. The runtime's whole body was:
+            "at {}:{}: {origin} replied no `data.{key}` array. The runtime's whole body was:
+{reply:#}",
+            site.file(),
+            site.line()
+        )
+    })
+}
+
+/// The string half of the same form (#760). See `envelope_array` for why the key is a parameter
+/// and why the dump is whole.
+#[track_caller]
+fn envelope_str<'reply>(reply: &'reply Value, key: &str, origin: &str) -> &'reply str {
+    let site = std::panic::Location::caller();
+    reply["data"][key].as_str().unwrap_or_else(|| {
+        panic!(
+            "at {}:{}: {origin} replied no `data.{key}` string. The runtime's whole body was:
 {reply:#}",
             site.file(),
             site.line()
@@ -401,7 +450,7 @@ fn the_fixture_story_drives_async_and_parity_holds() {
     // correctly rather than inventing a new one.
     let events_url = format!("{base}/v1/executions/{execution}/events?limit=100");
     let tail = get_json(&events_url, Some(&token));
-    let outcome = events_array(&tail, &events_url)
+    let outcome = envelope_array(&tail, "events", &events_url)
         .iter()
         .rev()
         .find(|event| event["kind"]["type"] == "node_outcome_recorded")
@@ -1849,7 +1898,7 @@ fn an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence() {
     // Every real outcome carries sealed evidence, readable from the store's own tail.
     let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
     let events_reply = get_json(&events_url, Some(&token));
-    let entries = events_array(&events_reply, &events_url);
+    let entries = envelope_array(&events_reply, "events", &events_url);
     let outcome_refs = |node: &str| -> usize {
         entries
             .iter()
@@ -2186,7 +2235,7 @@ fn a_sealed_model_reply_can_be_read_back_as_the_text_the_provider_sent() {
     // stored blob ever stopped agreeing, which is one of the things this route must not do.
     let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
     let events_reply = get_json(&events_url, Some(&token));
-    let entries = events_array(&events_reply, &events_url);
+    let entries = envelope_array(&events_reply, "events", &events_url);
     let reference = entries
         .iter()
         .filter(|entry| {
@@ -2214,7 +2263,11 @@ fn a_sealed_model_reply_can_be_read_back_as_the_text_the_provider_sent() {
     // Named in the reply so a caller knows the class of what it is holding, not left to be
     // inferred from where the id came from.
     assert_eq!(opened["data"]["sensitivity"], "confidential", "{opened}");
-    let content = opened["data"]["content"].as_str().unwrap();
+    let content = envelope_str(
+        &opened,
+        "content",
+        &format!("{base}/v1/executions/{execution}/evidence/{evidence_id}"),
+    );
     assert!(
         content.contains("the model did the thing"),
         "the provider's own text must survive sealing and come back: {opened}"
@@ -2379,7 +2432,7 @@ fn a_runtime_can_seal_a_message_with_a_keyring_and_no_credential_at_all() {
 
     let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
     let events_reply = get_json(&events_url, Some(&token));
-    let entries = events_array(&events_reply, &events_url);
+    let entries = envelope_array(&events_reply, "events", &events_url);
     let reference = entries
         .iter()
         .filter(|entry| entry["kind"]["type"] == "signal_recorded")
@@ -2635,7 +2688,7 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
     // The envelope sealed, and the message is readable by whoever is watching.
     let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
     let events_reply = get_json(&events_url, Some(&token));
-    let entries = events_array(&events_reply, &events_url);
+    let entries = envelope_array(&events_reply, "events", &events_url);
     let reference = entries
         .iter()
         .filter(|entry| entry["kind"]["type"] == "signal_recorded")
@@ -2659,5 +2712,160 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
             .unwrap_or_default()
             .contains(note),
         "the words sent from the Studio must come back out: {opened}"
+    );
+}
+
+/// No new bespoke `["data"][k].as_x().unwrap()` can be added to this file silently (#760).
+///
+/// **Two exclusions, and each of them is a false positive somebody already hit.**
+///
+/// COMMENTS. The doc on `envelope_array` quotes the very pattern it replaces, so a sweep over raw
+/// source text accuses the documentation that describes the fix. One of the three false positives
+/// the original survivor sweep returned was exactly this.
+///
+/// SITES WITH AN `ok` GUARD. Measured on this file: `data.address` and `data.content` each have an
+/// `assert_eq!(x["ok"], true, "{x}")` three to five lines above, which fires FIRST on a refusal and
+/// prints the whole body -- while all five `events` readers had none. A sweep that ignores the
+/// guard demands the helper where the hazard is already closed, and **a guard that asks for work
+/// with no defect behind it is a guard that gets switched off.**
+///
+/// The negative control is not optional here. A sweep is a search, and a search that finds nothing
+/// looks identical whether the file is clean or the pattern is wrong -- which is the same shape as
+/// the `unwrap` this whole ticket is about. So the predicate is first shown to FIRE on a sample
+/// carrying the defect, and only then applied to the real source.
+///
+/// **DECLARED LIMIT: the guard window is EIGHT LINES, and on today's file that number is
+/// UNTESTED.** Every real guard-to-reader distance in this file was measured -- 1, 3, 4 and 5, with
+/// nothing at 6, 7 or 8. So a window of six and a window of eight give the SAME answer on every
+/// line here, and no cell can tell them apart. It is not "8 is right"; it is "nothing in this file
+/// distinguishes 8 from 6".
+///
+/// **The direction of the error is the part that matters, and it is not symmetric.** Too WIDE
+/// excludes a site it should have flagged -- a false negative, failing OPEN, silent. Too narrow
+/// only demands the form where the hazard is already closed, which is noise. Eight errs wide.
+/// Someone moving this number should move it DOWN rather than up, and only a site landing between
+/// the current maximum and the window would give them evidence either way.
+///
+/// Found by my own sabotage failing to redden: the first attempt placed the defect two lines after
+/// the `address` reader, whose guard is three lines above THAT, so it fell inside the window and
+/// the sweep correctly declined by its own rule -- the silence was about the placement, not the
+/// pattern. That is the same fact from the other side: the window's edge is reachable by accident
+/// and untested on purpose.
+///
+/// Proximity is a proxy for the guard actually applying to THIS reply, and a proxy is what this is.
+#[test]
+fn no_reader_takes_a_data_key_with_a_bare_unwrap() {
+    /// True when the line reads a `data` key and unwraps it without a fallback.
+    ///
+    /// `unwrap_or`/`unwrap_or_default`/`unwrap_or_else` are excluded by the `(` check: they cannot
+    /// panic on `None`, so they are not this hazard.
+    fn is_bare_data_unwrap(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            return false;
+        }
+        let Some(after_data) = line.split_once("[\"data\"][\"") else {
+            return false;
+        };
+        let tail = after_data.1;
+        tail.contains(".unwrap()")
+    }
+
+    // NEGATIVE CONTROL, first: the predicate must fire on the defect, or a clean answer below
+    // proves only that the pattern never matches anything.
+    assert!(
+        is_bare_data_unwrap(" let a = reply[\"data\"][\"address\"].as_str().unwrap();"),
+        "HARNESS-BROKE: the sweep does not recognise its own subject, so a clean result below \
+         would be about the pattern rather than about the file"
+    );
+    // And it must NOT fire on the two shapes that are legitimate.
+    assert!(
+        !is_bare_data_unwrap(" opened[\"data\"][\"content\"].as_str().unwrap_or_default()"),
+        "a fallback cannot panic on None and is not this hazard"
+    );
+    assert!(
+        !is_bare_data_unwrap("/// used to do `[\"data\"][\"events\"].as_array().unwrap()`. That"),
+        "a comment quoting the pattern is not an occurrence of it"
+    );
+
+    let source = include_str!("runtime_http.rs");
+    let lines: Vec<&str> = source.lines().collect();
+    let mut survivors = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !is_bare_data_unwrap(line) {
+            continue;
+        }
+        // An `ok` assertion above turns a refusal into a named body before the reader runs, so the
+        // remaining hazard at such a site is a different-shape reply rather than a refusal. Not
+        // this sweep's subject.
+        let guarded = lines[index.saturating_sub(8)..index]
+            .iter()
+            .any(|above| above.contains("[\"ok\"]"));
+        if !guarded {
+            survivors.push(format!("line {}: {}", index + 1, line.trim()));
+        }
+    }
+    assert!(
+        survivors.is_empty(),
+        "a reader takes a `data` key with a bare unwrap and no `ok` guard above it, so a refusal \
+         there panics without naming the runtime's code or message. Use `envelope_str` or \
+         `envelope_array`, which take the key and dump the whole body:\n{}",
+        survivors.join("\n")
+    );
+}
+
+/// The form's failure names the runtime's own diagnostic, on the shape that can actually reach it
+/// (#760).
+///
+/// **The ticket asks for a forced REAL refusal on a non-`events` key, and that cannot demonstrate
+/// this.** Measured: `data.address` and `data.content` each have an `assert_eq!(x["ok"], true)`
+/// above them, so a real refusal fires the ASSERTION and the form never runs. Forcing one there
+/// would prove the assertion works.
+///
+/// The shape that does reach the form is the one the guard lets through: `ok` true, and the key
+/// missing or the wrong type -- a different-shape reply rather than a refusal. That is the residual
+/// hazard at a guarded site, and this is its cell.
+///
+/// The envelope here carries a diagnostic because the point is that the message hands over
+/// EVERYTHING the runtime said, unparsed. A form that extracted the code to explain itself would
+/// assume a shape, and the unknown shape is what the old `unwrap` hid.
+#[test]
+fn the_envelope_form_names_the_whole_body_when_a_key_is_missing() {
+    let reply = serde_json::json!({
+        "ok": true,
+        "data": { "mediaType": "application/json" },
+        "diagnostics": [{ "code": "GHCLI409_PRECONDITION_FAILED", "message": "the run moved" }],
+        "meta": {}
+    });
+
+    let panicked = std::panic::catch_unwind(|| {
+        // Deliberately NOT a refusal: `ok` is true and the guard above a real reader would pass.
+        let _ = envelope_str(&reply, "content", "GET /v1/.../evidence/abc");
+    })
+    .expect_err("a missing key must not be answered with a value");
+
+    let message = panicked
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            panicked
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_owned())
+        })
+        .expect("the panic carries a message");
+
+    assert!(
+        message.contains("data.content"),
+        "the failure must name WHICH key was missing: {message}"
+    );
+    assert!(
+        message.contains("GHCLI409_PRECONDITION_FAILED") && message.contains("the run moved"),
+        "the failure must hand over the runtime's own diagnostic, which is the thing a bare \
+         unwrap erased: {message}"
+    );
+    assert!(
+        message.contains("mediaType"),
+        "the dump must be the WHOLE body, not the fields the form thought were interesting: \
+         {message}"
     );
 }

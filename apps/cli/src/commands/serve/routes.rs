@@ -1474,6 +1474,12 @@ async fn drive(
     // Infallible by construction: everything that could refuse already did, in `prepare_drive`,
     // before the caller committed its decision. The fixture branch is the only part that needs
     // `prepared`, and building it cannot fail.
+
+    // The gates THIS binary carries. Built once and handed to both the executor and the driver:
+    // core never depends on `tools`, so the pathogen suites, their digests and their evaluators
+    // all arrive here as one piece of configuration.
+    let gates: Arc<dyn graphhelm_runtime::ports::GateRegistryPort> =
+        Arc::new(crate::commands::quality::RegisteredGates);
     let executor: Arc<dyn AsyncNodeExecutor> = match ports {
         Some(ports) => Arc::new(PortExecutor {
             model: Arc::new(ports.model),
@@ -1481,6 +1487,9 @@ async fn drive(
             route_id: ports.route_id,
             lease: ports.lease,
             actor: "runtime".to_owned(),
+            // #668: the SAME registry object the drive call below reads digests from, so a
+            // node cannot be certified against one gate and judged by another.
+            gates: gates.clone(),
         }),
         None => {
             let fixtures = FixtureExecutor::new(prepared.fixtures.clone());
@@ -1510,10 +1519,10 @@ async fn drive(
         // data on the event, not a property of which loop wrote it.
         crate::commands::execution::owner_actor(),
         cancel_rx,
-        // The certified-or-not-at-all precondition compares fold receipts against the
-        // suite THIS binary carries: the digest is computed here because core never
-        // depends on tools.
-        Some(pathogens::suite_digest(&pathogens::suite())),
+        // The certified-or-not-at-all precondition compares each fold receipt against the
+        // digest of THAT gate's own suite, read from this registry (#668). It used to be one
+        // digest -- geometry's -- for every gate.
+        Some(gates),
     )
     .await;
 

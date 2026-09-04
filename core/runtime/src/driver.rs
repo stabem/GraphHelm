@@ -510,11 +510,14 @@ fn build_work(
                 .and_then(|value| serde_json::from_value(value).ok())
                 .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
             // Certified or not at all: the fold's receipt for THIS gate must match the
-            // CURRENT suite digest. No digest configured means no way to verify — refuse,
-            // never gate on unverifiable immunity. A stale receipt refuses identically.
+            // CURRENT digest of THIS gate's own suite. No registry configured, or no entry
+            // for the gate the node named, means no way to verify — refuse, never gate on
+            // unverifiable immunity. A stale receipt refuses identically.
             let current = gate_context
-                .current_suite_digest
+                .gates
+                .and_then(|gates| gates.suite_digest(&check.gate_id))
                 .ok_or(crate::executor::ExecutorRefusal::Uncertified)?;
+            let current = current.as_str();
             let certified = gate_context
                 .certifications
                 .get(&check.gate_id)
@@ -658,12 +661,16 @@ fn retry_policy_diagnostic(
     .map_err(|_| DriverError::Identity)
 }
 
-/// What the certified-or-not-at-all precondition reads: the fold's receipts and the
-/// digest of the pathogen suite THIS build carries (computed by the binary that runs
-/// gates — `core` never depends on `tools`, so the digest arrives as configuration).
+/// What the certified-or-not-at-all precondition reads: the fold's receipts and the gate
+/// registry THIS build carries (owned by the binary that runs gates — `core` never depends
+/// on `tools`, so the suites and their digests arrive as configuration).
+///
+/// The registry is asked PER GATE (#668). It used to be one digest — geometry's — compared
+/// against every gate's receipt, so `gate-retry-lineage` and `gate-journey-contract` could
+/// be certified by `quality certify` and were still refused as uncertified at dispatch.
 struct GateContext<'a> {
     certifications: &'a std::collections::BTreeMap<String, String>,
-    current_suite_digest: Option<&'a str>,
+    gates: Option<&'a dyn crate::ports::GateRegistryPort>,
 }
 
 /// Who asked for an immediate stop, and under what idempotency key — carried ON the cancel
@@ -709,7 +716,11 @@ pub async fn drive_to_quiescence_async(
     release: BTreeSet<String>,
     release_actor: PersistedActor,
     mut cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
-    current_suite_digest: Option<String>,
+    // #668: the gate registry this binary carries — per-gate suite digests for the
+    // certified-or-not-at-all precondition below, and the evaluators the executor dispatches
+    // to. `None` refuses every gate node, which is what a binary that registers no gate at
+    // all should do.
+    gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
 ) -> Result<ExecutionProjection, DriverError> {
     let retry_policy_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
     if !retry_policy_diagnostics.is_empty() {
@@ -883,7 +894,7 @@ pub async fn drive_to_quiescence_async(
             let attempt = projection.node_attempts.get(node).copied().unwrap_or(0);
             let gate_context = GateContext {
                 certifications: &projection.gate_certifications,
-                current_suite_digest: current_suite_digest.as_deref(),
+                gates: gates.as_deref(),
             };
             let work = match build_work(&spec, &execution_id, node, attempt, &gate_context) {
                 Ok(work) => work,

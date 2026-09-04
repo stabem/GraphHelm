@@ -150,6 +150,7 @@ fn executor(model: Result<ModelReply, GatewayError>, disposition: ToolDispositio
         route_id: "claude_subscription".to_owned(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     }
 }
 
@@ -166,6 +167,7 @@ fn executor_with_reuse(
         route_id: "claude_subscription".to_owned(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     }
 }
 
@@ -1506,6 +1508,7 @@ fn drive_tool_fixture(
             programs: std::collections::BTreeSet::new(),
         },
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     });
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     multi_thread_runtime()
@@ -1677,6 +1680,7 @@ fn port_executor_with(model: Arc<dyn ModelPort>, tools: Arc<dyn ToolPort>) -> Po
         route_id: "claude_subscription".to_owned(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     }
 }
 
@@ -1732,6 +1736,7 @@ fn conflicting_retry_policy_refuses_before_every_node_effect_and_settles_failed(
             programs: std::collections::BTreeSet::new(),
         },
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     });
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let projection = multi_thread_runtime()
@@ -1829,6 +1834,7 @@ fn malformed_conflicting_retry_policy_fails_closed_before_every_node_effect() {
             programs: std::collections::BTreeSet::new(),
         },
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     });
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let projection = multi_thread_runtime()
@@ -2448,4 +2454,23 @@ fn append_execution_paused(directory: &std::path::Path, execution_id: &OpaqueId)
         }
     }
     panic!("HARNESS-BROKE: execution_paused never landed, so the test never posed its question");
+}
+
+/// No gate runs in this file, and that is a property worth stating rather than a gap: a
+/// registry that answers `None` to every id refuses every gate node, which is what a driver
+/// exercising cognitive and tool work should do if a gate node ever appears here by accident.
+struct NoGates;
+
+impl graphhelm_runtime::ports::GateRegistryPort for NoGates {
+    fn suite_digest(&self, _gate_id: &str) -> Option<String> {
+        None
+    }
+
+    fn evaluate(
+        &self,
+        _gate_id: &str,
+        _evidence: &serde_json::Value,
+    ) -> Option<graphhelm_runtime::ports::GateEvaluation> {
+        None
+    }
 }

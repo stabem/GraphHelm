@@ -11,8 +11,11 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use graphhelm_protocols::{
-    Diagnostic, EventKind, GateCertified, NewEvent, OpaqueId, Sensitivity, WireHash,
+    Diagnostic, EventKind, GateCertified, GateFinding, NewEvent, OpaqueId, Sensitivity,
+    SignalSeverity, WireHash,
 };
+
+use graphhelm_runtime::ports::GateEvaluation;
 
 use crate::commands::event_store;
 use crate::commands::execution::{
@@ -96,15 +99,54 @@ fn certify_journey_contract() -> Result<pathogens::Certification, pathogens::Cer
 ///
 /// **If id and certifier are ever separated again, the split must come back.** L's finding holds
 /// for that shape; the shape is what changed, not the finding.
-const REGISTRY: [(&str, Certifier); 3] = [
-    ("gate-geometry", certify_geometry),
-    ("gate-retry-lineage", certify_retry_lineage),
-    ("gate-journey-contract", certify_journey_contract),
+/// **The consumer path reads this same array (#668), which is why it is a struct now.**
+///
+/// A registered gate is three inseparable things: the id an operator types, the certification
+/// that id runs, and the evaluator that judges a NODE's evidence under it. Until #668 the third
+/// column did not exist anywhere -- the runtime evaluated every dispatched gate as geometry and
+/// compared every receipt against geometry's digest, so a gate could be certified here and was
+/// still refused as uncertified at dispatch. Putting the evaluator in the SAME entry as the
+/// certifier means a gate that certifies but cannot run has nowhere to be written, exactly as an
+/// id without a certifier has nowhere to be written.
+///
+/// **There is no digest column, deliberately.** The digest a node's receipt is compared against
+/// is read from the certification this entry's own certifier produces, so "the suite this gate
+/// was certified against" and "the suite its receipt is checked against" are one value from one
+/// call rather than two expressions held equal by hope.
+struct RegisteredGate {
+    id: &'static str,
+    certify: Certifier,
+    evaluate: Evaluator,
+}
+
+/// A node's evidence, judged by ONE registered gate.
+///
+/// The return type carries the distinction that matters to an append-only store: a VERDICT is a
+/// permanent claim about a delivered surface, while UNREADABLE evidence is an authoring fault in
+/// the node's contract and must produce no verdict at all.
+type Evaluator = fn(&serde_json::Value) -> GateEvaluation;
+
+const REGISTRY: [RegisteredGate; 3] = [
+    RegisteredGate {
+        id: "gate-geometry",
+        certify: certify_geometry,
+        evaluate: evaluate_geometry_evidence,
+    },
+    RegisteredGate {
+        id: "gate-retry-lineage",
+        certify: certify_retry_lineage,
+        evaluate: evaluate_retry_lineage_evidence,
+    },
+    RegisteredGate {
+        id: "gate-journey-contract",
+        certify: certify_journey_contract,
+        evaluate: evaluate_journey_contract_evidence,
+    },
 ];
 
 /// The registered ids, in registry order.
 fn registered_ids() -> Vec<&'static str> {
-    REGISTRY.iter().map(|(id, _)| *id).collect()
+    REGISTRY.iter().map(|entry| entry.id).collect()
 }
 
 /// Look the gate up and run its certification. `None` means no entry -- which is also what makes
@@ -114,8 +156,8 @@ fn certify_registered(
 ) -> Option<Result<pathogens::Certification, pathogens::CertificationRefusal>> {
     REGISTRY
         .iter()
-        .find(|(id, _)| *id == gate)
-        .map(|(_, run)| run())
+        .find(|entry| entry.id == gate)
+        .map(|entry| (entry.certify)())
 }
 
 /// The refusal, naming what IS registered.
@@ -289,4 +331,188 @@ fn stamp(
     )
     .map_err(|failure| finish::<()>(COMMAND, Err(failure), |_| serde_json::Value::Null))?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The consumer path (#668): what a REGISTERED gate does when a running node names it.
+//
+// Certification proves a gate cannot be fooled by its own suite. It says nothing about how that
+// gate reads a node's evidence, and until this section existed there was nowhere to say it: the
+// runtime hard-coded geometry's evaluator for every gate id and compared every fold receipt
+// against geometry's suite digest. `quality certify` stamped `GateCertified` for
+// `gate-retry-lineage` and `gate-journey-contract`; a node using either was refused as
+// uncertified, so certification said yes and the consumer path could only say no.
+//
+// Each evaluator below builds the evidence ITS OWN gate judges, from the JSON the node's
+// contract carries, and returns that gate's findings. A gate handed evidence of the wrong shape
+// REFUSES WITH A FINDING rather than panicking or being skipped: "this is not the evidence I
+// judge" is a verdict an operator can read, and it is the honest answer when a graph points a
+// journey-contract gate at a rendered surface.
+// ---------------------------------------------------------------------------------------------
+
+/// Geometry's evidence, with the strictness that used to live on `GateCheckWork` itself.
+///
+/// `deny_unknown_fields` did not move OUT of the contract, it moved IN to the gate that cares.
+/// A misspelled key is detected here and answered as `Unreadable`, which the executor turns into
+/// the same `Unassemblable` refusal the driver used to give -- the node is not dispatched and no
+/// verdict is appended.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GeometryEvidence {
+    delivered: graphhelm_quality::Delivered,
+    manifest: graphhelm_quality::ContentManifest,
+    #[serde(default)]
+    budget: graphhelm_quality::LayoutBudget,
+}
+
+/// One finding, in the shape the `GateVerdict` event carries.
+fn gate_finding(claim: String, remediation: String) -> GateFinding {
+    GateFinding {
+        severity: SignalSeverity::High,
+        claim,
+        evidence: vec![],
+        remediation,
+    }
+}
+
+/// What a gate answers when the node's contract does not carry evidence it can read.
+///
+/// **Not a verdict, and the difference is the append-only store.** A `GateVerdict` is permanent
+/// historical evidence; a failing one says a delivered surface was examined and refused. A node
+/// whose `gate.check` block is misspelled was never examined by anything, and writing a
+/// High-severity finding about it would leave a claim that fixing the typo cannot retract. The
+/// executor turns this into the same `Unassemblable` refusal an unparseable contract always
+/// produced -- the node is not dispatched, and nothing is appended.
+///
+/// (Found by L reviewing #771: the first version of this file returned findings here, which
+/// silently converted a graph-authoring typo from a refusal into a permanent accusation.)
+fn unreadable(gate: &str, detail: &str) -> GateEvaluation {
+    GateEvaluation::Unreadable(format!(
+        concat!(
+            "{gate} cannot read this node's evidence: {detail}. ",
+            "This is a fault in the node's gate contract, not a verdict about a delivered surface."
+        ),
+        gate = gate,
+        detail = detail,
+    ))
+}
+
+/// `gate-geometry`: the composed delivery-coherence and layout evaluator, over the delivered
+/// surface the node's contract carries. Byte-identical scoring to what the runtime did before
+/// this dispatch existed — the same `evaluate_geometry` call, reached by lookup instead of by
+/// being the only thing the executor knew how to do.
+fn evaluate_geometry_evidence(evidence: &serde_json::Value) -> GateEvaluation {
+    match serde_json::from_value::<GeometryEvidence>(evidence.clone()) {
+        Ok(evidence) => GateEvaluation::Verdict(graphhelm_quality::evaluate_geometry(
+            &evidence.delivered,
+            &evidence.manifest,
+            &evidence.budget,
+        )),
+        // Including the misspelled-key case `deny_unknown_fields` catches: detected here, and
+        // refused rather than verdicted.
+        Err(error) => unreadable("gate-geometry", &error.to_string()),
+    }
+}
+
+/// `gate-retry-lineage`: the nine declared structural checks over a retry-lineage document.
+///
+/// The document is the node's evidence under `document` when the contract names one, and the
+/// whole evidence object otherwise — the second form is what a node written before this gate had
+/// a consumer path carries, and the checks read it honestly either way (a document with no
+/// lineage fails the lineage checks; it is not silently passed).
+fn evaluate_retry_lineage_evidence(evidence: &serde_json::Value) -> GateEvaluation {
+    let document = evidence.get("document").unwrap_or(evidence).clone();
+    let verdict = pathogens::EvidenceGate::evaluate(
+        &pathogens::retry_lineage::RetryLineageGate,
+        &pathogens::jpd::JpdEvidence::RetryLineage(document),
+    );
+    GateEvaluation::Verdict(
+        verdict
+            .findings
+            .into_iter()
+            .map(|claim| {
+                gate_finding(
+                    claim,
+                    "repair the retry lineage the document claims is complete".to_owned(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// `gate-journey-contract`: the cross-record independence obligation JSON Schema cannot express.
+///
+/// The gate's own diagnostics are kept (code, path and message), not the generic string
+/// projection: a refusal that names `GHJPD000_WRONG_EVIDENCE_KIND` and the path it looked at is
+/// the difference between "the gate refused" and "the gate was pointed at the wrong thing".
+fn evaluate_journey_contract_evidence(evidence: &serde_json::Value) -> GateEvaluation {
+    let jpd = journey_contract_evidence(evidence);
+    // A VERDICT even when the gate rejects the evidence's kind: this gate parsed what the node
+    // carried and judged it, which is what separates `GHJPD000_WRONG_EVIDENCE_KIND` from a
+    // contract the evaluator could not read at all.
+    GateEvaluation::Verdict(
+        pathogens::jpd::JourneyContractGate
+            .diagnostics(&jpd)
+            .into_iter()
+            .map(|diagnostic| {
+                gate_finding(
+                    format!(
+                        "{} at {}: {}",
+                        diagnostic.code, diagnostic.path, diagnostic.message
+                    ),
+                    "appoint an observer who is not the actor performing the step".to_owned(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Builds the journey-contract evidence when the node carries all four parts, and something the
+/// gate will refuse as the wrong kind when it does not. The refusal is the gate's own, so the
+/// operator reads one vocabulary rather than this adapter's paraphrase of it.
+fn journey_contract_evidence(evidence: &serde_json::Value) -> pathogens::jpd::JpdEvidence {
+    let contract = evidence.get("contract");
+    let digest = evidence.get("contractDigest").and_then(|v| v.as_str());
+    let obligations = evidence
+        .get("observationObligations")
+        .and_then(|v| v.as_array());
+    let verification = evidence.get("verificationResult");
+    match (contract, digest, obligations, verification) {
+        (Some(contract), Some(digest), Some(obligations), Some(verification)) => {
+            pathogens::jpd::JpdEvidence::JourneyContract(pathogens::jpd::JourneyContractEvidence {
+                contract: contract.clone(),
+                contract_digest: digest.to_owned(),
+                observation_obligations: obligations.clone(),
+                verification_result: verification.clone(),
+            })
+        }
+        _ => pathogens::jpd::JpdEvidence::VerificationResult(evidence.clone()),
+    }
+}
+
+/// The runtime's view of this registry: which gates exist, and what each one says.
+///
+/// Both answers come from the SAME array, so the gate a node is certified against and the gate
+/// that judges it are the same gate by construction. The digest is read from the certification
+/// this build actually runs rather than recomputed from a suite named a second time.
+pub struct RegisteredGates;
+
+impl graphhelm_runtime::ports::GateRegistryPort for RegisteredGates {
+    /// The digest of `gate_id`'s own suite, as this build certifies it.
+    ///
+    /// `None` for an unregistered id AND for a gate this build can no longer certify — a
+    /// candidate its own pathogens now fool has no current immunity to compare a receipt
+    /// against, and refusing to dispatch it is the same fail-closed rule as an absent registry.
+    fn suite_digest(&self, gate_id: &str) -> Option<String> {
+        certify_registered(gate_id)?
+            .ok()
+            .map(|certification| certification.suite_digest)
+    }
+
+    fn evaluate(&self, gate_id: &str, evidence: &serde_json::Value) -> Option<GateEvaluation> {
+        REGISTRY
+            .iter()
+            .find(|entry| entry.id == gate_id)
+            .map(|entry| (entry.evaluate)(evidence))
+    }
 }

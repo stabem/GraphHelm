@@ -125,12 +125,13 @@ use graphhelm_events::{
 };
 use graphhelm_protocols::{
     ActorId, Clock, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, GateCertified,
-    GraphBudgets, GraphNode, GraphSpec, IdGenerator, NewEvent, NodeState, OpaqueId, Optionality,
-    PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
-    WireHash, WorkspaceId,
+    GateFinding, GraphBudgets, GraphNode, GraphSpec, IdGenerator, NewEvent, NodeState, OpaqueId,
+    Optionality, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
+    Sensitivity, SignalSeverity, WireHash, WorkspaceId,
 };
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::PortExecutor;
+use graphhelm_runtime::ports::GateEvaluation;
 use graphhelm_tool_broker::lease::ToolLease;
 
 fn empty_lease() -> ToolLease {
@@ -234,6 +235,13 @@ const SUITE_DIGEST: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const STALE_DIGEST: &str =
     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+/// A SECOND gate's suite digest (#668). Different from geometry's on purpose: a registry whose
+/// two entries share a digest cannot tell "certified against its own suite" from "certified
+/// against whichever suite the drive happened to be handed".
+const ALPHA_DIGEST: &str =
+    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const ALPHA_GATE: &str = "gate-alpha";
+const ALPHA_REFUSAL: &str = "alpha refuses every surface, and only alpha says so";
 
 fn gate_scope() -> RepositoryScope {
     RepositoryScope::new(
@@ -264,6 +272,17 @@ fn plain_event(key: &str, kind: EventKind) -> NewEvent {
 /// A started execution; when `certified` carries a digest, a `GateCertified` receipt for
 /// `gate-geometry` against that digest is in the stream too.
 fn started_store(directory: &std::path::Path, certified: Option<&str>) -> OpaqueId {
+    started_store_for(directory, "gate-geometry", certified)
+}
+
+/// The same, for an arbitrary gate id -- what the per-gate cells (#668) need: a receipt that
+/// names a gate OTHER than geometry, so "certified" and "certified as geometry" stop being the
+/// same sentence.
+fn started_store_for(
+    directory: &std::path::Path,
+    gate_id: &str,
+    certified: Option<&str>,
+) -> OpaqueId {
     let repository = LocalEventRepository::open(
         directory,
         Arc::new(FixedClock),
@@ -285,7 +304,7 @@ fn started_store(directory: &std::path::Path, certified: Option<&str>) -> Opaque
             "gate-certified",
             EventKind::GateCertified(GateCertified {
                 execution_id: execution_id.clone(),
-                gate_id: OpaqueId::parse("gate-geometry").unwrap(),
+                gate_id: OpaqueId::parse(gate_id).unwrap(),
                 suite_digest: WireHash::parse(digest).unwrap(),
                 specimens: 10,
             }),
@@ -316,7 +335,7 @@ fn opener(directory: std::path::PathBuf) -> StoreOpen {
 
 /// A gate node whose contract carries the decided check. `blank` empties the page so the
 /// manifest fails; otherwise the delivered surface is coherent and passes clean.
-fn gate_graph_node(blank: bool) -> GraphNode {
+fn gate_graph_node_for(gate_id: &str, blank: bool) -> GraphNode {
     let html = if blank {
         String::new()
     } else {
@@ -326,7 +345,7 @@ fn gate_graph_node(blank: bool) -> GraphNode {
     properties.insert(
         "gate".to_owned(),
         serde_json::json!({"check": {
-            "gateId": "gate-geometry",
+            "gateId": gate_id,
             "delivered": {
                 "claims": [{"feature": "Panel", "elementId": "panel", "artifact": "src/panel.rs"}],
                 "html": html,
@@ -351,9 +370,13 @@ fn gate_graph_node(blank: bool) -> GraphNode {
 }
 
 fn gate_spec(blank: bool) -> GraphSpec {
+    gate_spec_for("gate-geometry", blank)
+}
+
+fn gate_spec_for(gate_id: &str, blank: bool) -> GraphSpec {
     GraphSpec {
         entrypoints: vec!["quality".to_owned()],
-        nodes: [("quality".to_owned(), gate_graph_node(blank))].into(),
+        nodes: [("quality".to_owned(), gate_graph_node_for(gate_id, blank))].into(),
         edges: Vec::new(),
         budgets: GraphBudgets {
             max_parallel_model_calls: Some(1),
@@ -366,7 +389,7 @@ fn gate_spec(blank: bool) -> GraphSpec {
 
 /// The executor under test is the REAL PortExecutor: gate work must never touch either
 /// port, so panicking ports prove the no-model-no-tool transport claim for free.
-fn port_executor() -> Arc<PortExecutor> {
+fn port_executor(gates: Arc<dyn graphhelm_runtime::ports::GateRegistryPort>) -> Arc<PortExecutor> {
     struct NoPort;
     impl graphhelm_runtime::ports::ModelPort for NoPort {
         fn call<'a>(
@@ -409,6 +432,73 @@ fn port_executor() -> Arc<PortExecutor> {
         route_id: "route-test".to_owned(),
         lease: empty_lease(),
         actor: "agent-gate".to_owned(),
+        gates,
+    })
+}
+
+/// The registry these cells run against, in the shape the binary supplies (#668): a lookup from
+/// gate id to that gate's own suite digest and its own evaluator.
+///
+/// Held as data rather than as a hard-coded pair so a cell can state a registry where the two
+/// gates DISAGREE -- which is the only arrangement that can tell per-gate dispatch from the
+/// single-evaluator behaviour it replaced.
+struct TestGates {
+    entries: Vec<TestGate>,
+}
+
+/// One registry entry: the gate id, the digest of ITS suite, and ITS evaluator.
+type TestGate = (String, String, fn(&serde_json::Value) -> GateEvaluation);
+
+impl graphhelm_runtime::ports::GateRegistryPort for TestGates {
+    fn suite_digest(&self, gate_id: &str) -> Option<String> {
+        self.entries
+            .iter()
+            .find(|(id, _, _)| id == gate_id)
+            .map(|(_, digest, _)| digest.clone())
+    }
+
+    fn evaluate(&self, gate_id: &str, evidence: &serde_json::Value) -> Option<GateEvaluation> {
+        self.entries
+            .iter()
+            .find(|(id, _, _)| id == gate_id)
+            .map(|(_, _, evaluate)| evaluate(evidence))
+    }
+}
+
+/// Geometry's real evaluator over the node's evidence -- the composition the runtime used to
+/// hard-code, now supplied by whoever wires the registry.
+fn geometry_evaluator(evidence: &serde_json::Value) -> GateEvaluation {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct GeometryEvidence {
+        delivered: graphhelm_quality::Delivered,
+        manifest: graphhelm_quality::ContentManifest,
+        #[serde(default)]
+        budget: graphhelm_quality::LayoutBudget,
+    }
+    // The real registry answers `Unreadable` here; these cells hand it evidence that parses, and
+    // the unreadable path has its own cell below rather than being folded into this one.
+    let Ok(evidence) = serde_json::from_value::<GeometryEvidence>(evidence.clone()) else {
+        return GateEvaluation::Unreadable(
+            "the fixture does not carry geometry evidence".to_owned(),
+        );
+    };
+    GateEvaluation::Verdict(graphhelm_quality::evaluate_geometry(
+        &evidence.delivered,
+        &evidence.manifest,
+        &evidence.budget,
+    ))
+}
+
+/// A registry holding geometry alone, at `digest` -- what every pre-#668 cell in this file
+/// means by "the current suite".
+fn geometry_registry(digest: &str) -> Arc<dyn graphhelm_runtime::ports::GateRegistryPort> {
+    Arc::new(TestGates {
+        entries: vec![(
+            "gate-geometry".to_owned(),
+            digest.to_owned(),
+            geometry_evaluator,
+        )],
     })
 }
 
@@ -416,7 +506,7 @@ fn drive(
     directory: &std::path::Path,
     execution_id: OpaqueId,
     spec: GraphSpec,
-    digest: Option<String>,
+    gates: Option<Arc<dyn graphhelm_runtime::ports::GateRegistryPort>>,
 ) -> graphhelm_events::ExecutionProjection {
     let sealer = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let ids = Arc::new(SequenceIds::default());
@@ -435,14 +525,18 @@ fn drive(
             OpaqueId::parse(GATE_STREAM).unwrap(),
             execution_id,
             spec,
-            port_executor(),
+            port_executor(
+                gates
+                    .clone()
+                    .unwrap_or_else(|| geometry_registry(SUITE_DIGEST)),
+            ),
             gate_actor(),
             // #123: this drive releases nothing, so the set is empty and the
             // releasing actor is never consulted.
             std::collections::BTreeSet::new(),
             gate_actor(),
             cancel_rx,
-            digest,
+            gates,
         ))
         .unwrap()
 }
@@ -482,7 +576,7 @@ fn a_certified_gate_runs_and_a_failing_verdict_lands_beside_the_terminal_outcome
         directory.path(),
         execution_id,
         gate_spec(true),
-        Some(SUITE_DIGEST.to_owned()),
+        Some(geometry_registry(SUITE_DIGEST)),
     );
     assert_eq!(
         projection.node_states.get("quality"),
@@ -514,7 +608,7 @@ fn a_certified_gate_passing_clean_succeeds_with_an_empty_findings_verdict() {
         directory.path(),
         execution_id,
         gate_spec(false),
-        Some(SUITE_DIGEST.to_owned()),
+        Some(geometry_registry(SUITE_DIGEST)),
     );
     assert_eq!(
         projection.node_states.get("quality"),
@@ -537,7 +631,7 @@ fn an_uncertified_gate_never_runs_and_never_verdicts() {
         directory.path(),
         execution_id,
         gate_spec(true),
-        Some(SUITE_DIGEST.to_owned()),
+        Some(geometry_registry(SUITE_DIGEST)),
     );
     assert_ne!(
         projection.node_states.get("quality"),
@@ -559,7 +653,7 @@ fn a_stale_certification_refuses_identically() {
         directory.path(),
         execution_id,
         gate_spec(true),
-        Some(SUITE_DIGEST.to_owned()),
+        Some(geometry_registry(SUITE_DIGEST)),
     );
     let kinds = read_kinds(directory.path());
     assert!(
@@ -569,5 +663,173 @@ fn a_stale_certification_refuses_identically() {
     assert_ne!(
         projection.node_states.get("quality"),
         Some(&NodeState::Succeeded)
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// #668: a registered gate is certified against ITS OWN suite and judged by ITS OWN evaluator.
+//
+// Both cells below run a node that names `gate-alpha`, a gate the registry holds beside
+// geometry. Before per-gate dispatch, the drive carried ONE digest and the executor ran ONE
+// evaluator, so this node was refused as uncertified (its receipt was compared against
+// geometry's digest) and, had it dispatched, would have been scored by geometry's rules.
+// -------------------------------------------------------------------------------------------
+
+/// Alpha's evaluator: refuses everything, with a finding no geometry evaluation can produce.
+///
+/// Constant rather than derived from the evidence deliberately. The question here is WHICH
+/// evaluator ran, and a finding that could only have come from this function answers it; an
+/// evaluator that merely scored differently would leave "geometry ran and disagreed" open.
+fn alpha_evaluator(_evidence: &serde_json::Value) -> GateEvaluation {
+    GateEvaluation::Verdict(vec![GateFinding {
+        severity: SignalSeverity::High,
+        claim: ALPHA_REFUSAL.to_owned(),
+        evidence: vec![],
+        remediation: "there is no remedy; alpha exists to be recognised".to_owned(),
+    }])
+}
+
+/// A gate that can never read what this node carries -- the shape a misspelled key in a
+/// `gate.check` block produces once the evidence is carried unparsed (#771, found by L).
+fn unreadable_evaluator(_evidence: &serde_json::Value) -> GateEvaluation {
+    GateEvaluation::Unreadable("this evaluator reads no evidence at all".to_owned())
+}
+
+/// Geometry and alpha, each at its own digest with its own evaluator.
+fn two_gate_registry() -> Arc<dyn graphhelm_runtime::ports::GateRegistryPort> {
+    Arc::new(TestGates {
+        entries: vec![
+            (
+                "gate-geometry".to_owned(),
+                SUITE_DIGEST.to_owned(),
+                geometry_evaluator,
+            ),
+            (
+                ALPHA_GATE.to_owned(),
+                ALPHA_DIGEST.to_owned(),
+                alpha_evaluator,
+            ),
+        ],
+    })
+}
+
+/// The DIGEST half: a receipt for alpha's own suite certifies alpha.
+///
+/// The receipt names `gate-alpha` at `ALPHA_DIGEST`, which is NOT the digest of the geometry
+/// entry the same registry carries. A verdict naming alpha is the whole assertion: it can only
+/// exist if the precondition looked alpha's own suite up.
+#[test]
+fn a_gate_is_certified_against_the_digest_of_its_own_suite() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_store_for(directory.path(), ALPHA_GATE, Some(ALPHA_DIGEST));
+    drive(
+        directory.path(),
+        execution_id,
+        gate_spec_for(ALPHA_GATE, false),
+        Some(two_gate_registry()),
+    );
+    let kinds = read_kinds(directory.path());
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| kind.starts_with("gate_verdict:gate-alpha:")),
+        "a gate certified against its own suite must dispatch: {kinds:?}"
+    );
+}
+
+/// The EVALUATOR half: the gate the node named is the gate that judged it.
+///
+/// The surface is the CLEAN one -- geometry passes it, and every other cell in this file relies
+/// on that. Alpha refuses it. So a passing verdict here does not mean "alpha is lenient", it
+/// means geometry answered for a node that asked alpha.
+#[test]
+fn the_named_gates_own_evaluator_produces_the_verdict() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_store_for(directory.path(), ALPHA_GATE, Some(ALPHA_DIGEST));
+    let projection = drive(
+        directory.path(),
+        execution_id,
+        gate_spec_for(ALPHA_GATE, false),
+        Some(two_gate_registry()),
+    );
+    let kinds = read_kinds(directory.path());
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| kind == "gate_verdict:gate-alpha:false:1"),
+        "alpha refuses every surface; a pass here is geometry answering for alpha: {kinds:?}"
+    );
+    assert_eq!(
+        projection.node_states.get("quality"),
+        Some(&NodeState::Failed),
+        "alpha's refusal is deterministic, so the node is terminal"
+    );
+}
+
+/// A gate the registry does not hold never dispatches, even with a receipt in the stream.
+///
+/// The receipt is genuine and matches nothing this build can run: an operator who certified a
+/// gate on a binary that had it, and then ran a binary that does not, must be refused rather
+/// than served geometry's opinion under another gate's name.
+#[test]
+fn an_unregistered_gate_never_dispatches_even_when_certified() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_store_for(directory.path(), ALPHA_GATE, Some(ALPHA_DIGEST));
+    let projection = drive(
+        directory.path(),
+        execution_id,
+        gate_spec_for(ALPHA_GATE, false),
+        Some(geometry_registry(SUITE_DIGEST)),
+    );
+    let kinds = read_kinds(directory.path());
+    assert!(
+        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
+        "a gate this build cannot run must not verdict: {kinds:?}"
+    );
+    assert_ne!(
+        projection.node_states.get("quality"),
+        Some(&NodeState::Succeeded)
+    );
+}
+
+/// Evidence a gate cannot READ refuses the node and appends NOTHING (#771).
+///
+/// **Why this is not a taste question about error shapes.** A `GateVerdict` is permanent: the
+/// Event Store is append-only and historical evidence is never rewritten. A failing verdict says
+/// a delivered surface was examined and refused, so emitting one for a node whose contract could
+/// not even be read leaves a High-severity claim about a surface nothing looked at -- and fixing
+/// the typo that caused it cannot retract the event. Before per-gate dispatch, a contract that
+/// did not deserialize refused as `Unassemblable` and wrote nothing; carrying the evidence
+/// unparsed moved that failure into the evaluator, and this cell pins that the OUTCOME CLASS
+/// came with it.
+///
+/// The certification is genuine and the digest matches, so nothing upstream of the evaluator can
+/// account for the refusal: the only thing that decides it is what the evaluator answered.
+#[test]
+fn evidence_a_gate_cannot_read_refuses_the_node_and_appends_no_verdict() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_store_for(directory.path(), ALPHA_GATE, Some(ALPHA_DIGEST));
+    let gates: Arc<dyn graphhelm_runtime::ports::GateRegistryPort> = Arc::new(TestGates {
+        entries: vec![(
+            ALPHA_GATE.to_owned(),
+            ALPHA_DIGEST.to_owned(),
+            unreadable_evaluator,
+        )],
+    });
+    let projection = drive(
+        directory.path(),
+        execution_id,
+        gate_spec_for(ALPHA_GATE, false),
+        Some(gates),
+    );
+    let kinds = read_kinds(directory.path());
+    assert!(
+        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
+        "unreadable evidence must leave NO permanent claim about an unexamined surface: {kinds:?}"
+    );
+    assert_ne!(
+        projection.node_states.get("quality"),
+        Some(&NodeState::Succeeded),
+        "a node whose gate contract cannot be read must not pass"
     );
 }

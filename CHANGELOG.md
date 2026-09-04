@@ -1,5 +1,39 @@
 # Specification Changelog
 
+## A registered gate runs the gate it was registered as, #668 - 2026-09-03
+
+- **Certification said yes and the consumer path could only say no.** `quality certify` stamped
+  `GateCertified` for `gate-retry-lineage` and `gate-journey-contract`, and a node using either
+  was refused as uncertified: the drive carried ONE suite digest (geometry's) and the driver
+  compared every gate's receipt against it, while the executor evaluated every dispatched gate
+  with geometry's evaluator. Two production sites, one consequence - the registry could admit a
+  gate that no running graph could reach.
+- **The runtime now asks a registry, per gate id.** `GateRegistryPort` (`core/runtime/src/ports.rs`)
+  answers both questions from one object: the digest of THAT gate's own suite, and that gate's own
+  evaluation of the node's evidence. The binary supplies it (`RegisteredGates` in
+  `apps/cli/src/commands/quality.rs`), so `core` still names no pathogen suite and no gate's
+  evaluator.
+- **A gate node carries the evidence its gate judges.** `GateCheckWork` no longer names geometry's
+  three fields; it carries `gateId` plus the contract's remaining keys, and the registered
+  evaluator parses what it needs. Geometry's `deny_unknown_fields` strictness moved WITH it, into
+  the geometry evaluator.
+- **Evidence a gate cannot READ refuses the node; it does not verdict it.** The registry answers
+  either a verdict or `Unreadable`, and `Unreadable` becomes the same `Unassemblable` refusal an
+  unparseable contract always produced: the node is never dispatched and NOTHING is appended. The
+  distinction is the append-only store's, not a taste in error shapes -- a `GateVerdict` is
+  permanent evidence that a delivered surface was examined and refused, so emitting one for a
+  misspelled `gate.check` block would leave a High-severity claim about a surface nothing looked
+  at, and fixing the typo could not retract it. A gate that PARSES the node's evidence and rejects
+  it for being the wrong kind (the journey-contract gate's `GHJPD000_WRONG_EVIDENCE_KIND`) is a
+  verdict: it looked. (Found by L reviewing the first version of this change, which returned
+  findings for both.)
+- **Fail-closed did not move.** No registry, no entry for the named gate, or a gate this build can
+  no longer certify all refuse to dispatch exactly as an absent digest did. A gate id the registry
+  does not hold produces no verdict at all rather than another gate's opinion under its name.
+- **`core/runtime` no longer depends on `core/quality`.** Geometry became one registered evaluator
+  among three, wired by the binary; the dependency survives only as a dev-dependency of the gate
+  cells that choose it.
+
 ## Local Studio MVP and the execution index, #105 - 2026-08-27
 
 - **The Studio stopped being a specification with no code behind it.** `apps/studio` is a

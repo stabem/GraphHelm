@@ -97,7 +97,6 @@ fn the_runtime_crate_depends_on_exactly_the_declared_crates() {
         "graphhelm-tool-broker",
         "hex",
         "serde",
-        "graphhelm-quality",
         "serde_json",
         "sha2",
         "thiserror",
@@ -109,10 +108,20 @@ fn the_runtime_crate_depends_on_exactly_the_declared_crates() {
         );
     }
     let count = table.lines().filter(|line| line.contains('=')).count();
-    // 13 since M06 Task 4: graphhelm-quality entered deliberately (the gate check IS
-    // core/quality's evaluators running under the runtime); recorded here consciously —
-    // this count exists precisely to force this sentence to be written.
-    assert_eq!(count, 13, "the dependency table grew or shrank: {table}");
+    // 12 since #668, and the sentence this count exists to force is about a dependency LEAVING.
+    //
+    // `graphhelm-quality` entered at M06 Task 4 because the gate check WAS core/quality's
+    // evaluators running under the runtime: `gate_check_outcome` called `evaluate_geometry`
+    // directly, so geometry was not one registered gate among several, it was what a gate MEANT
+    // here. #668 made the runtime dispatch through `GateRegistryPort` instead, and the binary
+    // supplies the evaluators — so this crate now names no particular gate's evaluator, which is
+    // the same posture it already holds toward adapters two tests below.
+    //
+    // It survives as a DEV-dependency, which this table cannot see by construction
+    // (`production_dependencies` stops at the next `[section]` header): the gate cells still
+    // choose geometry as the evaluator they wire into a test registry, and a test choosing a
+    // concrete evaluator is not the crate depending on one.
+    assert_eq!(count, 12, "the dependency table grew or shrank: {table}");
 }
 
 #[test]

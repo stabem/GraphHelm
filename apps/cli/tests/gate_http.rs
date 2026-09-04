@@ -234,10 +234,46 @@ fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, 
     );
 }
 
-/// A single-gate graph whose contract carries a coherent delivered surface — the same
-/// passing subject shape the Task 7 dogfood ran.
-fn gate_graph(directory: &Path, execution: &str, gate_id: &str) -> PathBuf {
-    let gate_block = serde_json::json!({"check": {
+/// The repository's own positive retry-lineage document, embedded so a moved path breaks the
+/// BUILD rather than silently leaving the retry-lineage node with evidence it does not judge.
+const RECOVERED_RETRY_CHAIN: &str = include_str!(
+    "../../../extensions/builtin/graphhelm-jpd/fixtures/positive/recovered-retry-chain.json"
+);
+
+/// The evidence a node carries for `gate_id` (#668).
+///
+/// Before per-gate dispatch every gate node carried geometry's evidence, because geometry's
+/// evaluator was the only one a running graph could reach. Now the node carries what the gate it
+/// names actually judges: a lineage document for `gate-retry-lineage`, the delivered surface for
+/// geometry.
+///
+/// `gate-journey-contract` deliberately keeps the geometry-shaped surface. A journey contract
+/// that passes all eighteen of that gate's checks is a fixture in its own right and is not built
+/// here; what this file proves about that gate is that ITS OWN evaluator answered — which its
+/// wrong-evidence refusal states in a vocabulary geometry has no way to produce.
+fn gate_check_block(gate_id: &str) -> serde_json::Value {
+    if gate_id == "gate-geometry-misspelled" {
+        // The same coherent surface, with ONE key misspelled: `manifst`. Before the evidence was
+        // carried unparsed, `deny_unknown_fields` on the work struct refused this in the driver;
+        // the geometry evaluator is where it is caught now, and the cell below pins that the
+        // OUTCOME is still a refusal rather than a permanent verdict (#771, found by L).
+        let mut block = gate_check_block("gate-geometry");
+        let object = block
+            .as_object_mut()
+            .expect("the geometry block is an object");
+        let manifest = object
+            .remove("manifest")
+            .expect("the geometry block carries a manifest");
+        object.insert("manifst".to_owned(), manifest);
+        object.insert("gateId".to_owned(), serde_json::json!("gate-geometry"));
+        return block;
+    }
+    if gate_id == "gate-retry-lineage" {
+        let document: serde_json::Value = serde_json::from_str(RECOVERED_RETRY_CHAIN)
+            .expect("the shipped retry-lineage fixture parses");
+        return serde_json::json!({"gateId": gate_id, "document": document});
+    }
+    serde_json::json!({
         "gateId": gate_id,
         "delivered": {
             "claims": [{"feature": "node table", "elementId": "nodes-table", "artifact": "monitor-snapshot.html"}],
@@ -251,7 +287,13 @@ fn gate_graph(directory: &Path, execution: &str, gate_id: &str) -> PathBuf {
             "diff": {"filesTouched": 2, "behaviorLines": 14}
         },
         "manifest": {"required": [{"marker": "id=\"nodes-table\"", "label": "node table"}]}
-    }});
+    })
+}
+
+/// A single-gate graph whose contract carries the evidence the named gate judges — the same
+/// passing subject shape the Task 7 dogfood ran, for geometry.
+fn gate_graph(directory: &Path, execution: &str, gate_id: &str) -> PathBuf {
+    let gate_block = serde_json::json!({"check": gate_check_block(gate_id)});
     let yaml = format!(
         r#"apiVersion: p50.dev/graph/v1
 kind: ExecutionGraph
@@ -866,8 +908,19 @@ fn certify_then_resume_for(
     gate_id: &str,
     execution: &str,
 ) -> (tempfile::TempDir, GateServe, serde_json::Value) {
+    certify_then_resume_for_graph(gate_id, gate_id, execution)
+}
+
+/// The same choreography with the CERTIFIED gate and the GRAPH's evidence block chosen
+/// separately, so a cell can certify `gate-geometry` and still hand the node a contract shaped
+/// some other way -- which is what a malformed contract is.
+fn certify_then_resume_for_graph(
+    gate_id: &str,
+    graph_block: &str,
+    execution: &str,
+) -> (tempfile::TempDir, GateServe, serde_json::Value) {
     let directory = tempfile::tempdir().unwrap();
-    let serve = gate_serve_for(directory.path(), execution, gate_id);
+    let serve = gate_serve_for(directory.path(), execution, graph_block);
     let (status, reply) = start(&serve, execution, &format!("{gate_id}-start"));
     assert_eq!(status, 200, "{reply}");
 
@@ -903,49 +956,71 @@ fn certify_then_resume_for(
     (directory, serve, resume_reply)
 }
 
-/// PINNED DEFECT, not an aspiration -- this cell goes RED when the consumer path is fixed.
+/// The pinned defect of #668, FLIPPED: a node using the journey-contract gate now runs, and the
+/// gate that answers is the one the node named.
 ///
-/// A node using the newly registered gate does NOT run to a verdict today: serve supplies one
-/// suite digest (geometry's), the driver compares every gate's receipt against it, and the
-/// executor evaluates every dispatched gate as geometry. Measured end to end, with the geometry
-/// control below proving the harness itself is sound. The same failure holds for
-/// gate-retry-lineage, registered long before this branch -- the gap is the consumer path's, is
-/// pre-existing, and its fix is deliberately deferred (owed ticket: per-gate digest/evaluator
-/// dispatch across all three registry entries).
+/// This cell used to assert the ABSENCE of any gate verdict — serve supplied one suite digest
+/// (geometry's), the driver compared every gate's receipt against it, and the executor evaluated
+/// every dispatched gate as geometry, so this gate was refused as uncertified and never spoke.
+/// Its message said the flip would be the fix's receipt. This is that flip.
 ///
-/// Asserting the CURRENT behaviour keeps the authoritative gate green about the tree as it is,
-/// and turns this cell into the trap that forces whoever wires per-gate dispatch to flip it to
-/// "completed" -- the flip is the fix's receipt.
-/// The trap observes the DISPATCH boundary, not the outcome. First version asserted
-/// `status != completed`, and Codex caught the hole: once per-gate dispatch lands, this gate RUNS
-/// against the geometry-shaped fixture, legitimately refuses it, and the execution still ends
-/// not-completed -- the trap would stay green through the very fix it exists to catch. "The gate
-/// never runs" is observable as the ABSENCE of any gate_verdict event; a verdict of either
-/// polarity means dispatch happened.
+/// **What makes the assertion about DISPATCH rather than about a passing run:** the finding's
+/// code. `GHJPD000_WRONG_EVIDENCE_KIND` is produced by `JourneyContractGate` and by nothing else
+/// in the registry — geometry emits prose about rendered surfaces and has no such vocabulary. So
+/// a refusal carrying that code cannot have come from geometry answering under this gate's name,
+/// which is precisely what used to happen.
+///
+/// The node carries a geometry-shaped surface on purpose (see `gate_check_block`): a journey
+/// contract that survives all eighteen checks is its own fixture and is not built here.
 #[test]
-fn a_node_using_the_journey_contract_gate_does_not_yet_run() {
+fn the_journey_contract_gate_runs_and_answers_in_its_own_vocabulary() {
     let (_keep, serve, reply) = certify_then_resume_for("gate-journey-contract", "exec-jc-e2e");
-    let kinds = event_kinds(&serve, "exec-jc-e2e");
+    let verdict = gate_verdict(&serve, "exec-jc-e2e").unwrap_or_else(|| {
+        panic!("the journey-contract gate produced no verdict at all: reply={reply}")
+    });
+    assert_eq!(verdict["gateId"], "gate-journey-contract");
+    assert_eq!(
+        verdict["passed"], false,
+        "the node carries a rendered surface, which this gate does not judge: {verdict}"
+    );
+    let claims = verdict["findings"]
+        .as_array()
+        .map(|findings| {
+            findings
+                .iter()
+                .map(|finding| finding["claim"].as_str().unwrap_or("").to_owned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     assert!(
-        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
-        "a gate_verdict exists, so per-gate dispatch now RUNS this gate -- the pinned defect is \
-         FIXED: rewrite this cell to assert the verdict (positive evidence or expected refusal) \
-         and close the consumer-path debt: kinds={kinds:?} reply={reply}"
+        claims
+            .iter()
+            .any(|claim| claim.contains("GHJPD000_WRONG_EVIDENCE_KIND")),
+        "the refusal must be in THIS gate's vocabulary; geometry cannot produce that code: {claims:?}"
     );
 }
 
-/// The same pinned defect on the SECOND registry entry, and it is the provenance control: this
-/// gate was registered on main long before this branch, and it fails identically -- which is what
-/// proves the gap pre-existing rather than introduced here. Flips together with its sibling when
-/// per-gate dispatch lands.
+/// The same flip on the SECOND registry entry, and it is the stronger half: this gate does not
+/// merely answer, it PASSES a real document of the kind it exists to judge.
+///
+/// The node carries the repository's own positive retry-lineage fixture. Geometry over that
+/// document refuses it (there is no rendered surface in it at all), so a clean pass here can only
+/// be the retry-lineage evaluator's — the two gates disagree about this evidence, which is what
+/// makes the observation discriminating rather than merely present.
 #[test]
-fn a_node_using_the_retry_lineage_gate_does_not_yet_run() {
+fn the_retry_lineage_gate_runs_its_own_checks_over_a_lineage_document() {
     let (_keep, serve, reply) = certify_then_resume_for("gate-retry-lineage", "exec-rl-e2e");
-    let kinds = event_kinds(&serve, "exec-rl-e2e");
-    assert!(
-        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
-        "a gate_verdict exists on the pre-existing second entry -- per-gate dispatch landed: \
-         rewrite this cell to assert the verdict: kinds={kinds:?} reply={reply}"
+    let verdict = gate_verdict(&serve, "exec-rl-e2e").unwrap_or_else(|| {
+        panic!("the retry-lineage gate produced no verdict at all: reply={reply}")
+    });
+    assert_eq!(verdict["gateId"], "gate-retry-lineage");
+    assert_eq!(
+        verdict["passed"], true,
+        "the shipped positive lineage document satisfies all nine declared checks; a refusal here is a broken fixture or another gate answering: {verdict}"
+    );
+    assert_eq!(
+        reply["data"]["status"], "completed",
+        "a passing gate lets the execution finish: {reply}"
     );
 }
 
@@ -961,5 +1036,49 @@ fn the_geometry_gate_runs_to_a_verdict_through_the_same_helper() {
     assert_eq!(
         reply["data"]["status"], "completed",
         "CONTROL: the helper itself is broken, so the other two failures say nothing: {reply}"
+    );
+}
+
+/// The gate verdict event's payload, or `None` when the gate never ran.
+///
+/// Reads the FINDINGS, not only the event's presence: "a verdict exists" proves dispatch,
+/// "the verdict says X" proves WHICH gate dispatched, and #668 was a defect about the second.
+fn gate_verdict(serve: &GateServe, execution: &str) -> Option<Value> {
+    let url = format!("{}/v1/executions/{execution}/events?after=0", serve.base);
+    let response = raw_request(&url, Some(&serve.token)).expect("the events request completes");
+    assert_eq!(response.status, 200, "{}", response.body);
+    let parsed: Value = serde_json::from_str(&response.body).expect("the events body is JSON");
+    parsed["data"]["events"]
+        .as_array()?
+        .iter()
+        .find(|event| event["kind"]["type"] == "gate_verdict")
+        .map(|event| event["kind"]["data"].clone())
+}
+
+/// A misspelled key in a gate node's contract REFUSES and appends no verdict (#771).
+///
+/// **The invariant this protects is the append-only store's, not a preference about error
+/// shapes.** `GateVerdict` is permanent historical evidence; a failing one claims a delivered
+/// surface was examined and refused. This node's surface is coherent and geometry would PASS it
+/// -- the only defect is that `manifest` is spelled `manifst` -- so a verdict here would be a
+/// permanent High-severity accusation against a surface no gate ever looked at, and fixing the
+/// typo could not retract it.
+///
+/// Before #771 the driver's `deny_unknown_fields` refused this contract as `Unassemblable`.
+/// Carrying the evidence unparsed moved the detection into the geometry evaluator; this cell
+/// pins that the OUTCOME CLASS moved with it. The gate is certified and the execution reaches
+/// the node, so nothing upstream can account for the absence of a verdict.
+#[test]
+fn a_misspelled_key_in_the_gate_contract_refuses_instead_of_verdicting() {
+    let (_keep, serve, reply) =
+        certify_then_resume_for_graph("gate-geometry", "gate-geometry-misspelled", "exec-typo-e2e");
+    let kinds = event_kinds(&serve, "exec-typo-e2e");
+    assert!(
+        !kinds.iter().any(|kind| kind.starts_with("gate_verdict")),
+        "a contract the gate cannot read must leave no permanent claim: kinds={kinds:?} reply={reply}"
+    );
+    assert_ne!(
+        reply["data"]["status"], "completed",
+        "the node was never gated, so the execution cannot have completed through it: {reply}"
     );
 }

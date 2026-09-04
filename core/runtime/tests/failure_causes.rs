@@ -111,6 +111,7 @@ fn executor(model: Result<ModelReply, GatewayError>, disposition: ToolDispositio
         route_id: "claude_subscription".to_owned(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
+        gates: Arc::new(NoGates),
     }
 }
 
@@ -299,5 +300,24 @@ fn no_failure_outcome_is_ever_silent_about_why() {
             "{:?} landed without a cause — the operator is back to guessing",
             outcome.outcome
         );
+    }
+}
+
+/// No gate runs in this file, and that is a property worth stating rather than a gap: a
+/// registry that answers `None` to every id refuses every gate node, which is what a driver
+/// exercising cognitive and tool work should do if a gate node ever appears here by accident.
+struct NoGates;
+
+impl graphhelm_runtime::ports::GateRegistryPort for NoGates {
+    fn suite_digest(&self, _gate_id: &str) -> Option<String> {
+        None
+    }
+
+    fn evaluate(
+        &self,
+        _gate_id: &str,
+        _evidence: &serde_json::Value,
+    ) -> Option<graphhelm_runtime::ports::GateEvaluation> {
+        None
     }
 }

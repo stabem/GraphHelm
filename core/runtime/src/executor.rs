@@ -45,22 +45,34 @@ pub enum ToolFailureSemantics {
     VerdictBearing,
 }
 
-/// One decided gate evaluation: which event-sourced gate definition runs, and the whole
-/// delivered surface it scores — carried by the node's contract, deserialized by the
-/// driver, never invented downstream.
+/// One decided gate evaluation: which event-sourced gate definition runs, and the evidence
+/// it judges — carried by the node's contract, deserialized by the driver, never invented
+/// downstream.
+///
+/// **The evidence is carried unparsed on purpose (#668).** This struct used to name geometry's
+/// three fields directly, which made every gate node a geometry node by its type: a
+/// retry-lineage or journey-contract node could not even be expressed, let alone dispatched.
+/// The shape a gate demands is the GATE's business, so the driver carries the contract's
+/// remaining keys as they were written and the registered evaluator deserializes what it
+/// needs. Geometry's own strictness did not move: its evaluator still parses
+/// `delivered`/`manifest`/`budget` under `deny_unknown_fields`, one layer further in, where the
+/// gate that cares about it lives.
+///
+/// **`deny_unknown_fields` had to come off THIS struct**, and not as a relaxation: serde does not
+/// honour it alongside `flatten`, so leaving it here would have been strictness that silently did
+/// nothing. What it used to catch — a misspelled key — is caught by the evaluator and answered as
+/// [`crate::ports::GateEvaluation::Unreadable`], which refuses the node exactly as an
+/// unparseable contract always did. `gateId` is a real field, so a typo THERE still fails
+/// deserialization here.
 #[derive(Clone, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct GateCheckWork {
     /// The gate definition this check runs — what the certification precondition looks up
     /// and what the appended `GateVerdict` names.
     pub gate_id: String,
-    /// The delivered surface under evaluation.
-    pub delivered: graphhelm_quality::Delivered,
-    /// The spec-derived content manifest.
-    pub manifest: graphhelm_quality::ContentManifest,
-    /// The layout grammar's budgets; the crate default when the contract is silent.
-    #[serde(default)]
-    pub budget: graphhelm_quality::LayoutBudget,
+    /// Everything else the node's contract carries for this gate, verbatim.
+    #[serde(flatten)]
+    pub evidence: serde_json::Map<String, serde_json::Value>,
 }
 
 /// What real work produced: the outcome for `apply_transition`, plus the free-form material to
@@ -156,6 +168,10 @@ pub struct PortExecutor {
     pub route_id: String,
     pub lease: graphhelm_tool_broker::lease::ToolLease,
     pub actor: String,
+    /// The gates this binary can run (#668). The SAME registry the driver reads digests
+    /// from, so the gate a node is certified against and the gate that judges it cannot be
+    /// two different gates.
+    pub gates: std::sync::Arc<dyn crate::ports::GateRegistryPort>,
 }
 
 /// Names a gateway class as a cause. This is NOT a second outcome mapping —
@@ -356,7 +372,7 @@ impl AsyncNodeExecutor for PortExecutor {
                     let Some(gate) = work.gate_check.as_ref() else {
                         return Err(ExecutorRefusal::Unassemblable);
                     };
-                    Ok(gate_check_outcome(gate))
+                    gate_check_outcome(gate, self.gates.as_ref())
                 }
             }
         })
@@ -458,12 +474,32 @@ fn judge_outcome(
     }
 }
 
-fn gate_check_outcome(gate: &crate::executor::GateCheckWork) -> WorkOutcome {
-    let findings =
-        graphhelm_quality::evaluate_geometry(&gate.delivered, &gate.manifest, &gate.budget);
+fn gate_check_outcome(
+    gate: &crate::executor::GateCheckWork,
+    gates: &dyn crate::ports::GateRegistryPort,
+) -> Result<WorkOutcome, ExecutorRefusal> {
+    // Dispatch on the gate the node named (#668): before this, every dispatched gate was
+    // evaluated as geometry, so a registered gate's own evaluator was unreachable from a
+    // running graph. An id with no registry entry is a REFUSAL, never a verdict: the
+    // executor has nothing to ask and must not answer for a gate it cannot run.
+    let evidence = serde_json::Value::Object(gate.evidence.clone());
+    let Some(evaluation) = gates.evaluate(&gate.gate_id, &evidence) else {
+        return Err(ExecutorRefusal::Unsupported);
+    };
+    // Evidence the gate cannot READ is an authoring fault in the node's contract, not a verdict
+    // about a delivered surface. It refuses exactly as it did before per-gate dispatch existed,
+    // and for the same reason: a `GateVerdict` is permanent, and a permanent claim that a
+    // surface failed a gate that never examined it cannot be retracted by fixing the typo that
+    // produced it.
+    let findings = match evaluation {
+        crate::ports::GateEvaluation::Verdict(findings) => findings,
+        crate::ports::GateEvaluation::Unreadable(_) => {
+            return Err(ExecutorRefusal::Unassemblable);
+        }
+    };
     let passed = findings.is_empty();
     let sealed = serde_json::to_vec(&findings).expect("findings serialize");
-    WorkOutcome {
+    Ok(WorkOutcome {
         outcome: if passed {
             NodeOutcome::Succeeded
         } else {
@@ -486,5 +522,5 @@ fn gate_check_outcome(gate: &crate::executor::GateCheckWork) -> WorkOutcome {
             findings,
         }),
         reason: (!passed).then_some(NodeOutcomeReason::GateRefused),
-    }
+    })
 }

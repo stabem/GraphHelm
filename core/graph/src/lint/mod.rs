@@ -131,10 +131,12 @@ pub fn lint(graph: &ExecutionGraph, source: &str) -> LintReport {
             // capability rather than a judgement (#549). `work_kind` returns `GateCheck`
             // (`core/runtime/src/classify.rs:34`) and the driver runs it, so "never dispatched" was
             // FALSE of this variant and shipped in #547 as part of a sentence covering eight. What is
-            // true: `gate_check_outcome` (`core/runtime/src/executor.rs:461-489`) produces exactly two
+            // true: `gate_check_outcome` (`core/runtime/src/executor.rs:470-508`) produces exactly two
             // outcomes -- `Succeeded` when the findings are empty, `TerminalFailure` when they are not
             // -- and `WaitingInput` is only reachable via `NeedsInput`, which is not in that set. A
-            // gate decides; it does not wait for anyone.
+            // gate decides; it does not wait for anyone. Per-gate dispatch (#668) added a REFUSAL to
+            // that function for a gate this build does not register, which is not an outcome: the
+            // node is never dispatched, so the outcome set is unchanged.
             //
             // NOT GUARDED, and said so rather than implied: nothing fails if that outcome set gains a
             // third member. This reason is a citation across a crate boundary `core/graph` does not

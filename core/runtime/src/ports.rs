@@ -218,3 +218,62 @@ pub trait BoundedSourceSearch: Send + Sync {
         bounds: &SourceSearchBounds,
     ) -> Result<Vec<String>, SourceSearchError>;
 }
+
+/// The gates this binary can actually run, keyed by the CLI-facing gate id.
+///
+/// **One port answers both questions the gate path asks**, and that is the whole point of the
+/// shape. The driver asks "is this gate's certification current?" (the suite digest) and the
+/// executor asks "what does this gate say about this evidence?" (the evaluation). Before this
+/// port they were answered by two different mechanisms — a single geometry digest supplied at
+/// the drive call and a hard-coded geometry evaluator in the executor — so a gate could be
+/// certified against one suite and evaluated by another gate's rules, which is exactly the
+/// state #668 recorded: `quality certify` stamped `GateCertified` for `gate-retry-lineage` and
+/// `gate-journey-contract`, and a node using either was refused as uncertified because its
+/// receipt was compared against geometry's digest.
+///
+/// Keying BOTH answers on `gate_id` through ONE object means the digest a gate is certified
+/// against and the evaluator that runs it come from the same registry entry: a gate that can be
+/// certified but not evaluated (or the reverse) has nowhere to be written.
+///
+/// `core` never depends on `tools`, so the pathogen suites and their digests still arrive as
+/// configuration — this is that configuration grown a second column, not a new dependency.
+pub trait GateRegistryPort: Send + Sync {
+    /// The digest of the pathogen suite THIS build carries for `gate_id`, or `None` when no
+    /// gate by that id is registered. The certified-or-not-at-all precondition compares a
+    /// fold receipt against it; `None` refuses, never gates on unverifiable immunity.
+    fn suite_digest(&self, gate_id: &str) -> Option<String>;
+
+    /// Run `gate_id`'s own evaluator over the node contract's evidence.
+    ///
+    /// `None` means no gate by that id is registered — the executor refuses rather than
+    /// inventing a verdict.
+    fn evaluate(&self, gate_id: &str, evidence: &serde_json::Value) -> Option<GateEvaluation>;
+}
+
+/// What a registered gate did with a node's evidence.
+///
+/// **The two arms are different KINDS of answer, and collapsing them writes a permanent lie.**
+/// A verdict is a claim about a delivered surface, and it is appended to an append-only store as
+/// `GateVerdict` — historical evidence that is never rewritten, so a failing verdict about a
+/// surface no gate ever examined cannot be retracted by fixing the graph that produced it. A node
+/// whose contract does not carry the evidence its gate reads has an authoring fault, and the
+/// honest response is the one the executor already had for an unassemblable node: refuse to
+/// dispatch it, and append nothing.
+///
+/// The distinction is NOT "the gate said no" versus "the gate said yes". It is "the gate read the
+/// evidence and judged it" versus "the gate could not read it at all". A gate that examines a
+/// document and rejects it for being the wrong KIND of evidence — the journey-contract gate's
+/// `GHJPD000_WRONG_EVIDENCE_KIND`, produced after parsing what the node carried — is a verdict:
+/// it looked. A geometry evaluator that cannot deserialize the node's block never looked.
+///
+/// (Found by L reviewing #771: the first version of this port returned findings for both, so a
+/// misspelled key in a gate node's contract turned a refusal into a permanent High-severity
+/// claim that a delivered surface had failed a gate that never examined it.)
+pub enum GateEvaluation {
+    /// The gate judged the evidence. Empty findings pass; a non-empty vector refuses with the
+    /// findings the gate itself produced.
+    Verdict(Vec<graphhelm_protocols::GateFinding>),
+    /// The node's contract does not carry evidence this gate can read, with the reason as the
+    /// gate stated it. The node is never dispatched and no verdict is appended.
+    Unreadable(String),
+}

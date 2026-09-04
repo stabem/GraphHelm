@@ -10,7 +10,6 @@ graphhelm-events = { path = "../events" }
 graphhelm-execution = { path = "../execution" }
 graphhelm-gateway = { path = "../gateway" }
 graphhelm-protocols = { path = "../protocols" }
-graphhelm-quality = { path = "../quality" }
 graphhelm-simulation = { path = "../simulation" }
 graphhelm-tool-broker = { path = "../tool-broker" }
 hex.workspace = true
@@ -22,5 +21,9 @@ tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 
 [dev-dependencies]
 chrono.workspace = true
+# #668: the runtime dispatches gates through `GateRegistryPort` and no longer names any
+# particular gate's evaluator. Geometry is still the evaluator the gate cells wire in, so the
+# dependency survives HERE, where a test chooses it, instead of in the crate that must not.
+graphhelm-quality = { path = "../quality" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

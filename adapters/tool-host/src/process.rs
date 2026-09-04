@@ -709,6 +709,18 @@ fn drain_readers(
             // on a path only reached after the invocation deadline has already passed, against
             // losing a capture that was in hand. (Found by a peer reviewing PR #770, after it
             // merged.)
+            //
+            // **A SHARED BUDGET IS NOT A DEFECT BY ITSELF, and the line is worth drawing here so
+            // the next reader does not "fix" the other side of it** (#793). The class was swept
+            // rather than the instance: this crate has one other `recv_timeout`, a per-iteration
+            // poll above, and one real structural twin -- `OperationDeadline` in `backup.rs`, which
+            // shares ONE budget across its steps deliberately, says so, and spells `step()` as
+            // `remaining().min(ceiling)`.
+            //
+            // The rule that separates them: INDEPENDENT CAPTURES GET THEIR OWN WINDOW; STEPS OF ONE
+            // OPERATION SHARE ONE. Two readers of two pipes are independent -- neither's answer is
+            // the other's input, and one being slow says nothing about the other. A sequence of
+            // steps bounded by a caller's single deadline is not.
             if let Ok(answer) = receiver.recv_timeout(post_release_grace) {
                 answers[index] = Some(answer);
             }
@@ -1601,9 +1613,19 @@ mod tests {
     ///
     /// The arrangement makes the two answers arrive at 3/4 and 5/4 of the grace. Under one shared
     /// window the second is 1/4 of a grace past the shared expiry and is lost; under a per-stream
-    /// one it is comfortably inside its own. Both bounds are one-sided in the direction load
-    /// pushes: a slow host makes the SECOND answer later, which is the arm that must still pass,
-    /// and it has a full grace to arrive in.
+    /// one it is comfortably inside its own.
+    ///
+    /// **The two assertions do NOT have equal slack, and the FIRST is the one load will break**
+    /// (#793 -- the first version of this comment said the opposite and would have sent someone
+    /// debugging a load-induced red to the wrong place). stdout is sent at 3/4 of the grace against
+    /// its own full grace, so it has 1/4 of one -- 100 ms -- to spare; stderr is sent at 5/4 against
+    /// a window that starts when its wait does, so it has 200 ms. A slow host reddens the stdout
+    /// assertion first.
+    ///
+    /// That costs the cell nothing, and saying why is the point: BOTH failure directions are red.
+    /// A host too slow for stdout reds the first assertion; a shared window reds the second. There
+    /// is no host speed at which the sabotaged shape passes, because under it stderr's budget is at
+    /// most 1/4 of a grace while it is always sent a full 1/2 grace after stdout.
     #[test]
     fn each_stream_gets_its_own_post_release_grace_not_a_share_of_one() {
         let mut out = FakeReader::new();

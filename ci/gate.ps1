@@ -382,6 +382,875 @@ function Get-TestArtifactManifest {
     }
 }
 
+function Get-RecordedStatus {
+    <#
+        The status the RECORD carries, given what the run computed and whether the head moved.
+
+        Extracted so it can be fed. It was two operands of an `if` inside `Write-RunManifest`, which
+        drives the whole gate and cannot be run from a cell -- so the comparison that decides what
+        the durable record says about a moved head had no input that could tell an ordinal comparer
+        from a culture-aware one. A reviewer measured that: swapping all eleven comparisons in this
+        file to InvariantCulture reddens exactly ONE cell. That does not mean ten are untested; it
+        means no cell hands them an input that DISTINGUISHES the two comparers, which is a gap in
+        inputs rather than in lines.
+
+        AND THE EXACTNESS IS THE POINT, in the direction that needs saying. A status of 'GREEN' plus
+        an ignorable code point is not downgraded here, and that is deliberate: it is not a status
+        this gate can produce, so the honest record keeps the odd value where somebody can see it
+        rather than laundering it into a tidy 'RED'. The RUN is red either way -- movement adds its
+        own entry to the failure list and sets the script-scope flag, neither of which passes
+        through this function -- so nothing about the verdict rests on the downgrade. What rests on
+        it is whether a reader of the store can tell "this gate called it red" from "something wrote
+        a status this gate cannot emit".
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [AllowNull()] [string] $Status,
+        [Parameter(Mandatory)] [bool] $HeadMoved
+    )
+
+    if ($HeadMoved -and [string]::Equals($Status, 'GREEN', [System.StringComparison]::Ordinal)) { return 'RED' }
+    return $Status
+}
+
+function Get-HeadProvenance {
+    <#
+        Where this run's head can be found later, if anywhere.
+
+        A gate run records `headSha`, and a squash merge THROWS THAT COMMIT AWAY -- so a manifest
+        that names only the head cannot certify anything that reaches main. Measured on this
+        repository: of the heads certified on 2026-09-01, six of seven do not exist on the server
+        at all, because the gate ran on a commit that was then amended or rebased before any push.
+
+        Two fields fix that, and they answer different halves:
+
+          pullRequest   the number survives the squash, in the merge title's `(#N)`, so it is the
+                        only key that connects a commit on main back to the head that was gated
+          pushed        TRUE when the SERVER was asked and answered that this commit is the tip
+                        of the branch this run tracked, and $null in every other case. Never read
+                        out of `refs/remotes/*`: that is what the last fetch left behind. A
+                        certified sha that dies in the next amend certifies NOTHING, and a reader
+                        treating a cached ref as proof is worse off than with no proof, because it
+                        looks like compliance
+
+        Both are recorded as facts, never inferred: when a value cannot be determined it is `$null`
+        with `reason` saying which lookup failed. An absent field and a field that says "nobody
+        could tell" are different states, and only the second is honest here.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $HeadSha,
+        # The branch this run gated, captured before the stages. See the note at the lookup below:
+        # a SHA-based movement check cannot see a checkout onto a different branch at the same
+        # commit, so a fresh read here would look up somebody else's pull request while every guard
+        # stayed quiet.
+        [string] $BranchRef
+    )
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # THE CAPTURED BRANCH'S UPSTREAM, not "the current branch's". A bare `@{upstream}` resolves
+        # against whatever HEAD names now, so a sibling branch at the same commit -- the case the
+        # SHA guards are blind to by construction -- makes this answer about somebody else's
+        # tracking configuration. Another consumer of identity that the table missed, and it was
+        # missed the same way as the pull-request lookup: the read is spelled without a subject, so
+        # it reads as if it had one.
+        # SHORT NAME, measured rather than assumed: `@{upstream}` resolves against a branch NAME, and
+        # the fully-qualified form is not one.
+        #   master@{upstream}            -> refs/remotes/origin/master
+        #   refs/heads/master@{upstream} -> fatal: no such branch
+        # Declared BEFORE the read, not after it: the first version put this beside the pull-request
+        # locals further down, which run LATER in the function and quietly reset it to null -- the
+        # assignment happened and then was undone. A cell caught it; reading the code did not.
+        $upstreamLocalRef = $null
+        $upstreamRev = if ($BranchRef) { ($BranchRef -replace '^refs/heads/', '') + '@{upstream}' } else { '@{upstream}' }
+        # AND THESE TWO READS KEEP GIT'S WORDS TOO. A reviewer on another machine hit a case where
+        # NOTHING here resolves -- every cell that needs an upstream failed, every cell that does not
+        # passed -- and the record said only `pushed: null, "this branch tracks no remote branch"`.
+        # That sentence is what this function CONCLUDED, not what it OBSERVED: "no upstream is
+        # configured", "the tracking ref is missing" and "git could not read the config at all"
+        # arrive identically once stderr is dropped, and they are three different repairs.
+        $upstreamOutput = @(& git rev-parse $upstreamRev 2>&1 | ForEach-Object { [string]$_ })
+        $upstreamExit = $LASTEXITCODE
+        $upstream = @($upstreamOutput | Where-Object { $_ -cmatch '^[0-9a-f]{40}$' } | Select-Object -First 1)
+        $upstreamSha = if ($upstreamExit -eq 0 -and $upstream) { ([string]$upstream).Trim() } else { $null }
+        # Kept for the reason string below: on the failing path this is the only evidence of WHY.
+        $upstreamWhy = if ($upstreamExit -ne 0) {
+            "git rev-parse $upstreamRev exited $upstreamExit and said: " + (($upstreamOutput | Select-Object -First 2) -join ' | ')
+        } else { $null }
+
+        # AND AN UPSTREAM IS ONLY EVIDENCE OF A PUSH IF IT LIVES ON A REMOTE. `branch.<name>.merge`
+        # can point at another LOCAL branch, and `pushed: true` then certified a commit that never
+        # left the machine -- the field exists to answer "did the server get this", and a local
+        # tracking relationship answers a different question entirely.
+        $upstreamRefOutput = @(& git rev-parse --symbolic-full-name $upstreamRev 2>&1 | ForEach-Object { [string]$_ })
+        $upstreamRefExit = $LASTEXITCODE
+        $upstreamRef = @($upstreamRefOutput | Where-Object { $_ -cmatch '^refs/' } | Select-Object -First 1)
+        $upstreamIsRemote = ($upstreamRefExit -eq 0 -and ([string]$upstreamRef).Trim() -cmatch '^refs/remotes/')
+        if ($upstreamRefExit -ne 0 -and -not $upstreamWhy) {
+            $upstreamWhy = ("git rev-parse --symbolic-full-name $upstreamRev exited $upstreamRefExit and said: " +
+                (($upstreamRefOutput | Select-Object -First 2) -join ' | '))
+        }
+        # The ref itself is kept, because the remote NAME and the branch name on the server are read
+        # out of it below: `pushed` is answered by asking that server, not by reading its cache here.
+        $upstreamRemoteRef = if ($upstreamIsRemote) { ([string]$upstreamRef).Trim() } else { $null }
+        if ($null -ne $upstreamSha -and -not $upstreamIsRemote) {
+            # Not silently dropped: the equality fast path below must not fire, and the reason has to
+            # say why a configured upstream did not count.
+            $upstreamLocalRef = ([string]$upstreamRef).Trim()
+            $upstreamSha = $null
+        }
+
+        # `gh` may be absent, unauthenticated or offline, and none of those is a gate failure --
+        # this is provenance, not a verdict. A number that cannot be looked up is recorded as
+        # unknown rather than guessed from the branch name, which would be a second spelling of
+        # something the server already knows.
+        $prNumber = $null
+        $prReason = $null
+        # THE CAPTURED BRANCH, not a fresh read -- and this is the consumer my table missed. The
+        # movement check compares SHAs, so another shell checking out a different local branch that
+        # points at the SAME commit leaves it false while this lookup asks about the branch the
+        # operator is standing on now. The record then names a pull request belonging to a branch
+        # this run never gated, and every SHA-based guard says nothing is wrong, because nothing
+        # about the SHA is.
+        #
+        # Identity captured once has to feed every consumer that uses it. Feeding only the publisher
+        # left the provenance reading a different clock.
+        $branch = if ($BranchRef) { $BranchRef -replace '^refs/heads/', '' } else { $null }
+        if (-not $branch) {
+            $prReason = 'detached HEAD when this run started: no branch to look a pull request up by'
+        } else {
+            # THE TOOL BEING UNUSABLE AND THE ANSWER BEING "NONE" ARE DIFFERENT STATES, and a
+            # single non-zero exit conflates them: `gh pr view` fails the same way when there is no
+            # pull request and when it is missing, unauthenticated or offline. A consumer reading
+            # one reason for both cannot tell "this branch has no PR" from "nobody could look".
+            # So the tool is asked whether it can answer at all, first.
+            # RESOLVE THE COMMAND BEFORE RUNNING IT. With `gh` absent, `&` does not launch a
+            # process and does not set an exit code: it throws CommandNotFoundException, which
+            # `2>$null` does not silence (the command never ran, so that text is not its stderr) and
+            # which no `catch` here stops -- the try below has only a `finally`. Measured: the line
+            # reading `$LASTEXITCODE` is never reached, the error propagates out of this function,
+            # and the manifest write goes with it -- `Write-RunManifest` never returns, the caller's
+            # catch sets `$manifestFailed`, and the gate exits RED for "run-manifest write". That
+            # contradicts this function's own docstring, which says an absent gh is not a gate
+            # failure.
+            #
+            # HISTORY, not present tense: with the `Get-Command` check below, none of that happens
+            # any more. The paragraph is kept because it says why the check exists, not what the
+            # code does today -- a comment describing behaviour that has since been fixed is a
+            # defect this repository keeps finding, so it is labelled rather than left to rot.
+            #
+            # And the escape depends on the CALLER, which is worth recording because two
+            # measurements disagreed about it: called from inside a try -- the production path,
+            # through `Write-RunManifest` -- the error propagates. Called at top level with no
+            # enclosing try, as an extracted-function harness does, the statement is abandoned and
+            # the function still RETURNS, with the reason unset. Same function, different structure,
+            # and only the first is what the gate does.
+            if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+                $prReason = 'gh is not installed here: nobody could look'
+            } else {
+            # SCOPED TO THE HOST THIS QUESTION IS ABOUT. Bare `gh auth status` reports on EVERY host
+            # gh knows, so an expired token for some unrelated enterprise host made the preflight fail
+            # and the pull request was recorded as "nobody could look" while github.com was perfectly
+            # reachable. An instrument that answers about the wrong subject is not a conservative
+            # instrument; it is a wrong one, and this one fails toward silence.
+            # AND THE ACTIVE ACCOUNT, not any account on the host. `gh auth status --hostname` exits
+            # non-zero when ANY account configured for that host has an expired token, including one
+            # that will not be used -- so a stale second login suppressed the lookup while the
+            # account that would actually answer was fine. Sibling of the host scoping, one level in:
+            # the preflight has to ask about the identity that will do the work.
+            #
+            # `--active` where the installed gh has it, and the "Active account: true" block where it
+            # does not -- the flag is recent enough that assuming it would make the preflight fail on
+            # older installs, which is the same failure this is fixing.
+            $authProbe = @(& gh auth status --hostname github.com --active 2>&1 | ForEach-Object { [string]$_ })
+            $authOk = ($LASTEXITCODE -eq 0)
+            if (-not $authOk -and (($authProbe -join "`n") -cmatch 'unknown flag|unrecognized|--active')) {
+                $authProbe = @(& gh auth status --hostname github.com 2>&1 | ForEach-Object { [string]$_ })
+                # Without the flag, read the block that names the active account: a non-zero exit
+                # here can be entirely about an account nobody is going to use.
+                $authOk = (($authProbe -join "`n") -cmatch 'Active account: true')
+            }
+            if (-not $authOk) {
+                $prReason = 'gh is unavailable or not authenticated for the active github.com account: nobody could look'
+            } else {
+                # `pr list`, not `pr view`. A LIST answers with an empty array and exit 0 when
+                # there is nothing, and fails only when the lookup itself failed -- so the two
+                # states arrive on different signals instead of sharing one non-zero exit. With
+                # `pr view` an offline blip and a branch with no pull request are the same event,
+                # and the `gh auth status` preflight only narrows that, it does not separate it.
+                # `--head` FILTERS BY BRANCH NAME ONLY -- gh's own help says the `<owner>:<branch>`
+                # form is unsupported -- so two forks using `fix-thing`, or a branch renamed since
+                # the pull request was opened, both answer with somebody else's pull request. `.[0]`
+                # then discarded the ambiguity in silence, and the manifest recorded a number that
+                # names a different head: the provenance chain this field exists to carry, pointing
+                # somewhere else.
+                #
+                # So the head decides, not the branch name. `headRefOid` is requested and the
+                # candidates are filtered by it, and anything other than exactly one match is a
+                # REFUSAL with its reason rather than a choice among strangers.
+                # AND THE CANDIDATE SET IS NOT PINNED TO THE BRANCH NAME EITHER. Filtering the
+                # candidates by `headRefOid` decided correctly AMONG them, but `--head <name>`
+                # chooses who is in the room: a branch renamed after its pull request was opened
+                # returns an EMPTY list, and empty read as "this branch has no open pull request".
+                # Same fail-open as before, one layer further out.
+                #
+                # So the head is searched for as well, and the two answers are pooled before the
+                # `headRefOid` filter runs. A search that fails is not fatal -- it narrows the set
+                # back to what the branch name found, which is what this did before.
+                $lookup = & gh pr list --head ([string]$branch).Trim() --state open --json number,headRefOid 2>$null
+                $byBranchFailed = ($LASTEXITCODE -ne 0)
+                $searchLookup = & gh pr list --search $HeadSha --state open --json number,headRefOid 2>$null
+                $bySearchFailed = ($LASTEXITCODE -ne 0)
+                # A FAILED QUERY IS NOT AN ANSWER -- but it is also not a reason to throw away the
+                # other one. The search is the only query that can find a pull request whose branch
+                # was renamed, so a successful-but-empty `--head` beside a FAILED search does not
+                # establish that no pull request exists. If what survived still names this head,
+                # that is a real answer; if it does not, the honest word is "nobody could look",
+                # never "this branch has no open pull request".
+                $anyQueryFailed = ($byBranchFailed -or $bySearchFailed)
+                $whichFailed = if ($byBranchFailed -and $bySearchFailed) { 'both queries' }
+                    elseif ($byBranchFailed) { 'the branch-name query' }
+                    elseif ($bySearchFailed) { 'the head search' } else { $null }
+                if ($byBranchFailed -and $bySearchFailed) {
+                    $prReason = 'gh could not complete the lookup: nobody could look'
+                } else {
+                    if ($byBranchFailed) { $lookup = $searchLookup }
+                    elseif (-not $bySearchFailed) { $lookup = @($lookup) + @($searchLookup) }
+                    # `@(ConvertFrom-Json)` DOES NOT ENUMERATE. Under Windows PowerShell 5.1 the
+                    # cmdlet emits a JSON array as ONE object, so `@(...)` wrapped the whole array
+                    # in a single-element array: the count was 1 whatever the answer held, and no
+                    # candidate ever matched. Measured, not reasoned -- a two-element response came
+                    # back with `count=1` and `matching=0`. The pipeline enumerates it properly.
+                    # Two answers, so two documents: each is parsed on its own and the results are
+                    # pooled by pull request number. Joining the texts would produce `[...][...]`,
+                    # which is not JSON at all.
+                    $candidates = @()
+                    $parseFailed = $false
+                    foreach ($doc in @($lookup | Where-Object { ([string]$_).Trim() -ne '' })) {
+                        try {
+                            $parsedJson = ([string]$doc) | ConvertFrom-Json
+                            # `@(ConvertFrom-Json)` DOES NOT ENUMERATE under Windows PowerShell 5.1:
+                            # the cmdlet emits a JSON array as ONE object, so the wrapper produced a
+                            # single-element array holding the whole array and no candidate ever
+                            # matched. Measured, not reasoned. The pipeline enumerates it properly.
+                            $candidates += @($parsedJson | ForEach-Object { $_ })
+                        } catch { $parseFailed = $true }
+                    }
+                    # A DOCUMENT THAT DOES NOT PARSE IS A FAILED QUERY. Two queries run here, and
+                    # truncated JSON from one of them was being absorbed as long as the other
+                    # answered: the pool looked complete, and "no open pull request" or a match got
+                    # recorded from half the evidence. This is my own rule about instruments --
+                    # a failed instrument is UNKNOWN, never an answer -- applied to the case where
+                    # only part of the instrument failed.
+                    if ($parseFailed) {
+                        $anyQueryFailed = $true
+                        $whichFailed = if ($whichFailed) { "$whichFailed and a lookup that did not parse" }
+                            else { 'a lookup that did not parse' }
+                    }
+                    if ($parseFailed -and $candidates.Count -eq 0) {
+                        $candidates = $null
+                        $prReason = "gh answered a document that did not parse as JSON, so nobody could look: $lookup"
+                    } else {
+                        $candidates = @($candidates | Group-Object -Property number | ForEach-Object { $_.Group[0] })
+                    }
+                    if ($null -ne $candidates) {
+                        if ($candidates.Count -eq 0) {
+                            $prReason = if ($anyQueryFailed) { "gh could not complete $whichFailed, so nobody could look" }
+                                else { 'gh answered: this branch has no open pull request' }
+                        } else {
+                            # ORDINAL, BECAUSE -ceq IS NOT. PowerShell's case-sensitive operators are still CULTURE
+                            # aware, and a culture comparison gives some code points no weight at all: measured on this
+                            # machine, 'GREEN' plus U+FFFD, plus U+FE00, or plus U+00AD each comes back -ceq 'GREEN'.
+                            # THE CLASS IS "IGNORABLE TO THE COMPARER", NOT "INVISIBLE". Measured, because
+                            # the difference decides what a reader does next: U+00AD, U+200D, U+2060,
+                            # U+FE00, U+FEFF and U+FFFD all fold; U+200B, which is the first character
+                            # anyone thinks of, does NOT (-ceq False). Control: 'GREENX' is false under
+                            # both comparers. Calling the class "invisible" invites a deny-list of
+                            # invisible characters -- which would miss U+FFFD, include U+200B for
+                            # nothing, and be the population defect this file already carries a fix for.
+                            # Every one of these comparisons decides something -- which pull request this head belongs
+                            # to, whether the ref still holds the commit this run is about to certify, whether the
+                            # manifest on disk is the one that was published -- and each was deciding it with a comparer
+                            # that treats different strings as the same string. Found in ci/merge-proof.ps1 first, where
+                            # a status of GREEN plus a weightless code point read as GREEN; this file has the same
+                            # operator in ten places, and one of them is a compare-and-swap.
+                            $matching = @($candidates | Where-Object {
+                                    [string]::Equals([string]$_.headRefOid, $HeadSha, [System.StringComparison]::Ordinal) })
+                            if ($matching.Count -eq 1) {
+                                $parsed = 0
+                                if ([int]::TryParse(([string]$matching[0].number).Trim(), [ref] $parsed)) { $prNumber = $parsed }
+                                else { $prReason = "gh answered something that is not a number: $($matching[0].number)" }
+                            } elseif ($matching.Count -eq 0) {
+                                $prReason = if ($anyQueryFailed) {
+                                    ("$($candidates.Count) open pull request(s) were found and none names $HeadSha, but " +
+                                        "$whichFailed failed -- so nobody could look where the answer may be")
+                                } else {
+                                    ("$($candidates.Count) open pull request(s) use this branch name and none of them " +
+                                        "names $HeadSha, so none of them is the pull request this run gated")
+                                }
+                            } else {
+                                $prReason = ("$($matching.Count) open pull requests name $HeadSha on this branch name, so which " +
+                                    'one this run belongs to cannot be decided here')
+                            }
+                        }
+                    }
+                }
+            }
+            }
+        }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+
+    # NO UPSTREAM IS NOT "NOT PUSHED". `git push origin HEAD:feature` without `-u` puts the commit
+    # on the server and leaves no tracking branch, so an equality test against a missing upstream
+    # reported a sha that IS on the remote as unpushed -- the same "unknown read as an answer" this
+    # function exists to avoid, in its own load-bearing field.
+    #
+    # So when there is no upstream the question is asked directly: does any REMOTE ref contain this
+    # commit? Containment is the right test here and equality is not, because the question has
+    # changed -- not "is this the tip the remote tracks" but "does the server have this commit at
+    # all". Where an upstream DOES exist, equality still decides: an ancestor test there would say
+    # yes for every unpushed commit on a tracked branch.
+    # ONE QUESTION, ONE SEARCH. `pushed` asks whether the SERVER has this commit -- nothing more --
+    # and there are two ways to know: the upstream is exactly it, or some remote ref contains it.
+    # The first two versions of this had a containment search in each branch, which made the
+    # branches interchangeable: removing one fell through to the other and the sabotage proved
+    # nothing. Written as one condition and one search, each part can be removed and seen.
+    #
+    # EQUALITY IS THE FAST PATH AND NOT THE TEST. It answers yes exactly when the upstream IS this
+    # commit; it must never answer NO on its own, because a tracked branch is not the only route
+    # (`git push origin HEAD:review` leaves the upstream behind) and a missing upstream is not an
+    # absent commit (`git push origin HEAD:feature` without -u). An ancestor test is wrong for both:
+    # it says yes for every unpushed commit on a tracked branch.
+    # AND A LOCAL REF IS A MEMORY OF THE SERVER, NOT A READING OF IT. `refs/remotes/*` is what the
+    # last successful fetch left behind, so both paths this replaces certified `pushed: true` from a
+    # cache: delete or force-push the upstream afterwards and the local ref still equals $HeadSha
+    # while the server no longer has that commit anywhere. Because #674(b) refuses a manifest whose
+    # `pushed` is not TRUE, a stale true is not a stale note -- it is PERMISSION TO MERGE, granted on
+    # evidence this machine cannot see.
+    #
+    # It is the same shape as the empty-search note that used to close this block: an empty local
+    # search is not absence at the server, AND a present local ref is not presence at the server.
+    # Same instrument, the other half; the note covered only the half I was looking at.
+    #
+    # So the fast path becomes the whole test, and it asks the server. `ls-remote` returns TIPS, and
+    # "the upstream's tip IS this commit" is exactly a tip question. Containment -- "some ref out
+    # there contains this commit" -- is NOT answerable by tips; answering it needs a fetch or a
+    # server API, and neither belongs in the gate's path for a provenance field. That half descends
+    # to the third state rather than being answered from the cache.
+    #
+    # `pushed` therefore has two values and one meaning: TRUE means the server was asked and said
+    # this commit is the tip of the branch this run tracked. Everything else is $null -- nobody could
+    # tell -- which #674(b) already treats as a question rather than as a certificate.
+    # The bound on the one network call this function makes, read INSIDE it: the cells extract this
+    # function by anchor text and run it alone, so a script-scope variable declared above the anchor
+    # would exist in the gate and be $null in every cell -- and Wait-Job with a null timeout does not
+    # fail loudly, it waits.
+    #
+    # AND THE ENVIRONMENT CANNOT REINSTATE THAT NULL. `[int]'abc'` under `Continue` writes an error
+    # and leaves the assignment UNDONE, so a malformed override produced exactly the $null the
+    # paragraph above defends against, by a different route: the variable was moved inside the
+    # function so the cells could not leave it null, and the operator could still hand it one.
+    # `0` IS LEGAL AND IS A SEAM, not an oversight: `Wait-Job -Timeout 0` returns immediately, which
+    # is how `gate-manifest-provenance.tests.ps1` forces the expiry branch deterministically instead
+    # of sleeping through a real bound. The first version of this refusal rejected it and reddened
+    # that cell, which is the cell teaching the fix what the parameter is for. A NEGATIVE value is
+    # refused, because it is not a bound at all.
+    # (Found by the GraphHelm ISSUES 4 lane reviewing this pull request; narrowed by its own suite.)
+    $lsRemoteTimeoutSeconds = 30
+    if ($env:GATE_LS_REMOTE_TIMEOUT_SECONDS) {
+        $override = 0
+        if (-not [int]::TryParse($env:GATE_LS_REMOTE_TIMEOUT_SECONDS, [ref] $override) -or $override -lt 0) {
+            throw ("GATE_LS_REMOTE_TIMEOUT_SECONDS is [$($env:GATE_LS_REMOTE_TIMEOUT_SECONDS)], which is not a " +
+                'whole number of seconds. Unset it to use the default of 30, or give it one (0 expires ' +
+                'immediately and is what the suite uses to reach the timeout branch).')
+        }
+        $lsRemoteTimeoutSeconds = $override
+    }
+    $pushedReason = $null
+    $pushed = $null
+    $localMemory = @(& git for-each-ref --contains $HeadSha --format '%(refname)' refs/remotes 2>$null |
+            Where-Object { $_ })
+    $localNote = if ($localMemory.Count -gt 0) {
+        " (a local ref, $($localMemory[0]), names it, but that is memory from the last fetch)"
+    } else { '' }
+
+    if ($null -eq $upstreamRemoteRef) {
+        $where = if ($upstreamLocalRef) { "the upstream is $upstreamLocalRef, a LOCAL branch, which says nothing about the server" }
+            elseif ($upstreamWhy) { "the upstream of $BranchRef could not be resolved ($upstreamWhy)" }
+            else { 'this branch tracks no remote branch' }
+        $pushedReason = "$where, so there was no server to ask$localNote"
+    } elseif ($upstreamRemoteRef -cnotmatch '^refs/remotes/([^/]+)/(.+)$') {
+        $pushedReason = ("the upstream ref $upstreamRemoteRef does not name a remote and a branch, so there was no " +
+            "server to ask$localNote")
+    } else {
+        $remoteName = $Matches[1]
+        $remoteBranch = $Matches[2]
+        # BOUNDED, AND UNABLE TO ASK FOR CREDENTIALS. An unbounded network call in the path that
+        # publishes the record is a hang where a refusal belongs, and a credential prompt on a
+        # headless runner is the same hang wearing a question mark. A timeout is not an answer: it is
+        # the third state, like every other lookup in this function.
+        $tip = $null
+        $tipError = $null
+        $job = Start-Job -ScriptBlock {
+            param($root, $remote, $branch)
+            $env:GIT_TERMINAL_PROMPT = '0'
+            $env:GCM_INTERACTIVE = 'never'
+            $out = & git -C $root ls-remote $remote ('refs/heads/' + $branch) 2>&1
+            [ordered]@{ code = $LASTEXITCODE; lines = @($out | ForEach-Object { [string]$_ }) }
+        } -ArgumentList @((Get-Location).Path, $remoteName, $remoteBranch)
+        $finished = Wait-Job -Job $job -Timeout $lsRemoteTimeoutSeconds
+        if ($null -eq $finished) {
+            # `Stop-Job` ends the job's own PowerShell process; `git ls-remote` is a NATIVE child of
+            # that process, so a git blocked on a network read can outlive it. This repository knows
+            # that shape by name -- #714, #715, #717, #748 are all a descendant surviving a stop --
+            # and the record says so rather than implying the process is gone, because one orphaned
+            # `git ls-remote` per timed-out run accumulates on a machine that gates all day.
+            Stop-Job -Job $job -ErrorAction SilentlyContinue
+            $tipError = ("the server did not answer within $lsRemoteTimeoutSeconds seconds (the " +
+                'lookup was abandoned; a git process may still be running)')
+        } else {
+            $result = Receive-Job -Job $job
+            if ($null -eq $result -or $result.code -ne 0) {
+                $firstLine = if ($null -ne $result -and @($result.lines).Count -gt 0) { @($result.lines)[0] } else { 'no output' }
+                $tipError = "asking the server failed: $firstLine"
+            } else {
+                $answer = @(@($result.lines) | Where-Object { $_ -cmatch '^[0-9a-f]{40}\s' })
+                if ($answer.Count -gt 0) { $tip = ($answer[0] -split '\s+')[0] }
+            }
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+
+        if ($tipError) {
+            $pushedReason = "$tipError, so nobody here knows whether $remoteName has this commit$localNote"
+        } elseif ($null -eq $tip) {
+            # The branch is gone from the server, or was never there under this name. The COMMIT can
+            # still be on it under another ref, which is the containment question tips cannot answer,
+            # so this is not `false` either.
+            $pushedReason = ("$remoteName has no branch $remoteBranch, so this commit is not the tip of the branch " +
+                "this run tracked -- which is not the same as the server not having it$localNote")
+        } elseif ([string]::Equals($tip, $HeadSha, [System.StringComparison]::Ordinal)) {
+            $pushed = $true
+            $pushedReason = "the tip of $remoteBranch on $remoteName IS this commit, read from the server"
+        } else {
+            $pushedReason = ("the tip of $remoteBranch on $remoteName is $tip, not this commit, and a commit that is " +
+                "not a tip is not thereby absent from the server$localNote")
+        }
+    }
+
+    return [ordered]@{
+        pullRequest       = $prNumber
+        pullRequestReason = $prReason
+        upstreamSha       = $upstreamSha
+        pushedReason      = $pushedReason
+        pushed            = $pushed
+    }
+}
+
+function Publish-RunManifest {
+    <#
+        Commits the manifest, alone, or refuses.
+
+        THE COMMIT IS PURE BY CONSTRUCTION, and that is not a nicety: this runs inside a gate that
+        an author started, on a branch holding their work. A commit that swept anything else in
+        would put the author's uncommitted changes into history under a message they did not write,
+        at the one moment they are least likely to be watching -- which is a far worse defect than
+        the missing record this exists to fix. So it refuses when ANYTHING outside the manifest
+        store differs, staged or unstaged, and it stages exactly one path.
+
+        THE GATED HEAD IS THE PARENT OF THIS COMMIT. `headSha` was captured before the manifest was
+        written, so it names the commit that was actually gated; this commit is its child, and the
+        button's rule (#674(b)) is `headSha == parent(head)` when the tip touches only the store.
+        The two facts a reader needs -- which commit was judged, and that the tip added nothing but
+        the record -- are then both checkable with git alone.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $ManifestPath,
+        [Parameter(Mandatory)] [string] $HeadSha,
+        $PullRequest,
+        # THE BRANCH THIS RUN GATED, captured before the stages and passed in. Read here it would
+        # answer "where is the operator standing?" when the question is "which branch did this run
+        # gate?", and every read between the capture and the write was a window somebody could move
+        # through. A parameter cannot drift; a fresh read can.
+        [string] $BranchRef,
+        # The exact bytes this run serialized. See the note at the hash below: hashing the PATH
+        # commits whatever is on disk at that instant, and the store is a directory the
+        # foreign-change refusal deliberately allows anyone to write in.
+        [string] $Content,
+        # EVERY copy of this record. `Write-GateManifestPair` writes two, and reconciling only the
+        # one whose path the publisher happened to receive left the durable twin corrupted while
+        # the run declared success -- the pair is the unit, and a parameter that names one file
+        # made it easy to forget that.
+        [string[]] $Copies = @()
+    )
+
+    $relative = 'ci/../.factory/gate-runs'
+    $storePrefix = '.factory/gate-runs/'
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $status = @(& git status --porcelain --untracked-files=all 2>$null | ForEach-Object { [string]$_ })
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '[gate] WARNING: the manifest was not committed: git status did not answer.' -ForegroundColor Yellow
+            return
+        }
+        # A porcelain line is `XY <path>`; a rename is `XY <old> -> <new>`. Both ends of a rename
+        # are checked, because a rename INTO the store from outside is still the gate moving a file
+        # the author is holding.
+        # THE GATE'S OWN NONCE IS NOT THE AUTHOR'S WORK. `Write-CanaryNonce` rewrites this TRACKED
+        # file before every run by design (#152), so `git status` reports it on EVERY normal
+        # invocation -- and this refusal then fired every time, which means #674(a) committed a
+        # manifest on no ordinary run at all. A guard that refuses on its own artefact does not
+        # protect anything; it just never lets the thing it guards happen.
+        #
+        # Named, single, and narrow: this one path, written by this script, in this run. Everything
+        # else outside the store still refuses, which is the case the guard exists for.
+        $gateOwnPath = 'tools/ci-canary/src/nonce.rs'
+        $foreign = @()
+        foreach ($line in $status) {
+            if ($line.Length -lt 4) { continue }
+            $paths = ($line.Substring(3) -split ' -> ') | ForEach-Object { $_.Trim('"') }
+            foreach ($candidate in $paths) {
+                $normalised = $candidate -replace '\\', '/'
+                if ([string]::Equals($normalised, $gateOwnPath, [System.StringComparison]::Ordinal)) { continue }
+                if (-not $candidate.StartsWith($storePrefix)) { $foreign += $candidate }
+            }
+        }
+        if ($foreign.Count -gt 0) {
+            Write-Host ("[gate] the run manifest was NOT committed: this tree holds changes outside " +
+                "$storePrefix, and a gate that commits them would put your work into history under " +
+                "a message you did not write. Commit or stash them and re-run to record the run:`n  " +
+                (($foreign | Sort-Object -Unique) -join "`n  ")) -ForegroundColor Yellow
+            return
+        }
+
+        $fileName = [System.IO.Path]::GetFileName($ManifestPath)
+
+        # A FIXED FORM, so a reader and a checker parse the same thing. The pull request number is
+        # omitted rather than guessed when it is unknown -- the manifest already records why.
+        $message = if ($null -ne $PullRequest) {
+            "gate: run manifest for $HeadSha (#$PullRequest)"
+        } else {
+            "gate: run manifest for $HeadSha"
+        }
+
+        # THE PARENT IS PART OF THE PUBLICATION, NOT A CHECK IN FRONT OF IT. Re-reading HEAD and
+        # then running `git commit` left a read-then-act window: another shell advancing the branch
+        # in between meant `git commit` read the NEWER head, committed on top of it, and reported
+        # success while `manifest.headSha == HEAD~1` -- the predicate the checker relies on -- was
+        # false. A window narrow enough to be hard to hit is still a window, and this one produces a
+        # green record of the wrong thing.
+        #
+        # So the commit is BUILT on $HeadSha and the branch is moved by compare-and-swap:
+        #   hash-object   the manifest blob
+        #   read-tree     $HeadSha into a TEMPORARY index -- never the author's
+        #   update-index  put the blob at its path
+        #   commit-tree   with $HeadSha as the parent, explicitly
+        #   update-ref    <new> <old>, which git refuses if the branch moved
+        # git decides the race, and it decides it by refusing.
+        #
+        # The author's index is never touched now, which also retires the `git reset` recovery: the
+        # earlier form staged into the real index and had to undo that on every failure path.
+        # THE BRANCH IS THE ONE CAPTURED BEFORE THE STAGES, never one read now. Reading it here
+        # asked "where is the operator standing?" when the question is "which branch did this run
+        # gate?" -- and every answer between the capture and the write was a window.
+        $branchRef = $BranchRef
+        if (-not $branchRef) {
+            Write-Host ('[gate] WARNING: HEAD was detached when this run started, so there is no branch to publish ' +
+                'the run manifest onto; it is written but not committed.') -ForegroundColor Yellow
+            return
+        }
+
+        # THE BYTES THIS RUN SERIALIZED, not whatever is at that path now. `hash-object` reads the
+        # FILE, and between Write-GateManifestPair returning and this line the store copy is
+        # ordinary disk: anything can replace it, and the foreign-change refusal explicitly permits
+        # every path under the store, so the swap still succeeds and the gate publishes somebody
+        # else's bytes under its own message while the durable copy says something different.
+        #
+        # The content is handed in and staged where only this run knows the path, so there is no
+        # window to race: the commit carries what the gate generated, whatever happens to the copy
+        # in the store.
+        $hashSource = $ManifestPath
+        $contentStaging = $null
+        if ($Content) {
+            $contentStaging = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
+                "graphhelm-manifest-$([guid]::NewGuid().ToString('N')).json")
+            [System.IO.File]::WriteAllText($contentStaging, $Content, (New-Object System.Text.UTF8Encoding($false)))
+            $hashSource = $contentStaging
+        }
+        # GIT'S OWN WORDS ARE KEPT FOR EVERY STEP OF THIS PUBLICATION, not only for the one that
+        # flaked. The `commit-tree` call below already did this, and its comment says why: "the
+        # warning said only that it failed, so three sightings produced no diagnosis at all". THAT IS
+        # A RULE ABOUT FIVE CALLS AND I APPLIED IT TO ONE -- the seventh time in this pull request
+        # that a rule of mine was applied to the subject in front of me instead of to its subjects.
+        #
+        # It was paid for immediately: a reviewer saw this exact warning 37 times on his machine and
+        # could not tell me WHY, because the only text the run produced was that this step failed.
+        # Five measurements were spent guessing at a sentence git had already written and this code
+        # threw away. `2>&1` costs nothing on the happy path.
+        #
+        # The sha is picked out BY SHAPE rather than by position, so a warning line on stderr cannot
+        # be mistaken for the answer.
+        $blobOutput = @(& git hash-object -w -- $hashSource 2>&1 | ForEach-Object { [string]$_ })
+        $blobExit = $LASTEXITCODE
+        if ($contentStaging) { Remove-Item -LiteralPath $contentStaging -Force -ErrorAction SilentlyContinue }
+        $blob = @($blobOutput | Where-Object { $_ -cmatch '^[0-9a-f]{40}$' } | Select-Object -First 1)
+        if ($blobExit -ne 0 -or -not $blob) {
+            Write-Host ('[gate] WARNING: the run manifest could not be written to the object store; it is not ' +
+                "committed. git exited $blobExit and said: " + (($blobOutput | Select-Object -First 3) -join ' | ')) -ForegroundColor Yellow
+            return
+        }
+        $blob = ([string]$blob).Trim()
+
+        $tempIndex = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
+            "graphhelm-gate-index-$([guid]::NewGuid().ToString('N'))")
+        $previousIndex = $env:GIT_INDEX_FILE
+        try {
+            $env:GIT_INDEX_FILE = $tempIndex
+            $readTreeOutput = @(& git read-tree $HeadSha 2>&1 | ForEach-Object { [string]$_ })
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ("[gate] WARNING: could not read the tree of $HeadSha; the run manifest is not " +
+                    'committed. git said: ' + (($readTreeOutput | Select-Object -First 3) -join ' | ')) -ForegroundColor Yellow
+                return
+            }
+            $updateIndexOutput = @(& git update-index --add --cacheinfo "100644,$blob,$storePrefix$fileName" 2>&1 |
+                    ForEach-Object { [string]$_ })
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ('[gate] WARNING: the run manifest could not be placed in the tree; it is not ' +
+                    'committed. git said: ' + (($updateIndexOutput | Select-Object -First 3) -join ' | ')) -ForegroundColor Yellow
+                return
+            }
+            $treeOutput = @(& git write-tree 2>&1 | ForEach-Object { [string]$_ })
+            $treeExit = $LASTEXITCODE
+            $tree = @($treeOutput | Where-Object { $_ -cmatch '^[0-9a-f]{40}$' } | Select-Object -First 1)
+            if ($treeExit -ne 0 -or -not $tree) {
+                Write-Host ('[gate] WARNING: the run manifest tree could not be written; it is not committed. ' +
+                    "git exited $treeExit and said: " + (($treeOutput | Select-Object -First 3) -join ' | ')) -ForegroundColor Yellow
+                return
+            }
+        } finally {
+            if ($null -eq $previousIndex) { Remove-Item Env:\GIT_INDEX_FILE -ErrorAction SilentlyContinue }
+            else { $env:GIT_INDEX_FILE = $previousIndex }
+            Remove-Item -LiteralPath $tempIndex -Force -ErrorAction SilentlyContinue
+        }
+        $tree = ([string]$tree).Trim()
+
+        # SIGNING IS HONOURED, because `commit-tree` does not read `commit.gpgsign` the way `commit`
+        # does: switching to the plumbing would otherwise have made the gate the one writer in a
+        # signing repository that quietly produces unsigned commits. `--no-verify` opting out of
+        # HOOKS was a deliberate decision recorded above; opting out of signing was not, and a
+        # silent policy change is worse than a refusal.
+        # `--type=bool` LETS GIT DECIDE WHAT A BOOLEAN IS. My regex listed the spellings I happened
+        # to remember; git accepts more of them, and case-insensitively, so a repository configured
+        # with `commit.gpgSign = On` or `Yes` would have had its policy silently dropped by a gate
+        # that believed it was honouring it. Reimplementing a parser the tool already exposes is how
+        # a check ends up agreeing with itself instead of with the thing it checks.
+        # FOUR STATES, NOT THREE -- and this is the fourth instance of the pattern named a hundred
+        # lines up, arriving before the comment had settled. Enumerating the subjects of
+        # "commit.gpgsign" gives absent, false, true, and MALFORMED, and `2>$null` collapsed the
+        # fourth into the first. Measured:
+        #
+        #   absent      exit 1     (nothing)
+        #   'yesplease' exit 128   fatal: bad boolean config value 'yesplease' for 'commit.gpgsign'
+        #   'True'      exit 0     true
+        #
+        # So a repository whose config is malformed got an UNSIGNED commit from the gate, where a
+        # normal `git commit` refuses outright. That is the silent policy change this block's own
+        # comment forbids, and the exit code alone distinguishes it -- no message parsing needed.
+        # AND THE EXIT CODE IS NOT THE DIAGNOSIS. This block used to ASSERT the cause -- "gpgsign is
+        # set to something git cannot read as a boolean" -- from an exit code that covers more than
+        # that. Observed here, three runs of the suite, no `commit.gpgsign` set at any level
+        # (`git config --show-origin --get-all commit.gpgsign` exits 1, nothing anywhere): one run
+        # printed that sentence anyway. `git config` returns 128 for a malformed value AND for a
+        # config file it could not read -- and the fleet rewrites the shared `.git/config` and the
+        # global one constantly, so a reader can land mid-rewrite.
+        #
+        # The refusal stays: an unreadable signing policy is not a licence to write an unsigned
+        # commit, and this fails closed on purpose. What changes is that the run reports what GIT
+        # said instead of naming a cause it did not measure. A message that asserts one cause for a
+        # class of exits sends the next reader to fix a config that is not broken.
+        $signOutput = @(& git config --type=bool --get commit.gpgsign 2>&1 | ForEach-Object { [string]$_ })
+        $signExit = $LASTEXITCODE
+        $signRequested = @($signOutput | Where-Object { $_ -cmatch '^(true|false)$' } | Select-Object -First 1)
+        if ($signExit -ne 0 -and $signExit -ne 1) {
+            Write-Host ("[gate] git could not read commit.gpgsign (git exited $signExit and said: " +
+                (($signOutput | Select-Object -First 3) -join ' | ') + "), so this run will NOT commit the " +
+                'manifest: signing here would be a policy decision the repository did not make, and skipping it ' +
+                'silently would be the same decision by omission. If the value is malformed, fix it; if git could ' +
+                'not read the file at all, this run raced something that was rewriting it.') -ForegroundColor Red
+            return
+        }
+        $signArgs = if ($signExit -eq 0 -and
+            [string]::Equals(([string]$signRequested).Trim(), 'true', [System.StringComparison]::Ordinal)) { @('-S') } else { @() }
+        # GIT'S OWN WORDS ARE KEPT FOR THIS STEP. It is the one that has failed intermittently in the
+        # suite (#741) and the warning said only that it failed, so three sightings produced no
+        # diagnosis at all. `2>&1` here costs nothing on the happy path and is the difference between
+        # a fourth sighting and an answer.
+        $commitOutput = @(& git commit-tree @signArgs $tree -p $HeadSha -m $message 2>&1 | ForEach-Object { [string]$_ })
+        $commitExit = $LASTEXITCODE
+        $commit = @($commitOutput | Where-Object { $_ -cmatch '^[0-9a-f]{40}$' } | Select-Object -First 1)
+        if ($commitExit -ne 0 -or -not $commit) {
+            Write-Host ("[gate] WARNING: the run manifest commit could not be created; it is written but not " +
+                "committed. git exited $commitExit and said: " + (($commitOutput | Select-Object -First 3) -join ' | ')) -ForegroundColor Yellow
+            return
+        }
+        $commit = [string]$commit
+        $commit = ([string]$commit).Trim()
+
+        # THE COMPARE-AND-SWAP. `<new> <old>` makes git verify the branch still points at the head
+        # this run judged, and refuse otherwise -- there is no instant between the check and the
+        # move for anything to happen in.
+        # NO RE-READ, BY CONSTRUCTION. The previous revision read `symbolic-ref` again and compared
+        # -- which narrowed the window and left one, because a check followed by an act is still two
+        # things. This asks git nothing: the ref NAME came from the capture, and `update-ref` with an
+        # expected value compares and writes in ONE operation. A shell that switched branches does
+        # not touch `$branchRef`, so it cannot affect this; a shell that MOVED `$branchRef` makes the
+        # command fail. There is no instant between looking and acting because there is no looking.
+        $updateRefOutput = @(& git update-ref -m $message $branchRef $commit $HeadSha 2>&1 |
+                ForEach-Object { [string]$_ })
+        if ($LASTEXITCODE -ne 0) {
+            # WHICH OF THE TWO FAILED: the swap refusing because the branch moved, or the swap being
+            # refused for some other reason entirely -- a `reference-transaction` hook saying no,
+            # permissions, a broken ref store. Both arrive as one non-zero exit, and treating that as
+            # movement wrote `headMovedDuringRun: true` into the durable record with the branch
+            # standing still, then told the operator to re-run on a stable checkout, which fixes
+            # nothing they can see.
+            #
+            # This is the first finding of this pull request in the newest place: THE TOOL FAILING
+            # AND THE FACT BEING OBSERVED ARE DIFFERENT STATES, and one non-zero exit cannot carry
+            # both. The re-read is diagnostic and happens AFTER the act, so it decides no
+            # publication -- it only decides which true sentence to record.
+            $refNow = (& git rev-parse --verify --quiet "$branchRef" 2>$null | Select-Object -First 1)
+            # The compare-and-swap's own comparison: the one place where an approximate comparer
+            # would let the record be written against a ref that had moved.
+            $refMoved = ($LASTEXITCODE -ne 0 -or
+                -not [string]::Equals(([string]$refNow).Trim(), $HeadSha, [System.StringComparison]::Ordinal))
+            # THE REFUSAL IS A VERDICT, NOT A LOG LINE. The compare-and-swap failing means the
+            # branch moved during the run, which is the same fact the start-versus-end comparison
+            # reports -- and it was reaching nobody: `Publish-RunManifest` returned, the caller still
+            # got a path, the flag stayed false, and the gate printed GREEN and exited 0 for a head
+            # the stages never tested. Detecting a race and then not acting on it is worse than not
+            # detecting it, because the detection reads as coverage.
+            if ($refMoved) {
+                $script:headMovedDuringRun = $true
+                Write-Host ("[gate] $branchRef no longer points at $HeadSha, so the run manifest was NOT committed. " +
+                    'Something moved the branch while this run was finishing, and a commit here would name a head this ' +
+                    'run never judged. This run is RED.') -ForegroundColor Red
+            } else {
+                # And git's own words, which are the whole diagnosis in this branch: "a hook,
+                # permissions, or the ref store itself" is a list of guesses, and the command that
+                # refused usually says which. Captured above rather than discarded.
+                Write-Host ("[gate] $branchRef still points at $HeadSha, and the update was refused anyway -- a hook, " +
+                    'permissions, or the ref store itself. The run manifest was NOT committed. This run is RED, and ' +
+                    're-running on a stable checkout will not help: look at what refused the ref update. git said: ' +
+                    (($updateRefOutput | Select-Object -First 3) -join ' | ')) -ForegroundColor Red
+            }
+            return
+        }
+        # AND THE REAL INDEX IS BROUGHT LEVEL WITH THE COMMIT, for exactly one path. Building the
+        # commit in a temporary index left the author's index BEHIND the branch: `git status` then
+        # showed the manifest as staged for DELETION, and their next unqualified commit would have
+        # removed it. The old `git commit --only` updated the index for that path as a side effect,
+        # and dropping it dropped that too. Caught by the cell that asserts what is staged
+        # afterwards, not by reading the code.
+        # AND THE WORKTREE COPY IS RECONCILED WITH WHAT WAS PUBLISHED. Hashing the captured bytes
+        # secured the OBJECT; it said nothing about the file at $ManifestPath, which anything may
+        # have replaced or deleted in the meantime. Left alone, the gate exits GREEN with the commit
+        # holding one record and the disk holding another -- and the index refresh below would then
+        # stage a blob that does not match the file, so the operator's next `git commit -a` writes
+        # the stranger's bytes over the published ones.
+        #
+        # There is no read-then-act gap to worry about here: the bytes are already published and
+        # immutable in the object store, so this only makes the mutable copy agree with them.
+        if ($Content) {
+            # EVERY COPY, not the one this function was handed. Write-GateManifestPair writes the
+            # committable copy and the durable twin under one name precisely so they are one record;
+            # reconciling a single path meant the twin could stay corrupted while the run declared
+            # success, and the whole reason that helper exists is that half a pair must not survive.
+            $toReconcile = @($ManifestPath) + @($Copies | Where-Object { $_ })
+            $toReconcile = @($toReconcile | ForEach-Object { [System.IO.Path]::GetFullPath($_) } | Select-Object -Unique)
+            foreach ($copyPath in $toReconcile) {
+                $onDisk = $null
+                try { $onDisk = [System.IO.File]::ReadAllText($copyPath) } catch { $onDisk = $null }
+                if (-not [string]::Equals([string]$onDisk, [string]$Content, [System.StringComparison]::Ordinal)) {
+                    try {
+                        $reconcileTmp = "$copyPath.reconciling"
+                        [System.IO.File]::WriteAllText($reconcileTmp, $Content, (New-Object System.Text.UTF8Encoding($false)))
+                        [System.IO.File]::Replace($reconcileTmp, $copyPath, [NullString]::Value)
+                        Write-Host ("[gate] a manifest copy did not match what was published, and was rewritten from " +
+                            'the published bytes.') -ForegroundColor Yellow
+                    } catch {
+                        $script:manifestReconcileFailed = ("a manifest copy does not match what was published and could " +
+                            "not be rewritten: $($_.Exception.Message)")
+                        Write-Host ("[gate] $script:manifestReconcileFailed. The COMMITTED record is the authoritative " +
+                            'one, and this run is RED.') -ForegroundColor Red
+                    }
+                }
+            }
+        }
+
+        # AND THE INDEX IS PER WORKTREE, NOT PER BRANCH -- which is why this one read has to exist,
+        # and why my previous "the gate never asks git what HEAD is again" was the wrong rule stated
+        # too widely. The compare-and-swap guarantees the VALUE of the captured ref; it cannot
+        # express which ref HEAD names. A shell that runs `git checkout bar` after the swap leaves
+        # the swap correct and this line writing into BAR's index: the operator, standing on bar,
+        # finds the gate's manifest staged in their tree, and their next unqualified commit carries
+        # it under their message. That is the foreign-change refusal at the top of this function
+        # defeated through the exit instead of the entrance.
+        #
+        # The rule that survives is narrower and truer: IDENTITY IS RE-VERIFIED IMMEDIATELY BEFORE
+        # EACH ACT THAT DEPENDS ON IT. The publication does not need a read because `update-ref
+        # <new> <expected>` compares and writes atomically. This does, because it writes into
+        # whatever worktree is current, and no plumbing makes that atomic with the swap.
+        #
+        # Skipping is safe where publishing was not: the worst case becomes one path staged in the
+        # gate's own store, with the remedy printed. The publication has already happened and the
+        # commit is correct; only the courtesy touch is withheld.
+        $branchAtIndexTime = (& git symbolic-ref --quiet HEAD 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or
+            -not [string]::Equals(([string]$branchAtIndexTime).Trim(), $branchRef, [System.StringComparison]::Ordinal)) {
+            Write-Host ("[gate] the run manifest is committed on $branchRef, and this worktree has since moved to " +
+                "$(([string]$branchAtIndexTime).Trim()) -- the index was NOT touched, because staging the gate's file " +
+                "into another branch's tree would hand you a commit you did not write. Nothing to do; if " +
+                "``git status`` looks odd on $branchRef, run ``git reset -- $storePrefix$fileName`` there.") -ForegroundColor Yellow
+        } else {
+            & git update-index --add --cacheinfo "100644,$blob,$storePrefix$fileName" 2>$null | Out-Null
+            $touchFailed = ($LASTEXITCODE -ne 0)
+            # AND CHECKED AGAIN AFTER THE WRITE. There is no atomic index update -- git offers a CAS
+            # for refs and nothing for the index -- so a checkout between the guard and this line
+            # still lands the file in another tree. Checking afterwards does not close that; it makes
+            # the damage self-undoing, because the window now has to be entered TWICE for anything to
+            # survive: once before the write and once before this repair.
+            #
+            # THE DIRECTION, since it cannot be removed: worst case the gate's manifest is left staged
+            # in another branch's tree, where the operator's next unqualified commit would carry it
+            # under their message. It is one path, inside the gate's own store, and the run prints the
+            # `git reset` that clears it.
+            #
+            # NOT dropping the touch, and the reason is the opposite hazard: without it the operator's
+            # index sits BEHIND the branch, `git status` shows the manifest staged for DELETION, and
+            # their next unqualified commit REMOVES the record this whole ticket exists to keep. That
+            # failure needs no race at all -- just an ordinary commit -- so trading a racy nuisance
+            # for a routine erasure would be the worse bargain.
+            $branchAfterTouch = (& git symbolic-ref --quiet HEAD 2>$null | Select-Object -First 1)
+            if ($LASTEXITCODE -eq 0 -and
+                -not [string]::Equals(([string]$branchAfterTouch).Trim(), $branchRef, [System.StringComparison]::Ordinal)) {
+                & git reset --quiet HEAD -- "$storePrefix$fileName" 2>$null | Out-Null
+                Write-Host ("[gate] this worktree moved to $(([string]$branchAfterTouch).Trim()) while the index was " +
+                    'being refreshed; the staging was undone. Nothing of the gate is in your tree.') -ForegroundColor Yellow
+            } elseif ($touchFailed) {
+                Write-Host ('[gate] WARNING: the run manifest is committed, but this index still shows it as changed; ' +
+                    "run ``git reset -- $storePrefix$fileName`` if git status looks odd.") -ForegroundColor Yellow
+            }
+        }
+        $script:manifestPublished = $true
+        Write-Host "[gate] run manifest committed: $message" -ForegroundColor Cyan
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Write-RunManifest {
     # $Status: one of GREEN, RED, ABORTED-BY-CANARY - the house's PASS/FAIL/HARNESS-BROKE
     # discipline, plus the fourth value a contaminated build environment needs (orchestrator
@@ -400,7 +1269,32 @@ function Write-RunManifest {
     $manifestDir = Join-Path $repositoryRoot '.factory\gate-runs'
     New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
 
-    $headSha = (git rev-parse HEAD).Trim()
+    # The head the STAGES ran against, not the head the publication happens to find. They differ
+    # exactly when something moved underneath a long gate, which is the case this records.
+    $headNow = (git rev-parse HEAD).Trim()
+    $headSha = if ($script:gatedHeadAtStart) { $script:gatedHeadAtStart } else { $headNow }
+    $headMoved = (-not [string]::Equals([string]$headSha, [string]$headNow, [System.StringComparison]::Ordinal))
+    # AND THE RECORD SAYS SO BEFORE IT IS WRITTEN. The flag reached the process exit code but not
+    # the manifest: the durable record was serialized `status: GREEN`, `overallPassed: true`, and
+    # every consumer counting successful verifications counted this one. The exit code is read once
+    # by whoever ran the gate; the manifest is read by everything afterwards, so it is the copy that
+    # must not lie.
+    $Status = Get-RecordedStatus -Status $Status -HeadMoved $headMoved
+    # AND IT LEAVES THIS FUNCTION. Recorded only in the manifest, movement was a note nobody acted
+    # on: stages could have inspected a mixture of revisions, the publisher refused to commit, and
+    # the gate still finished GREEN and exited 0. A detection that does not reach the verdict is a
+    # detection the caller never made.
+    if ($headMoved) { $script:headMovedDuringRun = $true }
+    # WHAT THIS COMPARISON CANNOT SEE, written down rather than left for the next reader to
+    # discover: a head that moved to B and back to A between two stages ends where it started, so
+    # comparing the start against the end says "did not move". The tree the gate measured at the
+    # end is then the right tree, and the risk is narrower but real -- a STAGE that ran while the
+    # checkout was on B measured something else, and its green belongs to B.
+    #
+    # Catching that needs a watch or the reflog, neither of which this comparison is. The slot lock
+    # keeps other SESSIONS out; another shell in the same session is what remains. Declared as a
+    # limit rather than papered over: this detects movement that LASTS, not movement that returns.
+    $provenance = Get-HeadProvenance -HeadSha $headSha -BranchRef $script:gatedBranchAtStart
     $diff = git diff HEAD
     $dirtyDiffHash = if ($diff) {
         $bytes = [System.Text.Encoding]::UTF8.GetBytes(($diff -join "`n"))
@@ -481,9 +1375,41 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         runClassOrigin     = 'automatic'
         relatedToDiff      = $relatedToDiff
         headSha            = $headSha
+        # #674(a): the three fields that let a MERGED head be traced back to the run that gated it.
+        # `headSha` alone cannot do it -- a squash merge discards the commit this run measured, so
+        # the number is the only key that survives into main's history, and `pushed` says whether
+        # this sha ever left the machine at all.
+        pullRequest        = $provenance.pullRequest
+        # The REASONS travel too. Without them a null `pullRequest` is indistinguishable from a
+        # field nobody filled in, which is the exact distinction this design is built on: a value
+        # that could not be determined and a value nobody looked for are different states, and only
+        # the first is honest. The function computed both reasons and the record dropped them.
+        pullRequestReason  = $provenance.pullRequestReason
+        pushed             = $provenance.pushed
+        pushedReason       = $provenance.pushedReason
+        upstreamSha        = $provenance.upstreamSha
         dirtyDiffHash      = $dirtyDiffHash
+        # A FACT, not an inference: the head moved between the start of the gate and this write.
+        # The record names the head the STAGES ran against, and this says the working tree is no
+        # longer on it -- which is why the publication below refuses to commit.
+        headMovedDuringRun = $headMoved
         cargoTargetDir     = $actualTargetDir
         runStartUtc        = $runStartUtc.ToString('o')
+        # THE INSTANT THIS RECORD WAS SERIALIZED, WHICH IS NOT THE INSTANT THE RUN ENDED. Everything
+        # that can still turn this run RED happens after this line: the pair is written, the
+        # compare-and-swap can refuse, the correction can fail. A reader holding only the manifest
+        # cannot tell a finished run from one that died between here and its last write.
+        #
+        # The witness of completion is the ledger, not this field: RUN-END carries
+        # `manifest=<basename>`, so a run whose manifest has no RUN-END naming it is a RUN-START
+        # with no end, which #199 already treats as a dead run. That link is one-directional -- the
+        # name is chosen after this object is built, so the record cannot name itself -- and a cell
+        # pins it, because a consumer that reads `runEndUtc` as proof of completion under #674(b)
+        # would be trusting a timestamp written before the run could still fail.
+        #
+        # For the overlap tool (#638) the field is conservative in the safe direction: every stage
+        # has finished by the time this is stamped, so the window it closes covers all the work that
+        # could touch a shared target dir. Publication touches git, not the target dir.
         runEndUtc          = [DateTime]::UtcNow.ToString('o')
         canaryPassed       = $CanaryPassed
         # [object[]] cast, NOT @() - caught live, reproduced in isolation before guessing: under
@@ -508,7 +1434,9 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # touched for the whole run. See Test-SlotLockSnapshotsIdentical in ci/slot-lock.ps1.
         slotLockStartEndIdentical = Test-SlotLockSnapshotsIdentical -Start $SlotLockAtStart -End $SlotLockAtEnd
         instrumentSuspect  = $instrumentSuspect
-        overallPassed      = $passedEverything
+        # A run whose head moved did not pass everything, whatever the stages said: they did not all
+        # inspect one revision, so there is no revision this record can vouch for.
+        overallPassed      = ($passedEverything -and -not $headMoved)
     }
 
     # #667: sub-second stamp plus a random suffix, and a CREATE-ONLY write. The old name was
@@ -570,14 +1498,196 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
     # and the basename in RUN-END all one letter long, so nothing downstream could link the run to
     # its file. The tests already wrap; the production caller did not.
     $path = @($written)[0]
+    # THE NAME IS AN INDEX; THE IDENTITY IS `headSha` INSIDE THE FILE. The artefact is called
+    # `<first 12 of the head>-<timestamp>.json`, so a glob on twelve characters is the obvious way to
+    # find a run and it is NOT a way to identify one: it matches a NAME, and a reader that stops
+    # there has married a filename to a question about a commit. Measured, not imagined -- on #639 a
+    # reader matched a manifest by a sha that appeared in a file name and reported the wrong run.
+    #
+    # AND THE TWO FAILURES OF THAT GLOB ARE DIFFERENT FACTS, which is the half that saves whoever
+    # writes the next reader:
+    #   nothing matched          -> no run recorded for that head (or the store is not where you looked)
+    #   matched, headSha differs -> a twelve-character prefix collision, or the wrong artefact
+    # The first is absence; the second is a mismatch that a bare `Test-Path` reports as presence.
+    # Anything deciding on a manifest must open it and compare `headSha` in full.
     $fileName = [System.IO.Path]::GetFileName($path)
 
     # #199's durable copy is now written by Write-GateManifestPair above, in the same reservation
     # as the committable one, so the two cannot end up under different names or with one store
     # holding a previous run's file where this run's twin belongs.
 
-    Write-SlotEvent -Event 'RUN-END' -Detail "status=$Status class=$runClass head=$($headSha.Substring(0, 12)) manifest=$fileName"
+    # RUN-END IS WRITTEN AFTER THE PUBLICATION, not before it. The ledger event and the durable JSON
+    # are the two records that survive this process, and both were being written while the operation
+    # that can still turn the run RED had not run yet: `$json` said GREEN at serialization, the pair
+    # went to disk, RUN-END said GREEN, and only then could the compare-and-swap fail and take the
+    # exit code to 1. Anyone counting runs from the store or the log counted a success the gate
+    # rejected.
+    #
+    # The committed copy is the one record that CANNOT carry this -- it is the input to the commit
+    # whose outcome it would have to describe. That is a real limit of the shape, and it is why the
+    # durable copy and this event are the two that must tell the truth.
+
+    # #674(a): the manifest is COMMITTED, or nothing about it travels with the merge. A file in a
+    # working tree is evidence for whoever is standing at that machine; the whole point of this
+    # ticket is a record a merged commit can be traced back to.
+    # THE VERDICT IS PERSISTED ONLY AFTER THE PUBLICATION SUCCEEDS. The record was serialized to
+    # BOTH stores before this call, so a refused publication left a durable `status: GREEN` for a run
+    # that never published -- the copy every later reader trusts, saying the opposite of what
+    # happened. The flag is set inside the publisher and the record is corrected here.
+    $script:manifestPublished = $false
+    Publish-RunManifest -ManifestPath $path -HeadSha $headSha -PullRequest $provenance.pullRequest `
+        -BranchRef $script:gatedBranchAtStart -Content $json -Copies @($written)
+    # THE CLASS IS DERIVED FROM THE STATUS, so correcting one without the other leaves the record
+    # disagreeing with itself: `status: RED` beside a class that still says the run passed. #199
+    # made the class derived precisely so the two could not drift, and writing the status by hand on
+    # the refusal path reintroduced the drift one field over.
+# THE CORRECTION RUNS FIRST, AND THE EVENT DESCRIBES WHAT IT FOUND. RUN-END was appended before the
+# durable copies were corrected, so a process killed between the two left the ledger saying RED and
+# the manifests saying GREEN -- the append-only record and the store disagreeing about the same run,
+# with the store being the one most readers open.
+#
+# Ordering is the whole remedy here: there is no way to make two writes one, so the one that can be
+# re-derived goes last. A ledger line missing its manifest correction is a run whose RUN-START has
+# no RUN-END, which #199 already treats as a dead run; a corrected manifest with no ledger line is a
+# record nobody can place in the sequence.
+    if (-not $script:manifestPublished) {
+        # THE PATTERN, NAMED, because this is its third appearance in one pull request and naming it
+        # is cheaper than a fourth fix: a principle applied one level short of where it reaches.
+        # The host scoping stopped at the host and missed the second ACCOUNT on it. The captured
+        # identity fed the publisher and missed the provenance CONSUMER. The derived-field
+        # correction fixed the class and missed the next FIELD. Each time the sentence was already
+        # written in this file, and each time it was applied to the instance in front of me.
+        #
+        # The rule that generalises all three: WHEN A RULE IS STATED, ENUMERATE ITS SUBJECTS.
+        # For a hand-corrected record that means every field the failure touches, or derive them
+        # all from one source -- never the fields I happened to remember.
+        #
+        # EVERY DERIVED FIELD, FROM THE SAME SOURCE. Correcting status, overallPassed, runClass and
+        # publication while leaving `headMovedDuringRun` as the local `$headMoved` -- captured before
+        # the compare-and-swap could set the script-scope flag -- produced a record saying RED beside
+        # `headMovedDuringRun: false`: the run failed and the record denies the fact that explains
+        # it. That is the drift I named two commits ago, one field further along, and the lesson is
+        # that "correct the fields I remember" loses to the field list the same way guarding
+        # remembered fields lost to the field list in the checker.
+        $manifest.status = 'RED'
+        $manifest.overallPassed = $false
+        $manifest.runClass = Get-RunClassFrom -Status 'RED' -PassedEverything $false
+        $manifest.headMovedDuringRun = [bool]$script:headMovedDuringRun
+        $manifest['publication'] = ('refused: the manifest was written but not committed, so nothing about this run ' +
+            'travels with the merge')
+        $correctedJson = $manifest | ConvertTo-Json -Depth 8
+
+        # AND A CORRECTION THAT CANNOT REPORT ITS OWN FAILURE IS NOT A CORRECTION. The empty `catch`
+        # here left a durable copy saying GREEN while the gate exited RED -- the false historical
+        # verdict this whole block exists to prevent, arriving in silence and reading as coverage
+        # because the block is visibly present.
+        #
+        # It cannot go through Write-GateManifestPair: that reserves a NEW name on every call, so it
+        # would write a second pair and leave the stale GREEN one in place. What it can borrow is the
+        # DISCIPLINE -- write both to `.tmp` siblings first, and only replace once both are written.
+        # Two file replacements still cannot be made atomic here; what changes is that a failure at
+        # either end is REPORTED and becomes a gate failure instead of a quiet lie.
+        $copies = @($written)
+        $staged = @()
+        $correctionFailure = $null
+        try {
+            foreach ($copy in $copies) {
+                $tmp = "$copy.correcting"
+                [System.IO.File]::WriteAllText($tmp, $correctedJson, (New-Object System.Text.UTF8Encoding($false)))
+                $staged += $tmp
+            }
+        } catch {
+            $correctionFailure = "the corrected record could not be prepared: $($_.Exception.Message)"
+        }
+        if (-not $correctionFailure) {
+            for ($i = 0; $i -lt $copies.Count; $i++) {
+                try {
+                    # REPLACE, NOT COPY. `File.Copy(src, dst, overwrite)` writes THROUGH the
+                    # destination: a kill halfway leaves a truncated file where a VALID record was,
+                    # which is the one direction worse than not correcting at all. `File.Replace` is
+                    # a rename over an existing file on the same volume -- both conditions hold here
+                    # -- so each file is replaced atomically.
+                    #
+                    # Measured on this runtime, because the obvious alternative does not exist here:
+                    #   File.Replace(3-arg)  : True
+                    #   File.Move(overwrite) : False   (.NET Core 3.0+ only)
+                    #
+                    # THE PAIR IS STILL NOT ATOMIC, and that declaration stands. What was wrong was
+                    # carrying "the pair cannot be atomic" into "so neither file can be" -- only the
+                    # first half is true.
+                    # Full paths here too, for the reason measured one function above.
+                    # Same two traps as the reconciliation above: full paths, and a REAL null for
+                    # the backup. This site has been throwing since the day it was written -- the
+                    # catch below turned it into a reported failure, so nothing was silently wrong,
+                    # but the correction it exists to perform never happened. Its cell asserted the
+                    # WIRING and not the outcome, which is exactly how it stayed green.
+                    [System.IO.File]::Replace([System.IO.Path]::GetFullPath($staged[$i]),
+                        [System.IO.Path]::GetFullPath($copies[$i]), [NullString]::Value)
+                } catch {
+                    $correctionFailure = ("the corrected record could not replace $($copies[$i]): $($_.Exception.Message)" +
+                        $(if ($i -gt 0) { ' -- an earlier copy WAS corrected, so the two stores now disagree' } else { '' }))
+                    break
+                }
+            }
+        }
+        foreach ($tmp in $staged) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        if ($correctionFailure) {
+            Write-Host "[gate] MANIFEST CORRECTION FAILED: $correctionFailure" -ForegroundColor Red
+            $script:manifestCorrectionFailed = $correctionFailure
+        }
+        $script:manifestNotPublished = $true
+    }
+
+    $endStatus = if ($script:manifestPublished) { $Status } else { 'RED' }
+    $endClass = if ($script:manifestPublished) { $runClass }
+        else { Get-RunClassFrom -Status 'RED' -PassedEverything $false }
+    $endDetail = "status=$endStatus class=$endClass head=$($headSha.Substring(0, 12)) manifest=$fileName" +
+        $(if (-not $script:manifestPublished) { ' publication=refused' } else { '' })
+    Write-SlotEvent -Event 'RUN-END' -Detail $endDetail
+
     return $path
+}
+
+# THE GATED HEAD IS CAPTURED BEFORE ANY STAGE RUNS. Read at publication time instead, it named
+# whatever HEAD had become after a long gate: another shell committing or checking out underneath
+# put a head into the manifest that no stage ever verified, and that record still satisfies
+# #674(b)'s `headSha == parent(head)` predicate. Green record, wrong subject.
+#
+# The window is the WHOLE GATE, not the moment of the commit, so this is the start of the pair --
+# the check immediately before the commit is the other end, and neither replaces the other.
+$script:headMovedDuringRun = $false
+$script:manifestNotPublished = $false
+$script:manifestCorrectionFailed = $null
+$script:manifestReconcileFailed = $null
+# THE BRANCH IS CAPTURED HERE TOO, and this is the LAST time the gate asks git what HEAD is.
+# Every later question about identity was a fresh read, and each fresh read opened a window
+# somebody could move through -- eight rounds of review found eight of them, one per site. Reading
+# once and comparing against the captured value turns "which window is left?" into a question with
+# no instances: `update-ref refs/heads/<captured> <new> <expected>` compares and writes as ONE
+# operation, and a shell that switches branches does not touch the captured ref at all.
+# ONE COHERENT SNAPSHOT, VERIFIED. These are two commands, so a checkout onto a sibling branch
+# between them yields a branch and a sha that never described the same state -- and every later
+# guard compares against that pair as though it did. There is no atomic primitive for "read HEAD's
+# ref and value together", so the pair is READ and then CHECKED: the captured branch must still
+# point at the captured sha. If it does not, this run has no coherent subject and refuses to start.
+#
+# The check does not close the window -- something can still move between the check and the first
+# stage -- but the compare-and-swap at publication is what makes that residue harmless: it refuses
+# unless the branch still holds the captured sha at the moment of writing.
+$gatedBranchAtStart = (& git symbolic-ref --quiet HEAD 2>$null | Select-Object -First 1)
+$gatedBranchAtStart = if ($LASTEXITCODE -eq 0 -and $gatedBranchAtStart) { ([string]$gatedBranchAtStart).Trim() } else { $null }
+$gatedHeadAtStart = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
+$gatedHeadAtStart = if ($LASTEXITCODE -eq 0 -and $gatedHeadAtStart) { ([string]$gatedHeadAtStart).Trim() } else { $null }
+
+if ($gatedBranchAtStart -and $gatedHeadAtStart) {
+    $branchValueAtStart = (& git rev-parse --verify --quiet $gatedBranchAtStart 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or
+        -not [string]::Equals(([string]$branchValueAtStart).Trim(), $gatedHeadAtStart, [System.StringComparison]::Ordinal)) {
+        Write-Host ("[gate] the branch and the head read at startup do not describe one state: $gatedBranchAtStart " +
+            "holds $(([string]$branchValueAtStart).Trim()) while HEAD read $gatedHeadAtStart. Something moved between " +
+            'the two reads, so this run has no coherent subject to gate. Re-run on a stable checkout.') -ForegroundColor Red
+        exit 1
+    }
 }
 
 $slotLockAtStart = Read-SlotLockSnapshot
@@ -652,13 +1762,13 @@ try {
     # --no-fail-fast, because without it a single failing binary aborts the run and the verdict
     # goes RED without recording how much of the suite never executed. Measured on two consecutive
     # cold gates: one truncated after 9 binaries, the next after 23, and in BOTH a lane's nineteen
-    # named guards never ran at all — verified name by name, not inferred. A RED that stopped
+    # named guards never ran at all -- verified name by name, not inferred. A RED that stopped
     # looking is not the same object as a RED that looked at everything, and before this flag the
     # two printed the same word (#238).
     #
     # THEY STILL CAN, and this comment would mislead without the next sentence: the flag stops
     # CARGO aborting on a failing binary. It does not stop the stage ending early from a harness
-    # abort, a timeout, a killed process or a crash — and in those cases the manifest is shaped
+    # abort, a timeout, a killed process or a crash -- and in those cases the manifest is shaped
     # exactly like a complete run. Coverage becomes visible in the LOG here; it becomes visible in
     # the RECORD only with #238's executed-vs-discovered field. (Caught reviewing #239: a PR body
     # is read once at merge, this line is read by whoever touches it next.)
@@ -775,6 +1885,35 @@ if ($manifestPath) {
 }
 if ($manifestFailed) {
     $failed += 'run-manifest write'
+}
+# MOVEMENT IS A GATE FAILURE, not an annotation. If HEAD changed between the capture before the
+# first stage and the manifest write, the stages did not all look at one revision -- so there is no
+# revision this run can vouch for, whatever the individual stages said. Green here would be a green
+# about nothing in particular.
+# A REFUSED PUBLICATION IS A GATE FAILURE, not a warning: #674(a) exists so the record travels with
+# the merge, and a record that stayed on this disk does not.
+# A correction that could not be persisted leaves a record claiming the opposite of the verdict, so
+# it is a manifest failure in its own right -- the same rule as "green without a well-formed manifest
+# is red by rule", applied to the copy that says green after the run went red.
+# Same rule as the correction below it: the commit is authoritative, the file on disk is what most
+# readers open, and a run that leaves them disagreeing has not recorded what it claims to have.
+if ($script:manifestReconcileFailed) {
+    Write-Host ("[gate] the manifest on disk disagrees with the published record: $script:manifestReconcileFailed") -ForegroundColor Red
+    $failed += 'run manifest reconciliation'
+}
+if ($script:manifestCorrectionFailed) {
+    Write-Host ("[gate] a durable record may still say GREEN for this run: $script:manifestCorrectionFailed") -ForegroundColor Red
+    $failed += 'run manifest correction'
+}
+if ($script:manifestNotPublished) {
+    Write-Host ('[gate] the run manifest was written but NOT committed, so nothing about this run travels ' +
+        'with the merge. The durable copies were corrected to say so.') -ForegroundColor Red
+    $failed += 'run manifest not published'
+}
+if ($script:headMovedDuringRun) {
+    Write-Host ("[gate] HEAD moved during this run: the stages did not all inspect $gatedHeadAtStart, so no " +
+        'revision was gated. Re-run on a stable checkout.') -ForegroundColor Red
+    $failed += 'HEAD moved during the run'
 }
 if ($failed.Count -gt 0) {
     Write-Host "[gate] RED - failed stages: $($failed -join ', ')" -ForegroundColor Red

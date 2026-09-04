@@ -536,14 +536,24 @@ fn drain_readers(
         abandoned = true;
         released = true;
         release();
-        let post = Instant::now() + post_release_grace;
         for index in 0..pending.len() {
             let Some((receiver, _)) = pending[index].take() else {
                 continue;
             };
-            if let Ok(answer) =
-                receiver.recv_timeout(post.saturating_duration_since(Instant::now()))
-            {
+            // PER STREAM, not one window shared by both (#788). Computed once outside this loop,
+            // a first stream that used the whole grace left the second with a zero timeout -- so
+            // its answer was discarded even though the release had already turned its held pipe
+            // into an EOF and its reader was on the way to send. That is #708's own defect at the
+            // last step: the capture existed, was recoverable, and the drain stopped listening.
+            //
+            // It lands on the asymmetric case this design already worries about, because stdout is
+            // the big stream and is waited on first.
+            //
+            // The cost is a worst case of 2x `post_release_grace` instead of 1x -- four seconds,
+            // on a path only reached after the invocation deadline has already passed, against
+            // losing a capture that was in hand. (Found by a peer reviewing PR #770, after it
+            // merged.)
+            if let Ok(answer) = receiver.recv_timeout(post_release_grace) {
                 answers[index] = Some(answer);
             }
         }
@@ -1398,6 +1408,65 @@ mod tests {
         );
         assert!(!drained.abandoned);
         assert_eq!(drained.stdout, (b"stdout finished".to_vec(), false));
+    }
+
+    /// Each pending stream gets its OWN post-release grace, not a share of one window (#788).
+    ///
+    /// The window used to be computed once, outside the collect loop. A first stream that used
+    /// most of it left the second with a near-zero timeout, so the second's answer was discarded
+    /// even though the release had already turned its held pipe into an EOF and its reader was on
+    /// the way to send. That is #708's own defect at the last step, and it lands on the asymmetric
+    /// case this design worries about, because stdout is the big stream and is waited on first.
+    ///
+    /// The arrangement makes the two answers arrive at 3/4 and 5/4 of the grace. Under one shared
+    /// window the second is 1/4 of a grace past the shared expiry and is lost; under a per-stream
+    /// one it is comfortably inside its own. Both bounds are one-sided in the direction load
+    /// pushes: a slow host makes the SECOND answer later, which is the arm that must still pass,
+    /// and it has a full grace to arrive in.
+    #[test]
+    fn each_stream_gets_its_own_post_release_grace_not_a_share_of_one() {
+        let mut out = FakeReader::new();
+        let mut err = FakeReader::new();
+        let streams = (out.stream(), err.stream());
+
+        let grace = Duration::from_millis(400);
+        // Cloned INSIDE the closure so it stays `FnMut`: `drain_readers` takes the callback by
+        // `&mut dyn FnMut()` because a caller could in principle release more than once, and a
+        // closure that moves its captures is `FnOnce`.
+        let mut release = || {
+            let slow_stdout = out.sender.clone();
+            let later_stderr = err.sender.clone();
+            // Releasing the group is what turns both held pipes into an EOF. The readers then
+            // answer on their own schedule -- here, one after the other.
+            std::thread::spawn(move || {
+                std::thread::sleep(grace * 3 / 4);
+                let _ = slow_stdout.send((b"stdout, late".to_vec(), false));
+                std::thread::sleep(grace / 2);
+                let _ = later_stderr.send((b"stderr, later".to_vec(), false));
+            });
+        };
+
+        let drained = drain_readers(
+            streams.0,
+            streams.1,
+            Instant::now(),
+            GRACE,
+            POLL,
+            grace,
+            &mut release,
+        );
+
+        assert_eq!(
+            drained.stdout,
+            (b"stdout, late".to_vec(), false),
+            "the first stream answered inside the grace and must be kept"
+        );
+        assert_eq!(
+            drained.stderr,
+            (b"stderr, later".to_vec(), false),
+            "the second stream answered inside ITS OWN grace and was still lost: the window is shared, so the first stream spent it"
+        );
+        assert!(drained.released && drained.abandoned);
     }
 
     /// A reader that answers NEITHER before nor after the release is reported, not guessed at.

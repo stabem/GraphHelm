@@ -11,7 +11,7 @@
 # Exit codes are the consumer's scheme, agreed with the desk that calls this: 0 SATISFIED,
 # 1 THE TOOL BROKE, 2 NOT, 3 ABSENT. 1 is reserved for a broken tool so a caller treating
 # "non-zero" as "refused" can never refuse a merge because this script failed to run.
-$ExpectedAssertionCount = 146
+$ExpectedAssertionCount = 149
 # 'Continue', not 'Stop': these cells run git and the subject against fixtures that are meant to
 # fail, and under Windows PowerShell 5.1 a native command's redirected stderr becomes a
 # NativeCommandError that 'Stop' promotes to a terminating error.
@@ -42,15 +42,50 @@ $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-mergeproof
 [System.IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+$script:templates = @{}
+
 function New-Repo {
     <#
         A repository with a commit, and a `ci/gate.ps1` that decides the MODE.
+
+        A COPY of a template built once, not a fresh `git init` per cell. Building one cost ~2.1s
+        and the suite builds dozens; a directory copy costs milliseconds. What the copy must NOT
+        buy is shared state -- a repository shared between cells turns "this cell only reads" into
+        a claim the next author breaks in silence -- so every cell still gets its own directory AND
+        its own bare origin, and mutates only its own. The two absolute paths baked into the copied
+        `.git/config` are re-declared below, and the `-- a copy is a repository of its own --` cell
+        is their guard.
 
         The advisory/blocking switch is read from the repository under test, not from a flag, so a
         fixture chooses its mode by whether its gate carries (a)'s function -- which is the same
         fact the real switch reads. A fixture that set the mode some other way would be testing a
         different program.
     #>
+    param([Parameter(Mandatory)] [string] $Name, [switch] $ProvenanceInGate)
+
+    # Two templates, because the MODE is decided by the gate's own bytes.
+    $key = if ($ProvenanceInGate) { 'provenance' } else { 'plain' }
+    if (-not $script:templates.ContainsKey($key)) {
+        $script:templates[$key] = New-RepoFromScratch -Name ".template-$key" -ProvenanceInGate:$ProvenanceInGate
+    }
+    $template = $script:templates[$key]
+
+    $repo = Join-Path $fixtureRoot $Name
+    Copy-Item -LiteralPath $template -Destination $repo -Recurse -Force
+    Copy-Item -LiteralPath "$template.origin.git" -Destination "$repo.origin.git" -Recurse -Force
+    Push-Location $repo
+    try {
+        # THE COPIED CONFIG STILL NAMES THE TEMPLATE'S BARE. Left alone, every cell that pushes
+        # would write into one shared origin -- the exact sharing this copy exists to avoid, and it
+        # would not fail loudly: it would fail as one cell seeing another cell's refs.
+        & git remote set-url origin "$repo.origin.git" 2>&1 | Out-Null
+        # Same reason, for the same kind of absolute path baked into the copied config.
+        & git config core.hooksPath ([System.IO.Path]::Combine($repo, '.no-hooks')) 2>&1 | Out-Null
+    } finally { Pop-Location }
+    return $repo
+}
+
+function New-RepoFromScratch {
     param([Parameter(Mandatory)] [string] $Name, [switch] $ProvenanceInGate)
 
     $repo = Join-Path $fixtureRoot $Name
@@ -1463,6 +1498,36 @@ try {
             -PullRequest 42 -Head $tip -RepositoryRoot $repo -LedgerDirectory $ledger 2>&1 | ForEach-Object { [string]$_ })
     Assert-True -Condition ((($out -join "`n")) -cnotmatch 'the two unreadable values DIFFER') `
         -Message 'CONTROL: two identical unreadable values are not reported as disagreeing'
+
+    Write-Host ''
+    Write-Host '-- a copy is a repository of its own --' -ForegroundColor Cyan
+    # THE GUARD FOR THE TEMPLATE ITSELF. Every cell above reads as an independent measurement only
+    # because its repository is its own; a copy that kept the template's origin, or shared an object
+    # store, would turn "this cell only reads" into a claim the next cell quietly breaks -- and it
+    # would not fail loudly, it would fail as one cell seeing another cell's refs and passing for
+    # the wrong reason. So the isolation the speed-up depends on is asserted, not assumed.
+    $a = New-Repo -Name 'iso-a' -ProvenanceInGate
+    $b = New-Repo -Name 'iso-b' -ProvenanceInGate
+    $originA = (& git -C $a remote get-url origin).Trim()
+    $originB = (& git -C $b remote get-url origin).Trim()
+    Assert-True -Condition ($originA -cne $originB -and $originA -ceq "$a.origin.git") `
+        -Message "each copy pushes to its OWN bare origin, not the template's ($originA)"
+
+    Add-Manifest -Repo $a -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = 'x' } | Out-Null
+    & git -C $a push --quiet origin HEAD:refs/heads/main 2>&1 | Out-Null
+    $tipA = (& git -C $a rev-parse HEAD).Trim()
+    & git -C $b cat-file -e "$tipA^{commit}" 2>&1 | Out-Null
+    $inB = ($LASTEXITCODE -eq 0)
+    Assert-True -Condition (-not $inB) `
+        -Message 'a commit written in one copy does not exist in another: the object stores are separate, not shared'
+
+    # FETCH FIRST. Without it this reads a cached remote-tracking ref that cannot move whatever the
+    # origins are, so the cell would pass under a shared origin -- an assertion about B's copy of a
+    # ref instead of about the origin it points at.
+    & git -C $b fetch --quiet origin 2>&1 | Out-Null
+    $mainB = (& git -C $b rev-parse origin/main).Trim()
+    Assert-True -Condition ($mainB -cne $tipA) `
+        -Message "a push in one copy does not move another copy's origin/main"
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

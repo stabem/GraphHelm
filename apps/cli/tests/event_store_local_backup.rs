@@ -389,3 +389,231 @@ fn backup_refuses_a_blob_entry_that_is_not_a_regular_file() {
          not happen; got {message:?}"
     );
 }
+
+/// A backup whose store carries `repository.lock` takes that lock, SHARED, for the whole capture
+/// (#664).
+///
+/// The command read `journal.jsonl` and then walked `blobs/` with nothing between them, so a
+/// writer appending in that gap produced a bundle whose halves never coexisted -- and the command
+/// reported success. A backup that is silently inconsistent fails toward false confidence: it is
+/// found at restore time, which is when there is nothing left to fall back to.
+///
+/// This is observable rather than structural because the capture no longer opens the store: the
+/// lock in the path is the SNAPSHOT's, so holding it exclusively is the whole difference between
+/// a locked capture and an unlocked one. Removing the lock makes this cell go red, which a cell
+/// that also had `open`'s acquisition in front of it could not do.
+#[test]
+fn a_backup_waits_for_a_writer_holding_the_store_lock() {
+    use fs2::FileExt;
+
+    let directory = TempDir::new().unwrap();
+    let source = populated_local_repository(&directory);
+    // The fixture copies a store WITHOUT its lock file; a real store has one, and this cell is
+    // about the case where there is a lock to take.
+    fs::copy(
+        repository_root().join("docs/acceptance/m05-run-2026-08-16/events/repository.lock"),
+        source.join("repository.lock"),
+    )
+    .unwrap();
+
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(source.join("repository.lock"))
+        .unwrap();
+    held.lock_exclusive().unwrap();
+
+    // ARRANGEMENT, asserted rather than assumed: a second handle must fail to take the same lock,
+    // or the wait measured below is not a wait for anything.
+    let probe = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(source.join("repository.lock"))
+        .unwrap();
+    assert!(
+        probe.try_lock_exclusive().is_err(),
+        "ARRANGEMENT: the exclusive lock is not actually held, so nothing below is contended"
+    );
+
+    let archive = directory.path().join("under-lock.ghbak");
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "events",
+            "backup",
+            "--repository",
+            source.to_str().unwrap(),
+            "--output",
+            archive.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Deliberately generous, and the claim is coarse on purpose: not "it waited exactly this
+    // long" but "it had not finished while a writer held the lock". An unlocked capture of this
+    // fixture completes in single-digit milliseconds.
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the backup completed while a writer held the store's exclusive lock: its capture is not \
+         taking the lock, so an append between its two reads can still tear the bundle"
+    );
+
+    FileExt::unlock(&held).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "once the writer releases, the backup must complete: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value["data"]["lockHeld"],
+        json!(true),
+        "a store carrying repository.lock must report a locked capture: {value}"
+    );
+}
+
+/// The control the cell above needs, and the one that keeps `lockHeld` honest: with nothing
+/// contending, the same command completes promptly and still reports that it held the lock.
+/// Without this, a backup that always blocked -- or one that reported `lockHeld` unconditionally
+/// -- would satisfy the cell above.
+#[test]
+fn an_uncontended_backup_completes_and_reports_the_lock_it_held() {
+    let directory = TempDir::new().unwrap();
+    let source = populated_local_repository(&directory);
+    fs::copy(
+        repository_root().join("docs/acceptance/m05-run-2026-08-16/events/repository.lock"),
+        source.join("repository.lock"),
+    )
+    .unwrap();
+
+    let archive = directory.path().join("uncontended.ghbak");
+    let (code, value) = back_up(&source, &archive);
+
+    assert_eq!(code, 0, "an uncontended backup must succeed: {value}");
+    assert_eq!(
+        value["data"]["lockHeld"],
+        json!(true),
+        "the capture held the store's lock and must say so: {value}"
+    );
+}
+
+/// A root with no `repository.lock` is archived, and the envelope SAYS the capture held no lock.
+///
+/// That shape is a restored-but-never-opened directory, and `open` refuses it rather than
+/// creating the lock file -- so nothing can attach a writer to it while the capture runs. The
+/// absence is reported rather than assumed: a snapshot that silently could not lock is the same
+/// false confidence one level down.
+#[test]
+fn a_root_without_a_lock_file_is_archived_and_says_it_held_no_lock() {
+    let directory = TempDir::new().unwrap();
+    let source = populated_local_repository(&directory);
+    assert!(
+        !source.join("repository.lock").exists(),
+        "ARRANGEMENT: this fixture is the never-opened shape, which is what makes it the subject"
+    );
+
+    let archive = directory.path().join("unlocked.ghbak");
+    let (code, value) = back_up(&source, &archive);
+
+    assert_eq!(code, 0, "a never-opened root must still archive: {value}");
+    assert_eq!(
+        value["data"]["lockHeld"],
+        json!(false),
+        "with no lock file there is no lock to hold, and the envelope must not claim one: {value}"
+    );
+}
+
+/// The snapshot lock is SHARED, so another reader does not block the backup (#664).
+///
+/// This is what separates "hold the lock" from "hold the lock the right way". An exclusive
+/// snapshot lock would also keep writers out - the contended cell above would still pass - while
+/// serialising the whole store against every concurrent reader, including a second backup and
+/// every `execution status`. Nothing else in this file would notice, so the distinction gets its
+/// own cell rather than a comment.
+#[test]
+fn a_backup_is_not_blocked_by_another_reader() {
+    use fs2::FileExt;
+
+    let directory = TempDir::new().unwrap();
+    let source = populated_local_repository(&directory);
+    fs::copy(
+        repository_root().join("docs/acceptance/m05-run-2026-08-16/events/repository.lock"),
+        source.join("repository.lock"),
+    )
+    .unwrap();
+
+    let reader = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(source.join("repository.lock"))
+        .unwrap();
+    FileExt::lock_shared(&reader).unwrap();
+
+    // ARRANGEMENT, asserted rather than assumed: this shared lock must genuinely exclude a
+    // WRITER, or it is not the store's lock and the cell measures nothing.
+    let probe = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(source.join("repository.lock"))
+        .unwrap();
+    assert!(
+        probe.try_lock_exclusive().is_err(),
+        "ARRANGEMENT: the shared lock is not held, so nothing below is contended"
+    );
+
+    // SPAWNED WITH A BOUNDED WAIT rather than called through `back_up`, and the reason is a
+    // receipt rather than a preference: the first version of this cell blocked on that helper,
+    // and when the guard was sabotaged to take the lock EXCLUSIVE the cell did not go red - it
+    // HUNG, at zero CPU, indefinitely (measured; found by a peer reading the process table while
+    // the sabotage was applied). `cargo test` has no per-test timeout, so that stalls the suite
+    // and, inside a gate stage, the gate. A red is a verdict; a hang is the absence of one, and
+    // the absence is the failure that never reports itself.
+    let archive = directory.path().join("shared.ghbak");
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "events",
+            "backup",
+            "--repository",
+            source.to_str().unwrap(),
+            "--output",
+            archive.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Generous against a capture measured in single-digit milliseconds. The claim is coarse on
+    // purpose: not "it was fast" but "a reader did not stop it at all".
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let finished = loop {
+        match child.try_wait().unwrap() {
+            Some(status) => break Some(status),
+            None if std::time::Instant::now() >= deadline => break None,
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    };
+    if finished.is_none() {
+        let _ = child.kill();
+    }
+    FileExt::unlock(&reader).unwrap();
+    let status = finished.expect(
+        "a backup must take its snapshot lock SHARED: another reader holding the same lock must \
+         not block it, or every concurrent read of this store serialises behind a backup - and an \
+         EXCLUSIVE snapshot lock makes this WAIT FOREVER rather than fail",
+    );
+
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "the backup ran beside a reader and must succeed: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["data"]["lockHeld"], json!(true), "{value}");
+}

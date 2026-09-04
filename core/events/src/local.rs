@@ -307,6 +307,62 @@ pub struct LocalEventRepository {
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
 }
 
+/// Whether a snapshot ran under the repository's lock, or under no lock because there was none
+/// to take (#664).
+///
+/// Returned rather than swallowed so a caller can SAY which of the two happened. A snapshot that
+/// silently could not lock is the exact shape this issue is about: a bundle that reports success
+/// and carries a claim nobody checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadLockHeld {
+    /// The root carried `repository.lock` and it was held, shared, for the whole operation.
+    Held,
+    /// The root has no `repository.lock`, so no writer can be attached to it through this store:
+    /// `open` REFUSES a root that carries `format.json` without the lock file rather than
+    /// creating one, so such a root cannot acquire a writer while the operation runs. This is the
+    /// shape a restored-but-never-opened directory has.
+    NoLockFile,
+}
+
+/// Runs `operation` while holding the repository's SHARED lock, when the root has one (#664).
+///
+/// **Why this exists rather than a caller taking the lock itself.** The store's lock is TWO
+/// levels — the root directory, then `repository.lock` — and a caller that took one of them
+/// would hold something that looks like the store's lock and is not, which is worse than holding
+/// none: the bundle would then carry a guarantee nobody checked.
+///
+/// **Why it does not simply open the store.** `events backup` must work on a root that has never
+/// been opened — a restored directory carrying `format.json`, `journal.jsonl` and `blobs/` and
+/// nothing else — and `open` REFUSES exactly that shape on purpose. Opening would also repair a
+/// damaged layout, which is a write to the thing being backed up.
+pub fn with_repository_read_lock<T>(
+    root: &Path,
+    operation: impl FnOnce() -> T,
+) -> Result<(T, ReadLockHeld), EventRepositoryError> {
+    if !root.join("repository.lock").is_file() {
+        return Ok((operation(), ReadLockHeld::NoLockFile));
+    }
+    let root_handle = ensure_root_path(root)?;
+    lock_root_exclusive(&root_handle)?;
+    let lock =
+        open_child_file(&root_handle, root, "repository.lock", true, false).inspect_err(|_| {
+            let _ = unlock_root(&root_handle);
+        })?;
+    // The same order `with_lock` takes: root directory first, then the lock file, shared. A
+    // reader that reversed them would serialise against a different thing than every writer.
+    FileExt::lock_shared(&lock)
+        .map_err(|_| EventRepositoryError::Storage)
+        .inspect_err(|_| {
+            let _ = unlock_root(&root_handle);
+        })?;
+    let value = operation();
+    let released = FileExt::unlock(&lock).map_err(|_| EventRepositoryError::Storage);
+    let root_released = unlock_root(&root_handle);
+    released?;
+    root_released?;
+    Ok((value, ReadLockHeld::Held))
+}
+
 /// Result of recognizing a local repository without opening it for writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalRepositoryInspection {
@@ -737,7 +793,19 @@ impl LocalEventRepository {
     ///
     /// Appends keep the exclusive lock. One writer at a time is the store's correctness model,
     /// not a defect to be optimised away; what was wrong was readers waiting on readers.
-    fn with_shared_lock<T>(
+    ///
+    /// **Public because a snapshot spanning SEVERAL reads needs it and had nothing to ask for**
+    /// (#664). `events backup` read `journal.jsonl` and then walked `blobs/` with no lock across
+    /// the pair, so a writer appending between the two reads produced a bundle whose halves never
+    /// coexisted - and the command reported success. A backup that is silently inconsistent fails
+    /// toward false confidence: it is discovered at restore time, which is when there is nothing
+    /// left to fall back to.
+    ///
+    /// Exposed rather than reimplemented in the caller on purpose. This store's lock is TWO
+    /// levels - the root directory, then `repository.lock` - and a caller that took only one of
+    /// them would hold a lock that looks like the store's and is not, which is worse than holding
+    /// none because the bundle would then carry a claim nobody checked.
+    pub fn with_shared_lock<T>(
         &self,
         operation: impl FnOnce() -> Result<T, EventRepositoryError>,
     ) -> Result<T, EventRepositoryError> {

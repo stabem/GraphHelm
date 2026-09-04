@@ -56,5 +56,9 @@ tokio = { workspace = true, features = ["net", "rt", "time", "io-util"] }
 hex.workspace = true
 sha2.workspace = true
 assert_cmd.workspace = true
+# #664: the backup-under-lock cell holds the store's own `repository.lock` the way a writer does,
+# using the same crate the store locks with. A test that took a different lock would be testing a
+# different lock.
+fs2.workspace = true
 predicates.workspace = true
 tempfile.workspace = true

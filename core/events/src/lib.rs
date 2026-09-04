@@ -32,7 +32,8 @@ pub use key::{
     WrapKeyRequest, WrappedKey,
 };
 pub use local::{
-    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, journal_line_roundtrips,
+    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, ReadLockHeld,
+    journal_line_roundtrips, with_repository_read_lock,
 };
 pub use memory::{MemoryAdmissionRefusalAppend, prepare_memory_admission_refusal};
 pub use projection::{

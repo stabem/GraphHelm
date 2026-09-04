@@ -132,6 +132,60 @@ fn execute_local(root: &Path, output: &Path) -> Result<serde_json::Value, Failur
     super::require_supported_format(root)?;
     require_absent_file(output, "/output", "--output")?;
 
+    // THE WHOLE SNAPSHOT RUNS UNDER THE STORE'S OWN SHARED LOCK (#664).
+    //
+    // The journal and the blobs were read as two independent passes with nothing between them.
+    // A writer appending in that gap - a local CLI invocation, which `deploy/backup-vps.sh`'s
+    // operation lock does not serialise because that lock covers the deploy scripts and the
+    // service, not an independent CLI run - produced a bundle whose two halves never coexisted,
+    // and the command reported SUCCESS. There are two distinct tears, not one: a retention
+    // cleanup between the passes removes a blob the captured journal still references, and an
+    // append DURING the journal read can leave its final line truncated.
+    //
+    // The lock is the store's, taken through the store, not reimplemented here: it is two levels
+    // (the root directory, then `repository.lock`), and half of it would be a lock that looks
+    // like the store's without being it.
+    //
+    // NOT by opening the store: `open` refuses a root carrying `format.json` without
+    // `repository.lock` - the shape a restored-but-never-opened directory has, which this command
+    // must still archive - and opening would repair a damaged layout, a write to the very thing
+    // being backed up.
+    //
+    // A root with no lock file has no writer to race: `open` refuses that shape rather than
+    // creating the lock, so nothing can attach to it while the capture runs. That case is
+    // REPORTED rather than assumed - `lockHeld` in the envelope - because a snapshot that
+    // silently could not lock is the same false confidence, one level down.
+    let (captured, lock_held) =
+        graphhelm_events::with_repository_read_lock(root, || capture_local(root)).map_err(
+            |_| local_error("the repository could not be held for a consistent snapshot"),
+        )?;
+    let (journal, blobs) = captured?;
+
+    let blob_count = blobs.len();
+
+    let archive = json!({
+        "archiveVersion": ARCHIVE_VERSION,
+        "journal": journal,
+        "blobs": serde_json::Value::Object(blobs),
+    });
+    let encoded = serde_json::to_vec(&archive)
+        .map_err(|_| local_error("the archive could not be encoded"))?;
+    std::fs::write(output, encoded).map_err(|_| local_error("the archive could not be written"))?;
+
+    Ok(json!({
+        "journalBytes": journal.len(),
+        "blobCount": blob_count,
+        // The operator can tell a locked snapshot from an unlocked one without reading this code.
+        "lockHeld": lock_held == graphhelm_events::ReadLockHeld::Held,
+    }))
+}
+
+/// The two reads the bundle is built from, run as one unit so the caller can hold a lock across
+/// them. Split out of `execute_local` for exactly that reason and for no other: the body below is
+/// unchanged from what shipped, so what this commit changes is WHEN it runs, not what it does.
+fn capture_local(
+    root: &Path,
+) -> Result<(String, serde_json::Map<String, serde_json::Value>), Failure> {
     let journal = read_regular_file(&root.join("journal.jsonl"))
         .map_err(|_| local_error("the repository journal could not be read"))?;
 
@@ -182,18 +236,8 @@ fn execute_local(root: &Path, output: &Path) -> Result<serde_json::Value, Failur
             .map_err(|_| local_error("a repository blob could not be read"))?;
         blobs.insert(name, serde_json::Value::String(text));
     }
-    let blob_count = blobs.len();
 
-    let archive = json!({
-        "archiveVersion": ARCHIVE_VERSION,
-        "journal": journal,
-        "blobs": serde_json::Value::Object(blobs),
-    });
-    let encoded = serde_json::to_vec(&archive)
-        .map_err(|_| local_error("the archive could not be encoded"))?;
-    std::fs::write(output, encoded).map_err(|_| local_error("the archive could not be written"))?;
-
-    Ok(json!({"journalBytes": journal.len(), "blobCount": blob_count}))
+    Ok((journal, blobs))
 }
 
 /// Local failures name a class and never a path: the same posture the Postgres arm keeps, for the

@@ -468,3 +468,139 @@ fn a_root_named_through_a_link_is_refused_with_or_without_a_trailing_separator()
         "the refused acquisitions must have left the real layout alone"
     );
 }
+
+/// #772, the WINDOWS face: the swap this defect needs is refused by the platform while a claim is
+/// held.
+///
+/// An open handle inside a tree pins every directory above it on Windows, so an ancestor cannot
+/// be renamed away and replaced by a junction while the claim lives.
+///
+/// **This cell pins the OUTCOME, not any one field, and the distinction was measured after an
+/// attribution of mine turned out to be wrong.** The first version of this comment credited
+/// `RootAnchor::_ancestors` -- the retained ancestor handles, named with a leading underscore
+/// because nothing reads them -- and said this cell would go red if they were deleted. It does
+/// not. Dropping them at construction leaves every cell here green, because the pinning is
+/// OVER-DETERMINED: measured on this host, the root's own directory handle alone refuses the
+/// rename, and a file handle anywhere inside the root alone refuses it too.
+///
+/// So do not cite this cell as protecting `_ancestors`. Whether that field earns its place is a
+/// question about the claim walk's own no-follow guarantee, and nothing here answers it.
+///
+/// The CONTROL is the same rename after the claim is dropped. Without it, a rename that failed
+/// for any unrelated reason -- a stray handle, a scanner, a path typo -- would read as the
+/// mitigation working.
+#[cfg(windows)]
+#[test]
+fn a_live_claim_pins_the_ancestors_against_the_swap_this_defect_needs() {
+    let ground = tempfile::tempdir().expect("a temp dir");
+    let anchor = ground.path().join("anchor");
+    std::fs::create_dir(&anchor).expect("the ancestor creates");
+    let root = anchor.join("root");
+    std::fs::create_dir(&root).expect("the root creates");
+
+    let claim = ActivationClaim::acquire(&root).expect("the claim must be granted");
+    let while_held = std::fs::rename(&anchor, ground.path().join("moved-while-held"));
+    assert!(
+        while_held.is_err(),
+        "an ancestor was renamed out from under a live claim; the redirect this defect needs is reachable on this platform after all"
+    );
+
+    drop(claim);
+    std::fs::rename(&anchor, ground.path().join("moved-after-release")).expect(
+        "CONTROL: the rename must succeed once the claim is released, or the refusal above says nothing about the claim",
+    );
+}
+
+/// The positive control for `root_still_anchored`: an ordinary layout must pass it, and the
+/// lifecycle must still work.
+///
+/// A guard that refused every path would satisfy every "the far side survived" assertion in this
+/// file. This is what makes those assertions mean something.
+#[test]
+fn an_unlinked_layout_is_still_anchored_and_still_uninstalls() {
+    let ground = tempfile::tempdir().expect("a temp dir");
+    let anchor = ground.path().join("anchor");
+    std::fs::create_dir(&anchor).expect("the ancestor creates");
+    let root = anchor.join("root");
+    std::fs::create_dir(&root).expect("the root creates");
+
+    let claim = ActivationClaim::acquire(&root).expect("the claim must be granted");
+    claim
+        .root_still_anchored()
+        .expect("an ordinary layout must be anchored");
+
+    let (_keep, package) = synthetic_package("anchored-ordinary", None);
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    uninstall_version(&claim, &installed.digest).expect("an unlinked layout still uninstalls");
+    assert!(
+        !installed.root.exists(),
+        "the adopted tree must be gone, or the anchor check is refusing everything"
+    );
+}
+
+/// #772, the UNIX face -- the one that is actually reachable.
+///
+/// **NOT RUN in the lane that wrote it.** This repository's toolchain here is Windows and there is
+/// no Rust toolchain on the WSL side, so this cell is type-checked against
+/// `x86_64-unknown-linux-gnu` and has never been executed. It is written because the platform
+/// premise underneath it WAS measured, in Python under WSL2 Ubuntu 6.6.87.2:
+///
+/// ```text
+/// rename of an ancestor with an open descriptor inside : Ok (Windows: os error 32)
+/// root/versions resolves through the planted symlink   : True
+/// lstat(root).is_symlink() : False     <- the probe sees a directory
+/// ```
+///
+/// The third line is the defect: the link is at an ANCESTOR, so the final component is an
+/// ordinary directory and `symlink_metadata` reports one. The operation proceeds, on the far side.
+///
+/// Whoever runs this on a Linux host: it must be RED against a build without
+/// `root_still_anchored`, or it proves only that the code does what its author just wrote.
+#[cfg(unix)]
+#[test]
+fn an_ancestor_replaced_by_a_symlink_after_the_claim_refuses_the_lifecycle() {
+    let ground = tempfile::tempdir().expect("a temp dir");
+    let anchor = ground.path().join("anchor");
+    std::fs::create_dir(&anchor).expect("the ancestor creates");
+    let root = anchor.join("root");
+    std::fs::create_dir(&root).expect("the root creates");
+
+    let claim = ActivationClaim::acquire(&root).expect("the claim must be granted");
+    let (_keep, package) = synthetic_package("ancestor-symlink-swap", None);
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    let adopted_name = installed
+        .root
+        .file_name()
+        .expect("the adopted tree has a name")
+        .to_owned();
+
+    // A tree the operator never named, shaped like the one they did, so every precondition the
+    // removal checks is satisfied on the far side and it PROCEEDS rather than tripping something
+    // unrelated. The defect's face is a success, not a refusal.
+    let decoy = ground.path().join("decoy");
+    let decoy_version = decoy.join("root").join("versions").join(&adopted_name);
+    std::fs::create_dir_all(&decoy_version).expect("the decoy layout creates");
+    std::fs::write(
+        decoy_version.join("marker.txt"),
+        b"outside the claimed root",
+    )
+    .expect("the decoy marker writes");
+
+    std::fs::rename(&anchor, ground.path().join("anchor-real")).expect("the real tree moves aside");
+    std::os::unix::fs::symlink(&decoy, &anchor).expect("ARRANGEMENT: the symlink was not created");
+    assert!(
+        root.join("versions").join(&adopted_name).is_dir(),
+        "CONTROL: the layout must still resolve THROUGH the link, or the removal would fail for an ordinary reason and this cell would prove nothing"
+    );
+
+    let outcome = uninstall_version(&claim, &installed.digest);
+
+    assert!(
+        decoy_version.join("marker.txt").exists(),
+        "THE REMOVAL FOLLOWED THE ANCESTOR LINK: a tree outside the claimed root was deleted"
+    );
+    assert!(
+        matches!(outcome, Err(InstallRefusal::UnsafeLayoutPath)),
+        "an ancestor that became a link after the claim must refuse, got {outcome:?}"
+    );
+}

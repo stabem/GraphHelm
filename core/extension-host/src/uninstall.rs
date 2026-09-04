@@ -31,7 +31,7 @@ use crate::install::{InstallRefusal, directory_for_digest, read_pointer};
 /// current or previous, and [`InstallRefusal::UnknownVersion`] when it was never adopted.
 pub fn uninstall_version(claim: &ActivationClaim, digest: &str) -> Result<(), InstallRefusal> {
     let install_root = claim.install_root();
-    crate::install::require_unlinked_layout(install_root)?;
+    crate::install::require_unlinked_layout(claim)?;
     let directory = directory_for_digest(digest).map_err(|_| InstallRefusal::UnknownVersion)?;
     let adopted = install_root.join("versions").join(directory);
     if !adopted.is_dir() {

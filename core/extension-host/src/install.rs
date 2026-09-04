@@ -159,7 +159,17 @@ fn probe_path(path: &Path) -> &Path {
     path.components().as_path()
 }
 
-pub(crate) fn require_unlinked_layout(install_root: &Path) -> Result<(), InstallRefusal> {
+pub(crate) fn require_unlinked_layout(claim: &ActivationClaim) -> Result<(), InstallRefusal> {
+    // FIRST, because the two probes below read the path and a redirected path answers about
+    // somewhere else (#772). The claim proved the ancestors were real directories when it was
+    // taken; this proves the name still reaches the directory it proved. Taking the claim rather
+    // than a bare `&Path` is deliberate: every one of the four entry points already holds one,
+    // and a signature that cannot express the check is a check that gets forgotten at a call
+    // site.
+    claim
+        .root_still_anchored()
+        .map_err(|_| InstallRefusal::UnsafeLayoutPath)?;
+    let install_root = claim.install_root();
     fn is_link(path: &Path) -> Result<bool, InstallRefusal> {
         // The probe must see the path as a FINAL COMPONENT, never as a trailing-separator
         // directory reference. POSIX resolves a pathname ending in `/` as a directory, so
@@ -292,7 +302,7 @@ pub fn install_package(
     package: &Path,
 ) -> Result<InstalledVersion, InstallRefusal> {
     let install_root = claim.install_root();
-    require_unlinked_layout(install_root)?;
+    require_unlinked_layout(claim)?;
     let validated = graphhelm_schema::validate_extension_package(package)
         .map_err(|_| InstallRefusal::Invalid)?;
     let digest = validated.package_digest;
@@ -353,7 +363,7 @@ pub fn switch_active(
     digest: &str,
 ) -> Result<ActiveVersions, InstallRefusal> {
     let install_root = claim.install_root();
-    require_unlinked_layout(install_root)?;
+    require_unlinked_layout(claim)?;
     let directory = directory_for_digest(digest)?;
     let adopted = install_root.join("versions").join(directory);
     if !adopted.is_dir() {
@@ -388,7 +398,7 @@ pub fn switch_active(
 /// Returns [`InstallRefusal::NoPreviousVersion`] when the pointer records none.
 pub fn roll_back(claim: &ActivationClaim) -> Result<ActiveVersions, InstallRefusal> {
     let install_root = claim.install_root();
-    require_unlinked_layout(install_root)?;
+    require_unlinked_layout(claim)?;
     let Some(active) = read_pointer(install_root)? else {
         return Err(InstallRefusal::NoPreviousVersion);
     };

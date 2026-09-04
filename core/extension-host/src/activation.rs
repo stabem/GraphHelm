@@ -287,6 +287,43 @@ impl ActivationClaim {
     pub fn install_root(&self) -> &Path {
         &self.root.path
     }
+
+    /// Whether [`Self::install_root`] STILL names the directory this claim anchored (#772).
+    ///
+    /// The claim walk opens every component without following a link, and that proves the
+    /// ancestors were real directories AT ACQUIRE TIME. It cannot prove they stayed that way: the
+    /// four lifecycle entry points reach the tree by PATH afterwards, and a directory above the
+    /// root can be renamed away and replaced by a link between the two moments. Both probes in
+    /// `require_unlinked_layout` then report ordinary directories, because `symlink_metadata`
+    /// does not follow the FINAL component and resolves every intermediate one -- so the layout
+    /// is read, and written, on the far side of the link. The failure is a SUCCESS, not a
+    /// refusal.
+    ///
+    /// This is the discipline `verify_named_claim_identity` already applies to the claim file,
+    /// pointed at the root: open the path by NAME -- deliberately following links, because
+    /// landing somewhere else is exactly what is being detected -- and compare its identity
+    /// against the handle taken at acquire time. Different identity means the name no longer
+    /// reaches the anchored directory.
+    ///
+    /// **Reachability is not the same on both platforms, and it is measured rather than assumed.**
+    /// On Windows an open handle inside a tree pins every directory above it: renaming an
+    /// ancestor while the claim is held is refused, and succeeds once it is released. That cover
+    /// is OVER-DETERMINED and not attributable to any single field -- the root's own directory
+    /// handle alone refuses the rename, and so does a file handle anywhere inside the root. On
+    /// Unix a rename with open descriptors inside is ordinary and permitted. So this check is the
+    /// only cover on Unix, and on Windows it is a second one behind a platform guarantee.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClaimRefusal::UnsafeClaimPath`] when the path no longer names the anchored
+    /// directory, and [`ClaimRefusal::Unwritable`] when it cannot be opened or interrogated.
+    pub fn root_still_anchored(&self) -> Result<(), ClaimRefusal> {
+        let named = open_directory_by_name(&self.root.path)?;
+        if file_identity(&self.root.directory)? != file_identity(&named)? {
+            return Err(ClaimRefusal::UnsafeClaimPath);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(any(target_os = "linux", windows))]
@@ -539,6 +576,38 @@ fn lock_claim(file: &File) -> Result<(), ClaimRefusal> {
             ClaimRefusal::Unwritable
         }
     })
+}
+
+/// Open a DIRECTORY by name, following links on purpose.
+///
+/// Following is the point (#772): the question is whether the name still reaches the anchored
+/// directory, and a redirected name landing somewhere else is exactly the answer being looked
+/// for. A no-follow open would refuse the redirect instead of reporting it, and would also refuse
+/// the ordinary macOS layout where `/tmp` resolves to `/private/tmp`.
+///
+/// `File::open` cannot do this on Windows -- opening a directory needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`, and without it every ordinary layout is refused. That was not
+/// reasoned: the first version used `File::open` and the positive control in `tests/links.rs`
+/// went red on a layout with no link in it at all, alongside four unrelated cells.
+#[cfg(windows)]
+fn open_directory_by_name(path: &Path) -> Result<File, ClaimRefusal> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|_| ClaimRefusal::Unwritable)
+}
+
+/// The Unix face of [`open_directory_by_name`]. `File::open` opens a directory here.
+#[cfg(not(windows))]
+fn open_directory_by_name(path: &Path) -> Result<File, ClaimRefusal> {
+    File::open(path).map_err(|_| ClaimRefusal::Unwritable)
 }
 
 fn verify_named_claim_identity(root: &RootAnchor, file: &File) -> Result<(), ClaimRefusal> {

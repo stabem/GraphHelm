@@ -25,8 +25,8 @@ use super::ports::{
     RuntimeWiring, ServeModelPort, ServeToolPort, build_opener, build_sealer, find_route,
 };
 use super::{
-    ExecutorWiring, MutationError, ServeState, last_execution_paused_key, parse_mutation_headers,
-    respond, respond_failure, run_idempotent_mutation,
+    ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
+    parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
 };
 use crate::commands::execution::PreparedDrive;
 use crate::commands::{event_store, execution, owner, publish_loaded, topology};
@@ -917,8 +917,19 @@ pub(super) async fn pause(
                             // `signalled_key`. Comparing actor too closes that gap -- the same
                             // attribution `classify_existing_keys`'s pre-flight already enforces,
                             // now also enforced on the post-append read.
-                            && last_execution_paused_key(&events, &drive_execution_id)
-                                == Some((signalled_key.clone(), signalled_actor.clone()))
+                            //
+                            // WHOLE HISTORY, not the latest event (#710, Codex P2): a pause is not
+                            // the end of a stream. If this execution pauses under this caller's
+                            // key, resumes, and pauses again under another caller's key before this
+                            // loop looks, the caller's own event is still durably committed but is
+                            // no longer the newest -- and comparing against the newest reported a
+                            // conflict for a request that had succeeded.
+                            && execution_paused_under(
+                                &events,
+                                &drive_execution_id,
+                                &signalled_key,
+                                &signalled_actor,
+                            ) == PausedUnderCaller::Committed
                         {
                             return Ok(value);
                         }

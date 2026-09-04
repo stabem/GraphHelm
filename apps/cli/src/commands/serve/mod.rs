@@ -1575,8 +1575,22 @@ fn current_head(events: &Path, execution: &str) -> Option<u64> {
     Some(history.last().map_or(0, |event| event.sequence))
 }
 
-/// The idempotency key AND actor of the LAST committed `ExecutionPaused` event, or `None` if the
-/// store is unreadable or no such event exists yet.
+/// Whether ANY committed `ExecutionPaused` event in this stream's history carries exactly this
+/// (key, actor) pair.
+///
+/// **Was "the LAST one", and that lost committed requests** (#710, Codex P2 on `4f56cafe`). A
+/// pause is not the end of a stream: X pauses under caller A's key, resumes, and pauses again
+/// under caller B's key. A's event is still durably in history and A's request genuinely
+/// committed — but it is no longer the LATEST, so A's handler compared against B's pair, found no
+/// match, ran out its ten-second budget and answered `409 GHE003_IDEMPOTENCY_CONFLICT` for a
+/// request that succeeded. A conflict is what a caller is told when someone else holds its key;
+/// telling it that about its OWN committed pause is the opposite of what the code means.
+///
+/// The whole history is the population because the append-only log is the record: an event that
+/// committed does not stop having committed when a later one lands on top of it. The Studio's
+/// client half reads the same way and for the same reason — it accepts a pause as proof of its
+/// own request only when the event carries its derived key prefix AND its actor, never merely
+/// because an `execution_paused` exists (`apps/studio/src/runtime/client.ts`, PR #662).
 ///
 /// #681, Codex P1's second finding: the immediate branch's success condition was "the execution
 /// is paused", which two concurrently racing immediate-pause requests against the same live
@@ -1593,13 +1607,64 @@ fn current_head(events: &Path, execution: &str) -> Option<u64> {
 /// both claim success, even though only one of their (actor, key) pairs is what actually
 /// committed -- exactly the attribution gap `classify_existing_keys`'s own `ExpectedDecision`
 /// already guards against at the pre-flight, undone by checking the key alone after the fact.
-fn last_execution_paused_key(events: &Path, execution: &str) -> Option<(OpaqueId, PersistedActor)> {
-    let store = event_store(events).ok()?;
-    let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
-    history.iter().rev().find_map(|event| {
+fn execution_paused_under(
+    events: &Path,
+    execution: &str,
+    key: &OpaqueId,
+    actor: &PersistedActor,
+) -> PausedUnderCaller {
+    let Ok(store) = event_store(events) else {
+        return PausedUnderCaller::Unreadable;
+    };
+    let Ok((_, _, history)) = execution::resolve_stream(&store, Some(execution)) else {
+        return PausedUnderCaller::Unreadable;
+    };
+    // BACKWARDS, and the direction is the whole cost of this function (#734's shape, found by
+    // ISSUES 4 reviewing this PR). The widened population is the fix -- a committed pause stays
+    // findable after a later one lands on top of it -- but the caller's own pause is at or near
+    // the TAIL, so a forward scan finds it last, after touching every event in the stream. This
+    // runs inside the immediate-pause poll loop, once per poll, for up to ten seconds, over a
+    // history that grows for the execution's life. Scanning from the end restores the early exit
+    // the predecessor had by only ever looking at the last event, without giving back the
+    // population that made it wrong.
+    let found = history.iter().rev().any(|event| {
         matches!(event.kind, EventKind::ExecutionPaused(_))
-            .then(|| (event.idempotency_key.clone(), event.actor.clone()))
-    })
+            && &event.idempotency_key == key
+            && &event.actor == actor
+    });
+    if found {
+        PausedUnderCaller::Committed
+    } else {
+        PausedUnderCaller::Absent
+    }
+}
+
+/// Three answers, because a store that could not be read is not a store that says no (#710).
+///
+/// The predecessor returned `Option<(key, actor)>` and the caller compared it for equality, so an
+/// unreadable store and a genuinely different pair produced the same `false` — and the poll loop
+/// treated both as "keep waiting", then reported a conflict. Collapsing a read failure into a
+/// negative verdict is the shape this file already refuses one function down, for the same reason
+/// it refuses it there: an unreadable store and a calm one are different facts and only one of
+/// them is the caller's problem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Whether THIS caller's pause is on the ledger.
+///
+/// `Unreadable` is deliberately distinct from `Absent` even though the poll loop treats both as
+/// "keep waiting" (ISSUES 4, reviewing this PR): the two are opposite facts -- one says the store
+/// answered and this pair is not there, the other says the store did not answer at all -- and
+/// collapsing them at the TYPE is what let the predecessor report a conflict for a store it never
+/// read. Control flow acting the same on both is correct here, because a caller cannot distinguish
+/// "not yet" from "cannot tell" while the budget is still running. The distinction is carried so a
+/// future diagnostic can say WHICH of the two exhausted the budget, and so that a later change
+/// cannot silently start treating an unreadable store as a negative answer.
+enum PausedUnderCaller {
+    /// An `ExecutionPaused` carrying exactly this (key, actor) is in the history.
+    Committed,
+    /// The history was read and holds no such event.
+    Absent,
+    /// The store could not be opened or replayed; this says nothing about the caller's request.
+    Unreadable,
 }
 
 /// #248: the three answers to "is any node in this execution parked in `waiting_input`", read
@@ -2418,6 +2483,142 @@ mod tests {
         assert!(
             OpaqueId::parse(derived.clone()).is_ok(),
             "the maximum-length derived key must still be a valid OpaqueId: {derived:?}"
+        );
+    }
+
+    /// A pause is not the end of a stream (#710, Codex P2).
+    ///
+    /// Caller A pauses, someone resumes, caller B pauses. A's event is still durably committed,
+    /// and A's handler must still find it — the predecessor read only the LATEST `ExecutionPaused`
+    /// and so compared A against B, found no match, and answered `409 GHE003_IDEMPOTENCY_CONFLICT`
+    /// for a request that had succeeded.
+    ///
+    /// The two negative arms are the controls: a key that never committed must be Absent (or the
+    /// search would accept anyone), and A's key under a DIFFERENT actor must be Absent too (or the
+    /// attribution guard #681 added at the pre-flight would be undone here, one layer down).
+    #[test]
+    fn a_committed_pause_is_found_after_a_later_pause_lands_on_top_of_it() {
+        use graphhelm_events::{LocalEventRepository, PreparedAppend};
+        use graphhelm_protocols::{
+            ActorId, ExecutionMode, ExecutionPaused, ExecutionResumed, ExecutionStarted, NewEvent,
+            PersistedActorType, ProjectId, RepositoryScope, Sensitivity, WireHash, WorkspaceId,
+        };
+
+        struct FixedClock;
+        impl graphhelm_protocols::Clock for FixedClock {
+            fn now(&self) -> chrono::DateTime<chrono::Utc> {
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 9, 4, 1, 0, 0).unwrap()
+            }
+        }
+        struct Ids(AtomicUsize);
+        impl graphhelm_protocols::IdGenerator for Ids {
+            fn next_id(&self, prefix: &'static str) -> String {
+                format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+            }
+        }
+
+        let execution = "exec-two-pauses";
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse(crate::commands::execution::WORKSPACE).unwrap(),
+            ProjectId::parse(crate::commands::execution::PROJECT).unwrap(),
+            Some(graphhelm_protocols::ExecutionId::parse(execution).unwrap()),
+        );
+        let caller =
+            |id: &str| PersistedActor::new(PersistedActorType::Owner, ActorId::parse(id).unwrap());
+        let event = |key: &str, actor: PersistedActor, kind: EventKind| {
+            NewEvent::new(
+                OpaqueId::parse(key).unwrap(),
+                actor,
+                Sensitivity::Internal,
+                kind,
+                vec![],
+                vec![],
+            )
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalEventRepository::open(
+            directory.path(),
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids(AtomicUsize::new(0))),
+        )
+        .unwrap();
+        store
+            .append_atomic(
+                &PreparedAppend::new(
+                    scope,
+                    OpaqueId::parse(execution).unwrap(),
+                    1,
+                    vec![
+                        event(
+                            "key-start",
+                            caller("studio-operator"),
+                            EventKind::ExecutionStarted(ExecutionStarted {
+                                execution_id: OpaqueId::parse(execution).unwrap(),
+                                graph_version: 1,
+                                graph_hash: WireHash::parse(format!("sha256:{}", "d".repeat(64)))
+                                    .unwrap(),
+                                mode: ExecutionMode::Supervised,
+                            }),
+                        ),
+                        event(
+                            "key-caller-a",
+                            caller("caller-a"),
+                            EventKind::ExecutionPaused(ExecutionPaused {
+                                execution_id: OpaqueId::parse(execution).unwrap(),
+                            }),
+                        ),
+                        event(
+                            "key-resume",
+                            caller("studio-operator"),
+                            EventKind::ExecutionResumed(ExecutionResumed {
+                                execution_id: OpaqueId::parse(execution).unwrap(),
+                            }),
+                        ),
+                        event(
+                            "key-caller-b",
+                            caller("caller-b"),
+                            EventKind::ExecutionPaused(ExecutionPaused {
+                                execution_id: OpaqueId::parse(execution).unwrap(),
+                            }),
+                        ),
+                    ],
+                    vec![],
+                    vec![],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let key_a = OpaqueId::parse("key-caller-a").unwrap();
+        let key_b = OpaqueId::parse("key-caller-b").unwrap();
+
+        // ARRANGEMENT: B's pause is the LATEST, which is what made A's unfindable before.
+        assert_eq!(
+            execution_paused_under(directory.path(), execution, &key_b, &caller("caller-b")),
+            PausedUnderCaller::Committed,
+            "the later pause must be findable, or this fixture is not the shape the defect needs"
+        );
+
+        assert_eq!(
+            execution_paused_under(directory.path(), execution, &key_a, &caller("caller-a")),
+            PausedUnderCaller::Committed,
+            "caller A's pause committed and is still in history; a later pause on top of it does not make A's request a conflict"
+        );
+        assert_eq!(
+            execution_paused_under(
+                directory.path(),
+                execution,
+                &OpaqueId::parse("key-never-sent").unwrap(),
+                &caller("caller-a"),
+            ),
+            PausedUnderCaller::Absent,
+            "a key that never committed must not be found, or the search accepts anyone"
+        );
+        assert_eq!(
+            execution_paused_under(directory.path(), execution, &key_a, &caller("caller-b")),
+            PausedUnderCaller::Absent,
+            "A's key under B's actor is not A's request: two actors can derive the same key"
         );
     }
 }

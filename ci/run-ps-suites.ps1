@@ -24,6 +24,7 @@ $ErrorActionPreference = 'Continue'
 # from the pin says 'add it', a pinned name with no file says 'a suite was removed'.
 $PinnedSuites = @(
     'classify-run.tests.ps1',
+    'closing-keywords.tests.ps1',
     'gate-postgres-evidence.tests.ps1',
     'gate-run-overlap.tests.ps1',
     'gate-script-paths.tests.ps1',

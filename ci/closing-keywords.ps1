@@ -1,0 +1,463 @@
+<#
+.SYNOPSIS
+    What a squash of this pull request would CLOSE, read from both texts that decide it (#757).
+
+.DESCRIPTION
+    GitHub links a closing keyword from two different places and they are not the same text:
+
+      the PR BODY        is what `closingIssuesReferences` reports, and what the PR page shows;
+      the COMMIT MESSAGES are what a SQUASH carries into the commit that lands on the default
+                         branch, and therefore what actually fires on merge.
+
+    Twice in this repository an issue was closed that the pull request said it would not (#675 on
+    2026-09-01, #746 on 2026-09-03), and the second time the sentence responsible was a NEGATION
+    written to prevent exactly that: `This does NOT close #717.` still contains `close #717`, and a
+    parser looking for a keyword next to a number does not read English. The issue closed two
+    seconds after the merge.
+
+    A QUALIFIER is not a guard either, and it is the harder one to see because it is what a
+    CAREFUL author writes. Caught by hand on #781 while this program was being written:
+    `SCOPE, STATED: this closes #710's second finding only.` -- narrowing to a human, a close
+    to the parser, in a commit whose pull request body correctly said `Refs #710`.
+
+    THE INSTRUMENT LESSON, which is why this program exists rather than a paragraph:
+    `closingIssuesReferences` is precise, authoritative-sounding, and scoped to the BODY. Trusting
+    it retired the commit-message check that was the one actually gating. A stronger instrument that
+    answers a NARROWER question is worse than a weak one that answers yours, because it reforms the
+    doubt that would have made you look.
+
+    So the gate is the UNION of both texts, compared against the closures the operator says they
+    intend. Not the body. Not the commits. Both, together, equal to a stated intent.
+
+    THIS PROGRAM NEVER CONSULTS `closingIssuesReferences`, and there is a second, independent
+    reason beyond the one above. It is not merely a narrower reading of the same texts -- it is a
+    THIRD text with a scope condition of its own: the BASE BRANCH. Measured on 2026-09-04 by the
+    GraphHelm ISSUES 2 lane, on three pull requests whose body and commits each carried exactly one
+    closing keyword:
+
+      PR 767, base main                             linked: 546
+      PR 770, base main                             linked: 708
+      PR 779, base issue-708-reader-silence-grace   linked: (empty)
+
+    GitHub auto-links closing keywords only on a pull request targeting the DEFAULT branch, so the
+    linked set is empty for every stacked pull request -- while the squash still carries `Closes
+    #617` into whatever it lands on. A gate reading that field would call a stacked pull request
+    harmless while two of its texts declare a closure: the same defect as the one this program was
+    built for, with the sign flipped -- there the field reported the intended closure and missed the
+    accidental one, here it reports none at all.
+
+    Both directions say the same thing. That field is not one of the two halves and must never be
+    allowed to answer alone.
+
+.PARAMETER Number
+    The pull request to read.
+
+.PARAMETER Closes
+    The issue numbers this pull request is INTENDED to close, with or without a leading `#`.
+
+    For a pull request that closes NOTHING -- a partial delivery that says `Refs #N` on purpose --
+    pass **`-Closes none`**.
+
+    NOT `-Closes @()`: `-File` passes arguments as TEXT, so `@()` arrives as three literal
+    characters. That is not hypothetical -- it is how this parameter was first used against four
+    real pull requests, each reporting a missing closure for an issue named `@()`.
+
+    And NOT `-Closes ''` either, which this documentation prescribed until someone ran it from a
+    PowerShell prompt: there the empty LITERAL is dropped while the native command line is built,
+    so it never reaches the binder and the run dies with "Missing an argument for parameter
+    'Closes'" -- an error about the wrong thing, from a layer this program cannot explain from. It
+    survives from bash, from cmd, and when splatted, which is exactly why it went unnoticed.
+
+    Anything that is not digits after its `#`, and is not the word `none`, is refused by name.
+
+    Required, and deliberately not defaulted: a check that derives the intent from the same text it
+    is checking cannot disagree with it, and a check that cannot disagree is decoration. The
+    operator states the intent, and this program says whether the texts agree.
+
+.PARAMETER Repository
+    `owner/name`. Defaults to whatever `gh` resolves for the current directory.
+
+.INPUTS
+    None. The texts are fetched with `gh`.
+
+.OUTPUTS
+    Exit 0 when the union equals the intent, 1 when it does not, 2 when the texts could not be read
+    and therefore nothing was measured.
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File ci/closing-keywords.ps1 -Number 746 -Closes 735
+
+.NOTES
+    CALIBRATION, measured on #754 and recorded here rather than in a comment somewhere else,
+    because a check whose relationship to the real parser is unwritten gets "fixed" until it agrees:
+
+    this program's match is TIGHTER than GitHub's. The text `` `Refs #752`, not `Closes` -- #752 ``
+    is flagged here and is NOT linked by GitHub. Why is unmeasured -- a backtick code span, an
+    em-dash, the distance between the keyword and the number, or some combination.
+
+    That direction is the safe one and is chosen on purpose. A false positive costs a human one
+    reading of a sentence. A false negative is what closed #717. **Do not tune this to agree with
+    GitHub.** It is the cheap alarm that decides when to look, never a model of the parser, and the
+    cell named `the_calibration` exists to make anyone who tries watch a test go red.
+
+    IT CAN ANSWER WITH THE COMMITS YOU JUST REPLACED. Measured on this program's own pull request:
+    a force-push amended the offending commit, the check ran seconds later, and it still reported
+    the OLD commit's closure. Re-run moments afterwards, with nothing else changed, it reported the
+    new one. The push succeeded and the read was stale -- GitHub had not yet reflected it -- and a
+    stale read here fails toward the DANGEROUS colour in one direction and the annoying one in the
+    other: it can show a closure you have already removed (annoying), and it can equally show a
+    clean list for a force-push whose new commit reintroduced one (dangerous).
+
+    So: after amending or force-pushing, confirm the commit list this program printed matches
+    `git log`, or run it twice. The exit code is a verdict about what GitHub reported, and what
+    GitHub reports is not always what you pushed a moment ago.
+
+    STACKED PULL REQUESTS ARE MEASURED AGAINST THEIR OWN BASE. `gh pr view --json commits` lists the
+    commits this pull request adds to ITS base, so a branch stacked on another branch does not carry
+    the parent's closing keywords here -- measured on #768, stacked on #765: its commit list shows
+    `#698` alone and not #765's `#699`. That is the right reading, because a squash of #768 into its
+    base carries exactly those commits. But it also means RETARGETING a stacked branch to `main`
+    changes what it would carry, so the check has to be re-run after the retarget rather than before
+    it.
+
+    DECLARED LIMIT: only bare `#123` is recognised. `owner/repo#123` and full issue URLs are
+    keyword-linkable on GitHub and are not matched here, so a cross-repository closure is invisible
+    to this program. Nothing in this repository has used that form; if one does, this is where it
+    is missing rather than a thing anyone discovers.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)] [int] $Number,
+    # BOTH attributes, and neither is what makes "closes nothing" work. AllowEmptyString lets an
+    # empty string reach the body once it ARRIVES; whether it arrives depends on the launcher.
+    #
+    # Reported by the GraphHelm ISSUES lane as "-File drops the empty argument" after it failed on
+    # their merge checklist. Measured across four launchers before acting on it:
+    #
+    #     bash        -> powershell -File ... -Closes ''       WORKS
+    #     cmd.exe     -> powershell -File ... -Closes ""       WORKS
+    #     PowerShell  -> & powershell -File ... -Closes ''     FAILS  "Missing an argument"
+    #     PowerShell  -> the same call, SPLATTED array         WORKS
+    #
+    # So the trigger is not `-File`; it is PowerShell's own construction of a native command line
+    # dropping an empty LITERAL, in some contexts and not others. Their failure was real and their
+    # mechanism was right; the scope was wider than the behaviour.
+    #
+    # This program's documentation used to prescribe `-Closes ''` for "closes nothing" -- the MOST
+    # COMMON intent on this board, every partial delivery and every `Refs #N`. A remedy that works
+    # on three launchers out of four is worse than none, because the operator who hits the fourth
+    # reads the binder's complaint as a fact about their pull request. `-Closes none` survives all
+    # four; see `ConvertTo-IntendedClosures`.
+    [Parameter(Mandatory)] [AllowEmptyCollection()] [AllowEmptyString()] [string[]] $Closes,
+    [string] $Repository
+)
+
+$ErrorActionPreference = 'Stop'
+
+# Every keyword GitHub fires on, in every inflection it accepts. Written out rather than built from
+# a stem: `close|closes|closed` is three words and `clos(e|es|ed)` is a pattern whose next reader
+# has to re-derive what it covers, and this list is the whole claim the program makes.
+$ClosingKeywords = @(
+    'close', 'closes', 'closed',
+    'fix', 'fixes', 'fixed',
+    'resolve', 'resolves', 'resolved'
+)
+
+function ConvertTo-IntendedClosures {
+    <#
+        The operator's `-Closes` argument, turned into issue numbers or REFUSED by name.
+
+        An unparseable token used to survive `TrimStart('#')` and be compared as though it were an
+        issue, so the run reported a MISSING closure that was really the operator's own argument --
+        a refusal about nothing, wearing the clothes of a finding.
+
+        That is not a hypothetical and it is not abuse. `-File` passes every argument as TEXT, so
+        `-Closes @()` -- the obvious spelling for "closes nothing", and the one the first version of
+        this program's own documentation gave -- arrives as the three literal characters `@()`. It
+        was used that way against four real pull requests before anyone noticed, and each one
+        reported a missing closure for an issue named `@()`.
+
+        The spelling that works from every launcher measured is the word `none`. An empty string
+        works from bash and from cmd, and is dropped when PowerShell builds a native command line
+        with an empty LITERAL -- so it worked for whoever wrote the documentation and failed for
+        the first person to run it from a PowerShell prompt. A remedy whose success depends on the
+        shell the operator happens to be in is not a remedy.
+
+        `none` is matched OrdinalIgnoreCase, deliberately, and it is the one comparison here that
+        is: an operator typing `None` or `NONE` means the same thing, and unlike a manifest field
+        this token comes from a human at a prompt rather than from a machine-written file.
+
+        In the seam rather than in the script body for the same reason the union is: a decision the
+        body holds is a decision no cell can reach.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [AllowEmptyString()] [string[]] $Tokens)
+
+    $numbers = New-Object System.Collections.Generic.List[string]
+    foreach ($token in @($Tokens)) {
+        $trimmed = ([string]$token).Trim().TrimStart('#')
+        if ($trimmed -eq '') { continue }
+        if ([string]::Equals($trimmed, 'none', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        if ($trimmed -notmatch '^\d+$') {
+            return [ordered]@{ ok = $false; numbers = @(); offending = ([string]$token) }
+        }
+        if (-not $numbers.Contains($trimmed)) { $numbers.Add($trimmed) }
+    }
+    return [ordered]@{ ok = $true; numbers = @($numbers); offending = '' }
+}
+
+function Get-ClosingReferences {
+    <#
+        The issue numbers a closing keyword names in this text, as strings, deduplicated.
+
+        A seam that takes a STRING and returns a set, for the same reason the other decisions in
+        this directory do: every interesting case here is a SHAPE of text -- a negation, a code
+        span, a keyword in a commit body rather than a PR body -- and a cell that had to create a
+        real pull request to exercise one would be a test of GitHub.
+
+        The match is case-insensitive because GitHub's is: `CLOSES #1` closes issue 1.
+
+        There is no attempt to understand the sentence. That is the entire point. `This does NOT
+        close #717.` returns 717, because GitHub returns 717, and a program that were clever enough
+        to see the negation would disagree with the thing that actually presses the button.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text)
+
+    $pattern = '(?i)\b(' + ($ClosingKeywords -join '|') + ')\b\s*#(\d+)'
+    $found = New-Object System.Collections.Generic.List[string]
+    foreach ($match in [regex]::Matches($Text, $pattern)) {
+        $number = $match.Groups[2].Value
+        if (-not $found.Contains($number)) { $found.Add($number) }
+    }
+    # `,` before the array, the same guard `Get-IndexBlobBytes` in this directory carries and for
+    # the same reason: PowerShell UNROLLS a returned collection, and an EMPTY one unrolls to
+    # NOTHING -- the caller receives $null rather than a set with no members. Here that is worse
+    # than a crash, because $null.Count is 0 and every "this text closes nothing" comparison would
+    # keep agreeing while the function had stopped returning a set at all.
+    return ,@($found)
+}
+
+function Compare-ClosureIntent {
+    <#
+        The two ways the texts can disagree with the operator, kept apart because they mean
+        opposite things and want opposite fixes.
+
+        UNEXPECTED: the texts close something the operator did not name. This is #675 and #746 --
+        an issue closed by a sentence nobody meant as an instruction. The fix is to the text.
+
+        MISSING: the operator names a closure the texts do not carry. That is not harmless. It
+        means the intended closure depends on whichever half of the text the squash happens to
+        carry, and the operator finds out afterwards. The fix is also to the text, in the other
+        direction.
+
+        Sorted numerically rather than lexically, so `#9` does not sort after `#10` in a message a
+        human is about to compare by eye.
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Union,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Intended
+    )
+
+    $normalise = { param($values) @(@($values) | ForEach-Object { ([string]$_).TrimStart('#').Trim() } |
+            Where-Object { $_ -ne '' }) }
+    $left = & $normalise $Union
+    $right = & $normalise $Intended
+    $bySize = { param($values) @($values | Sort-Object { [int]$_ } -Unique) }
+    # `@( ... )` around each, for the unrolling reason recorded on `Get-ClosingReferences`: an
+    # empty `Sort-Object` result is $null, and a property that is $null where a caller expects a
+    # set is the same defect one level in.
+    return [ordered]@{
+        unexpected = @(& $bySize @($left | Where-Object { $right -notcontains $_ }))
+        missing    = @(& $bySize @($right | Where-Object { $left -notcontains $_ }))
+    }
+}
+
+function Test-PullRequestPayload {
+    <#
+        Did the answer actually CARRY the two texts, or is it merely not an error?
+
+        Contributed by the GraphHelm ISSUES 2 lane, who hit this one layer up. Their audit ran the
+        same subject twice with nothing changed and got `Closes #708` once and an empty body once;
+        the body was 8908 characters both times, so the empty answer was the INSTRUMENT. Their
+        one-liner discarded gh's stderr and piped into `grep`, and grep over empty stdin exits 1
+        with no output -- which prints exactly what a successful fetch that found no closing
+        keyword prints. **A failed fetch and a clean pull request were the same observation**, and
+        the failure read as CLEAN, so the merge would have proceeded.
+
+        This program already refuses a non-zero exit and an unparseable answer, so it does not
+        inherit that. It DID inherit the layer below, and this function is why it no longer does.
+        Measured before writing it: a payload of `{}` -- gh exits 0, the JSON parses, and neither
+        field is there -- produced empty texts, an empty intent, and the program printed
+        "the union of both texts equals the stated intent". A green over nothing at all.
+
+        THE INVARIANT THAT MAKES IT CHECKABLE: a pull request always has at least one commit. Zero
+        is not a pull request with nothing in it; it is an answer that did not carry what was asked
+        for. So zero commits is HARNESS-BROKE and never a finding.
+
+        AN EMPTY BODY IS LEGAL AND IS NOT REFUSED. That distinction is the whole care in this
+        function: `body` ABSENT means the answer is the wrong shape, `body` present and empty means
+        somebody wrote a pull request without a description, which is allowed and closes nothing.
+        Collapsing the two would trade a false green for a false refusal, and a check that refuses
+        legitimate work gets switched off.
+    #>
+    param([Parameter(Mandatory)] [AllowNull()] $Payload)
+
+    if ($null -eq $Payload) {
+        return [ordered]@{ ok = $false; reason = 'the answer was empty' }
+    }
+    $names = @($Payload.PSObject.Properties.Name)
+    if ($names -notcontains 'body') {
+        return [ordered]@{ ok = $false; reason = 'the answer carries no `body` field' }
+    }
+    if ($names -notcontains 'commits') {
+        return [ordered]@{ ok = $false; reason = 'the answer carries no `commits` field' }
+    }
+    if (@($Payload.commits).Count -eq 0) {
+        return [ordered]@{
+            ok     = $false
+            reason = 'the answer carries ZERO commits, and every pull request has at least one'
+        }
+    }
+    return [ordered]@{ ok = $true; reason = '' }
+}
+
+function Read-PullRequestTexts {
+    <#
+        The WHOLE path from what `gh` returned to the two texts, or a refusal naming which step
+        failed.
+
+        It lives here rather than in the script body for the third time in this program's short
+        life, and the reason has not changed: a decision the body holds is a decision no cell can
+        reach. `Test-PullRequestPayload` could be perfect and never called, and every cell for it
+        would still pass -- which is precisely the defect this program was written about, one level
+        further out.
+
+        Three ways to fail, kept apart because they mean different things to whoever reads the
+        refusal: the instrument did not run, the instrument answered something that is not JSON,
+        and the instrument answered JSON that does not carry what was asked for. None of the three
+        may fall through to a verdict.
+    #>
+    param([Parameter(Mandatory)] [AllowNull()] $Answer)
+
+    if ($null -eq $Answer -or $Answer.exitCode -ne 0) {
+        return [ordered]@{ ok = $false; reason = 'gh could not read the pull request'; body = ''; commits = '' }
+    }
+    $payload = $null
+    try {
+        $payload = $Answer.text | ConvertFrom-Json
+    } catch {
+        return [ordered]@{ ok = $false; reason = "gh's answer did not parse as JSON"; body = ''; commits = '' }
+    }
+    $shape = Test-PullRequestPayload -Payload $payload
+    if (-not $shape.ok) {
+        return [ordered]@{ ok = $false; reason = $shape.reason; body = ''; commits = '' }
+    }
+    # Both halves of a commit message. GitHub links from the subject as well as the body, and
+    # #746's offending keyword was in a body while its intended one was in a subject -- reading
+    # only one half would have found exactly one of the two.
+    $commitText = (@($payload.commits | ForEach-Object { @($_.messageHeadline, $_.messageBody) }) -join "`n")
+    return [ordered]@{
+        ok      = $true
+        reason  = ''
+        body    = [string]$payload.body
+        commits = $commitText
+    }
+}
+
+function Get-ClosureVerdict {
+    <#
+        The whole decision, over the two texts and the stated intent.
+
+        It lives HERE rather than in the script body because the body cannot be tested without a
+        pull request, and the claim this program makes is precisely the one the body used to hold:
+        that the gate is the UNION of both texts. A version that read only the body would have
+        passed every cell in this suite while being the exact defect #757 is about, because both
+        halves it exercises -- the pattern and the comparison -- were individually correct in #746
+        too. Counting conjuncts is not testing them.
+
+        So the body below fetches and prints. Everything that DECIDES is in this function.
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $BodyText,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $CommitText,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Intended
+    )
+
+    $fromBody = Get-ClosingReferences -Text $BodyText
+    $fromCommits = Get-ClosingReferences -Text $CommitText
+    $comparison = Compare-ClosureIntent -Union @(@($fromBody) + @($fromCommits)) -Intended $Intended
+    return [ordered]@{
+        body       = @($fromBody)
+        commits    = @($fromCommits)
+        unexpected = @($comparison.unexpected)
+        missing    = @($comparison.missing)
+    }
+}
+
+function Invoke-Gh {
+    <#
+        `gh` read through its own exit code, with stderr kept OUT of the stream this parses.
+
+        Same trap `ci/normalize-script-eol.ps1` documents for git: under Windows PowerShell 5.1 a
+        redirected native stderr line becomes a NativeCommandError and `$ErrorActionPreference =
+        'Stop'` promotes it to a terminating error, so an authentication failure would kill this
+        function before its own exit-code check could report HARNESS-BROKE -- the diagnostic
+        unreachable in exactly the case it exists for.
+    #>
+    param([Parameter(Mandatory)] [string[]] $Arguments)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & gh @Arguments 2>$null
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    return [ordered]@{ exitCode = $code; text = (@($output) -join "`n") }
+}
+
+$stated = ConvertTo-IntendedClosures -Tokens $Closes
+if (-not $stated.ok) {
+    Write-Host ("[closing] REFUSED: -Closes was given [$($stated.offending)], which is not an issue " +
+        "number. Write the digits, with or without a leading hash. For a pull request that closes " +
+        "nothing, pass an empty string: -Closes ''") -ForegroundColor Red
+    exit 1
+}
+$intended = @($stated.numbers)
+
+$arguments = @('pr', 'view', "$Number", '--json', 'body,commits')
+if ($Repository) { $arguments += @('--repo', $Repository) }
+$read = Read-PullRequestTexts -Answer (Invoke-Gh -Arguments $arguments)
+if (-not $read.ok) {
+    Write-Host ("[closing] HARNESS-BROKE: for pull request $Number, $($read.reason), so neither " +
+        "text was measured. An absence that arrived as a failure must never be read as a finding.") -ForegroundColor Magenta
+    exit 2
+}
+$bodyText = $read.body
+$commitText = $read.commits
+
+$verdict = Get-ClosureVerdict -BodyText $bodyText -CommitText $commitText -Intended $intended
+
+$show = { param($values) if (@($values).Count -eq 0) { '(none)' } else { (@($values) | ForEach-Object { "#$_" }) -join ', ' } }
+Write-Host ""
+Write-Host "[closing] pull request $Number" -ForegroundColor Cyan
+Write-Host "  body     : $(& $show $verdict.body)"
+Write-Host "  commits  : $(& $show $verdict.commits)   <- the text a SQUASH carries"
+Write-Host "  intended : $(& $show $intended)"
+
+if ($verdict.unexpected.Count -eq 0 -and $verdict.missing.Count -eq 0) {
+    Write-Host "[closing] the union of both texts equals the stated intent." -ForegroundColor Green
+    exit 0
+}
+
+if ($verdict.unexpected.Count -gt 0) {
+    Write-Host ("[closing] REFUSED: merging this would close $(& $show $verdict.unexpected), which is not in the " +
+        "stated intent. Remember the keyword fires inside a NEGATION too: write ``Refs #N`` or " +
+        "``Scope: #N stays open``, never a closing word next to a number you mean to keep open.") -ForegroundColor Red
+}
+if ($verdict.missing.Count -gt 0) {
+    Write-Host ("[closing] REFUSED: $(& $show $verdict.missing) is intended to close and appears in neither text, " +
+        "so nothing would close it. An intended closure that depends on what the squash happens " +
+        "to carry is one the operator finds out about afterwards.") -ForegroundColor Red
+}
+exit 1

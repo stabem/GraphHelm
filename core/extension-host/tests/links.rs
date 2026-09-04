@@ -604,3 +604,125 @@ fn an_ancestor_replaced_by_a_symlink_after_the_claim_refuses_the_lifecycle() {
         "an ancestor that became a link after the claim must refuse, got {outcome:?}"
     );
 }
+
+/// The arrangement the four #772 entry-point cells share: an adopted layout, then an ancestor
+/// ABOVE the root replaced by a symlink to a decoy shaped like it.
+///
+/// Extracted because the four differ only in the VERB they call afterwards. Writing it four times
+/// would make a divergence between them look like a difference in the defect.
+///
+/// Returns the claim, the installed version, a second package ready to adopt, and the decoy's
+/// marker path — the file that must still exist afterwards.
+#[cfg(unix)]
+fn layout_behind_a_swapped_ancestor(
+    ground: &TempDir,
+    label: &str,
+) -> (
+    ActivationClaim,
+    graphhelm_extension_host::InstalledVersion,
+    (TempDir, PathBuf),
+    PathBuf,
+) {
+    let anchor = ground.path().join("anchor");
+    std::fs::create_dir(&anchor).expect("the ancestor creates");
+    let root = anchor.join("root");
+    std::fs::create_dir(&root).expect("the root creates");
+
+    let claim = ActivationClaim::acquire(&root).expect("the claim must be granted");
+    let (keep_first, first) = synthetic_package(&format!("{label}-first"), None);
+    let installed = install_package(&claim, &first).expect("the package adopts");
+    drop(keep_first);
+    let adopted_name = installed
+        .root
+        .file_name()
+        .expect("the adopted tree has a name")
+        .to_owned();
+
+    let decoy = ground.path().join("decoy");
+    let decoy_version = decoy.join("root").join("versions").join(&adopted_name);
+    std::fs::create_dir_all(&decoy_version).expect("the decoy layout creates");
+    let marker = decoy_version.join("marker.txt");
+    std::fs::write(&marker, b"outside the claimed root").expect("the decoy marker writes");
+
+    std::fs::rename(&anchor, ground.path().join("anchor-real")).expect("the real tree moves aside");
+    std::os::unix::fs::symlink(&decoy, &anchor).expect("ARRANGEMENT: the symlink was not created");
+    assert!(
+        root.join("versions").join(&adopted_name).is_dir(),
+        "CONTROL: the layout must still resolve THROUGH the link, or the verb would fail for an ordinary reason and the cell would prove nothing"
+    );
+
+    let second = synthetic_package(&format!("{label}-second"), None);
+    (claim, installed, second, marker)
+}
+
+/// #772 blast radius, 1 of 3: `install_package` behind a swapped ancestor.
+///
+/// The cell that shipped with the fix exercises `uninstall_version` ALONE — `install_package`
+/// appears in it only as arrangement, BEFORE the link is planted, so it never meets the redirected
+/// ancestor. A peer measured the radius by neutering `root_still_anchored` and watching exactly
+/// one cell fall.
+///
+/// The guard lives inside `require_unlinked_layout` and all four entry points call it, and the
+/// `&ActivationClaim` signature makes forgetting it a compile error. That is a structural argument
+/// and it is a good one. **It is still an argument.** These three cells make it a measurement.
+#[cfg(unix)]
+#[test]
+fn install_behind_a_swapped_ancestor_refuses() {
+    let ground = tempfile::tempdir().expect("a temp dir");
+    let (claim, _installed, (_keep, second), marker) =
+        layout_behind_a_swapped_ancestor(&ground, "install");
+
+    let outcome = install_package(&claim, &second);
+
+    assert!(
+        marker.exists(),
+        "THE ADOPTION FOLLOWED THE ANCESTOR LINK: it wrote into a tree outside the claimed root"
+    );
+    assert!(
+        matches!(outcome, Err(InstallRefusal::UnsafeLayoutPath)),
+        "install_package must refuse an ancestor that became a link after the claim, got {outcome:?}"
+    );
+}
+
+/// #772 blast radius, 2 of 3: `switch_active` behind a swapped ancestor.
+#[cfg(unix)]
+#[test]
+fn switch_behind_a_swapped_ancestor_refuses() {
+    let ground = tempfile::tempdir().expect("a temp dir");
+    let (claim, installed, _second, marker) = layout_behind_a_swapped_ancestor(&ground, "switch");
+
+    let outcome = switch_active(&claim, &installed.digest);
+
+    assert!(
+        marker.exists(),
+        "THE SWITCH FOLLOWED THE ANCESTOR LINK: it touched a tree outside the claimed root"
+    );
+    assert!(
+        matches!(outcome, Err(InstallRefusal::UnsafeLayoutPath)),
+        "switch_active must refuse an ancestor that became a link after the claim, got {outcome:?}"
+    );
+}
+
+/// #772 blast radius, 3 of 3: `roll_back` behind a swapped ancestor.
+///
+/// This one would refuse for a second reason on a layout with nothing to roll back to, so the
+/// assertion is on the CODE and not merely on failure — otherwise it would pass with the guard
+/// removed, which is the vacuity these three exist to close.
+#[cfg(unix)]
+#[test]
+fn roll_back_behind_a_swapped_ancestor_refuses() {
+    let ground = tempfile::tempdir().expect("a temp dir");
+    let (claim, _installed, _second, marker) =
+        layout_behind_a_swapped_ancestor(&ground, "rollback");
+
+    let outcome = graphhelm_extension_host::roll_back(&claim);
+
+    assert!(
+        marker.exists(),
+        "THE ROLLBACK FOLLOWED THE ANCESTOR LINK: it touched a tree outside the claimed root"
+    );
+    assert!(
+        matches!(outcome, Err(InstallRefusal::UnsafeLayoutPath)),
+        "roll_back must refuse an ancestor that became a link after the claim, got {outcome:?}"
+    );
+}

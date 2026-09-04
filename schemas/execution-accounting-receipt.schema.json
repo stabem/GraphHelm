@@ -23,7 +23,7 @@
         {"$ref": "#/$defs/providerReportedInputField", "properties": {"name": {"const": "provider_reported_input_tokens"}}},
         {"$ref": "#/$defs/providerTotalInputField", "properties": {"name": {"const": "provider_total_input_tokens"}}},
         {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "compiled_input_tokens"}},
-         "description": "Input tokens attributable to the compiled capsule content, as counted by the serving provider for the request that carried it. NOT the whole prompt's count -- that is provider_reported_input_tokens, which is already filled -- and NOT a locally tokenized estimate, which would be an estimate wearing a counter's name. No provider reports a per-part count today, so this field is honestly unavailable rather than approximated (#506)."},
+         "description": "Input tokens attributable to the compiled capsule content, as counted by the serving provider for the request that carried it. NOT the whole prompt's count -- that is provider_reported_input_tokens, a different field, itself measured only when the provider reports one and otherwise unavailable (D-043) -- and NOT a locally tokenized estimate, which would be an estimate wearing a counter's name. No provider reports a per-part count today, so this field is honestly unavailable rather than approximated (#506)."},
         {"$ref": "#/$defs/outputField", "properties": {"name": {"const": "output_tokens"}}},
         {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "formatting_tokens"}}},
         {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "index_cost_cold"}}},

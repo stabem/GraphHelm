@@ -29,5 +29,16 @@ function Get-RunClassFrom {
         [Parameter(Mandatory)] [bool] $PassedEverything
     )
 
-    if ($Status -eq 'GREEN' -and $PassedEverything) { 'green' } else { 'UNCLASSIFIED' }
+    # ORDINAL, BECAUSE -eq IS NOT. PowerShell's comparison operators are culture aware, and a
+    # culture comparison gives some code points no weight at all: measured, 'GREEN' plus U+FE00,
+    # U+00AD or U+FFFD each comes back -eq 'GREEN'. This one line decides the class the GATE writes
+    # and the class `classify-run.ps1` recomputes to check it, so a status carrying an invisible
+    # code point was classified `green` in both places at once -- the duplication this file removed
+    # would at least have needed two mistakes.
+    #
+    # Ordinal and not OrdinalIgnoreCase: the gate writes GREEN in capitals, `classify-run.ps1`
+    # refuses any status outside its closed vocabulary, and a lowercase `green` status is not a
+    # value either producer emits. Case-insensitivity here would widen the rule, not preserve it.
+    if ([string]::Equals($Status, 'GREEN', [System.StringComparison]::Ordinal) -and $PassedEverything) { 'green' }
+    else { 'UNCLASSIFIED' }
 }

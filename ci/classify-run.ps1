@@ -86,6 +86,62 @@ param(
 . (Join-Path $PSScriptRoot 'run-class.ps1')
 $ErrorActionPreference = 'Stop'
 
+# ORDINAL, BECAUSE -eq AND -in ARE NOT. PowerShell's comparison operators are case-insensitive AND
+# CULTURE aware, and a culture comparison gives some code points no weight at all. Measured:
+#     ('GREEN' + [char]0xFE00) -eq 'GREEN'                     -> True
+#     ('green' + [char]0xFE00) -in @('green', 'UNCLASSIFIED')  -> True
+#     [string]::Equals('GREEN' + [char]0xFE00, 'GREEN', 'Ordinal')  -> False
+# U+FE00 is a variation selector: category Mn, ordinary text. The answer is not to refuse the
+# character -- that is a deny-list growing by one code point per review -- but to stop comparing
+# approximately.
+#
+# This matters here more than almost anywhere, because this file's guards are CLOSED VOCABULARIES
+# and its own comment at the vocabulary check states the property the comparer breaks: "a value
+# outside the set compares unequal to every member". It does not. A manifest whose `status` was
+# GREEN plus an invisible code point passed the closed set, was recomputed as an automatic `green`,
+# and became refinable -- and the same shape let a `runClass` and a stated `runClassOrigin` through
+# their own vocabularies.
+#
+# Case matters in every vocabulary here (`GREEN`, `green`, `human`), so these are Ordinal. The two
+# PATH comparisons further down are OrdinalIgnoreCase instead, because Windows paths are
+# case-insensitive and making them case-sensitive would be a different defect wearing this fix.
+function Test-SameText {
+    param(
+        [Parameter(Position = 0)] [AllowNull()] [object] $Left,
+        [Parameter(Position = 1)] [AllowNull()] [object] $Right
+    )
+    # Null is not the empty string: `[string] $null` is '', so a typed parameter would make an
+    # absent value equal to an empty one. Both nulls are answered before any cast.
+    if ($null -eq $Left -or $null -eq $Right) { return ($null -eq $Left -and $null -eq $Right) }
+    return [string]::Equals([string]$Left, [string]$Right, [System.StringComparison]::Ordinal)
+}
+
+function Test-InVocabulary {
+    param([Parameter()] [AllowNull()] [object] $Value, [Parameter(Mandatory)] [string[]] $Vocabulary)
+    foreach ($member in $Vocabulary) { if (Test-SameText $Value $member) { return $true } }
+    return $false
+}
+
+function Test-NameIsPresent {
+    param([Parameter(Mandatory)] $Object, [Parameter(Mandatory)] [string] $Name)
+    foreach ($property in $Object.PSObject.Properties.Name) { if (Test-SameText $property $Name) { return $true } }
+    return $false
+}
+
+function Test-SamePath {
+    # OrdinalIgnoreCase, deliberately. What is removed is the CULTURE, not the case-insensitivity --
+    # and the justification is not the same at all three call sites, so it is written at each one
+    # rather than assumed from the name:
+    #   :318 and :453 compare two RESOLVED filesystem paths, where Windows itself is
+    #        case-insensitive and two spellings name one file;
+    #   :399 compares paths that came out of GIT, whose index IS case-sensitive, so that argument
+    #        does not hold there. It stays OrdinalIgnoreCase for the opposite reason, written at
+    #        the site: over-matching there REFUSES.
+    # (The third site was mine to justify and I had not; found by J in review of #759.)
+    param([Parameter(Mandatory)] [string] $Left, [Parameter(Mandatory)] [string] $Right)
+    return [string]::Equals($Left, $Right, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 if (-not (Test-Path -LiteralPath $Manifest)) {
     throw "no manifest at $Manifest"
 }
@@ -102,7 +158,7 @@ $run = $json | ConvertFrom-Json
 # against these categories, and nothing in the file would say so afterwards. (Found in review by
 # L Agent.) Refused by NAME rather than by value, because absent and UNCLASSIFIED are different
 # facts: one means "not judged yet", the other means "this gate could not have judged it".
-if (-not ($run.PSObject.Properties.Name -contains 'runClass')) {
+if (-not (Test-NameIsPresent -Object $run -Name 'runClass')) {
     throw "this manifest has no runClass field, so it predates the taxonomy (#202). Classifying it would produce a record that looks like a judged run of the new gate and is not one. Re-run the gate, or annotate the file by hand and say it was pre-taxonomy."
 }
 
@@ -152,7 +208,7 @@ function Read-ScalarField {
         [string[]] $Vocabulary
     )
 
-    if (-not ($Run.PSObject.Properties.Name -contains $Name)) { return $null }
+    if (-not (Test-NameIsPresent -Object $Run -Name $Name)) { return $null }
     $value = $Run.$Name
     if (($value -is [System.Array]) -or ($value -is [System.Collections.IList])) {
         throw "this manifest's $Name is not a single value: it holds a collection of $($value.Count). PowerShell's -eq and -ne both return truthy against an array, so no comparison below could test it. Fix the manifest."
@@ -168,7 +224,7 @@ function Read-ScalarField {
     # field and not its neighbour.)
     #
     # Vocabulary first, so a field WITH a closed set keeps the more specific message.
-    if ($Vocabulary -and ($value -notin $Vocabulary)) {
+    if ($Vocabulary -and -not (Test-InVocabulary -Value $value -Vocabulary $Vocabulary)) {
         $seen = if ($null -eq $value) { 'null' } else { "'$value'" }
         throw "this manifest's $Name is $seen, which is not a $Name the gate writes. The gate's vocabulary is closed: $($Vocabulary -join ', '). Refused at the read, because a value outside the set compares unequal to every member and would produce a refusal for the wrong reason."
     }
@@ -201,15 +257,15 @@ if ($null -ne $passedField -and $passedField -isnot [bool]) {
 #
 # Checked for EVERY class rather than inside the automatic branch below: the manifest that gets
 # persisted as `real-red` never reaches that branch. (Found in review on #645.)
-if ($null -ne $statusField -and $true -eq $passedField -and $statusField -ne 'GREEN') {
+if ($null -ne $statusField -and $true -eq $passedField -and -not (Test-SameText $statusField 'GREEN')) {
     throw "this manifest says overallPassed = true beside status = '$statusField', which gate.ps1 cannot emit: status is non-GREEN only when a stage failed, and overallPassed requires that same count to be zero. Refused before recomputing, because the pair is impossible rather than merely unusual."
 }
 $AutomaticClasses = @('green', 'UNCLASSIFIED')
 $HumanClasses = @('real-red', 'dead', 'green-by-luck', 'flaky-observed')
 $OriginVocabulary = @('automatic', 'human')
-$existingOrigin = if ($existingClass -in $AutomaticClasses) {
+$existingOrigin = if (Test-InVocabulary -Value $existingClass -Vocabulary $AutomaticClasses) {
     'automatic'
-} elseif ($existingClass -in $HumanClasses) {
+} elseif (Test-InVocabulary -Value $existingClass -Vocabulary $HumanClasses) {
     'human'
 } else {
     # REFUSED, not widened. The derivation rests on the two producers having disjoint CLOSED
@@ -226,13 +282,13 @@ $existingOrigin = if ($existingClass -in $AutomaticClasses) {
 # second witness, and a second witness that disagrees is the whole reason to have one. Taking it raw
 # made it a way to OVERRIDE the derivation: `real-red` + `automatic` skipped the human-judgement
 # guard entirely. (Found in review on #644.)
-if ($run.PSObject.Properties.Name -contains 'runClassOrigin') {
+if (Test-NameIsPresent -Object $run -Name 'runClassOrigin') {
     $statedOrigin = Read-ScalarField -Run $run -Name 'runClassOrigin'
-    if ($statedOrigin -notin $OriginVocabulary) {
+    if (-not (Test-InVocabulary -Value $statedOrigin -Vocabulary $OriginVocabulary)) {
         $seen = if ($null -eq $statedOrigin) { 'null' } else { "'$statedOrigin'" }
         throw "this manifest states runClassOrigin = $seen, which is neither 'automatic' nor 'human'. An origin outside its own vocabulary cannot corroborate anything, so it is refused rather than trusted."
     }
-    if ($statedOrigin -ne $existingOrigin) {
+    if (-not (Test-SameText $statedOrigin $existingOrigin)) {
         throw "this manifest's runClass '$existingClass' and its stated runClassOrigin '$statedOrigin' disagree: '$existingClass' can only have been written by a $existingOrigin producer. Present and legal is not the same as agreeing. Reconcile the manifest before classifying."
     }
 }
@@ -245,16 +301,16 @@ if ($run.PSObject.Properties.Name -contains 'runClassOrigin') {
 # ABSENT counts as not corroborated, deliberately: absent and false are different facts, and this
 # file already treats them so for `instrumentSuspect`. A class nobody can corroborate is not one
 # anybody should act on.
-if ($existingClass -in $AutomaticClasses) {
-    $hasStatus = $run.PSObject.Properties.Name -contains 'status'
-    $hasPassed = $run.PSObject.Properties.Name -contains 'overallPassed'
+if (Test-InVocabulary -Value $existingClass -Vocabulary $AutomaticClasses) {
+    $hasStatus = Test-NameIsPresent -Object $run -Name 'status'
+    $hasPassed = Test-NameIsPresent -Object $run -Name 'overallPassed'
     if (-not ($hasStatus -and $hasPassed)) {
         $sawStatus = if ($hasStatus) { "'$($run.status)'" } else { 'ABSENT' }
         $sawPassed = if ($hasPassed) { "$($run.overallPassed)" } else { 'ABSENT' }
         throw "this manifest's runClass is '$existingClass' but that class is not corroborated: status = $sawStatus, overallPassed = $sawPassed. Both are needed to say which class gate.ps1 would have written."
     }
     $classTheGateWouldWrite = Get-RunClassFrom -Status $statusField -PassedEverything ([bool]$passedField)
-    if ($classTheGateWouldWrite -ne $existingClass) {
+    if (-not (Test-SameText $classTheGateWouldWrite $existingClass)) {
         throw "this manifest's runClass is '$existingClass' but that class is not corroborated by the fields the gate writes it from: status = '$($run.status)', overallPassed = $($run.overallPassed). From those, gate.ps1 would have written '$classTheGateWouldWrite'. Refused rather than believed."
     }
 }
@@ -265,15 +321,27 @@ if ($existingClass -in $AutomaticClasses) {
 # the committable copy an automatic `green` while the durable one already holds a human judgement.
 # Reading the twin is what makes "refine once" true across both copies rather than per file.
 $durableTwin = [System.IO.Path]::Combine([System.IO.Path]::Combine($slotDir, 'gate-runs'), $fileName)
-if ((Test-Path -LiteralPath $durableTwin) -and ((Resolve-Path -LiteralPath $durableTwin).Path -ne (Resolve-Path -LiteralPath $Manifest).Path)) {
-    $twin = Get-Content -LiteralPath $durableTwin -Raw | ConvertFrom-Json
-    $twinClass = if ($twin.PSObject.Properties.Name -contains 'runClass') { $twin.runClass } else { 'ABSENT' }
-    if ($twinClass -ne $existingClass) {
+if ((Test-Path -LiteralPath $durableTwin) -and
+    -not (Test-SamePath (Resolve-Path -LiteralPath $durableTwin).Path (Resolve-Path -LiteralPath $Manifest).Path)) {
+    # THE SAME READER AS THE PRIMARY COPY, and this line was not. `Get-Content -Raw` in Windows
+    # PowerShell 5.1 decodes with the ANSI code page unless told otherwise, while the gate WRITES
+    # UTF-8 without a BOM and this script reads the committable copy with `File.ReadAllText`, which
+    # is UTF-8. So the two copies of one run were being decoded two different ways, and any byte
+    # above 7F in the twin came back as two or three characters that were never in the file.
+    #
+    # Measured while writing the ordinal cells: a twin whose runClass carried U+FE00 came back
+    # eight characters long instead of six, so the disagreement check fired on the DECODER rather
+    # than on the values -- an encoding defect standing in front of a comparison defect and making
+    # the comparison look sound. The refusal was right by accident, and the diagnostic printed
+    # mojibake at the operator.
+    $twin = [System.IO.File]::ReadAllText($durableTwin) | ConvertFrom-Json
+    $twinClass = if (Test-NameIsPresent -Object $twin -Name 'runClass') { $twin.runClass } else { 'ABSENT' }
+    if (-not (Test-SameText $twinClass $existingClass)) {
         throw "this copy and its durable twin disagree: this one says '$existingClass', the durable twin at $durableTwin says '$twinClass'. Classifying from one copy would overwrite whatever the other already records. Reconcile them before classifying."
     }
 }
 
-if ($existingClass -and $existingClass -ne 'UNCLASSIFIED' -and $existingOrigin -eq 'human') {
+if ($existingClass -and -not (Test-SameText $existingClass 'UNCLASSIFIED') -and (Test-SameText $existingOrigin 'human')) {
     throw "this run is already classified as '$existingClass' by a person. Classifying twice would overwrite a judgement someone already made; edit deliberately if that is what you mean."
 }
 
@@ -286,7 +354,7 @@ if ($existingClass -and $existingClass -ne 'UNCLASSIFIED' -and $existingOrigin -
 
 # A green-side class REFINES an observed pass. Where the gate never observed one, there is nothing
 # to refine -- the mirror of the rule below it.
-if ($Class -in $GreenSideClasses -and $existingClass -ne 'green') {
+if ((Test-InVocabulary -Value $Class -Vocabulary $GreenSideClasses) -and -not (Test-SameText $existingClass 'green')) {
     $seen = if ($existingClass) { "'$existingClass'" } else { 'no class' }
     throw "'$Class' refines an automatic green, and this run carries $seen. The gate never recorded a passing run here, so there is nothing to refine. A run that failed is judged with: real-red, dead."
 }
@@ -294,7 +362,7 @@ if ($Class -in $GreenSideClasses -and $existingClass -ne 'green') {
 # An automatic green may be refined but not CONTRADICTED. `real-red` and `dead` are readings of a
 # FAILURE this run did not have; applying one would make the ledger assert something the gate never
 # observed, which is the defect this change exists to remove rather than to mirror.
-if ($existingClass -eq 'green' -and $Class -notin $GreenSideClasses) {
+if ((Test-SameText $existingClass 'green') -and -not (Test-InVocabulary -Value $Class -Vocabulary $GreenSideClasses)) {
     throw "'$existingClass' was assigned automatically because no stage failed, so it can be refined but not contradicted: '$Class' is a reading of a failure this run did not have. Use one of: $($GreenSideClasses -join ', ')."
 }
 
@@ -335,7 +403,15 @@ if ($UnrelatedTestFile -or $UnrelatedIssue -or $FailThenPassObserved) {
         $touched += (git diff --name-only --cached)
         $touched += (git log --format= --name-only 'origin/main..HEAD')
         $needle = $UnrelatedTestFile.Replace('\', '/')
-        $hit = $touched | Where-Object { $_ -and ($_.Replace('\', '/') -eq $needle) }
+        # ORDINALIGNORECASE HERE FAILS CLOSED, and that is the reason -- not the Windows one. These
+        # paths come from `git diff --name-only`, and git's index is case-sensitive: `Foo.rs` and
+        # `foo.rs` can both exist. So the usual argument for ignoring case does not apply.
+        #
+        # What decides it is the DIRECTION of the mistake in this block, which throws when it finds
+        # a match. Over-matching refuses a run that might have been fine; under-matching certifies a
+        # touched file as untouched, and this check exists precisely to stop a failure in a file the
+        # diff touches being called unrelated. Ordinal would take the second kind of mistake.
+        $hit = $touched | Where-Object { $_ -and (Test-SamePath ($_.Replace('\', '/')) $needle) }
         if ($hit) {
             throw "$UnrelatedTestFile IS touched by this diff (found in the range or the working tree), so a failure in it is not unrelated. Refused."
         }
@@ -358,7 +434,7 @@ if ($UnrelatedTestFile -or $UnrelatedIssue -or $FailThenPassObserved) {
 
 # The class this replaced, so the ledger is self-describing: a census can see that the run was
 # green AND that a person refined it, without having to find the commit that says so.
-if ($existingClass -eq 'green') {
+if (Test-SameText $existingClass 'green') {
     $run | Add-Member -NotePropertyName runClassRefinedFrom -NotePropertyValue $existingClass -Force
 }
 $run | Add-Member -NotePropertyName runClass -NotePropertyValue $Class -Force
@@ -388,7 +464,8 @@ $written = New-Object System.Collections.Generic.List[string]
 # paths are wrapped" false. It is true now.)
 $targets = New-Object System.Collections.Generic.List[string]
 $durable = [System.IO.Path]::Combine([System.IO.Path]::Combine($slotDir, 'gate-runs'), $fileName)
-if ((Test-Path -LiteralPath $durable) -and ((Resolve-Path -LiteralPath $durable).Path -ne (Resolve-Path -LiteralPath $Manifest).Path)) {
+if ((Test-Path -LiteralPath $durable) -and
+    -not (Test-SamePath (Resolve-Path -LiteralPath $durable).Path (Resolve-Path -LiteralPath $Manifest).Path)) {
     $targets.Add($durable)
 }
 $targets.Add($Manifest)
@@ -419,7 +496,7 @@ try {
 
 # Read, never computed here. Three states, and the third is the point: absent means the run predates
 # the measurement, which is a different fact from "the instrument was fine".
-if ($run.PSObject.Properties.Name -contains 'instrumentSuspect') {
+if (Test-NameIsPresent -Object $run -Name 'instrumentSuspect') {
     if ($run.instrumentSuspect) {
         Write-Host "  NOTE: instrumentSuspect = TRUE (staleArtifactCount=$($run.staleArtifactCount), canaryPassed=$($run.canaryPassed))." -ForegroundColor Yellow
         Write-Host "  A '$Class' verdict can be true AT THE SAME TIME as a broken instrument -- that is why this is a field and not a class." -ForegroundColor Yellow

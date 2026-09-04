@@ -28,7 +28,7 @@
 # 45 = 45 runtime assertions: 43 direct Assert-True calls plus the one inside the two-item
 # consumer loop, which the naive grep counts once and which fires twice. Assert-Equal is not used here; every case asserts a boolean outcome or
 # a string equality expressed through Assert-True, so the naive grep and the runtime count agree.
-$ExpectedAssertionCount = 45
+$ExpectedAssertionCount = 59
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -352,6 +352,141 @@ try {
     [System.IO.File]::WriteAllText($legacyBare, (@{ headSha = 'e' * 40; runClass = 'real-red' } | ConvertTo-Json -Depth 8), $utf8NoBom2)
     $onLegacyBare = Invoke-Classify -Path $legacyBare -Class 'dead' -Because 'no status or overallPassed at all'
     Assert-True ((-not $onLegacyBare.Ok) -and ($onLegacyBare.Error -match 'by a person')) "a manifest with NEITHER field still reaches the human-judgement refusal: absent is tolerated, null is not"
+
+    Write-Host "`n-- both copies of one run are read by the same reader --"
+
+    # #753, found while writing the comparison cells. `Get-Content -Raw` decodes with the ANSI code
+    # page under Windows PowerShell 5.1; the gate writes UTF-8 without a BOM and this script reads
+    # the committable copy with `File.ReadAllText`. Two decoders over one record: every byte above
+    # 7F in the durable twin came back as two or three characters that were never in the file, so
+    # the twin check could report a disagreement between two byte-identical copies.
+    #
+    # Asserted over the source, and said plainly why: the values that reach the twin comparison are
+    # constrained to a closed ASCII vocabulary before it, so no fixture can drive a non-ASCII value
+    # THROUGH that comparison -- the defect is real and its only observable effect is on values the
+    # earlier guards reject. A cell that cannot reach it structurally is the honest one.
+    $classifySource = [System.IO.File]::ReadAllText($classify)
+    Assert-True ($classifySource -notmatch 'Get-Content -LiteralPath \$durableTwin') `
+        "the durable twin is not read with Get-Content, which decodes with the ANSI code page"
+    Assert-True ($classifySource -match '\$twin = \[System\.IO\.File\]::ReadAllText\(\$durableTwin\)') `
+        "it is read with the same reader as the committable copy, so one record has one decoding"
+    # Not vacuous: the pattern that must find nothing does find the old form when it is present.
+    Assert-True ('    $twin = Get-Content -LiteralPath $durableTwin -Raw | ConvertFrom-Json' -match 'Get-Content -LiteralPath \$durableTwin') `
+        "and the sweep recognises the old reader when one is put in front of it"
+
+    Write-Host "`n-- the comparisons that decide are ordinal, because -eq is not --"
+
+    # #753. PowerShell's `-eq`/`-ne`/`-in`/`-notin`/`-contains` are case-insensitive AND CULTURE
+    # aware, and a culture comparison gives some code points no weight at all. Measured here:
+    #     ('GREEN' + [char]0xFE00) -eq 'GREEN'                     -> True
+    #     ('green' + [char]0xFE00) -in @('green', 'UNCLASSIFIED')  -> True
+    # U+FE00 is a variation selector: category Mn, ORDINARY TEXT. Refusing the character would be a
+    # deny-list growing by one code point per review; what stops being approximate is the
+    # COMPARISON. The payload is invisible on purpose -- a visible character would redden these
+    # cells for a different reason and they would stop proving what they say.
+    #
+    # This file's own comment at the vocabulary check states the property the comparer breaks: "a
+    # value outside the set compares unequal to every member". It does not.
+    $weightless = [string][char]0xFE00
+    Assert-True ((('GREEN' + $weightless) -eq 'GREEN') -and
+        (-not [string]::Equals(('GREEN' + $weightless), 'GREEN', [System.StringComparison]::Ordinal))) `
+        "ARRANGEMENT: the culture-aware operator calls these two strings equal and the ordinal one does not"
+
+    # THE CLOSED VOCABULARY, refused at the read.
+    $sneakyStatus = New-Manifest -Properties @{ runClass = 'green'; status = 'GREEN' + $weightless }
+    $onSneakyStatus = Invoke-Classify -Path $sneakyStatus -Class 'green-by-luck' -Because 'the status carries a weightless code point'
+    Assert-True ((-not $onSneakyStatus.Ok) -and ($onSneakyStatus.Error -match 'vocabulary is closed')) `
+        "a status of GREEN plus a weightless code point is refused by the closed vocabulary (was: $($onSneakyStatus.Error))"
+
+    # THE ORIGIN DERIVATION, which rests on two disjoint closed vocabularies.
+    $sneakyClass = New-Manifest -Properties @{ runClass = 'green' + $weightless }
+    $onSneakyClass = Invoke-Classify -Path $sneakyClass -Class 'green-by-luck' -Because 'the class carries a weightless code point'
+    Assert-True ((-not $onSneakyClass.Ok) -and ($onSneakyClass.Error -match 'belongs to neither vocabulary')) `
+        "a runClass of green plus a weightless code point belongs to neither vocabulary (was: $($onSneakyClass.Error))"
+
+    # THE SECOND WITNESS: an origin outside its own vocabulary corroborates nothing.
+    $sneakyOrigin = New-Manifest -Properties @{ runClass = 'green'; runClassOrigin = 'automatic' + $weightless }
+    $onSneakyOrigin = Invoke-Classify -Path $sneakyOrigin -Class 'green-by-luck' -Because 'the origin carries a weightless code point'
+    Assert-True ((-not $onSneakyOrigin.Ok) -and ($onSneakyOrigin.Error -match "neither 'automatic' nor 'human'")) `
+        "a runClassOrigin of automatic plus a weightless code point is refused (was: $($onSneakyOrigin.Error))"
+
+    # THE DURABLE TWIN. Two copies of one run differing only by a weightless code point are not in
+    # agreement, and this cell could not exist before the decoder fix: reading the twin with the
+    # ANSI code page turned U+FE00 into three characters, so the disagreement fired for the wrong
+    # reason and the comparison underneath looked sound.
+    $twinName = (New-Guid).ToString('N').Substring(0, 12) + "-20260828T000000Z.json"
+    $twinDir = Join-Path $sandbox 'gate-runs'
+    [System.IO.Directory]::CreateDirectory($twinDir) | Out-Null
+    $utf8NoBomTwin = New-Object System.Text.UTF8Encoding($false)
+    $committablePath = Join-Path $sandbox $twinName
+    [System.IO.File]::WriteAllText($committablePath,
+        (@{ headSha = 'f' * 40; status = 'GREEN'; overallPassed = $true; runClass = 'green' } | ConvertTo-Json -Depth 8), $utf8NoBomTwin)
+    [System.IO.File]::WriteAllText((Join-Path $twinDir $twinName),
+        (@{ headSha = 'f' * 40; status = 'GREEN'; overallPassed = $true; runClass = 'green' + $weightless } | ConvertTo-Json -Depth 8), $utf8NoBomTwin)
+    $onTwin = Invoke-Classify -Path $committablePath -Class 'green-by-luck' -Because 'the twin differs by a weightless code point'
+    Assert-True ((-not $onTwin.Ok) -and ($onTwin.Error -match 'durable twin')) `
+        "a durable twin differing only by a weightless code point is a disagreement (was: $($onTwin.Error))"
+
+    # THE RULE ITSELF, in the file that owns it and that the GATE also dot-sources.
+    Assert-True ((Get-RunClassFrom -Status ('GREEN' + $weightless) -PassedEverything $true) -eq 'UNCLASSIFIED') `
+        "GREEN plus a weightless code point is not the GREEN that yields green"
+
+    # THE SWEEP, and it runs the COMMITTED tool rather than a copy of its logic. `ci/find-culture-
+    # comparisons.ps1` is dot-sourced here so the suite and a reviewer at a terminal read the same
+    # answer from the same producer -- a sweep the reviewer cannot re-run is an assertion with
+    # numbers in it.
+    #
+    # Asked of the AST, not of the source text: a regex flags the operator named inside a THROW
+    # MESSAGE -- ci/classify-run.ps1 has one -- and a sweep with a false positive is a sweep somebody
+    # deletes three months later. Comparisons against $null, $true and $false are exempt as identity
+    # and boolean tests.
+    #
+    # BINARY, and the assertion says so. The sweep inspects BinaryExpressionAst and nothing else, so
+    # it does not see the other idiomatic ways to dispatch on a closed vocabulary in PowerShell --
+    # a `switch` clause, a hashtable lookup by key, or `.StartsWith`/`.Equals` without an explicit
+    # StringComparison -- all of which are culture aware too. Neither of these two files uses any of
+    # them (measured), so the sweep is complete FOR THEM and the name is narrow enough to stay
+    # honest when the next file does. (Named by J in review of #759.)
+    . (Join-Path $scriptDir 'find-culture-comparisons.ps1')
+    foreach ($subject in @('classify-run.ps1', 'run-class.ps1')) {
+        $flagged = @(Find-CultureComparison -File (Join-Path $scriptDir $subject))
+        Assert-True ($flagged.Count -eq 0) `
+            ("no BINARY comparison over text in $subject is left to the culture comparer" +
+                $(if ($flagged.Count -gt 0) { ': ' + (($flagged | Select-Object -First 2 | ForEach-Object { $_.Text }) -join ' | ') } else { '' }))
+    }
+
+    # Not vacuous, and the canary goes through the SAME function on a real file: it must find the
+    # text comparison and leave the null check alone. A canary that exercised a reimplementation
+    # here would prove the reimplementation.
+    $canaryFile = Join-Path $sandbox 'canary.ps1'
+    [System.IO.File]::WriteAllText($canaryFile,
+        "if (`$a -eq 'green') { 1 }`nif (`$null -eq `$b) { 2 }`n", (New-Object System.Text.UTF8Encoding($false)))
+    $canaryFlagged = @(Find-CultureComparison -File $canaryFile)
+    Assert-True ($canaryFlagged.Count -eq 1) `
+        "and the sweep finds a text comparison when one is put in front of it, while leaving a null check alone"
+
+    Write-Host "`n-- the sweep reads a native command's exit code before anything can stop the pipeline --"
+
+    # `Select-Object -First 1` stops the pipeline once it has its item, which TERMINATES the native
+    # command feeding it. On PowerShell 7 that leaves `$LASTEXITCODE` at -1 with the VALUE correct,
+    # so `git rev-parse --show-toplevel | Select-Object -First 1` made the tool refuse with "not
+    # inside a git working tree" while holding that tree's path. Reported by a reviewer who could not
+    # run the documented invocation; NOT reproducible on this host, which is 5.1 and exits 0 both
+    # ways -- so the cell is structural and says why.
+    #
+    # The rule is about the SHAPE: capture, read $LASTEXITCODE, then reduce. Asserted over the file
+    # rather than by running it, because the behaviour that breaks it belongs to another edition.
+    $sweepSource = [System.IO.File]::ReadAllText((Join-Path $scriptDir 'find-culture-comparisons.ps1'))
+    $stoppingPipes = @(($sweepSource -split "`n") | Where-Object {
+            $_ -match '&\s+git' -and $_ -match '\|\s*(Select-Object|Where-Object)' -and $_ -notmatch '^\s*#'
+        })
+    Assert-True ($stoppingPipes.Count -eq 0) `
+        ("no native command in the sweep is piped before its exit code is read" +
+            $(if ($stoppingPipes.Count -gt 0) { ': ' + (($stoppingPipes | ForEach-Object { $_.Trim() }) -join ' | ') } else { '' }))
+    # Not vacuous: the pattern finds the old line when it is put in front of it.
+    $canaryLine = '    $root = (& git rev-parse --show-toplevel 2>$null | Select-Object -First 1)'
+    Assert-True (($canaryLine -match '&\s+git') -and ($canaryLine -match '\|\s*(Select-Object|Where-Object)')) `
+        'and the pattern recognises the shape it is looking for when one is put in front of it'
 
     Write-Host "`n-- the pre-taxonomy refusal still stands --"
 

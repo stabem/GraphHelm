@@ -3,14 +3,14 @@ use std::{collections::BTreeMap, path::Path};
 use graphhelm_events::PreparedAppend;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    EventKind, ExecutionFormDeclared, ExecutionId, ExecutionMode, ExecutionStarted, NewEvent,
-    OpaqueId, PersistedActor, ProjectId, RepositoryScope, Sensitivity, WireHash, WorkspaceId,
+    EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionStarted, NewEvent, OpaqueId,
+    PersistedActor, Sensitivity, WireHash,
 };
 
 use super::driver::{Release, drive_to_quiescence};
 use super::{
-    Failure, PROJECT, PreparedDrive, WORKSPACE, argument, execution_state, finish, idempotency_key,
-    load_fixtures, render, replay_failure, repository_failure,
+    Failure, PreparedDrive, argument, execution_state, finish, idempotency_key, load_fixtures,
+    render, replay_failure, repository_failure,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -143,12 +143,14 @@ pub(crate) fn execute_prepared(
     let mode = parse_mode(mode)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
-    let (stream_id, execution_scope_id) = resolve_execution_id(version, execution)?;
-    let scope = RepositoryScope::new(
-        WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
-        ProjectId::parse(PROJECT).expect("constant project id is valid"),
-        Some(execution_scope_id),
-    );
+    let stream_id = resolve_execution_id(version, execution)?;
+    // THE SAME FUNCTION EVERY OTHER VERB ADDRESSES THROUGH (#775). This built the scope inline --
+    // the same two constants and the same execution component, written a second time -- so the
+    // path that CREATES a stream and the paths that ADDRESS one agreed only by coincidence. #560
+    // was the same disagreement one surface over, and its fix added `addressable_scope` to be the
+    // single home for this rule; `start` was not moved onto it. One question about identity,
+    // answered in two places, is how the surfaces drift apart.
+    let scope = super::addressable_scope(stream_id.as_str())?;
 
     let history = store
         .read_replay_stream(&scope, stream_id.as_str())
@@ -280,22 +282,18 @@ fn parse_mode(mode: &str) -> Result<ExecutionMode, Failure> {
 fn resolve_execution_id(
     version: &GraphVersion,
     execution: Option<&str>,
-) -> Result<(OpaqueId, ExecutionId), Failure> {
+) -> Result<OpaqueId, Failure> {
     match execution {
         Some(value) => {
             let stream_id = OpaqueId::parse(value)
                 .map_err(|_| argument("--execution is not a valid identifier", "/execution"))?;
-            let scope_id = ExecutionId::parse(value)
-                .map_err(|_| argument("--execution is not a valid identifier", "/execution"))?;
-            Ok((stream_id, scope_id))
+            Ok(stream_id)
         }
         None => {
             let raw = &version.graph().metadata.execution_id;
             let stream_id =
                 OpaqueId::parse(raw).expect("validated graph execution id is wire-safe");
-            let scope_id =
-                ExecutionId::parse(raw).expect("validated graph execution id is wire-safe");
-            Ok((stream_id, scope_id))
+            Ok(stream_id)
         }
     }
 }

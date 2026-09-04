@@ -2151,3 +2151,74 @@ fn dispatch_completes_identically_regardless_of_mode() {
         );
     }
 }
+
+/// #775: the `execution` SURFACE must stay scope-fixed, not just `start`.
+///
+/// `start` is the only path that creates a stream today, and it takes the workspace and the
+/// project from constants -- so two streams cannot share an id under different scopes, and the
+/// readers that locate a stream by id alone cannot reach a second candidate. That is the whole of
+/// #775's reachability answer, and it rests on nothing but a function not being parameterised.
+///
+/// **The risk is per-SURFACE and an earlier version of this cell was per-VERB** (found by a peer
+/// reviewing this change). Naming `start` explicitly protects the verb that creates streams today
+/// and says nothing about a verb added tomorrow -- and a new verb is exactly the way this gets
+/// reopened, because whoever adds it will not remember a cell they never read. So the subcommands
+/// are ENUMERATED from the binary's own help rather than listed here.
+///
+/// The CONTROLS are two, because an enumerating cell has two ways to be vacuous: parse nothing and
+/// assert over an empty set, or parse a set that has silently shrunk. Both are checked.
+#[test]
+fn no_execution_verb_takes_scope_arguments() {
+    let listing = command()
+        .args(["execution", "--help"])
+        .output()
+        .expect("the binary runs");
+    let help = String::from_utf8_lossy(&listing.stdout);
+    let verbs: Vec<String> = help
+        .lines()
+        .skip_while(|line| !line.starts_with("Commands:"))
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|verb| *verb != "help")
+        .map(ToOwned::to_owned)
+        .collect();
+
+    // CONTROL 1: the parse found something. An empty list would satisfy every assertion below.
+    assert!(
+        verbs.len() >= 8,
+        "CONTROL: only {} verbs parsed out of `execution --help`; the format changed and this cell \
+         is now asserting over almost nothing: {verbs:?}",
+        verbs.len()
+    );
+    // CONTROL 2: it found the ones we know about. A parse that captured the wrong column would
+    // still be non-empty.
+    for known in ["start", "status", "pause", "cancel"] {
+        assert!(
+            verbs.iter().any(|verb| verb == known),
+            "CONTROL: `{known}` is missing from the parsed verbs, so the enumeration is reading \
+             something other than the command list: {verbs:?}"
+        );
+    }
+
+    for verb in &verbs {
+        for scope_argument in ["--workspace", "--project"] {
+            let refused = command()
+                .args(["execution", verb, scope_argument, "anything"])
+                .output()
+                .expect("the binary runs");
+            let complaint = String::from_utf8_lossy(&refused.stderr).to_lowercase();
+            // The SPECIFIC refusal. An earlier version asserted only a non-zero exit, and every
+            // invocation was already failing on a missing required argument -- so it stayed green
+            // under a sabotage that really did add `--workspace` to the verb.
+            assert!(
+                complaint.contains("unexpected argument") && complaint.contains(scope_argument),
+                "`execution {verb}` did not reject {scope_argument} as an unknown argument. A \
+                 stream can now be created or addressed under a caller-chosen scope, which makes \
+                 #775's same-id collision reachable through the product -- settle the readers \
+                 before this ships. It said: {}",
+                String::from_utf8_lossy(&refused.stderr)
+            );
+        }
+    }
+}

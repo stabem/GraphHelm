@@ -1,0 +1,2213 @@
+{
+    "status":  "GREEN",
+    "runClass":  "green",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "99109410faa382e7b7774f984b6321ac75bc57ae",
+    "pullRequest":  null,
+    "pullRequestReason":  "1 open pull request(s) use this branch name and none of them names 99109410faa382e7b7774f984b6321ac75bc57ae, so none of them is the pull request this run gated",
+    "pushed":  null,
+    "pushedReason":  "the tip of issue-810-select-the-evidence on origin is 8de1899a822d8de1f8e47f039653f3902e0bf817, not this commit, and a commit that is not a tip is not thereby absent from the server",
+    "upstreamSha":  "8de1899a822d8de1f8e47f039653f3902e0bf817",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "skipped",
+                     "complete":  false
+                 },
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "D:/gh810-targets",
+    "runStartUtc":  "2026-09-04T17:00:02.0037622Z",
+    "runEndUtc":  "2026-09-04T17:40:25.8361939Z",
+    "canaryPassed":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  8.088
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  11.81
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  103.709
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  382.6
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  243.107
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  27.783
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.731
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.956
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.877
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.613
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.615
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.032
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.7
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.468
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.474
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.642
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.203
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.468
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.38
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  13.471
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.538
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.011
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.162
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.251
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.557
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.395
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.238
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.341
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.11
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.998
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.705
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.41
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.312
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  23.745
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.079
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.47
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.138
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.004
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.379
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  28.957
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.309
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.09
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.926
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.495
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.218
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.567
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.529
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  67.591
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  173.802
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.065
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.593
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.07
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.123
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  259.997
+                   }
+               ],
+    "artifactBuildExit":  0,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "E581A84BEA3B7D99ADCB23CACE03896ADBA44A6C01A8A933EA2CCA9B73092F1F",
+                              "mtimeUtc":  "2026-09-04T17:00:50.3254598Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "9F3E4AC3EAC5BFE5756A1B549ADBB515A60ED9A4842D387A5DC51CD1A94ABD61",
+                              "mtimeUtc":  "2026-09-04T17:00:53.8377140Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "F3894D8400DB215C336B49EABD4FA5DC8371CC9E65A5689DEC26CE9B1570C8FD",
+                              "mtimeUtc":  "2026-09-04T17:00:54.3007010Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "64DC4960E8B5C2B0EEA59F958F361FD0ADCE0458D3E15C688CC7E92FE4AE4814",
+                              "mtimeUtc":  "2026-09-04T17:00:56.2452786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "E3DD0870AEC26A56A569EDE66E60C338B427D673A0825A75319E35631F0DB7BF",
+                              "mtimeUtc":  "2026-09-04T17:00:56.5516713Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "952265B6B1BCA7A9A9ABB70E687A4B80783F93F28B7604AA8D14551707CA92C6",
+                              "mtimeUtc":  "2026-09-04T17:00:56.2518312Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "9D4C279AAABDB82375A17B5260E588C1F2820E9CDBC0014C7F706857E1902565",
+                              "mtimeUtc":  "2026-09-04T17:01:02.0136439Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "390A9E5B337B49C062F07AF8802FCEE30D2A4029450ADDE067C85A01E240665C",
+                              "mtimeUtc":  "2026-09-04T17:01:04.0604109Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "148D4626E4B63E7051D29DD4BA42C5B8C4C419B2F1CB1568A1C753B53A731AB8",
+                              "mtimeUtc":  "2026-09-04T17:01:05.7149175Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "8E55112028AC8DD1DC992AD67F6DFA59CCD72DD7252F94A5521913C6F3C2CF70",
+                              "mtimeUtc":  "2026-09-04T17:01:05.4583981Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "AFA35A10DA80F152951E8BEED79DFB0CB2360167F7433D1C51A213EBF2C15EF6",
+                              "mtimeUtc":  "2026-09-04T17:01:05.5127802Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "D8188CB9F79D72786E9FD9A3DA7B3077C5C8C646E6D60BE86749647500FD7526",
+                              "mtimeUtc":  "2026-09-04T17:01:06.5807508Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "34E87F5FAEFDA96A5320FE21A531FA7B6F5022A8256FC310F51C894D790E60F1",
+                              "mtimeUtc":  "2026-09-04T17:01:14.9070855Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "787E8FE2EFE42AF405C729FCA0162D17AAF1DDCD6263CFD1B7088A1514ABFD6E",
+                              "mtimeUtc":  "2026-09-04T17:01:15.1071506Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "2491E0B5EB56F47D252C01F3636CB460AFA1D58FDD7361ACDD74CF7382A7D694",
+                              "mtimeUtc":  "2026-09-04T17:01:18.0414769Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "8AC1C95717FB046B417F868B64A0B20DF46FF22FC66F1E77BF584DE49D7C4713",
+                              "mtimeUtc":  "2026-09-04T17:01:42.4671791Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "BBF9493D44B4D37D7DEE4EF5F8C39427998759D658F72AEB1FCDC7AC15D379D2",
+                              "mtimeUtc":  "2026-09-04T17:01:41.8189482Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "54B53D3813B85CCEF7FD880A61D32152C09CE6CEF61F518CBCE0D812E2323716",
+                              "mtimeUtc":  "2026-09-04T17:01:42.4681846Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "3FA0ACA27D5D9B888DFC264015D9F0310618E4468D210D0A22C9FA48C25A164E",
+                              "mtimeUtc":  "2026-09-04T17:01:43.5849199Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "node_type_vocabularies_agree",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\node_type_vocabularies_agree-5f955cea1aeafc7b.exe",
+                              "sha256":  "241E6D39F5A8E18B719DA50CA8132D21BF34AB776F79B89F255544BC2E898157",
+                              "mtimeUtc":  "2026-09-04T17:01:45.0174929Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "5FE015E6F0B66BC7848FA762809684A0AEB2C087990E43D3B1BF8A7A6D67523B",
+                              "mtimeUtc":  "2026-09-04T17:01:46.7848332Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "501B53456FFEDAE9FE0BB1AF00F47D6D6BBD28F7D48C6289EF92FAD817AB8E39",
+                              "mtimeUtc":  "2026-09-04T17:01:46.7777862Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "003718B7D027582963F42D92730DEB00CC1D3F5377CAE293B69076B4CE606F86",
+                              "mtimeUtc":  "2026-09-04T17:01:51.8033937Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-2c09319e77d6c715.exe",
+                              "sha256":  "D91E03E490BDC6AA8E8C23AB53E72A28EE8BB940D5ACDB4F502A447D1FBA02A7",
+                              "mtimeUtc":  "2026-09-04T17:01:52.7619998Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "countersign_append_is_declared_only",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\countersign_append_is_declared_only-fe8f10eb3bf551f2.exe",
+                              "sha256":  "3C482B492EDEE207F36CA7B9DF0B43C47B40168A92ED4B49C85A853E7148C26E",
+                              "mtimeUtc":  "2026-09-04T17:01:53.0500653Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "dead_letter_is_declared_only",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\dead_letter_is_declared_only-76a4b315a835a5e0.exe",
+                              "sha256":  "3BFD1E6B341129B2C79F3DBB0A5235835BE61214462BFDD107E33FE6B61DB691",
+                              "mtimeUtc":  "2026-09-04T17:01:52.6879421Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "authored_strings_across_the_workspace",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\authored_strings_across_the_workspace-54f127c13b4393fb.exe",
+                              "sha256":  "B26ACEE632DD0C8E2DAC0BB927A5A12854EFD4CDAF6FBF4E8A41A807E9729A0A",
+                              "mtimeUtc":  "2026-09-04T17:01:52.9993460Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_protocols-8ab75a56c0d22bed.exe",
+                              "sha256":  "0E9E79F97E7586908C5D5BF8AC5DFF665E9D440B04C3339207F72E29FB67FB39",
+                              "mtimeUtc":  "2026-09-04T17:01:56.6177063Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\wire_roundtrip-8742b077772ce03f.exe",
+                              "sha256":  "8AA8FA11AB6C3F8F354716E71A792A03C0C2A728DD11337EEC2DF7739F5FD51E",
+                              "mtimeUtc":  "2026-09-04T17:01:56.6106989Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "EDE96E0562C98D51FC80BA8A33186210A62AD52F781EA0FCF6C73619FCD1F3A8",
+                              "mtimeUtc":  "2026-09-04T17:02:00.5748590Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\persistence_wire-6db9814264c30e6e.exe",
+                              "sha256":  "1E52772F109C42355EE1021053294E687C734CCF67078DAEC1CB3B9557E89EB4",
+                              "mtimeUtc":  "2026-09-04T17:02:01.0354118Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_schema-446c571838924ac8.exe",
+                              "sha256":  "D98642CF2BA9CE32CD64B3327583A0822B881756BD219B47D4ADB3BC6AF78373",
+                              "mtimeUtc":  "2026-09-04T17:02:28.8099819Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "8B1BA5448A864F086FCAE44AE11F279B9A896A2CE1D6B12015ED31436B5C3E14",
+                              "mtimeUtc":  "2026-09-04T17:02:30.2081819Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "593F314D3F66527E1ED1B2D891BD6B3FF1DCE42D8C7E0AC2E210ECC443224A86",
+                              "mtimeUtc":  "2026-09-04T17:02:31.6645630Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "D7BD7A3485A769E0C7AC0E65D20BF00C6D5AF16FA4F53D1114920432032E7474",
+                              "mtimeUtc":  "2026-09-04T17:02:30.4457693Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "mcp_capability_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\mcp_capability_contract-b701f4fb345d7382.exe",
+                              "sha256":  "F3789105B9223F2EB38EABC8C9F4D48882340D79472CC98C842710EB18A98CB6",
+                              "mtimeUtc":  "2026-09-04T17:02:34.5172541Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "576697502B24579ADA050C4C39A20945CF16A4BB4BCD09029A4656ADA474C539",
+                              "mtimeUtc":  "2026-09-04T17:02:35.2668174Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "EC8AFE29BD193730BDF96DB4AC17473371E30FAD19765C5F5F85E077823B2EB7",
+                              "mtimeUtc":  "2026-09-04T17:02:35.0527288Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\determinism-b4ef1ff5b98abd0b.exe",
+                              "sha256":  "C9C4E36B20A9FCC48CD2EF395E016BEB5EC8A624092687DA0A380D7B5A8B4E3C",
+                              "mtimeUtc":  "2026-09-04T17:02:36.3852236Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_schema_evolution-7a31b58337ac09d8.exe",
+                              "sha256":  "2CB217D452F95C06D82FEBF5503868C1E282BC7AFF122ABCDA0E41C359692D83",
+                              "mtimeUtc":  "2026-09-04T17:02:37.3673550Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "sources",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\sources-34d13b120430073c.exe",
+                              "sha256":  "3F4ACD7B5C808A3D42889209547CDA4A9C75315B4358CA43021C1B87EEF098A1",
+                              "mtimeUtc":  "2026-09-04T17:02:38.5987332Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "uninstall",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\uninstall-ee5868f99cb11131.exe",
+                              "sha256":  "3399C478A0ECC7A7AD1EFAB3A1FEE4970EE0D879FB5BD77ABA9971E504E578E3",
+                              "mtimeUtc":  "2026-09-04T17:02:40.0124707Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "pin_defence",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\pin_defence-6ead11b2846af5fd.exe",
+                              "sha256":  "20E70743772377575F0DF3FF44F605CEE267F6F8A03DB8C0B021F4F111C221DC",
+                              "mtimeUtc":  "2026-09-04T17:02:39.5851963Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "staging",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\staging-059fd7c3bdebfefa.exe",
+                              "sha256":  "C5745C30C2E830B804A245E7BA184AB44CDC824CEE1692CACEE93B2A3E1DB4ED",
+                              "mtimeUtc":  "2026-09-04T17:02:39.6596381Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\release_gate-afc6476bec06067f.exe",
+                              "sha256":  "8B552B16F8CEA8F0D0E83F5AB07CEA621F1A4F73706B420AE9519BF3D1516915",
+                              "mtimeUtc":  "2026-09-04T17:02:40.0124707Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\lint_rules-1ac0c1eca4c1ab0f.exe",
+                              "sha256":  "0201E9D96A4CEC88F61CFFAA68CD389B4A401B73BB77B44E2BE6A202EF4B9578",
+                              "mtimeUtc":  "2026-09-04T17:02:39.9551865Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "waivers",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\waivers-cbb39a2c850ac39d.exe",
+                              "sha256":  "B19D0A3ED8B7DF3085CE9F6858CCB66F1DA275DBAA6A6F8D2BBD3F58682030F4",
+                              "mtimeUtc":  "2026-09-04T17:03:06.6816948Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "resolve_once",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\resolve_once-fcea40ea492ac6a3.exe",
+                              "sha256":  "373087D598FD05DE48D95B466EE67C7D8FD8DE423F41D780C1D9FD346E80774E",
+                              "mtimeUtc":  "2026-09-04T17:03:10.9102729Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "precedence",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\precedence-9acd4764e95463cc.exe",
+                              "sha256":  "25424788F6796558F3DE953813D4ED7162D4F2CF021F542F5142AAEC1AD21EBE",
+                              "mtimeUtc":  "2026-09-04T17:03:10.6957342Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "install",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\install-9b2df37189a74b0b.exe",
+                              "sha256":  "BA8DCCCDA37480256A9F9677CEDC4A3D5A95ACE191407ED9FF73A40D5F590AB2",
+                              "mtimeUtc":  "2026-09-04T17:03:10.9452992Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "discovery",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\discovery-1efadc049bd94c59.exe",
+                              "sha256":  "C3152F6F43255DF1C5D291A5813397401C2DD624481E4B2741C0707CE49EC7F3",
+                              "mtimeUtc":  "2026-09-04T17:03:10.7022601Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\canonical_examples-ccc8943dc2022713.exe",
+                              "sha256":  "CF13D9DDB8206F9649CB51F8C398D98BA66CB1201C7F80B2E1887EF9E1D279C8",
+                              "mtimeUtc":  "2026-09-04T17:03:10.9447939Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "links",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\links-f3752a1522032326.exe",
+                              "sha256":  "48332D3475EFAAA3F388CE1B7EE71BD4FA614CAE11CBD3AE79699CA9FA56C6EF",
+                              "mtimeUtc":  "2026-09-04T17:03:11.0608334Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "union_provability",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\union_provability-8d512724d92cac32.exe",
+                              "sha256":  "0852C18EE0E33CAE7083A8165BDE9505503375227EFDC46DD8BDD325ABF76F3D",
+                              "mtimeUtc":  "2026-09-04T17:03:16.3792088Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "activation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\activation-c84433336266f7f3.exe",
+                              "sha256":  "5019D863C267834750EACA22C2ED004475BD7173C2C09E792C38A773506428D7",
+                              "mtimeUtc":  "2026-09-04T17:03:16.5739880Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\determinism-26fefe07d08fbd7d.exe",
+                              "sha256":  "CCE7E54F7546BCE1FCE925CDDE5BED750B119F5C66BF05E67908A8D11F44DAD1",
+                              "mtimeUtc":  "2026-09-04T17:03:17.5287290Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_policy-c8e4dc4c07225c77.exe",
+                              "sha256":  "0086F83631894C6A6AC9C15A78DE95608E2F7CAA9A2C08255CF7852E0002D24E",
+                              "mtimeUtc":  "2026-09-04T17:03:24.9757355Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "claim_binding",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\claim_binding-2ccd5d23309cf407.exe",
+                              "sha256":  "457704AFC515C60D9CE62A131390A5BF124C894994C1E6D8DA6BDEE7F5702CFC",
+                              "mtimeUtc":  "2026-09-04T17:03:24.9466124Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\offline_registry-ea42ba19b11ac336.exe",
+                              "sha256":  "D8C44C810C2C006784AE06AFA6A3E59FA2C2E44F50B257A424ECFB24CA33AE59",
+                              "mtimeUtc":  "2026-09-04T17:03:24.6969870Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\compatibility-7c7c1eac5aa68118.exe",
+                              "sha256":  "06A48FDA9468A66293EF15DD7EA34CA629EAB01A92DA4E572D920E2E3934438E",
+                              "mtimeUtc":  "2026-09-04T17:03:24.4852359Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "graphhelm_extension_host",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_extension_host-aa0dffd89be0ef5e.exe",
+                              "sha256":  "B05CC06C56DC8F31A73DAB1F51F9FEB2A31A6A4C533042442471F0C2E9E7AAF4",
+                              "mtimeUtc":  "2026-09-04T17:03:26.9018370Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\obligations-0dddb8a8246f33aa.exe",
+                              "sha256":  "0ED5FAA4C6A95DEC81F5210538B4D0AEA38E3904DC140CF715AEBC7DDBD0DC5D",
+                              "mtimeUtc":  "2026-09-04T17:03:28.9327120Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-2be709cd77865655.exe",
+                              "sha256":  "B12B3AFF7D61CE41618BD231A69D225DC5B9595E94C6A5A00DBD1223AE21AB3F",
+                              "mtimeUtc":  "2026-09-04T17:03:28.2976412Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\immutability-a5da5cd8d4d2dccf.exe",
+                              "sha256":  "DDD5BDE41141568582B09773F73E22298D6421AFB7EC2ECA3045F209FA417CA4",
+                              "mtimeUtc":  "2026-09-04T17:03:42.4653054Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/acceptance-map#0.1.0",
+                              "target":  "record_demonstration",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\record_demonstration-6307d9bd57d5344c.exe",
+                              "sha256":  "4E51F72EB458E961EB9259C23711AAD4CD624336671AE0F83AAB59D273FED876",
+                              "mtimeUtc":  "2026-09-04T17:03:45.3360132Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "async_repository_contracts",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\async_repository_contracts-cdce2517298f5fe4.exe",
+                              "sha256":  "6915D4F02BAB1E5751929F637E3B8FB756A94BE3424E76F2DA597F432A16ECEC",
+                              "mtimeUtc":  "2026-09-04T17:03:45.3857606Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\persistence_projection-b40819e83414e2c3.exe",
+                              "sha256":  "792C7DDFB76D4B7257C31154759AAD159E6D83B35A1056C8373FB0B67742369D",
+                              "mtimeUtc":  "2026-09-04T17:03:45.3792104Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance-map",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\acceptance_map-321f003458e6b752.exe",
+                              "sha256":  "5402555E7D496092029EDF3D4289F8AEA18A331B2077FDDC35D549423904888F",
+                              "mtimeUtc":  "2026-09-04T17:03:51.5522299Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "recoverable_layout",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\recoverable_layout-d56a562edc0d9572.exe",
+                              "sha256":  "58AE04FA78FE97F817C8116CB54B7EB7E59896EC5B2D739F150B079D043878A3",
+                              "mtimeUtc":  "2026-09-04T17:03:54.1884854Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "baseline_origin",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\baseline_origin-d4ed2ce391470b68.exe",
+                              "sha256":  "2416C45C4B58187ACDBB1B2B4F3C47BBCF11B0E8C5DA4AAC506C99CE90B00DF3",
+                              "mtimeUtc":  "2026-09-04T17:03:52.8375912Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\canonical_hash-2721c3c9f71b749f.exe",
+                              "sha256":  "006D0A66849374ABFC443308384E330AC106CF40018739888AC85A7C49C59788",
+                              "mtimeUtc":  "2026-09-04T17:03:51.0512657Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "dlq_kinds_are_declared",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\dlq_kinds_are_declared-3de3e2d9d51dc4d3.exe",
+                              "sha256":  "BCE5B06364A26921CF15BCCF650244C11C938950D70CFFD144F58479A5E7571A",
+                              "mtimeUtc":  "2026-09-04T17:03:55.9973392Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\catalog_integrity-df4cdb690dc800dc.exe",
+                              "sha256":  "DD725B1A52CCF93F3527FB773178B2FA28583C38B46DFB0EA2A18B5D6F3E6EFA",
+                              "mtimeUtc":  "2026-09-04T17:03:54.1864778Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\migration-4403d5b377d7338a.exe",
+                              "sha256":  "EDC77182C87091EE5A674D403DC2400FA0774A076AD149339C184D068B39216F",
+                              "mtimeUtc":  "2026-09-04T17:03:45.3938299Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "fake_runtime",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\fake_runtime-a2ef77a3e3ee68ac.exe",
+                              "sha256":  "A251B03A90FB7DA34327B8E0CD9ECE0A2ED65B2ABE4725E558BAF27CA28E01EE",
+                              "mtimeUtc":  "2026-09-04T17:04:00.9358141Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-1ccabf37030f08df.exe",
+                              "sha256":  "9CA8921F447534E0C5B5347B9B1F00E108D0A3CFC6EA96019B9F3C244C3ECA02",
+                              "mtimeUtc":  "2026-09-04T17:04:20.8195255Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "graphhelm_model_gateway",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_model_gateway-a343aba2fe39a51e.exe",
+                              "sha256":  "F91BB20BAFA016A5F396B7D353A2C80ABFB7F697B1333D4F1A60BFCF85E18F53",
+                              "mtimeUtc":  "2026-09-04T17:04:21.1399912Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\conformance-0da39bf4da031a1b.exe",
+                              "sha256":  "407251C2FB4B26B0205D69DB84E0C02E3F413B9FD4DA35AE71D5D71043D545A4",
+                              "mtimeUtc":  "2026-09-04T17:04:22.8606012Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_stage_vocabularies_agree",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\customs_stage_vocabularies_agree-badb5dfa7a6a3a54.exe",
+                              "sha256":  "485320C57D513A3B460F0FB2649F1928BBFC58ED8F21C852A02421E5CAA3325D",
+                              "mtimeUtc":  "2026-09-04T17:04:21.7670158Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "shared_lock_blocks_writers",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\shared_lock_blocks_writers-ebf5a7f12408b8f4.exe",
+                              "sha256":  "BB4FDFB83D915B53F835D9DD27415BA5C2EF48A0FF6A280ABB7682B3E18EB3B4",
+                              "mtimeUtc":  "2026-09-04T17:04:22.8666026Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "deterministic_simulation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\deterministic_simulation-99e24efdcf0830b8.exe",
+                              "sha256":  "693F8DA08614E88D516A0E753BB1BE414020D7E7AC0F6171BFCF8DF7C6A94EA0",
+                              "mtimeUtc":  "2026-09-04T17:04:36.0198767Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "inflight_governance",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\inflight_governance-1f730f32bb17e655.exe",
+                              "sha256":  "C5DF6262EA83EA003A3F4B47F37D2C5C594BA3B5E101B437E3A28C05E8883BC9",
+                              "mtimeUtc":  "2026-09-04T17:04:55.7902108Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "transition_properties",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\transition_properties-629d673df7741e98.exe",
+                              "sha256":  "AC8FCA393969EEA4F1868B1D04DFB3168CBAE624AA320D34AD6851D1D878061F",
+                              "mtimeUtc":  "2026-09-04T17:04:55.8945315Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-664e14f765c25973.exe",
+                              "sha256":  "20C24A3C5D70BC0F4DAD1686DCADD94DC9A7206F60328F9DCED6D5DD86487638",
+                              "mtimeUtc":  "2026-09-04T17:04:57.7614000Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "runtime_adapters",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\runtime_adapters-0474f886cb92197f.exe",
+                              "sha256":  "0E9C22E8C3236772CE4265BB3B91941471EC348500CE6DA857D37FF245DDBE4C",
+                              "mtimeUtc":  "2026-09-04T17:04:58.5857307Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "apply_overflow",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\apply_overflow-1c6105c3ef74988d.exe",
+                              "sha256":  "A00A39190BEF723DBAAF40020D4B36D636ADC17C408990D187B15FC54D12C9E8",
+                              "mtimeUtc":  "2026-09-04T17:04:59.3692708Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-90796774f267a234.exe",
+                              "sha256":  "60EF7C04A8B6728026F0B3A3355D0AB2DE9214DE60D135BF59D400CE2266B519",
+                              "mtimeUtc":  "2026-09-04T17:05:01.9718925Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "sealed_provider",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\sealed_provider-c70b1891a5c142ab.exe",
+                              "sha256":  "F3960531CBFAD179B8BC2C351321DA75E426F3C8206135B2207B8CC88E9CBC49",
+                              "mtimeUtc":  "2026-09-04T17:05:04.1476408Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/acceptance-map#0.1.0",
+                              "target":  "committed_stores",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\committed_stores-a92a7ae4f5260e87.exe",
+                              "sha256":  "BE2ACB81A936FA88D219C91649F1EF7472CE95E702B0CA3F35E6F706EFDCB4EC",
+                              "mtimeUtc":  "2026-09-04T17:05:04.5859120Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_concurrency",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\read_concurrency-9b10a993c1c5b668.exe",
+                              "sha256":  "69446EBCDAA13080EC116294A8CA9370943ABED280AF6792051CF6D513969B2D",
+                              "mtimeUtc":  "2026-09-04T17:05:25.1532778Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "byok_adapters",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\byok_adapters-1f281ba02c4805ed.exe",
+                              "sha256":  "F01A787E812AC843FB946829AB8AAAF1F6E56A59122BB2BF9B8485C86189751C",
+                              "mtimeUtc":  "2026-09-04T17:05:48.5612198Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_graph-ffeaf7778401df45.exe",
+                              "sha256":  "0E661C71B6B5DE8AC5FC5DB512B6D6E8BEAE0D85686CC59D1F42B94FA398C4EB",
+                              "mtimeUtc":  "2026-09-04T17:05:50.0069148Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "projection_rebuild",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\projection_rebuild-f084cdc5cf2ff2ec.exe",
+                              "sha256":  "AF1F36BC057B451AD1CD421448998E82A9BCEFE035F14FFDEB800AC33D3E8B7E",
+                              "mtimeUtc":  "2026-09-04T17:05:48.9307821Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance_map",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\acceptance_map-243ed95c375b4d83.exe",
+                              "sha256":  "CB6F9249B3B635DAD1DB9B518137C91C504E2DCC3EE38DB1178251F317E402D5",
+                              "mtimeUtc":  "2026-09-04T17:05:51.1960055Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "scheduling_properties",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\scheduling_properties-cbc5e0edb658ccdc.exe",
+                              "sha256":  "FFF4F7BE5A8A3BF72F61C85DAB085113D81CA2213B5CD7954EFEA56BC0186973",
+                              "mtimeUtc":  "2026-09-04T17:05:51.1985155Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "memory",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\memory-07e4c3f0c6ae6a13.exe",
+                              "sha256":  "C04A4D852D4869CED2D553E7E760AAF5FDF85DD6E679D4C82172CC269DCD26C1",
+                              "mtimeUtc":  "2026-09-04T17:05:52.7527742Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "memory",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\memory-81f73a9b3fde4f89.exe",
+                              "sha256":  "F1EBDDE46D2B4CF5A4900EE70AD0F0837F5936F52186BF77E1855CC405C673B1",
+                              "mtimeUtc":  "2026-09-04T17:06:04.3461211Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "broker",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\broker-9f6fe0b849cda787.exe",
+                              "sha256":  "B866827A0A2B53F1436655C11A5BD16FFD18CD48D3BF6AB1ABE2E237B231CA7B",
+                              "mtimeUtc":  "2026-09-04T17:06:05.7638444Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "execution_projection",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\execution_projection-6304d0816eea1539.exe",
+                              "sha256":  "23FC36B5C1701EA2592C39A384D0FB194CA3E86E20271DF45CF7C942D8BBD3C2",
+                              "mtimeUtc":  "2026-09-04T17:06:05.7790934Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "fake-index-provider",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\fake_index_provider-969265811b76c0d7.exe",
+                              "sha256":  "38F3B2CEDDA12093A6491250DFBB8A26E18DCBA21B79E3E3B6CF1079033231F0",
+                              "mtimeUtc":  "2026-09-04T17:06:11.3289449Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "fake_mcp_server",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\fake_mcp_server-d3a7c93c9a0e436c.exe",
+                              "sha256":  "3F2AD649C5A3A70A810F1F9AF96D456CA8AAFB7D0FF0D66BA9F341102BC584C3",
+                              "mtimeUtc":  "2026-09-04T17:06:14.6273975Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\authored_string_invariants-166056ee454f9353.exe",
+                              "sha256":  "F99734C51D25784A346B56E8A0B9AA355F41F592516D783D51CEFBC22DB63B24",
+                              "mtimeUtc":  "2026-09-04T17:06:11.1529519Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "append_only",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\append_only-d3b04e4de346911f.exe",
+                              "sha256":  "CCB85B0A3D212D3ECFA746E5EC1172BB0BC905AC1075D4CDC80CABFBCE216607",
+                              "mtimeUtc":  "2026-09-04T17:06:18.2381656Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "sweep_verb",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\sweep_verb-832785868e6262de.exe",
+                              "sha256":  "C35C51C8E831E0D8D7A2EA2F2DB3F524A51A1138AE118F7EF800F2B5A257AC45",
+                              "mtimeUtc":  "2026-09-04T17:06:18.6872401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "local_atomicity",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\local_atomicity-e89d0a3f6e53c87d.exe",
+                              "sha256":  "4FB1BDAB4B661A1FE1E8ECD3AAE26DAE7685F4AB60202BC3269B6EB89D3442AC",
+                              "mtimeUtc":  "2026-09-04T17:06:38.3413288Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/acceptance-map#0.1.0",
+                              "target":  "grounded",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\grounded-7c2a0af6de776b03.exe",
+                              "sha256":  "7860DD48B8A83237A0F9F03448940B80351E29041A66D5EEE617B473C9642592",
+                              "mtimeUtc":  "2026-09-04T17:06:40.2108394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-3d50a7ec65d3b728.exe",
+                              "sha256":  "926A07EE3702746B8EE208A1DBD0CBB1866CC0ECFD6579E48845BD03762FB4DA",
+                              "mtimeUtc":  "2026-09-04T17:06:56.5755445Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "graphhelm_simulation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_simulation-0bf61f7ec30fc42a.exe",
+                              "sha256":  "B256EEF9CF32BE0E81EC259E5940A7B2B8154501BA56FAA0850A199F24819EAA",
+                              "mtimeUtc":  "2026-09-04T17:06:58.9535398Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\repository_conformance-0c3020abfa5d2a90.exe",
+                              "sha256":  "3E7ADE3FED8EAE2E59524CF3F1402909B0846144A7AE2D187C70C4713813E607",
+                              "mtimeUtc":  "2026-09-04T17:07:00.1383451Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "attention",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\attention-a51521956919f1d6.exe",
+                              "sha256":  "70CA59485DA305198A92FCAA8D1BDE4A796AEEB9B6B62D670ED87E5C6E495901",
+                              "mtimeUtc":  "2026-09-04T17:07:03.9172039Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "retention",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\retention-58fab46cc1cfa7bc.exe",
+                              "sha256":  "51C904B2469FFFF4EDA1718CF14F67888071B1307F8E50FA391EE12834AC333D",
+                              "mtimeUtc":  "2026-09-04T17:07:16.0701080Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "graphhelm_governor",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_governor-c62b833bbf5e7def.exe",
+                              "sha256":  "6369CBC9321738BB109507764F1AF78BE524CD50E9883E7ACF8762F2066D505F",
+                              "mtimeUtc":  "2026-09-04T17:07:16.3142809Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "draft_application",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\draft_application-ab87e56c93c286fd.exe",
+                              "sha256":  "2F44161CE136A77065A90CDB7E5744A56DE019554BD5407116E3D7627D8BCECB",
+                              "mtimeUtc":  "2026-09-04T17:07:17.7685296Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "zero_bar",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\zero_bar-4f39a9f006d03ec0.exe",
+                              "sha256":  "E01094F786528186558A374EC754E60178683FC3C99249F19DE77BE9E86A3446",
+                              "mtimeUtc":  "2026-09-04T17:07:19.0881613Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "arm_symmetry",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\arm_symmetry-62360d814335dc34.exe",
+                              "sha256":  "E8C5D57CF42E8A4C53B9EA354473744D3621CAF999475268DB9DD2A69000659B",
+                              "mtimeUtc":  "2026-09-04T17:07:20.0208033Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "run_directory",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\run_directory-f32865bb5554c10e.exe",
+                              "sha256":  "E4CD85297A5771B59412693909D87E9A23C26F386406E8C1DBCE124DDBA87CD1",
+                              "mtimeUtc":  "2026-09-04T17:07:19.0911753Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "contained_session",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\contained_session-cadb55f4f8ecfb84.exe",
+                              "sha256":  "7A64F1B1E259636C8D8C59D8ED5D6819D967305B4AEE9BCC21E1B0AC3C06083D",
+                              "mtimeUtc":  "2026-09-04T17:07:20.9447242Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "oracle_isolation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\oracle_isolation-0a179792d404fcaf.exe",
+                              "sha256":  "7F9E33802001D2FC141F05C505C0E46035B4C94DC36D6D8C78B70EE6BF7BFC5A",
+                              "mtimeUtc":  "2026-09-04T17:07:22.5684064Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired_contexts",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\paired_contexts-3fbf2c1cd366357a.exe",
+                              "sha256":  "5ADFCE6AD60736196D82D0A7903A5EA53F723CFB3554B82E619A60F364E495C3",
+                              "mtimeUtc":  "2026-09-04T17:07:24.1754592Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "materialization",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\materialization-8d94fcaba91ba046.exe",
+                              "sha256":  "90EAD1552EF0A86D141E809D650B2A1AAB33E191D236BB8260FD143A39B615D3",
+                              "mtimeUtc":  "2026-09-04T17:07:22.5797402Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "declared_gap_delta_application",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\declared_gap_delta_application-518eea92248ad1b5.exe",
+                              "sha256":  "CFB751D641DD1AE67AB7B20DB3DBAB29499CDF302DED774338A49B2310337555",
+                              "mtimeUtc":  "2026-09-04T17:07:32.6630116Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "replay",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\replay-8fb0270f8cf6d943.exe",
+                              "sha256":  "AC5DE4AEBFD4B227DCBB834AD15C52ED38720B703BB4D5C4583994E59934FA0E",
+                              "mtimeUtc":  "2026-09-04T17:07:48.6368380Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "artifact_from_rows",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\artifact_from_rows-34517b4e0523221c.exe",
+                              "sha256":  "24318E49D459C8338C90D81D9CADE603029F39961399590D439470A2FCC293F3",
+                              "mtimeUtc":  "2026-09-04T17:07:53.3943882Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generator_arming_site",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\generator_arming_site-a59ae77fd530f265.exe",
+                              "sha256":  "7D8F275E0C40CC9AC20B74EC8BF6BE2BD8D730351A2C933E67AFE1324744361A",
+                              "mtimeUtc":  "2026-09-04T17:07:53.3943882Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_reader",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\workspace_source_reader-5a2af3b7be05c379.exe",
+                              "sha256":  "CB0A8B99D02C9621B2006BFDAD262C371FF0040FFF175A81BC173C1CC5CF79E0",
+                              "mtimeUtc":  "2026-09-04T17:07:53.9531070Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_channel",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\workspace_source_channel-02cbefa24788b521.exe",
+                              "sha256":  "FD31C9AA6C564ECC40CD46CB5725E7D2653DAC558CF4063BF846A57D05E2FE02",
+                              "mtimeUtc":  "2026-09-04T17:07:56.6399517Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "graphhelm_runtime",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_runtime-18a57336538146cd.exe",
+                              "sha256":  "2AE556134DCFD99C09C4A8023A3B3F22412449F7C0D37A2D6B406471511A0717",
+                              "mtimeUtc":  "2026-09-04T17:07:56.6419596Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_cancellation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\workspace_cancellation-2a14c9ee451c7096.exe",
+                              "sha256":  "3263C0B4E586194A7251966A38CC63CDC01D46B803F98631D4CBE03D8777DA6D",
+                              "mtimeUtc":  "2026-09-04T17:07:57.1962779Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-843066d2709875c1.exe",
+                              "sha256":  "71DB8E129934EBC795B0353DEDF29AEA07F07FF075DF2118253E9D7F347AC855",
+                              "mtimeUtc":  "2026-09-04T17:08:04.0932774Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "decoder",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\decoder-cd2a64e7b426267c.exe",
+                              "sha256":  "1D85050A0B05EC03B8F1C181BF19872CB668335A453D0F22678C7F080793A900",
+                              "mtimeUtc":  "2026-09-04T17:08:24.2060118Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "graphhelm_execution",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe",
+                              "sha256":  "EE1415F22B3EC09449902084880B271A591184C588890D43E4115CDE6BC83425",
+                              "mtimeUtc":  "2026-09-04T17:08:23.2995622Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "mcp_client_population",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\mcp_client_population-06f6775903d79f4b.exe",
+                              "sha256":  "5350D330CBC6F49D63DF973971995480D10AF2DB1FC42585E40F889DEA77331D",
+                              "mtimeUtc":  "2026-09-04T17:08:33.4756524Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "attention_tag_domain",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\attention_tag_domain-3180db9cef343c30.exe",
+                              "sha256":  "05C15B0C77905A857512D8922B773F6837C7A63FA165A019BF036A55D584EEF9",
+                              "mtimeUtc":  "2026-09-04T17:08:38.0630618Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "failure_causes",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\failure_causes-1a7a4b97b394efac.exe",
+                              "sha256":  "F023C528119F3E5DF64087A8676972BD83D37961843D0A63E1CA6AE1BC04CA76",
+                              "mtimeUtc":  "2026-09-04T17:08:46.1734066Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "safe_publication",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\safe_publication-e3ba45ef37d7d8b6.exe",
+                              "sha256":  "ACBDF23BDEFD79C2E16A3652D501B7B753D5B9D9FDC09E2E67F4215E6D27DE6A",
+                              "mtimeUtc":  "2026-09-04T17:08:45.7080518Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "graphhelm_sealed_key_provider",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_sealed_key_provider-de71c3c2c569e26b.exe",
+                              "sha256":  "3F14FA0429A4159D43FE4FA4DED6F35EC16FBB11AF834802D0A241E3D6B916C4",
+                              "mtimeUtc":  "2026-09-04T17:08:45.8754547Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-bc0e67e272615c51.exe",
+                              "sha256":  "640C76FE5B53B7BC08C79DE04F08285D11CC8F5D3BF3250BC0B33C830DED1FC2",
+                              "mtimeUtc":  "2026-09-04T17:08:48.4601589Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "surface_completeness",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\surface_completeness-ba8e60b0b94324f6.exe",
+                              "sha256":  "A5C8F9B21F6686A965CD0FF3C1DD5FD07F69A90583A3BB19D55B78891FDD2DD8",
+                              "mtimeUtc":  "2026-09-04T17:08:50.3794010Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_atomicity",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\resume_atomicity-ddf05fa3a1bec12a.exe",
+                              "sha256":  "26D3C5A1D969EE4066CE62FE605F9E955CDD06CD09D88FC9448F4634A6A3F3B7",
+                              "mtimeUtc":  "2026-09-04T17:08:51.6223992Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\event_store_cli-1af1ba34bc1104df.exe",
+                              "sha256":  "7F322D15A77CF715B8FA98804A24948498F21644978E119D2539CAD0BA41DFA2",
+                              "mtimeUtc":  "2026-09-04T17:08:51.6314229Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "sweep_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\sweep_cli-df9fbe7b1483fd8a.exe",
+                              "sha256":  "0D0D70DB789810BE24EEE3B7E755C5D9F3833BC3ECB741B18AC16E9521E265A7",
+                              "mtimeUtc":  "2026-09-04T17:09:17.4159069Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_promotion_policy",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_promotion_policy-93936c36e2567223.exe",
+                              "sha256":  "41EFC0A2553F1565C9D9B050F160757CF57630C2DF30ECAE92C566ECB6B6D331",
+                              "mtimeUtc":  "2026-09-04T17:09:18.6638435Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_package_inventory",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_package_inventory-0e125ccb68aa9faf.exe",
+                              "sha256":  "F1255C92D2A759CEA9A2B6286A88ADE895D7016E84E0B67A08CC47F52D24E321",
+                              "mtimeUtc":  "2026-09-04T17:09:23.3475659Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_lifecycle",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\extension_lifecycle-1e1e42bbc035e1b3.exe",
+                              "sha256":  "6A2B8A4E04DD28288E29C8968974CEBB94DD77AB2966555430C53F4D8968CDEA",
+                              "mtimeUtc":  "2026-09-04T17:09:24.4480441Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\source_invariants-3a0f7480874a6a5b.exe",
+                              "sha256":  "E512BAB5B655F6505445F5AE4D1827E949608DD8FBD74AFA0907B6467F56A11F",
+                              "mtimeUtc":  "2026-09-04T17:09:40.2641394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_capsule_authority",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_capsule_authority-ddd33a73de231504.exe",
+                              "sha256":  "84841C102C32A2EF5BB2F155C90C4C804FBC355D17E0071F2CCA9B0C35B6493C",
+                              "mtimeUtc":  "2026-09-04T17:09:38.7230871Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_observer_trust",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_observer_trust-7992aa0a7e192252.exe",
+                              "sha256":  "F2878C02247309067ACF4C65957E36B1F64D4875C7EEEB73610B522D72DE2B9E",
+                              "mtimeUtc":  "2026-09-04T17:09:38.7230871Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_concurrency",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_concurrency-c3fb95c423ddfc52.exe",
+                              "sha256":  "A95570E9CB0AF88A1867EA6872691A2D56F3D2794B93027B987F2D6AD14964E7",
+                              "mtimeUtc":  "2026-09-04T17:09:41.9224945Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "graphhelm_postgres_event_store",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_postgres_event_store-c057ecefb124fe5f.exe",
+                              "sha256":  "C7BFE27B5A6216F4075676655E9824EC238AEC91E8CF28736492BEBCA7D0BA89",
+                              "mtimeUtc":  "2026-09-04T17:09:42.5775954Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_url",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\mcp_url-18fc87bee2ccd682.exe",
+                              "sha256":  "B3742B5AE031F734AFA81A2BCFCAE86EB20B75A4EF7C9B11CF2F764EE2867DA7",
+                              "mtimeUtc":  "2026-09-04T17:09:44.5605730Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_surface_parity",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_surface_parity-b0d6edf13795e094.exe",
+                              "sha256":  "F58A6B496EA7C6D4A9EFFCD755B45C4A744601707379CE60E3B0A6F33C9BC69A",
+                              "mtimeUtc":  "2026-09-04T17:09:45.3781347Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "amend_budget",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\amend_budget-bdd983fe5702f68a.exe",
+                              "sha256":  "BBEE99DA97FF4C0E449E92A3984D644615B980EAAEA7920033F986F0DCA4B90D",
+                              "mtimeUtc":  "2026-09-04T17:09:50.1710967Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "schema_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\schema_cli-d8462fcfb50acfb1.exe",
+                              "sha256":  "38ADA207056AB6955C91D5D5E2DA24B2C50A12ED57A081D33200A83A0859BCC0",
+                              "mtimeUtc":  "2026-09-04T17:09:50.1695928Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "execution_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\execution_cli-081794c780331fc3.exe",
+                              "sha256":  "27D375599FD6DA2FE36C1F9ED283B444D0A3FF2CF923AA99012ED1A772B80B03",
+                              "mtimeUtc":  "2026-09-04T17:09:48.8536075Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gateway_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\gateway_cli-1282f164bb418d42.exe",
+                              "sha256":  "B8D61AFB34E0ACA13D84C3410A735060FA65FB9849B3EA9D34DAA96B0E99E06E",
+                              "mtimeUtc":  "2026-09-04T17:10:14.1224146Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "isolation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\isolation-094673799ea954d6.exe",
+                              "sha256":  "ECB278ABD5AC1282680CC9DC6A423784E71FCBCFBE5F9E9BA5D394EE756D87A7",
+                              "mtimeUtc":  "2026-09-04T17:09:50.1725963Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\extension_cli-916d5efd3e43eff9.exe",
+                              "sha256":  "5AB14A7430483D23D7252345A2BEFDEE2173A72EF34824B6550D4839914EBE70",
+                              "mtimeUtc":  "2026-09-04T17:10:18.3712686Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_benchmark",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_benchmark-4ff3c971974db79e.exe",
+                              "sha256":  "3FD9144C4F5E5EE508C19B4B9D8C0A4B21D024F4A39E1F366CACECD4F6A00370",
+                              "mtimeUtc":  "2026-09-04T17:10:30.0786070Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "projection",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\projection-7f30d49b0e7a8fb5.exe",
+                              "sha256":  "0DF75D26FE3292AEFAFBB1873A3119F3577EA8F7782F1C79900D2CCFE6CA18FC",
+                              "mtimeUtc":  "2026-09-04T17:10:30.8353845Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_graph_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_graph_contract-e641547a3eb9a005.exe",
+                              "sha256":  "372EAA12712A54B4D89F8E54F64B2743871524EFF36B41A538C3DFAA6CE6F36C",
+                              "mtimeUtc":  "2026-09-04T17:10:33.5730603Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_stdio",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\mcp_stdio-d408babdd7f86d06.exe",
+                              "sha256":  "A8E6B368382AFE399993B5804309729A4DF28C4DC34CE5A7C4D8BACCEF559C98",
+                              "mtimeUtc":  "2026-09-04T17:10:32.8736359Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_local_backup",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\event_store_local_backup-5f7e3f3aa2ed2dc2.exe",
+                              "sha256":  "CC452E5446EEAB1B4B03F5EA4A582C47E874094315C7B143F025F42BFC119188",
+                              "mtimeUtc":  "2026-09-04T17:10:33.8188977Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "cli_smoke",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\cli_smoke-726831a1c5e45405.exe",
+                              "sha256":  "8B3F9F6B16296A5308B810A7847CCA398CA6C9702D8DA22396E31F6E9D6BFD7F",
+                              "mtimeUtc":  "2026-09-04T17:10:33.8214058Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "tool_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\tool_cli-8b07e9438d7aab69.exe",
+                              "sha256":  "84B26B46EAC4EA1E42E441B781F8E1BA1C76B7D15E5C9196C1FB54005B0B3D25",
+                              "mtimeUtc":  "2026-09-04T17:10:49.6265222Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "shipped_package_coverage",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\shipped_package_coverage-adeedde494d0b81d.exe",
+                              "sha256":  "E175089C2945DF43580A556BFEF57C72B2EAD3339F32C28C6EED3A7D357E386D",
+                              "mtimeUtc":  "2026-09-04T17:10:50.9578583Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "api_http",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\api_http-555cf297c3114479.exe",
+                              "sha256":  "A90E16CB72185092C6DBAA412B235E102B696178B4B6B7F8213E2043957EBFD0",
+                              "mtimeUtc":  "2026-09-04T17:10:50.9448063Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_contract_schemas",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_contract_schemas-febd801bb48f4528.exe",
+                              "sha256":  "C819F13F93FFB6E3A35C544D376E04587FB48EF7116EC2EE5CFCD4D1762336EC",
+                              "mtimeUtc":  "2026-09-04T17:11:00.7686494Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_journey",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_journey-61fa2a3755e02732.exe",
+                              "sha256":  "194D0AB8C2A61B7549FA12F36AF0B6D369EBFB744DF22340BECF1E23A21965A2",
+                              "mtimeUtc":  "2026-09-04T17:11:02.6575830Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_project_default",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\resume_project_default-3c3cca3d743319f3.exe",
+                              "sha256":  "CE97AE002AD7D4C62B11CE68C334395489946A450B4FA3EC99DFB9B2A70D4263",
+                              "mtimeUtc":  "2026-09-04T17:11:03.2750076Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_plugin",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_plugin-5650f1c204c73c56.exe",
+                              "sha256":  "611AB458EACF130775D909D6F0057B38F3A7E61D6C1E4FB216AD5D4098A1BF35",
+                              "mtimeUtc":  "2026-09-04T17:11:03.2760142Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_citation_fixtures",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\context_citation_fixtures-9f3baa4154d4a09c.exe",
+                              "sha256":  "A1998DD3A3B32C49DD94CC02F04F22A6BD31F321CE0E9086BA7613FE39920991",
+                              "mtimeUtc":  "2026-09-04T17:11:05.1372065Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "driver_contract",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\driver_contract-13b5f18442448912.exe",
+                              "sha256":  "05AFF6F27FE4E126FD7655C69401316D868AB97DEE15B1ED051902F62ACB57C9",
+                              "mtimeUtc":  "2026-09-04T17:11:05.4509397Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "graphhelm_events",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe",
+                              "sha256":  "144120213F687DCE9D10EEB2DE6EC477AF8248B4D6A04B83F86730126A37C53C",
+                              "mtimeUtc":  "2026-09-04T17:11:04.8709677Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\migration-e6cf28a560f444c5.exe",
+                              "sha256":  "7CC76B03788299471E7C088C61157FB3641C12EE0C472E0BB78CB49F87374C24",
+                              "mtimeUtc":  "2026-09-04T17:11:13.8490596Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\fake_tool-4b9956ceda5ce728.exe",
+                              "sha256":  "850C3A4FDCB65D3837AD21A6F82FD164F27542D9C4165FF87A154FDD30CF7617",
+                              "mtimeUtc":  "2026-09-04T17:11:33.0833889Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm-development-benchmark",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_development_benchmark-c75cdadb61dc01ee.exe",
+                              "sha256":  "FE154D58B3BA795C1532EA06006233C10750BA636A4A16B7ABD68B5569E5BA86",
+                              "mtimeUtc":  "2026-09-04T17:11:33.7533296Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "graphhelm_codebase_memory_mcp",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_codebase_memory_mcp-c816b32b8753c4b3.exe",
+                              "sha256":  "AA5ED8E9E062E5C979D833548F342AEED0FE62A3D6767214058F84195DF0F2FC",
+                              "mtimeUtc":  "2026-09-04T17:11:33.7533296Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_plugin",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_plugin-1ce0d54d93b4c908.exe",
+                              "sha256":  "451470FF944A28CD8D45D214CB0180E66DE232520007FA3AEAAA3FE443703B08",
+                              "mtimeUtc":  "2026-09-04T17:11:33.8964224Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_capability",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\mcp_capability-da1294f8b9dba749.exe",
+                              "sha256":  "7618A2A75776AB41A7D8A14EB1BCFA1AD147A5B586953026EF080424D837F5FC",
+                              "mtimeUtc":  "2026-09-04T17:11:33.7558523Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_redaction",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_redaction-7c437bd97549f073.exe",
+                              "sha256":  "3838DD3A87588A914F4DC0E936A46F5144CEEE0F9520F7D1AA72B4660E71ECDB",
+                              "mtimeUtc":  "2026-09-04T17:11:36.6827667Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "retention",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\retention-581ea0642a79126d.exe",
+                              "sha256":  "007DADA7A1993BDFC7F85D4886A3CB7CE07F731638D834E0C12DD982B03E49F1",
+                              "mtimeUtc":  "2026-09-04T17:11:36.1586573Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "live_provider",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\live_provider-4b6db3cb31920138.exe",
+                              "sha256":  "690B9BFB2972A9515AB3A58B3D13A426390EFA5DEDDCBE8D1EE9CFA5BE7A9E3C",
+                              "mtimeUtc":  "2026-09-04T17:11:59.9850662Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "axis_completeness",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\axis_completeness-f8519796ad4dd589.exe",
+                              "sha256":  "C5BD46FA366345A171CB9DA40BEEA3381AEEE904D3A9470CC58B35B9C4489CF6",
+                              "mtimeUtc":  "2026-09-04T17:12:00.5171793Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "critical_miss",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\critical_miss-87557a11ed891851.exe",
+                              "sha256":  "E901EDA54E27335CADCCD1A38CE5F06B8E3060FCFBC01AA52D69C4DB07D429D1",
+                              "mtimeUtc":  "2026-09-04T17:12:00.5206784Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_retry_semantics",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\jpd_retry_semantics-0af1a8ce2d432707.exe",
+                              "sha256":  "2FB29A01C774785CCF1DFCF547842B583F22DAF645B7B6EFC7006AE612EF2F15",
+                              "mtimeUtc":  "2026-09-04T17:12:01.2929670Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "owner_output",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\owner_output-1e9990c7d788d837.exe",
+                              "sha256":  "6F583E255F4A23E94B79384C23FDCA3DEDC682748A2C620DBCE35498DE624EA9",
+                              "mtimeUtc":  "2026-09-04T17:12:02.6874022Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired-driver",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\paired_driver-bc3e225770a17a5a.exe",
+                              "sha256":  "9B467C0D14FA69C2134CCB5431AA3C69CFC12748896C5F0F66B828E268B9FC1A",
+                              "mtimeUtc":  "2026-09-04T17:12:10.6740590Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "test_support_has_no_dead_helpers",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\test_support_has_no_dead_helpers-1f6de88541a1257f.exe",
+                              "sha256":  "08B7205509CE3712DF87F6E93D7456987A5D36A9E0C7F84E06F1D1F61621C4DE",
+                              "mtimeUtc":  "2026-09-04T17:12:12.3805759Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_cli-c186d5397bb53fa0.exe",
+                              "sha256":  "7037871473B6C4274AA31BDF4F8A85E52E40841301ECFC9854D176E0042F72A1",
+                              "mtimeUtc":  "2026-09-04T17:12:12.2246356Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "pinned_snapshot",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\pinned_snapshot-f7b139b3d7a6429c.exe",
+                              "sha256":  "695A2A37EEE224B938A1284A748B5DA4E0ECABE08A186A9A3464E56EA10C9676",
+                              "mtimeUtc":  "2026-09-04T17:12:14.0953941Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "frozen_files",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\frozen_files-6e629bb755e1f909.exe",
+                              "sha256":  "08402D72B9C539724D15583FA666EB43A40A7DC5D49B968A584905EDB6189233",
+                              "mtimeUtc":  "2026-09-04T17:12:15.1912179Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "dry_run_pipeline",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\dry_run_pipeline-57bd4ab6b109aba5.exe",
+                              "sha256":  "75BBAE21832F192F6BD9922453F4C9944B581EB69BFF832DFF7BCA420937D92C",
+                              "mtimeUtc":  "2026-09-04T17:12:15.2737436Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "wake_http",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\wake_http-990e8ea331da58cb.exe",
+                              "sha256":  "2AE7C7F7C9B0434FA389E309CBA434B0CF1B57F324BE3537582D547CD698334B",
+                              "mtimeUtc":  "2026-09-04T17:12:14.0082192Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generate-retrieval",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\generate_retrieval-796deb74d6bf4bf8.exe",
+                              "sha256":  "D16B5211D47C18EDE942935C4667B489D8839031587D66CC3A5286EE6A2E0E37",
+                              "mtimeUtc":  "2026-09-04T17:12:29.2617308Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_context_budget",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_context_budget-ce82ffc8c8047aec.exe",
+                              "sha256":  "A6C928F1FC5B30919B9AA8CC20F0BB817CB016A403DA2B023C616D52C6A8E53F",
+                              "mtimeUtc":  "2026-09-04T17:12:30.2514895Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "blind_judge",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\blind_judge-5db6855d6bec171f.exe",
+                              "sha256":  "E19CD66B1133E84216848D64CAAC5A0C26E82B8B56BE10706007FF0525E63223",
+                              "mtimeUtc":  "2026-09-04T17:12:31.4886255Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "manifest_freeze",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\manifest_freeze-1a3ab0cbc9d324f7.exe",
+                              "sha256":  "0D20433C9AAEE34E37FA7FE3F698B0E8396C86F440AE88151DF73EE6F3CF44DE",
+                              "mtimeUtc":  "2026-09-04T17:12:32.1233234Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "monitor_http",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\monitor_http-4945ccbda322cdc8.exe",
+                              "sha256":  "1DF7449386544325C67E70424B305FB7501D1548810C1559AF2872D6C0AFCA66",
+                              "mtimeUtc":  "2026-09-04T17:12:31.4994985Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "runtime_http",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\runtime_http-923ab121815d1577.exe",
+                              "sha256":  "4E5CF62F6E774FDE1E084CA28E6E15CC09F256009EEE0F773AEC9655D4437FFE",
+                              "mtimeUtc":  "2026-09-04T17:12:32.1264066Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "concurrency",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\concurrency-a807a30b68e85850.exe",
+                              "sha256":  "D13BAC543378B82E25B8DDD6029CC5427BF5EE451D9BDCCFC492AF709EB71A7E",
+                              "mtimeUtc":  "2026-09-04T17:12:33.7035564Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm_development_benchmark",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_development_benchmark-7d115949016b800b.exe",
+                              "sha256":  "6C6CD16FE964B36939D9E42CB174471CCA77C49F76531F2FA377E9A7E961A773",
+                              "mtimeUtc":  "2026-09-04T17:12:56.2688636Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "request_set_ceiling",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\request_set_ceiling-35ac314383cfbd5d.exe",
+                              "sha256":  "94F07F6769B41339685D516C132A9D14915E2026A82CF5FFF02AD4C2BD18AD44",
+                              "mtimeUtc":  "2026-09-04T17:12:56.3075270Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "cost_provenance",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\cost_provenance-18314d4d0ba59c53.exe",
+                              "sha256":  "4CEF71E57216C7541B6003206D8A9D87305A7817B69D75C3A94183D8968445F4",
+                              "mtimeUtc":  "2026-09-04T17:12:57.7014716Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "evaluator_policy",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\evaluator_policy-b41d11f1dcab78c6.exe",
+                              "sha256":  "6FEDAA083C0F4A5C64C8F20A77D5A661F3C048F42E3128D98B6829E75D081F46",
+                              "mtimeUtc":  "2026-09-04T17:12:58.4262417Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "contained_provider",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\contained_provider-7f1ef5cd0cb94955.exe",
+                              "sha256":  "CE8767D37EF1C7097DE99D00C08FD1697DEC48979137995B4CAF8623E839918D",
+                              "mtimeUtc":  "2026-09-04T17:12:58.4276218Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "runner_cli",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\runner_cli-e218479fbd3499d1.exe",
+                              "sha256":  "C3AFAEC00D2B5D955EEE7AAD7AB3771B4BC7A9DAE18B1D304D4BDF650CD121C5",
+                              "mtimeUtc":  "2026-09-04T17:12:59.2422019Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_compiler",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\context_compiler-8d6eac50b954423c.exe",
+                              "sha256":  "B6EBD94A6FE1A848154B7920879101FF0E0D9EC4B642902CDF2439564923D33D",
+                              "mtimeUtc":  "2026-09-04T17:12:59.9176307Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "prompt_assembly",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\prompt_assembly-458d9899b3ed5725.exe",
+                              "sha256":  "C1DC1603278D108C052CC0D30ABE6C2B4651D6D154C6F68699768DFAF905807B",
+                              "mtimeUtc":  "2026-09-04T17:13:00.0292059Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "ceiling_reproduction",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\ceiling_reproduction-733eb00a87eaec30.exe",
+                              "sha256":  "41860D8883C4CC6DB7036719DF2E8ADD1614E537F9F3302B0B0BA39A9818F6A3",
+                              "mtimeUtc":  "2026-09-04T17:13:01.6430740Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gate_http",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\gate_http-9a89c0049bbd1295.exe",
+                              "sha256":  "BC9604D2CDAA31A46D9E092A94601CD1200D11493682863A8F9BFC1B8EF3484D",
+                              "mtimeUtc":  "2026-09-04T17:13:01.5923987Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_sabotage",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\development_sabotage-74816488e6f44389.exe",
+                              "sha256":  "5599E6BA0351C2FF02B3889778575F69F48E09695CDD57E8B390C57621D2CE01",
+                              "mtimeUtc":  "2026-09-04T17:13:09.1520221Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "verified_executable",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\verified_executable-af338a477179f1ea.exe",
+                              "sha256":  "A3530AD2CF572A28608618553B138A8C048F434D1B5CB5A26948056BC258271F",
+                              "mtimeUtc":  "2026-09-04T17:13:01.9238855Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_accounting",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\context_accounting-f956e16e0379926e.exe",
+                              "sha256":  "1E58EF2DBD0B54FAD102C611BB73C6C87F359E16B5E2DD0AB4EB5DD8CFCCEEA3",
+                              "mtimeUtc":  "2026-09-04T17:13:01.7102790Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\repository_conformance-fb6e3d72bc2db301.exe",
+                              "sha256":  "537F786B8F94B5207A155D3DA205E2D5F194AD2913C14A00A487E0059F648EE5",
+                              "mtimeUtc":  "2026-09-04T17:13:09.1538753Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\process_isolation-2e17423cebee073e.exe",
+                              "sha256":  "28F3E5CBA5C442A980046414DC7269DBD74EF0441A811E8B3B4873FB2EFB1B24",
+                              "mtimeUtc":  "2026-09-04T17:13:15.3715490Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "amendment_replay",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\amendment_replay-f07b0d5fcd1e3a51.exe",
+                              "sha256":  "48A08877FCC63AD32FA572B462A1B6EFC7A6ECA85F53DF5FB36AB64F2F744835",
+                              "mtimeUtc":  "2026-09-04T17:13:19.6605247Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\workspace_containment-f6fafec95a0856da.exe",
+                              "sha256":  "E60D4050663F1D644215C41AFB31D7AA738003D7E87E307B4E309C00B686B476",
+                              "mtimeUtc":  "2026-09-04T17:13:17.2078633Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\broker_end_to_end-6af77c5069aa51fc.exe",
+                              "sha256":  "61A36D310FEF42D434A064E4762CD059AF27309D85546B2EED5F712D51A900BE",
+                              "mtimeUtc":  "2026-09-04T17:13:18.3925879Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "retrieval",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\retrieval-46409bf261a4bd19.exe",
+                              "sha256":  "605D708E16B18575F0BE2F375188D576ACEA2A3A99093C861D671208A99B9CAB",
+                              "mtimeUtc":  "2026-09-04T17:13:17.2596401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm_tool_host-d8d78210bf28994e.exe",
+                              "sha256":  "7A732ABE1157D30C8EA8916C8775312A461585131ED63D609F978AF3E925C419",
+                              "mtimeUtc":  "2026-09-04T17:13:20.9751834Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "held_file_contention",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\held_file_contention-edbb7653b3d891cb.exe",
+                              "sha256":  "4D7DC741A8481DBD0E894CC539926DBA32C269255463EB5B5ABDBB4D9AEAC006",
+                              "mtimeUtc":  "2026-09-04T17:13:40.4288844Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "batch_validation_bound",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\batch_validation_bound-b590b333fa6ff55f.exe",
+                              "sha256":  "65F6A43F09FC264653A1353817CC3389FBF3CDABEA23C38BF0CA1BB8B32A22A7",
+                              "mtimeUtc":  "2026-09-04T17:13:42.7185696Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/tools/acceptance-map#0.1.0",
+                              "target":  "committed_journals",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\committed_journals-2cc055246fad6504.exe",
+                              "sha256":  "75AFA7DD20659B3077182E8D3F6159A833C3D7247A71AEFEA053BE1EC8E2E4C9",
+                              "mtimeUtc":  "2026-09-04T17:13:42.9813346Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_budget",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\read_budget-ca2527bd6f847f16.exe",
+                              "sha256":  "90B4620D3808AEF7F60A0FA232B287E4D4A5AA2BA34B2B4872C6FDAE6E28F838",
+                              "mtimeUtc":  "2026-09-04T17:13:47.5505075Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\authored_string_invariants-8e237a4ccbcf0333.exe",
+                              "sha256":  "A020AC534786896F5720BBBE0F0CD1CAF03978F5A77930F6620B700A0F052F83",
+                              "mtimeUtc":  "2026-09-04T17:13:59.8401029Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/events#graphhelm-events@0.1.0",
+                              "target":  "evidence_crypto",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\evidence_crypto-fc3878dda7e94bee.exe",
+                              "sha256":  "0730D111FC7D6C31404E8E65F6197E97E4E2E7F99FBA7EB7DA80328BD810B313",
+                              "mtimeUtc":  "2026-09-04T17:14:03.5830373Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "execution_lifecycle",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\execution_lifecycle-05778634293f70de.exe",
+                              "sha256":  "FEBC0BBB1BDA9A3A9953FD36959382CF690D35C7F0C424D086A57DE46A2C3AED",
+                              "mtimeUtc":  "2026-09-04T17:14:03.9855398Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "gate_nodes",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\gate_nodes-2c40cbe713334b3b.exe",
+                              "sha256":  "671B6A220CDDDFD4A6347FF16491C4C844C5FF029166A69769319343AC04759A",
+                              "mtimeUtc":  "2026-09-04T17:14:04.9933965Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "backup_restore",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\backup_restore-c3831cb839247472.exe",
+                              "sha256":  "8C24BA6862A33A8F23468041811795E79B51D103821C57D8F272DB005EC1A9F1",
+                              "mtimeUtc":  "2026-09-04T17:14:04.7650800Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/gh-810/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "graphhelm",
+                              "executable":  "D:/gh810-targets\\debug\\deps\\graphhelm-86e73b23287905fd.exe",
+                              "sha256":  "F62B11FC73777D145CCF269B199C401174B6F7AEF03B8647FF130F18B2439C7A",
+                              "mtimeUtc":  "2026-09-04T17:14:19.3879878Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "indeterminate",
+                            "reason":  "GRAPHHELM_SLOT_LOCK_PATH not set",
+                            "observedAtUtc":  "2026-09-04T17:00:02.1346139Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "indeterminate",
+                          "reason":  "GRAPHHELM_SLOT_LOCK_PATH not set",
+                          "observedAtUtc":  "2026-09-04T17:40:20.8224494Z"
+                      },
+    "slotLockStartEndIdentical":  true,
+    "instrumentSuspect":  false,
+    "overallPassed":  true
+}

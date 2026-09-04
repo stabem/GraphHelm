@@ -25,6 +25,12 @@ function Assert-Equal {
 }
 
 # Import only the functions under test. Dot-sourcing gate.ps1 would run the full gate.
+#
+# gate-evidence.ps1 IS dot-sourced, and safely: it defines Select-GateEvidenceLines and does
+# nothing else -- no stage runs, no cargo, no slot. Invoke-Stage calls that function to build
+# outputTail (#810), so importing Invoke-Stage's text alone leaves it undefined and every
+# assertion in this file dies on a missing command rather than on what it is testing.
+. (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 $gatePath = Join-Path $PSScriptRoot 'gate.ps1'
 $tokens = $null
 $parseErrors = $null

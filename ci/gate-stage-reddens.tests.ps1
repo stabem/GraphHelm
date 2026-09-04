@@ -77,6 +77,12 @@ function Set-FixtureSuites {
 
 function Invoke-GateSlice {
     $slicePath = Join-Path $fixtureRoot 'gate-slice.ps1'
+    # The helpers slice contains Invoke-Stage, and Invoke-Stage dot-sources gate-evidence.ps1
+    # for Select-GateEvidenceLines (#810). The slice is written to $fixtureRoot, so that is
+    # where its $PSScriptRoot points and where the dependency has to be -- the same reason
+    # run-ps-suites.ps1 is copied into the fixture. Without this the slice fails to load and
+    # the suite reddens for a missing file rather than for anything it is testing.
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'gate-evidence.ps1') -Destination (Join-Path $fixtureRoot 'gate-evidence.ps1') -Force
     $preamble = @(
         "`$ErrorActionPreference = 'Stop'"
         "`$repositoryRoot = '$($fixtureRoot.Replace("'", "''"))'"

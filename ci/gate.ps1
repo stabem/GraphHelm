@@ -182,6 +182,13 @@ function Invoke-Postgres {
     }
 }
 
+# #810: Select-GateEvidenceLines lives in its own file so it can be exercised against
+# constructed transcripts (ci/gate-evidence.tests.ps1) without running the gate, the same
+# split ci/slot-lock.ps1 uses. Sourced HERE, adjacent to its only caller below, rather than
+# with the other dot-sources further down: Invoke-Stage is defined at this point and the
+# ordering should not depend on where an unrelated block happens to sit.
+. (Join-Path $PSScriptRoot 'gate-evidence.ps1')
+
 function Invoke-Stage {
     param([string] $Name, [scriptblock] $Body)
 
@@ -232,10 +239,17 @@ function Invoke-Stage {
         wallTimeSecs = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
     }
     if ($code -ne 0) {
-        # Last 40 lines: enough to carry a panic site ("thread 'x' panicked at file:line") and its
-        # message without embedding an entire compiler-error wall into every red manifest.
-        $tailCount = [Math]::Min(40, $capturedLines.Count)
-        $record.outputTail = @($capturedLines.GetRange($capturedLines.Count - $tailCount, $tailCount))
+        # A 40-line budget, but AIMED rather than sliced from the end (#810). Taking the last 40
+        # lines carries the panic site only when the failure is the last thing the stage printed.
+        # `workspace tests` runs cargo with --no-fail-fast, which is the instruction to keep going
+        # after a binary fails, so every remaining binary prints its own trailing summary and the
+        # failing one's `failures:` block ends up 40+ lines from the end. Measured over 29
+        # manifests: single-binary stages named their failure in 10 of 10 captured tails, the
+        # workspace stage in 2 of 12 - the other ten holding a FULL forty lines of other binaries
+        # reporting `0 passed; 0 failed`. Select-GateEvidenceLines anchors on the first line that
+        # names a failure and still keeps the stage's own ending; with no such line it returns the
+        # last 40, which is what this did before and is right for the stages where it worked.
+        $record.outputTail = @(Select-GateEvidenceLines -Lines $capturedLines.ToArray() -Budget 40)
     }
     $script:stageRecords.Add($record)
     return $code

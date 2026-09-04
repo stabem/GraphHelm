@@ -391,11 +391,35 @@ The generation must be new. `GHE005_INTEGRITY_FAILURE` from a rebuild means the 
 
 The runbook defines RPO/RTO according to deployment. Single-node default: daily full backup plus frequent incremental events/artifacts. Enterprise production may use streaming replicas/object versioning.
 
-### 19.4 Event/Evidence Store backup and restore
+### 19.4 Local Event Store backup and restore
+
+Stop writers or otherwise hold the repository stable, then write a new archive path:
+
+```bash
+graphhelm events backup --repository LOCAL_REPOSITORY --output LOCAL_ARCHIVE
+```
+
+The local archive contains the journal and regular-file blobs. Backup refuses non-regular blob entries. The archive does not contain repository layout files, Runtime configuration, or bearer tokens. `--output` must not exist. Copy configuration and other deployment state separately.
+
+Restore into a path that does not exist or is empty:
+
+```bash
+graphhelm events restore --repository EMPTY_REPOSITORY --archive LOCAL_ARCHIVE
+```
+
+The restore command accepts local archive version `1.0.0`, creates the repository layout through the local adapter, and then writes the journal and blobs. It refuses to merge into a non-empty repository.
+
+**A FAILED local restore leaves a partial repository at the target, and that target cannot be retried into.** The layout is created and `journal.jsonl` is replaced before the blob loop runs, so an archive with a valid version and journal but an invalid blob name or value -- or a blob write that fails -- returns an error with the destination already carrying a supported, non-empty repository. The next attempt is then refused by the same non-empty check that protects a real repository, and nothing distinguishes the two states from outside.
+
+So: discard a failed target and restore into a FRESH path. Do not delete files inside it to make it look empty, and do not restart writers against it -- it holds a journal with no blobs behind it, which reads as a repository and is not one.
+
+The local CLI does not currently provide a post-restore integrity observer. `graphhelm events verify --repository EMPTY_REPOSITORY` recognizes a complete local repository layout, but it always reports `"verified": false`; it does not verify the journal hash chain, blob references or digests, or application-level replay. Those properties therefore remain unverified after a local restore, and operators must not treat that command as a readiness gate before restarting writers.
+
+### 19.5 PostgreSQL Event/Evidence Store backup and restore
 
 Both commands read one bounded JSON operator configuration from `--config` or `GRAPHHELM_EVENTS_CONFIG`. It must be a regular file, not a symbolic link, and not group- or world-accessible on Unix. It declares the administrative DSN, an absolute passfile, the sealed keyring directory and key ID, absolute `pg_dump` and `pg_restore` paths with pinned SHA-256 digests and versions, and a process timeout. The 32-byte root key is never in that file; it is supplied as 64 lowercase hexadecimal characters in `GRAPHHELM_EVENTS_KEY`, so a leaked configuration alone cannot unwrap Evidence.
 
-Backup:
+Back up PostgreSQL:
 
 ```bash
 graphhelm events backup --config OPERATOR_CONFIG --output ARCHIVE
@@ -403,7 +427,7 @@ graphhelm events backup --config OPERATOR_CONFIG --output ARCHIVE
 
 The dump is streamed through ordered 1 MiB authenticated-encryption chunks with an authenticated manifest binding source identity, pinned tool versions and digests, the migration, schema, and privilege contracts, provider metadata, counts, and totals. Publication is atomic and no-replace: an existing `--output` path is never overwritten, so archives are written under new names and rotated by the operator.
 
-Restore:
+Restore PostgreSQL:
 
 ```bash
 graphhelm events restore --config OPERATOR_CONFIG --archive ARCHIVE

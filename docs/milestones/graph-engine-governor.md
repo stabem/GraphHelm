@@ -22,7 +22,7 @@ Milestone 03 made persistence production-safe but nothing executed a published g
 | `MAX_READY_SET` | 1024 |
 | `MAX_SIGNALS_PER_EXECUTION` | 10,000 |
 
-A wall-clock bound would make the same event history replay to a different decision on a slower machine, which breaks the replay guarantee the rest of this milestone rests on. Only two of the five are consulted by anything shipped so far: `apply_transition` reads `MAX_NODE_ATTEMPTS` and `MAX_IDENTICAL_OUTCOMES` to decide whether a retryable failure blocks the node for an owner decision instead of retrying it. `MAX_ACCEPTED_MUTATIONS`, `MAX_READY_SET`, and `MAX_SIGNALS_PER_EXECUTION` exist for 04c and 04d, which do not exist yet.
+A wall-clock bound would make the same event history replay to a different decision on a slower machine, which breaks the replay guarantee the rest of this milestone rests on. Current code consults all five bounds. `apply_transition` uses `MAX_NODE_ATTEMPTS` and `MAX_IDENTICAL_OUTCOMES`; scheduling uses `MAX_READY_SET`; in-flight governance uses `MAX_ACCEPTED_MUTATIONS` and `MAX_SIGNALS_PER_EXECUTION`.
 
 ### The closed Graph Signal typed subset
 

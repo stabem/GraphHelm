@@ -1,5 +1,9 @@
 # Documentation index
 
+## Current behavior
+
+- [Current-main documentation audit, 2026-08-31](audits/CURRENT_MAIN_DOCUMENTATION_AUDIT_2026-08-31.md)
+
 ## Product
 
 - [Master PRD](../MASTER_PRD.md)

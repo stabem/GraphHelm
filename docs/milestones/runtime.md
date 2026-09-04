@@ -723,6 +723,8 @@ real `FixtureExecutor`, so the async path cannot drift from the sync fixture mea
 fixture story exercise the true async path. The 05a CLI–API parity test survived the swap
 unchanged, which is exactly what it exists to prove.
 
+An ordinary pause appends `execution_paused`, stops both drivers from dispatching more nodes, and lets work already in flight finish. An immediate pause uses the cancellation registry, interrupts in-flight work, and records interrupted nodes as blocked for triage. Both drivers check pause state before building a dispatch plan and again before each dispatch. The synchronous driver documents one residual window: a concurrent append can arrive after the final pause read and before the dispatch append obtains its sequence.
+
 The milestone's §8 sentence is one named green test:
 `an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence` — an agent node against a
 replying fake provider (the reply sealed beside its outcome), a tool node running real `git`
@@ -758,7 +760,10 @@ that the swap matters.
 - **Prompt assembly is the node contract only.** No Context Compiler, no capsules, no retrieved
   context — `objective` plus the `agent.ephemeral` fields in a fixed order.
 - **One route, no scoring.** The serve `--route` flag picks the manifest route; 05b's deferred
-  scoring stays deferred.
+  scoring stays deferred. Startup resolves the route by ID but does not consult its `enabled`
+  field. `gateway probe` refuses a disabled route, and the pure `eligible_routes` helper filters
+  disabled routes, but the production serve wiring does not call that helper. Treat `enabled` as
+  an operator-side gate for serve until the wiring enforces it.
 - **`artifact_refs` stays empty.** Evidence covers replies, records and streams; the artifact
   store design has not landed.
 - **Throughput, recorded in its own unit.** The 05a baseline was ≈3 requests/second for single

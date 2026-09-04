@@ -2,7 +2,7 @@
 
 Status: implemented on milestone branch. Toolchain: Rust 1.97.1, edition 2024. Published protocol release: `1.0.0`.
 
-This milestone makes the nine checked-in GraphHelm JSON Schemas independently verifiable, releasable, and safely evolvable. It adds canonical content hashes, current and immutable catalogs, deterministic compatibility and SemVer gates, bounded declarative migrations, public conformance fixtures, canonical schema views, JSON-only CLI commands, and mandatory Windows/Linux CI checks. The provisional `https://p50.dev/...` identifiers remain unchanged.
+This milestone makes the checked-in GraphHelm JSON Schemas independently verifiable, releasable, and safely evolvable. The current catalog contains 16 schemas at release `1.1.0`; the immutable `1.0.0` baseline contains 15. The implementation adds canonical content hashes, current and immutable catalogs, deterministic compatibility and SemVer gates, bounded declarative migrations, public conformance fixtures, canonical schema views, JSON-only CLI commands, and local Windows validation. The provisional `https://p50.dev/...` identifiers remain unchanged.
 
 ## Crate boundaries
 
@@ -16,7 +16,7 @@ This milestone makes the nine checked-in GraphHelm JSON Schemas independently ve
 
 ## Release and catalog contract
 
-`schemas/catalog.json` is the current catalog. `schemas/releases/1.0.0/catalog.json` and the nine sibling schema files are the immutable initial release. Both catalogs have `formatVersion: 1`, `releaseVersion: "1.0.0"`, and exactly these keys: `agent`, `claim`, `context-capsule`, `edge`, `extension`, `graph`, `graph-signal`, `node`, and `policy-waiver`.
+`schemas/catalog.json` is the current catalog. It has `formatVersion: 1`, `releaseVersion: "1.1.0"`, and 16 entries. `schemas/releases/1.0.0/catalog.json` is the immutable initial release with 15 sibling schema files. The current catalog adds `execution-accounting-receipt` to the baseline keys: `agent`, `artifact-reference`, `claim`, `context-capsule`, `edge`, `event-envelope`, `evidence-record`, `extension`, `graph`, `graph-signal`, `node`, `persisted-graph-version`, `policy-waiver`, `repository-scope`, and `sensitivity`.
 
 Each entry binds one catalog key to:
 
@@ -25,7 +25,7 @@ Each entry binds one catalog key to:
 - a normalized repository-relative path below `schemas/`;
 - lowercase `sha256:` plus the SHA-256 digest of compact canonical UTF-8 JSON.
 
-Canonicalization sorts object keys recursively and preserves array order. Whitespace and object insertion order therefore do not affect the digest. Catalog key, `$id`, document version, path, loaded resource, and digest must all agree. The current package and the `1.0.0` snapshot have equal identities, versions, canonical hashes, and public validation behavior; only their packaging paths differ.
+Canonicalization sorts object keys recursively and preserves array order. Whitespace and object insertion order therefore do not affect the digest. Catalog key, `$id`, document version, path, loaded resource, and digest must all agree. For the 15 schemas shared by both packages, the current package and the `1.0.0` snapshot have equal identities, versions, canonical hashes, and public validation behavior; only their packaging paths differ. The current `1.1.0` package additionally contains `execution-accounting-receipt`, so the packages as a whole are not equal.
 
 Merged release directories are append-only policy: a later release must add a new `schemas/releases/<version>/` package and must never edit an earlier snapshot. This milestone publishes no migration manifest or migration directory because the initial release requires no data migration.
 
@@ -91,7 +91,7 @@ Library chain planning requires a single explicit, strictly increasing, gap-free
 
 `conformance/manifest.json` is strict `formatVersion: 1`. It contains lexicographically sorted, unique canonical case IDs and normalized fixture paths. Cases have one of four kinds: `schema`, `compatibility`, `release`, or `migration`, with an expected `ok` value plus sorted unique diagnostic codes and paths. `validatorResources` explicitly maps version-qualified targets such as `graph@1.0.0` to sorted, confined schema resource paths used only by conformance.
 
-The checked-in suite has 38 cases: 18 valid/invalid schema cases (one pair for each released schema), five compatibility cases, five release cases, and ten migration cases. Its synthetic `graph@2.0.0` validator exists only under conformance fixtures; it is not an official release or a published migration. Reports are deterministic and payload-free, with case ID, pass/fail result, diagnostic codes/paths, kind metadata, and aggregate totals.
+The checked-in suite has 52 cases: 32 schema cases, five compatibility cases, five release cases, and ten migration cases. Its synthetic `graph@2.0.0` validator exists only under conformance fixtures; it is not an official release or a published migration. Reports are deterministic and payload-free, with case ID, pass/fail result, diagnostic codes/paths, kind metadata, and aggregate totals.
 
 ## CLI
 
@@ -122,7 +122,7 @@ Schema-command exit codes are `0` for success, `2` for invalid catalog, incompat
 
 Rollback is a normal Git revert of this milestone. Release `1.0.0` remains the immutable recovery baseline; rollback never rewrites a snapshot. This release performs no production data migration and has no external runtime side effect.
 
-The acceptance gate verifies formatting, warning-free Clippy, all-feature locked workspace tests, Foundation CLI smoke tests, schema CLI acceptance, nine-schema catalog integrity, no-change comparison against the immutable `1.0.0` baseline, all 38 conformance cases, locked metadata, and a clean diff. GitHub Actions runs the same schema gates on `ubuntu-latest` and `windows-latest`. Migration acceptance uses a temporary test repository and synthetic `1.0.0`-to-`2.0.0` resources: the output validates against the target schema, stdout contains only metadata/digests, and a pre-existing destination remains byte-for-byte unchanged.
+The authoritative local gate verifies formatting, warning-free Clippy, all-feature locked workspace tests, CLI suites, catalog integrity, compatibility against the immutable `1.0.0` baseline, all 52 conformance cases, locked metadata, a clean diff, and the PostgreSQL ignored matrix in two locales. GitHub Actions is disabled and is not a CI fallback. Migration acceptance uses a temporary test repository and synthetic `1.0.0`-to-`2.0.0` resources: the output validates against the target schema, stdout contains only metadata/digests, and a pre-existing destination remains byte-for-byte unchanged.
 
 ## Explicitly out of scope
 

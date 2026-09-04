@@ -37,6 +37,12 @@ they refuse for different reasons: the disabled branch prohibits `memory.capture
 enabled branch must pass the admission screens. `onUnknown` is `fail` rather than a route, because
 an undetermined capture state is not the same thing as capture being off.
 
+### Current memory-admission surface
+
+The current public slice exposes the same fixed-input operation through `graphhelm development memory-propose`, `POST /v1/development/memory`, and the MCP tool `memory_propose`. It reports an admission verdict but accepts no caller content or scope and returns no record identifier. The operation always evaluates the built-in safe proposal under an enabled local scope; it proves surface parity, not a general memory-ingestion workflow.
+
+The Governor also implements durable `memory_admission_refused` events for explicitly opted-in projects. Each event carries only a closed refusal code, a closed location, and the rejected byte count. It never carries rejected content or its digest. Disabled capture and incoherent opt-in return before repository access. A handoff into a scope without capture opt-in is refused as `handoff_target_not_opted_in`, distinct from `opt_in_absent` on the source project's own capture. This event path is a library contract; the fixed-input public operation does not currently trigger it or persist a `MemoryCandidate` or `MemoryRecord`.
+
 Node completion contracts name `coverage_carried` and `observer_distinct_from_actor`. Those are two
 of the sabotages written as **requirements** rather than as attacks: the corpus attacks, the graph
 declares, and both must name the same property or the sabotage has nothing to bite.

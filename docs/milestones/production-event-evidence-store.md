@@ -189,13 +189,19 @@ Each code names exactly one meaning. `GHE002_CORRUPT_BATCH` distinguishes a batc
 
 ```text
 graphhelm events verify --repository PATH
+graphhelm events backup --repository PATH --output FILE
+graphhelm events restore --repository EMPTY_PATH --archive FILE
 graphhelm events verify --config PATH --workspace ID --project ID [--execution ID] --stream NAME [--start N] [--max-events N]
 graphhelm events rebuild --config PATH --workspace ID --project ID [--execution ID] --stream NAME [--generation N] [--page-size N]
 graphhelm events backup --config PATH --output FILE
 graphhelm events restore --config PATH --archive FILE
 ```
 
-`--repository` and `--config` are mutually exclusive and exactly one is required by `events verify`. Against a local repository, `verify` recognizes the stored format only and refuses a range; range verification, rebuild, backup, and restore are PostgreSQL operations. `--start` defaults to 1, `--max-events` defaults to 1,000 and is capped at 100,000, `--generation` defaults to 1, and `--page-size` defaults to 1,000. `--output` must not exist and is never overwritten, and `--archive` must be an existing regular file. Restore has no target flag: the destination is the database named by the configuration's `adminUrl`, and the operator refuses to proceed unless that database is already empty.
+`--repository` and `--config` are mutually exclusive. `events verify` requires exactly one selector. Backup and restore select the local path when `--repository` is present; otherwise they use `--config` or `GRAPHHELM_EVENTS_CONFIG` for PostgreSQL.
+
+Local verification recognizes the stored format and refuses range arguments. Local backup writes archive version `1.0.0` with `journal.jsonl` and blob content; it excludes layout files such as `format.json` and `repository.lock`, and refuses a blob entry that is not a regular file. Local restore requires an empty destination and lets the repository adapter create those layout files before it writes the journal and blobs. It rejects malformed archives, unsupported archive versions, and blob names that are not plain file names.
+
+Range verification and rebuild remain PostgreSQL-only operations. `--start` defaults to 1, `--max-events` defaults to 1,000 and is capped at 100,000, `--generation` defaults to 1, and `--page-size` defaults to 1,000. `--output` must not exist when the command looks, and `--archive` must be an existing regular file. For a LOCAL `--repository` backup that is a check and not a guarantee: `execute_local` verifies the path is absent and later publishes with `std::fs::write`, so a path created between those two operations is truncated by the write. The stronger claim -- publication that cannot replace an existing file -- is what the PostgreSQL path enforces and what the local path would need an atomic create-new publication to make true. PostgreSQL restore has no target flag: the destination is the database named by the configuration's `adminUrl`, and the operator refuses to proceed unless that database is already empty.
 
 Configuration is a bounded JSON document supplied by `--config` or `GRAPHHELM_EVENTS_CONFIG`, limited to 64 KiB, rejected if it is a symbolic link, not a regular file, or group- or world-accessible on Unix. It declares `adminUrl`, an absolute `passfile`, a `keyring` directory and key ID, absolute `pgDump` and `pgRestore` paths with pinned SHA-256 digests and versions, and `processTimeoutSeconds` between 1 and 86,400. The 32-byte root key is never in the configuration file: it is supplied as 64 lowercase hexadecimal characters in `GRAPHHELM_EVENTS_KEY`, so a leaked configuration alone cannot unwrap Evidence.
 

@@ -388,6 +388,8 @@ contract by implementation. Read it beside #92 (`approve` without `resume` makes
 quieter without making it move): together they are the operator's model being wrong in BOTH
 directions.
 
+**Resolved after this milestone.** Ordinary pause now declines to dispatch more nodes on both the synchronous CLI driver and the asynchronous Runtime driver. Work already in flight drains. Immediate pause remains the separate interrupting operation. The drivers recheck pause state before planning and before each dispatch; the synchronous path still documents a narrow concurrent-append window between its final read and append.
+
 **The deferral lesson, which is the part that generalises.** #80 contained a deferral that was
 CORRECT and whose trigger named the WRONG DIMENSION: it watched for what would make the defect
 reachable, never for what would make it EXPENSIVE. So its own alarm never fired, and what caught

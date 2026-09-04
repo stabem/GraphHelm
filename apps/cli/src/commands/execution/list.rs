@@ -64,6 +64,19 @@ pub(crate) fn execute(
     let mut streams = store
         .list_streams()
         .map_err(|error| repository_failure(&error))?;
+    // ONLY the rows the rest of the API can answer for (#560). `list_streams` enumerates every
+    // stream in the repository, including any the generic `events` commands wrote under another
+    // workspace or project, while every follow-up verb addresses a stream through
+    // `addressable_scope`. Offering the others is worse than omitting them: the caller reads a
+    // row as an execution that exists, asks for its status, and is told there is nothing there.
+    // Two streams sharing an id across scopes are also indistinguishable in a listing, so the
+    // one this filter keeps is the one the id actually resolves to.
+    //
+    // The filter runs BEFORE the sort and the slice, so `hasMore` and `nextCursor` describe the
+    // page the caller can actually walk rather than counting rows that were never offerable.
+    streams.retain(|stream| {
+        super::addressable_scope(&stream.stream_id).is_ok_and(|scope| scope == stream.scope)
+    });
     // Sort by the id the cursor names, not by the store's own key order: the ordering a paging
     // contract promises must be a property of the values the caller can see.
     streams.sort_by(|left, right| left.stream_id.cmp(&right.stream_id));
@@ -261,5 +274,97 @@ mod tests {
             .collect();
         assert_eq!(readable_keys, unreadable_keys);
         assert_eq!(unreadable["attention"], serde_json::json!("unknown"));
+    }
+
+    /// A stream written under a DIFFERENT workspace is not offered as a row (#560).
+    ///
+    /// Both streams are real and both are in the store; the difference is that only one of them
+    /// can be addressed by `status`, `events`, or any other verb, because those reconstruct the
+    /// scope through `addressable_scope`. The foreign row is the defect: an index that offers it
+    /// tells the caller an execution exists and then hands back nothing when asked about it.
+    ///
+    /// **The addressable stream is the control on this cell.** Without it, a filter that dropped
+    /// EVERY row -- a mistyped constant, a comparison that can never hold -- would satisfy an
+    /// assertion about the foreign id's absence and look like the fix.
+    #[test]
+    fn a_stream_outside_the_addressable_scope_is_not_offered_as_a_row() {
+        use graphhelm_events::PreparedAppend;
+        use graphhelm_protocols::{
+            ActorId, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, NewEvent, OpaqueId,
+            PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity, WireHash,
+            WorkspaceId,
+        };
+
+        fn addressable_scope_or_panic(execution: &str) -> RepositoryScope {
+            match super::super::addressable_scope(execution) {
+                Ok(scope) => scope,
+                Err(_) => panic!("{execution} is not addressable, so this cell has no subject"),
+            }
+        }
+
+        fn started(directory: &Path, scope: RepositoryScope, stream: &str) {
+            let store = crate::commands::event_store(directory).expect("the store opens");
+            let execution_id = OpaqueId::parse(stream).expect("a wire-safe id");
+            let event = NewEvent::new(
+                OpaqueId::parse(format!("started-{stream}")).expect("a wire-safe key"),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-test").expect("a wire-safe actor"),
+                ),
+                Sensitivity::Internal,
+                EventKind::ExecutionStarted(ExecutionStarted {
+                    execution_id: execution_id.clone(),
+                    graph_version: 1,
+                    graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64)))
+                        .expect("a wire hash"),
+                    mode: ExecutionMode::Autopilot,
+                }),
+                vec![],
+                vec![],
+            );
+            let next = store
+                .next_sequence(&scope, execution_id.as_str())
+                .expect("a fresh stream starts at 1");
+            let request =
+                PreparedAppend::new(scope, execution_id, next, vec![event], vec![], vec![])
+                    .expect("the append is well-formed");
+            store.append_atomic(&request).expect("the append lands");
+        }
+
+        let directory = tempfile::tempdir().expect("a temp directory");
+        started(
+            directory.path(),
+            addressable_scope_or_panic("exec-addressable"),
+            "exec-addressable",
+        );
+        started(
+            directory.path(),
+            RepositoryScope::new(
+                WorkspaceId::parse("workspace-elsewhere").expect("a wire-safe workspace"),
+                ProjectId::parse("project-elsewhere").expect("a wire-safe project"),
+                Some(ExecutionId::parse("exec-foreign").expect("a wire-safe execution")),
+            ),
+            "exec-foreign",
+        );
+
+        let page = match execute(directory.path(), None, DEFAULT_LIMIT) {
+            Ok(page) => page,
+            // `Failure` carries no `Debug`, so the refusal is named rather than unwrapped: a
+            // panic reading "called unwrap on an Err" would not say WHICH refusal this was.
+            Err(_) => panic!("the index refused a store it wrote itself"),
+        };
+        let ids: Vec<&str> = page["executions"]
+            .as_array()
+            .expect("the page carries rows")
+            .iter()
+            .filter_map(|row| row["executionId"].as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["exec-addressable"],
+            "the index must offer exactly the rows the rest of the API can address"
+        );
+        assert_eq!(page["hasMore"], serde_json::json!(false));
+        assert_eq!(page["nextCursor"], serde_json::Value::Null);
     }
 }

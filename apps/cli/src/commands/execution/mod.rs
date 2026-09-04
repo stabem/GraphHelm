@@ -181,6 +181,28 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
     })
 }
 
+/// The ONE scope the `execution` verbs can address for a given execution id.
+///
+/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
+/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
+/// it -- so the index offered rows under any scope the generic `events` commands can write,
+/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
+/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
+/// execution that exists and then gets an empty history back.
+///
+/// # Errors
+/// [`Failure`] when `execution` is not a valid identifier.
+pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure> {
+    Ok(RepositoryScope::new(
+        WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
+        ProjectId::parse(PROJECT).expect("constant project id is valid"),
+        Some(
+            ExecutionId::parse(execution)
+                .map_err(|_| argument("--execution is not a valid identifier", "/execution"))?,
+        ),
+    ))
+}
+
 /// Resolves which stream a command addresses and reads its raw history: `--execution` when
 /// given, otherwise `status.rs`'s own fallback — a repository holding exactly one stream selects
 /// it. Every `execution` command past `start` shares this addressing rule.
@@ -192,13 +214,7 @@ pub(crate) fn resolve_stream(
         Some(execution) => {
             let stream_id = OpaqueId::parse(execution)
                 .map_err(|_| argument("--execution is not a valid identifier", "/execution"))?;
-            let scope = RepositoryScope::new(
-                WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
-                ProjectId::parse(PROJECT).expect("constant project id is valid"),
-                Some(ExecutionId::parse(execution).map_err(|_| {
-                    argument("--execution is not a valid identifier", "/execution")
-                })?),
-            );
+            let scope = addressable_scope(execution)?;
             let history = store
                 .read_replay_stream(&scope, stream_id.as_str())
                 .map_err(|error| repository_failure(&error))?;

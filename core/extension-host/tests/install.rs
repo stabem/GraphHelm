@@ -75,22 +75,22 @@ fn an_installed_version_switches_atomically_and_the_previous_is_recorded() {
          assertion below is about leftovers"
     );
 
-    let a = install_package(&claim, root.path(), &package_a).expect("package A adopts");
-    let b = install_package(&claim, root.path(), &package_b).expect("package B adopts");
+    let a = install_package(&claim, &package_a).expect("package A adopts");
+    let b = install_package(&claim, &package_b).expect("package B adopts");
     assert_ne!(
         a.digest, b.digest,
         "HARNESS-BROKE: the two fixtures share a digest, so switching between them measures \
          nothing about the pointer"
     );
 
-    let first = switch_active(&claim, root.path(), &a.digest).expect("the first switch lands");
+    let first = switch_active(&claim, &a.digest).expect("the first switch lands");
     assert_eq!(first.current, a.digest);
     assert_eq!(
         first.previous, None,
         "the first activation has nothing to retire"
     );
 
-    let second = switch_active(&claim, root.path(), &b.digest).expect("the second switch lands");
+    let second = switch_active(&claim, &b.digest).expect("the second switch lands");
     assert_eq!(second.current, b.digest);
     assert_eq!(
         second.previous.as_deref(),
@@ -115,11 +115,11 @@ fn a_switch_to_an_unknown_digest_is_refused_with_the_pointer_untouched() {
     let staged = tempfile::tempdir().expect("a temp dir");
     let package = staged.path().join("a");
     copy_tree(Path::new(SHIPPED), &package);
-    let installed = install_package(&claim, root.path(), &package).expect("the package adopts");
-    switch_active(&claim, root.path(), &installed.digest).expect("the switch lands");
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    switch_active(&claim, &installed.digest).expect("the switch lands");
 
     assert_eq!(
-        switch_active(&claim, root.path(), "sha256:0000000000000000").err(),
+        switch_active(&claim, "sha256:0000000000000000").err(),
         Some(InstallRefusal::UnknownVersion),
         "a digest that was never adopted must refuse"
     );
@@ -148,14 +148,14 @@ fn a_switch_whose_target_no_longer_matches_its_adopted_digest_refuses_and_the_ol
     copy_tree(Path::new(SHIPPED), &package_b);
     move_identity(&package_b);
 
-    let a = install_package(&claim, root.path(), &package_a).expect("package A adopts");
-    let b = install_package(&claim, root.path(), &package_b).expect("package B adopts");
-    switch_active(&claim, root.path(), &a.digest).expect("A activates");
+    let a = install_package(&claim, &package_a).expect("package A adopts");
+    let b = install_package(&claim, &package_b).expect("package B adopts");
+    switch_active(&claim, &a.digest).expect("A activates");
 
     // Corrupt B's ADOPTED tree the consistent way: the tree still validates, its identity moved.
     move_identity(&b.root);
 
-    let refusal = switch_active(&claim, root.path(), &b.digest)
+    let refusal = switch_active(&claim, &b.digest)
         .expect_err("a tree whose bytes moved after adoption activated anyway");
     assert_eq!(
         refusal,
@@ -178,7 +178,7 @@ fn roll_back_returns_to_the_previous_version_and_refuses_without_one() {
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
 
     assert_eq!(
-        roll_back(&claim, root.path()).err(),
+        roll_back(&claim).err(),
         Some(InstallRefusal::NoPreviousVersion),
         "a root that never activated has nothing to roll back to"
     );
@@ -190,19 +190,19 @@ fn roll_back_returns_to_the_previous_version_and_refuses_without_one() {
     copy_tree(Path::new(SHIPPED), &package_b);
     move_identity(&package_b);
 
-    let a = install_package(&claim, root.path(), &package_a).expect("package A adopts");
-    let b = install_package(&claim, root.path(), &package_b).expect("package B adopts");
-    switch_active(&claim, root.path(), &a.digest).expect("A activates");
+    let a = install_package(&claim, &package_a).expect("package A adopts");
+    let b = install_package(&claim, &package_b).expect("package B adopts");
+    switch_active(&claim, &a.digest).expect("A activates");
 
     assert_eq!(
-        roll_back(&claim, root.path()).err(),
+        roll_back(&claim).err(),
         Some(InstallRefusal::NoPreviousVersion),
         "one activation records no previous, and rolling back to nothing is an outage, not a \
          rollback"
     );
 
-    switch_active(&claim, root.path(), &b.digest).expect("B activates");
-    let rolled = roll_back(&claim, root.path()).expect("rollback lands");
+    switch_active(&claim, &b.digest).expect("B activates");
+    let rolled = roll_back(&claim).expect("rollback lands");
     assert_eq!(rolled.current, a.digest, "rollback returns to the previous");
     assert_eq!(
         rolled.previous.as_deref(),
@@ -220,8 +220,8 @@ fn installing_the_same_package_twice_is_idempotent() {
     let package = staged.path().join("a");
     copy_tree(Path::new(SHIPPED), &package);
 
-    let first = install_package(&claim, root.path(), &package).expect("the first install adopts");
-    let second = install_package(&claim, root.path(), &package)
+    let first = install_package(&claim, &package).expect("the first install adopts");
+    let second = install_package(&claim, &package)
         .expect("the second install of identical bytes must adopt idempotently, not refuse");
     assert_eq!(first, second, "one package, one adopted version");
 }
@@ -236,8 +236,8 @@ fn a_torn_pointer_write_leaves_the_old_version_active() {
     let staged = tempfile::tempdir().expect("a temp dir");
     let package = staged.path().join("a");
     copy_tree(Path::new(SHIPPED), &package);
-    let installed = install_package(&claim, root.path(), &package).expect("the package adopts");
-    switch_active(&claim, root.path(), &installed.digest).expect("the switch lands");
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    switch_active(&claim, &installed.digest).expect("the switch lands");
 
     // The wreckage a crash mid-publication leaves behind: a partial temporary BESIDE the pointer.
     std::fs::write(root.path().join("active.json.tmp-crashed"), b"{\"curr")

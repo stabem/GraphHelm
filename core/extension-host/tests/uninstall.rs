@@ -54,7 +54,6 @@ fn move_identity(package: &Path) {
 /// Three distinct adopted versions, current = B, previous = A, C free.
 fn three_versions(
     claim: &ActivationClaim,
-    root: &Path,
     staged: &Path,
 ) -> (
     graphhelm_extension_host::InstalledVersion,
@@ -71,15 +70,15 @@ fn three_versions(
     move_identity(&package_c);
     move_identity(&package_c);
 
-    let a = install_package(claim, root, &package_a).expect("A adopts");
-    let b = install_package(claim, root, &package_b).expect("B adopts");
-    let c = install_package(claim, root, &package_c).expect("C adopts");
+    let a = install_package(claim, &package_a).expect("A adopts");
+    let b = install_package(claim, &package_b).expect("B adopts");
+    let c = install_package(claim, &package_c).expect("C adopts");
     assert!(
         a.digest != b.digest && b.digest != c.digest && a.digest != c.digest,
         "HARNESS-BROKE: the three fixtures do not have three identities"
     );
-    switch_active(claim, root, &a.digest).expect("A activates");
-    switch_active(claim, root, &b.digest).expect("B activates");
+    switch_active(claim, &a.digest).expect("A activates");
+    switch_active(claim, &b.digest).expect("B activates");
     (a, b, c)
 }
 
@@ -88,13 +87,13 @@ fn a_version_that_is_neither_current_nor_previous_uninstalls_and_only_it() {
     let root = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
     let staged = tempfile::tempdir().expect("a temp dir");
-    let (a, b, c) = three_versions(&claim, root.path(), staged.path());
+    let (a, b, c) = three_versions(&claim, staged.path());
 
     // Trees are located by the roots the INSTALLER returned -- the digest-to-directory mapping
     // has one home in install.rs, and a re-spelling here would be the drift its comment warns of.
     assert!(c.root.is_dir(), "CONTROL: C's tree exists before");
 
-    uninstall_version(&claim, root.path(), &c.digest).expect("the free version uninstalls");
+    uninstall_version(&claim, &c.digest).expect("the free version uninstalls");
 
     assert!(!c.root.exists(), "C's tree is gone");
     assert!(a.root.is_dir(), "A (previous) is untouched");
@@ -114,10 +113,10 @@ fn the_current_and_the_previous_version_refuse_to_uninstall() {
     let root = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
     let staged = tempfile::tempdir().expect("a temp dir");
-    let (a, b, _c) = three_versions(&claim, root.path(), staged.path());
+    let (a, b, _c) = three_versions(&claim, staged.path());
 
     assert_eq!(
-        uninstall_version(&claim, root.path(), &b.digest).err(),
+        uninstall_version(&claim, &b.digest).err(),
         Some(InstallRefusal::VersionRetained),
         "removing the CURRENT version is an outage, not an uninstall"
     );
@@ -127,7 +126,7 @@ fn the_current_and_the_previous_version_refuse_to_uninstall() {
     );
 
     assert_eq!(
-        uninstall_version(&claim, root.path(), &a.digest).err(),
+        uninstall_version(&claim, &a.digest).err(),
         Some(InstallRefusal::VersionRetained),
         "removing the PREVIOUS version costs rollback its target"
     );
@@ -144,7 +143,7 @@ fn a_digest_that_was_never_adopted_refuses_as_unknown() {
     // Full-length and well-formed, so this cell exercises "not adopted" and not the validator.
     let absent = format!("sha256:{}", "0".repeat(64));
     assert_eq!(
-        uninstall_version(&claim, root.path(), &absent).err(),
+        uninstall_version(&claim, &absent).err(),
         Some(InstallRefusal::UnknownVersion),
         "uninstalling what was never adopted must say so, not succeed vacuously"
     );
@@ -167,7 +166,7 @@ fn a_shouted_spelling_of_the_current_digest_cannot_reach_its_tree() {
     let root = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
     let staged = tempfile::tempdir().expect("a temp dir");
-    let (_a, b, _c) = three_versions(&claim, root.path(), staged.path());
+    let (_a, b, _c) = three_versions(&claim, staged.path());
 
     let shouted = {
         let hex = b
@@ -182,7 +181,7 @@ fn a_shouted_spelling_of_the_current_digest_cannot_reach_its_tree() {
     );
 
     assert_eq!(
-        uninstall_version(&claim, root.path(), &shouted).err(),
+        uninstall_version(&claim, &shouted).err(),
         Some(InstallRefusal::UnknownVersion),
         "a non-canonical spelling must be refused by the validator, not resolved by the \
          filesystem"
@@ -195,7 +194,7 @@ fn a_shouted_spelling_of_the_current_digest_cannot_reach_its_tree() {
 
     // The same gap's other face: a well-formed alphabet at the wrong LENGTH.
     assert_eq!(
-        uninstall_version(&claim, root.path(), "sha256:00").err(),
+        uninstall_version(&claim, "sha256:00").err(),
         Some(InstallRefusal::UnknownVersion),
         "a short digest is not an identity, and the validator is where that is decided"
     );
@@ -217,7 +216,7 @@ fn uninstall_removes_a_planted_junction_without_reaching_its_target() {
     let staged = tempfile::tempdir().expect("a temp dir");
     let package = staged.path().join("a");
     copy_tree(Path::new(SHIPPED), &package);
-    let installed = install_package(&claim, root.path(), &package).expect("the package adopts");
+    let installed = install_package(&claim, &package).expect("the package adopts");
     // No switch: the pointer names nothing, so nothing is retained and the uninstall is legal.
 
     let user_directory = root.path().join("user-authored");
@@ -245,7 +244,7 @@ fn uninstall_removes_a_planted_junction_without_reaching_its_target() {
         "CONTROL: the junction reaches the user file, or removing it proves nothing"
     );
 
-    uninstall_version(&claim, root.path(), &installed.digest)
+    uninstall_version(&claim, &installed.digest)
         .expect("a version with a planted junction still uninstalls");
 
     assert!(!installed.root.exists(), "the adopted tree is gone");

@@ -270,6 +270,23 @@ impl ActivationClaim {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// The install root this claim is ANCHORED to.
+    ///
+    /// Every mutating entry point derives its target from this rather than taking a root
+    /// argument, so a claim acquired for one root cannot be presented alongside another: the
+    /// disagreement has no way to be spelled (#546). Before that, `uninstall_version` under a
+    /// mismatched root removed a tree the claim never covered.
+    ///
+    /// The path is the one `acquire` walked, not the one it was handed: absolute, and lexically
+    /// normalized component by component -- `.` dropped, `..` refused, and every component opened
+    /// without following a link, so an anchored root is a path whose ancestors were all real
+    /// directories at acquire time. A trailing separator is gone for the same reason, which is
+    /// what `install.rs`'s probe would otherwise have to strip a second time.
+    #[must_use]
+    pub fn install_root(&self) -> &Path {
+        &self.root.path
+    }
 }
 
 #[cfg(any(target_os = "linux", windows))]

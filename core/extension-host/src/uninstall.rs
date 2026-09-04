@@ -14,8 +14,6 @@
 //! already implements, and wiring it through install/uninstall belongs to the conformance slice
 //! (`links.rs`), where the whole link matrix lives. (Overclaim found by D on #535.)
 
-use std::path::Path;
-
 use crate::activation::ActivationClaim;
 use crate::install::{InstallRefusal, directory_for_digest, read_pointer};
 
@@ -31,11 +29,8 @@ use crate::install::{InstallRefusal, directory_for_digest, read_pointer};
 ///
 /// Returns [`InstallRefusal::VersionRetained`] when the pointer still names the digest as
 /// current or previous, and [`InstallRefusal::UnknownVersion`] when it was never adopted.
-pub fn uninstall_version(
-    _claim: &ActivationClaim,
-    install_root: &Path,
-    digest: &str,
-) -> Result<(), InstallRefusal> {
+pub fn uninstall_version(claim: &ActivationClaim, digest: &str) -> Result<(), InstallRefusal> {
+    let install_root = claim.install_root();
     crate::install::require_unlinked_layout(install_root)?;
     let directory = directory_for_digest(digest).map_err(|_| InstallRefusal::UnknownVersion)?;
     let adopted = install_root.join("versions").join(directory);

@@ -17,6 +17,12 @@
 //!
 //! Every mutating entry point takes `&ActivationClaim`: authority is the claim, at compile level,
 //! exactly as `ActivationRecord::activate` already requires it.
+//!
+//! And the claim names the ROOT, rather than sitting beside a root argument that could disagree
+//! with it (#546). Possessing a claim proves the caller acquired the lock; it did not prove the
+//! caller acquired the lock over the tree it is about to change, and `uninstall_version` is a
+//! `remove_dir_all`. The parameter that could disagree is gone instead of checked, so the
+//! mismatch has no spelling -- `claim.install_root()` is the only root these functions can reach.
 
 use std::path::{Path, PathBuf};
 
@@ -187,6 +193,19 @@ pub(crate) fn require_unlinked_layout(install_root: &Path) -> Result<(), Install
             Ok(metadata.file_type().is_symlink())
         }
     }
+    // NEITHER HALF IS DEAD, and the first one now LOOKS dead, which is worse than looking
+    // redundant (found by a peer reviewing #546).
+    //
+    // Since #546 the only root that reaches here is `claim.install_root()`, and the claim walk
+    // opened every component of it without following a link. The obvious reading is therefore
+    // "the anchor already proved this root is not a link, delete the probe" -- and that reading is
+    // wrong. The anchor proves it AT ACQUIRE TIME. An open directory handle does not stop the
+    // directory being renamed away and replaced by a link afterwards, and all four entry points
+    // reach the tree by PATH (`install_root.join("versions")`) rather than through the retained
+    // descriptor. This probe is the only thing covering the acquire-to-use window.
+    //
+    // The `versions/` half is not covered by the anchor at all: the claim walk stops at the root,
+    // and `versions/` may not even exist when the claim is taken.
     if is_link(install_root)? || is_link(&install_root.join("versions"))? {
         return Err(InstallRefusal::UnsafeLayoutPath);
     }
@@ -269,10 +288,10 @@ fn require_digest(path: &Path, digest: &str) -> Result<(), InstallRefusal> {
 /// Returns [`InstallRefusal`] when the package does not validate, carries entries the copier
 /// refuses to follow, or the layout is unwritable.
 pub fn install_package(
-    _claim: &ActivationClaim,
-    install_root: &Path,
+    claim: &ActivationClaim,
     package: &Path,
 ) -> Result<InstalledVersion, InstallRefusal> {
+    let install_root = claim.install_root();
     require_unlinked_layout(install_root)?;
     let validated = graphhelm_schema::validate_extension_package(package)
         .map_err(|_| InstallRefusal::Invalid)?;
@@ -330,10 +349,10 @@ pub fn install_package(
 /// Returns [`InstallRefusal`] when the target is unknown, no longer matches its adopted digest,
 /// or the pointer cannot be written.
 pub fn switch_active(
-    _claim: &ActivationClaim,
-    install_root: &Path,
+    claim: &ActivationClaim,
     digest: &str,
 ) -> Result<ActiveVersions, InstallRefusal> {
+    let install_root = claim.install_root();
     require_unlinked_layout(install_root)?;
     let directory = directory_for_digest(digest)?;
     let adopted = install_root.join("versions").join(directory);
@@ -367,10 +386,8 @@ pub fn switch_active(
 /// # Errors
 ///
 /// Returns [`InstallRefusal::NoPreviousVersion`] when the pointer records none.
-pub fn roll_back(
-    _claim: &ActivationClaim,
-    install_root: &Path,
-) -> Result<ActiveVersions, InstallRefusal> {
+pub fn roll_back(claim: &ActivationClaim) -> Result<ActiveVersions, InstallRefusal> {
+    let install_root = claim.install_root();
     require_unlinked_layout(install_root)?;
     let Some(active) = read_pointer(install_root)? else {
         return Err(InstallRefusal::NoPreviousVersion);

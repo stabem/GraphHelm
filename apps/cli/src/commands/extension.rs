@@ -118,7 +118,7 @@ pub fn run_install(root: &Path, package: &Path) -> Outcome {
         Ok(claim) => claim,
         Err(refusal) => return claim_refusal(COMMAND, refusal),
     };
-    match graphhelm_extension_host::install_package(&claim, root, package) {
+    match graphhelm_extension_host::install_package(&claim, package) {
         // The digest ONLY. The adopted path is an absolute path under the caller's root, and
         // normal CLI JSON is prohibited from exposing user-home paths (AGENTS.md): stdout gets
         // persisted into logs by automation, and whoever knows --root can derive the layout
@@ -138,7 +138,7 @@ pub fn run_switch(root: &Path, digest: &str) -> Outcome {
         Ok(claim) => claim,
         Err(refusal) => return claim_refusal(COMMAND, refusal),
     };
-    match graphhelm_extension_host::switch_active(&claim, root, digest) {
+    match graphhelm_extension_host::switch_active(&claim, digest) {
         Ok(active) => Outcome::success(
             COMMAND,
             serde_json::json!({
@@ -157,7 +157,7 @@ pub fn run_rollback(root: &Path) -> Outcome {
         Ok(claim) => claim,
         Err(refusal) => return claim_refusal(COMMAND, refusal),
     };
-    match graphhelm_extension_host::roll_back(&claim, root) {
+    match graphhelm_extension_host::roll_back(&claim) {
         Ok(active) => Outcome::success(
             COMMAND,
             serde_json::json!({
@@ -176,7 +176,7 @@ pub fn run_uninstall(root: &Path, digest: &str) -> Outcome {
         Ok(claim) => claim,
         Err(refusal) => return claim_refusal(COMMAND, refusal),
     };
-    match graphhelm_extension_host::uninstall_version(&claim, root, digest) {
+    match graphhelm_extension_host::uninstall_version(&claim, digest) {
         Ok(()) => Outcome::success(COMMAND, serde_json::json!({ "digest": digest })),
         Err(refusal) => install_refusal(COMMAND, refusal, "/digest"),
     }

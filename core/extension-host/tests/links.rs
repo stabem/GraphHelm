@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use graphhelm_extension_host::{
-    ActivationClaim, InstallRefusal, active_versions, install_package, switch_active,
+    ActivationClaim, ClaimRefusal, InstallRefusal, active_versions, install_package, switch_active,
     uninstall_version,
 };
 use serde_json::{Value, json};
@@ -165,7 +165,7 @@ fn a_junction_inside_a_package_refuses_to_install() {
     // copier ever runs. The copier's own UnsafePackagePath stays behind it as depth: redundant
     // through this door while the validator holds, load-bearing in any future that reorders.
     assert_eq!(
-        install_package(&claim, root.path(), &package).err(),
+        install_package(&claim, &package).err(),
         Some(InstallRefusal::Invalid),
         "a package carrying a junction must refuse, and the validator is the layer that answers"
     );
@@ -202,7 +202,7 @@ fn a_symlink_inside_a_package_refuses_to_install() {
     // Same layer as the junction face: the validator's GHEX004 refuses links by name before
     // the copier runs, so install answers Invalid. The copier's refusal is the layer behind.
     assert_eq!(
-        install_package(&claim, root.path(), &package).err(),
+        install_package(&claim, &package).err(),
         Some(InstallRefusal::Invalid),
         "a package carrying a symlink must refuse, and the validator is the layer that answers"
     );
@@ -217,7 +217,7 @@ fn uninstall_removes_a_planted_symlink_without_reaching_its_target() {
     let root = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
     let (_keep, package) = synthetic_package("planted-symlink", None);
-    let installed = install_package(&claim, root.path(), &package).expect("the package adopts");
+    let installed = install_package(&claim, &package).expect("the package adopts");
 
     let user_directory = root.path().join("user-authored");
     std::fs::create_dir(&user_directory).expect("the user directory creates");
@@ -235,7 +235,7 @@ fn uninstall_removes_a_planted_symlink_without_reaching_its_target() {
         "CONTROL: the symlink reaches the user file, or removing it proves nothing"
     );
 
-    uninstall_version(&claim, root.path(), &installed.digest)
+    uninstall_version(&claim, &installed.digest)
         .expect("a version with a planted symlink still uninstalls");
 
     assert!(!installed.root.exists(), "the adopted tree is gone");
@@ -255,8 +255,8 @@ fn a_versions_directory_that_is_a_junction_refuses_the_lifecycle() {
     let root = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
     let (_keep, package) = synthetic_package("junction-ancestor", None);
-    let installed = install_package(&claim, root.path(), &package).expect("the package adopts");
-    switch_active(&claim, root.path(), &installed.digest).expect("the switch lands");
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    switch_active(&claim, &installed.digest).expect("the switch lands");
 
     // Replace versions/ with a junction to an elsewhere holding the same layout.
     let elsewhere = tempfile::tempdir().expect("a temp dir");
@@ -274,12 +274,12 @@ fn a_versions_directory_that_is_a_junction_refuses_the_lifecycle() {
     );
 
     assert_eq!(
-        switch_active(&claim, root.path(), &installed.digest).err(),
+        switch_active(&claim, &installed.digest).err(),
         Some(InstallRefusal::UnsafeLayoutPath),
         "a layout whose ancestor is a junction must refuse by name, not operate through it"
     );
     assert_eq!(
-        uninstall_version(&claim, root.path(), &installed.digest).err(),
+        uninstall_version(&claim, &installed.digest).err(),
         Some(InstallRefusal::UnsafeLayoutPath),
         "uninstall through a junctioned ancestor is the same arrangement"
     );
@@ -292,8 +292,8 @@ fn a_versions_directory_that_is_a_symlink_refuses_the_lifecycle() {
     let root = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(root.path()).expect("the claim must be granted");
     let (_keep, package) = synthetic_package("symlink-ancestor", None);
-    let installed = install_package(&claim, root.path(), &package).expect("the package adopts");
-    switch_active(&claim, root.path(), &installed.digest).expect("the switch lands");
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    switch_active(&claim, &installed.digest).expect("the switch lands");
 
     let elsewhere = tempfile::tempdir().expect("a temp dir");
     let moved = elsewhere.path().join("versions");
@@ -302,12 +302,12 @@ fn a_versions_directory_that_is_a_symlink_refuses_the_lifecycle() {
         .expect("ARRANGEMENT: the symlink was not created");
 
     assert_eq!(
-        switch_active(&claim, root.path(), &installed.digest).err(),
+        switch_active(&claim, &installed.digest).err(),
         Some(InstallRefusal::UnsafeLayoutPath),
         "a layout whose ancestor is a symlink must refuse by name, not operate through it"
     );
     assert_eq!(
-        uninstall_version(&claim, root.path(), &installed.digest).err(),
+        uninstall_version(&claim, &installed.digest).err(),
         Some(InstallRefusal::UnsafeLayoutPath),
         "uninstall through a symlinked ancestor is the same arrangement"
     );
@@ -331,9 +331,9 @@ fn a_declared_file_with_crlf_endings_survives_the_whole_lifecycle() {
         Some(("skills/journey-contract/windows-notes.txt", crlf_bytes)),
     );
 
-    let installed = install_package(&claim, root.path(), &package)
+    let installed = install_package(&claim, &package)
         .expect("a CRLF-bearing declared file is bytes like any other and must adopt");
-    switch_active(&claim, root.path(), &installed.digest)
+    switch_active(&claim, &installed.digest)
         .expect("the switch re-derives over the same bytes and must land");
 
     let adopted_copy = std::fs::read(
@@ -357,33 +357,45 @@ fn a_declared_file_with_crlf_endings_survives_the_whole_lifecycle() {
     );
 }
 
-/// A root passed with a TRAILING SEPARATOR must not blind the ancestor probe.
+/// A root named through a LINK, with or without a trailing separator, must be refused.
 ///
-/// Found by G reviewing #596, and it defeats the check itself rather than the check-then-use
-/// window this module already declares. POSIX resolves a pathname ending in `/` as a directory,
-/// so `lstat("link/")` DEREFERENCES a final-component symlink and reports the target: the probe
-/// reads "not a link" about the very link it was aimed at. `--root /some/path/` is an ordinary way
-/// to type a directory and reaches this function straight off the CLI argument with no trim
-/// anywhere between, which is what makes it reachable rather than theoretical.
+/// **The subject moved, and saying where it went is the point of this comment.** Until #546 these
+/// assertions ran against `switch_active` and `uninstall_version`, which took a root argument
+/// beside the claim; the hostile root was handed straight to them and `require_unlinked_layout`
+/// was the layer that answered. #546 removed that parameter -- the four mutating entry points now
+/// derive their root from `claim.install_root()` -- so a hostile root can no longer BE handed to
+/// them, and the old form of this cell does not compile. The door the hostile root can still knock
+/// on is `ActivationClaim::acquire`, and that is what these two cells now measure.
 ///
-/// `versions/` is NOT exposed the same way -- `install_root.join("versions")` normalizes the
-/// separator away, so only the root itself is passed raw. The cell aims at the reachable half.
+/// The refusal moved layer as well as subject: `ClaimRefusal::UnsafeClaimPath` from the claim
+/// walk, not `InstallRefusal::UnsafeLayoutPath` from the layout probe. The mechanisms are not the
+/// same and the difference is what makes the trailing separator uninteresting here. G's P1 (found
+/// reviewing #596) was that POSIX resolves a pathname ending in `/` as a directory, so
+/// `lstat("link/")` DEREFERENCES a final-component symlink and the probe reads "not a link" about
+/// the link it was aimed at. `acquire` never lstats a path string: `open_root_anchor` walks the
+/// path COMPONENT BY COMPONENT and opens each one with `O_NOFOLLOW` (POSIX) or
+/// `FILE_FLAG_OPEN_REPARSE_POINT` plus a reparse-attribute check (Windows). `Path::components`
+/// has already dropped the trailing separator before the first open, so the separator cannot
+/// reach the probe to blind it -- by construction, not by a normalization step that could be
+/// deleted.
 ///
-/// **MEASURED, and it decides how to read this cell: on Windows it passes WITH AND WITHOUT the
-/// cure.** `GetFileAttributes` reports the reparse point for a trailing-separator name too, so the
-/// separator never blinds the probe here. This cell is REDUNDANT on Windows and LOAD-BEARING on
-/// POSIX, and it stays for the platform that needs it. **The red was never observed on this
-/// machine** -- the platform where it is red is the one this lane could not run, so whoever runs
-/// the Linux verification takes this cell's real first measurement. The cure's mechanism is pinned
-/// platform-independently by `probe_path`'s unit guard in install.rs.
+/// **Which means these two cells pass with and without `probe_path`'s cure, on BOTH platforms**,
+/// where the Windows face already did before #546 and the POSIX face carried the weight. That
+/// makes them regression guards on `acquire`'s walk, and NOT a measurement of the trailing-
+/// separator cure. The cure keeps its own subject: `probe_path`'s unit guard in `install.rs`,
+/// which is red when the normalization is deleted. Two things are declared rather than left to be
+/// re-derived from a green: the cure is now reached only by a caller that hands a raw root to
+/// `require_unlinked_layout`, which the public API no longer lets anyone do; and the POSIX red
+/// for the old form was never observed on the machine that wrote either version of this cell.
 #[cfg(windows)]
 #[test]
-fn a_root_named_with_a_trailing_separator_still_refuses_a_linked_root() {
+fn a_root_named_through_a_link_is_refused_with_or_without_a_trailing_separator() {
     let real = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(real.path()).expect("the claim must be granted");
     let (_keep, package) = synthetic_package("trailing-separator", None);
-    let installed = install_package(&claim, real.path(), &package).expect("the package adopts");
-    switch_active(&claim, real.path(), &installed.digest).expect("the switch lands");
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    switch_active(&claim, &installed.digest).expect("the switch lands");
+    drop(claim);
 
     // The hostile arrangement: the caller names the root through a link to it.
     let holder = tempfile::tempdir().expect("a temp dir");
@@ -394,44 +406,39 @@ fn a_root_named_with_a_trailing_separator_still_refuses_a_linked_root() {
         "CONTROL: the link serves the layout, or the refusals below prove nothing"
     );
 
-    // CONTROL, and it is the one that isolates the cause: named WITHOUT the trailing separator,
-    // the probe already refuses. Any difference below is attributable to the separator alone.
+    // CONTROL that isolates the cause: named WITHOUT the trailing separator, the walk already
+    // refuses. Any difference below is attributable to the separator alone.
     assert_eq!(
-        switch_active(&claim, &linked_root, &installed.digest).err(),
-        Some(InstallRefusal::UnsafeLayoutPath),
+        ActivationClaim::acquire(&linked_root).err(),
+        Some(ClaimRefusal::UnsafeClaimPath),
         "CONTROL: a linked root refuses when named without a trailing separator"
     );
 
     let mut trailing = linked_root.clone().into_os_string();
     trailing.push(std::path::MAIN_SEPARATOR.to_string());
-    let trailing = std::path::PathBuf::from(trailing);
+    let trailing = PathBuf::from(trailing);
 
     assert_eq!(
-        switch_active(&claim, &trailing, &installed.digest).err(),
-        Some(InstallRefusal::UnsafeLayoutPath),
-        "a trailing separator must not turn the ancestor probe into a probe of the link's TARGET"
+        ActivationClaim::acquire(&trailing).err(),
+        Some(ClaimRefusal::UnsafeClaimPath),
+        "a trailing separator must not turn the claim walk into a walk of the link's TARGET"
     );
-    assert_eq!(
-        uninstall_version(&claim, &trailing, &installed.digest).err(),
-        Some(InstallRefusal::UnsafeLayoutPath),
-        "uninstall reaches the same probe and must answer the same"
+    assert!(
+        installed.root.is_dir(),
+        "the refused acquisitions must have left the real layout alone"
     );
 }
 
-/// The POSIX face of the trailing-separator cell, and **the half that carries the weight**.
-///
-/// This is where G's P1 is real: POSIX resolves a pathname ending in `/` as a directory, so
-/// `lstat("link/")` dereferences a final-component symlink and the probe reads "not a link" about
-/// the link it was aimed at. The Windows twin above passes with and without the cure -- measured
-/// -- so this cell is the one whose red was never observable on the machine that wrote it.
+/// The POSIX face of the cell above. Same subject, same reason, the platform's own link.
 #[cfg(unix)]
 #[test]
-fn a_root_named_with_a_trailing_separator_still_refuses_a_linked_root() {
+fn a_root_named_through_a_link_is_refused_with_or_without_a_trailing_separator() {
     let real = tempfile::tempdir().expect("a temp dir");
     let claim = ActivationClaim::acquire(real.path()).expect("the claim must be granted");
     let (_keep, package) = synthetic_package("trailing-separator", None);
-    let installed = install_package(&claim, real.path(), &package).expect("the package adopts");
-    switch_active(&claim, real.path(), &installed.digest).expect("the switch lands");
+    let installed = install_package(&claim, &package).expect("the package adopts");
+    switch_active(&claim, &installed.digest).expect("the switch lands");
+    drop(claim);
 
     let holder = tempfile::tempdir().expect("a temp dir");
     let linked_root = holder.path().join("root-by-link");
@@ -441,26 +448,23 @@ fn a_root_named_with_a_trailing_separator_still_refuses_a_linked_root() {
         "CONTROL: the link serves the layout, or the refusals below prove nothing"
     );
 
-    // CONTROL that isolates the cause: named WITHOUT the trailing separator, the probe already
-    // refuses. Any difference below is attributable to the separator alone.
     assert_eq!(
-        switch_active(&claim, &linked_root, &installed.digest).err(),
-        Some(InstallRefusal::UnsafeLayoutPath),
+        ActivationClaim::acquire(&linked_root).err(),
+        Some(ClaimRefusal::UnsafeClaimPath),
         "CONTROL: a linked root refuses when named without a trailing separator"
     );
 
     let mut trailing = linked_root.clone().into_os_string();
     trailing.push(std::path::MAIN_SEPARATOR.to_string());
-    let trailing = std::path::PathBuf::from(trailing);
+    let trailing = PathBuf::from(trailing);
 
     assert_eq!(
-        switch_active(&claim, &trailing, &installed.digest).err(),
-        Some(InstallRefusal::UnsafeLayoutPath),
-        "a trailing separator must not turn the ancestor probe into a probe of the link's TARGET"
+        ActivationClaim::acquire(&trailing).err(),
+        Some(ClaimRefusal::UnsafeClaimPath),
+        "a trailing separator must not turn the claim walk into a walk of the link's TARGET"
     );
-    assert_eq!(
-        uninstall_version(&claim, &trailing, &installed.digest).err(),
-        Some(InstallRefusal::UnsafeLayoutPath),
-        "uninstall reaches the same probe and must answer the same"
+    assert!(
+        installed.root.is_dir(),
+        "the refused acquisitions must have left the real layout alone"
     );
 }

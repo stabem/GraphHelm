@@ -743,8 +743,21 @@ impl RepositorySchemaSet {
 
     #[must_use]
     pub fn validate_batch(&self, value: &serde_json::Value) -> Vec<Diagnostic> {
+        self.validate_batch_attempted(value).1
+    }
+
+    /// Validates a physical batch and reports separately whether the validator ran.
+    ///
+    /// The store needs the distinction: a stored journal line the governor declined to validate
+    /// is not evidence that the line is corrupt, and reporting it as corruption sends an operator
+    /// down a recovery path the bytes do not deserve. See [`OfflineSchemaSet::validate_attempted`].
+    #[must_use]
+    pub fn validate_batch_attempted(
+        &self,
+        value: &serde_json::Value,
+    ) -> (ValidationAttempt, Vec<Diagnostic>) {
         self.schemas
-            .validate(PHYSICAL_BATCH_ID, value, "repository-physical-batch")
+            .validate_attempted(PHYSICAL_BATCH_ID, value, "repository-physical-batch")
     }
 }
 
@@ -876,6 +889,10 @@ impl OfflineSchemaSet {
     }
 
     /// Validates a document using a root schema already compiled into this set.
+    ///
+    /// The returned diagnostics do NOT say whether the validator ran. A caller that must tell
+    /// "this document breaks the schema" from "this document was never checked" wants
+    /// [`Self::validate_attempted`], which is where this one gets its answer.
     #[must_use]
     pub fn validate(
         &self,
@@ -883,40 +900,96 @@ impl OfflineSchemaSet {
         document: &serde_json::Value,
         source: &str,
     ) -> Vec<Diagnostic> {
+        self.validate_attempted(schema_id, document, source).1
+    }
+
+    /// Validates a document and reports separately WHETHER the validator ran.
+    ///
+    /// `validate` answers one question with two meanings: an error-severity `GHS002_SCHEMA`
+    /// diagnostic is returned both when the document violates the schema and when the resource
+    /// governor declined to validate it at all. Those are opposite facts about the document --
+    /// one says it is wrong, the other says nothing about it -- and they have opposite recovery
+    /// paths for a caller holding stored bytes: repair or quarantine the document, versus present
+    /// it in smaller pieces. Distinguishing them by MESSAGE TEXT would make a reworded string a
+    /// silent behaviour change, so the distinction is returned as a type.
+    ///
+    /// This is the only place either answer is produced: `validate` is this function with the
+    /// attempt discarded, so the two can never disagree about the same document.
+    #[must_use]
+    pub fn validate_attempted(
+        &self,
+        schema_id: &str,
+        document: &serde_json::Value,
+        source: &str,
+    ) -> (ValidationAttempt, Vec<Diagnostic>) {
         let Some(schema) = self.validators.get(schema_id) else {
-            return vec![Diagnostic::error(
-                "GHS002_SCHEMA",
-                "root schema is not registered in the offline schema set",
-                "/",
-                source,
-            )];
+            return (
+                ValidationAttempt::Refused(ValidationRefusal::UnregisteredRoot),
+                vec![Diagnostic::error(
+                    "GHS002_SCHEMA",
+                    "root schema is not registered in the offline schema set",
+                    "/",
+                    source,
+                )],
+            );
         };
         let Some(instance_work_units) = instance_validation_work_units(
             document,
             MAX_VALIDATION_INSTANCE_VALUES,
             MAX_VALIDATION_TEXT_BYTES,
         ) else {
-            return vec![Diagnostic::error(
-                "GHS002_SCHEMA",
-                "document exceeds deterministic validation complexity limits",
-                "/",
-                source,
-            )];
+            return (
+                ValidationAttempt::Refused(ValidationRefusal::InstanceComplexity),
+                vec![Diagnostic::error(
+                    "GHS002_SCHEMA",
+                    "document exceeds deterministic validation complexity limits",
+                    "/",
+                    source,
+                )],
+            );
         };
         if !validation_work_is_bounded(
             schema.validation_work_units,
             schema.expanded_work_units,
             instance_work_units,
         ) {
-            return vec![Diagnostic::error(
-                "GHS002_SCHEMA",
-                "document exceeds deterministic validation work limits",
-                "/",
-                source,
-            )];
+            return (
+                ValidationAttempt::Refused(ValidationRefusal::ValidationWork),
+                vec![Diagnostic::error(
+                    "GHS002_SCHEMA",
+                    "document exceeds deterministic validation work limits",
+                    "/",
+                    source,
+                )],
+            );
         }
-        collect_validation_diagnostics(&schema.validator, document, source)
+        (
+            ValidationAttempt::Ran,
+            collect_validation_diagnostics(&schema.validator, document, source),
+        )
     }
+}
+
+/// Whether the validator ran over a document, as opposed to how the document fared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationAttempt {
+    /// The validator ran. Accompanying diagnostics describe the document; empty means it conforms.
+    Ran,
+    /// The validator did NOT run. Accompanying diagnostics describe the refusal, not the document,
+    /// and say nothing about whether it conforms.
+    Refused(ValidationRefusal),
+}
+
+/// Why validation was declined before the validator saw the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationRefusal {
+    /// The root schema id is not in this set. A build or wiring fault, not a property of the
+    /// document: the same document would validate against a correctly assembled set.
+    UnregisteredRoot,
+    /// The document has more values, or more text, than the instance walk will traverse.
+    InstanceComplexity,
+    /// The document and schema together exceed the bounded validation work budget.
+    ValidationWork,
 }
 
 fn collect_validation_diagnostics(

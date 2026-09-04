@@ -167,7 +167,7 @@ Any wire integer is additionally bounded by 9,007,199,254,740,991 so JSON consum
 | `GHE004_INVALID_EVENT` | A request, envelope, identifier, or reference is invalid. |
 | `GHE011_SCOPE_VIOLATION` | Retention scope is absent, invalid, foreign, or inconsistent. |
 | `GHE005_INTEGRITY_FAILURE` | Hash chain, checkpoint, cursor, watermark, Evidence, or artifact digest fails. |
-| `GHE006_LIMIT_EXCEEDED` | A deterministic repository, Evidence, page, or range bound is exceeded. |
+| `GHE006_LIMIT_EXCEEDED` | A deterministic repository, Evidence, page, or range bound is exceeded. Includes a physical batch the schema validator declines to process: `MAX_BATCH_EVENTS` and `MAX_BATCH_BYTES` are not the only bounds a batch can cross, and a batch too complex to validate is refused at append rather than written and then unreadable (#744). |
 | `GHE007_UNSUPPORTED_FORMAT` | Repository bytes are not the single supported baseline format. |
 | `GHE012_CONTENT_UNAVAILABLE` | A required content slot cannot be materialized. |
 | `GHE008_STORAGE_FAILURE` | The underlying store failed without a more specific classification. |

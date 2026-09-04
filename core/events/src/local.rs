@@ -12,6 +12,7 @@ use graphhelm_protocols::{
     ArtifactId, Clock, EventEnvelope, EventHash, EventKind, EvidenceId, IdGenerator, NewEvent,
     OpaqueId, PersistedTimestamp, RawSha256, RepositoryScope,
 };
+use graphhelm_schema::{ValidationAttempt, ValidationRefusal};
 use serde::{Deserialize, Serialize};
 
 use crate::canonical::{canonical_bytes, serialized_len_bounded, sha256_hex, wire_sha256};
@@ -990,6 +991,50 @@ impl LocalEventRepository {
         batch.checksum = batch_checksum(&batch)?;
         serialized_len_bounded(&batch, MAX_BATCH_BYTES)?;
         let mut line = canonical_bytes(&batch)?;
+        // Refuse a batch this store could write but could never read back (#744).
+        //
+        // `MAX_BATCH_EVENTS` and `MAX_BATCH_BYTES` are declared ceilings, but the schema
+        // validator applies a bound of its own -- a deterministic work budget over the parsed
+        // document -- and it is applied ONLY on the read path, inside `parse_physical_batch`.
+        // Nothing checked it here, so a batch that crossed the validator's budget without
+        // crossing either declared ceiling was accepted, fsynced, and became a journal line the
+        // store refuses for the rest of its life. Every later `load_state` over that stream
+        // stops there. The events are intact and unreachable, which is the worst of both.
+        //
+        // The real bound is a function of event COUNT and event SIZE together, so it cannot be
+        // restated here as a number without becoming a second, drifting opinion. Instead this
+        // asks the reader's own question, through the reader's own function, about the exact
+        // bytes the reader will see: parse the canonical line back and put it to
+        // `validate_batch_attempted`. A refusal here therefore proves a refusal there, and the
+        // guard can only reject batches that were already unreadable -- it cannot invent a
+        // limit the read path does not have.
+        //
+        // Deliberately not `UnregisteredRoot`: that is a broken binary, and failing an append
+        // for it would turn a build fault into data loss at a point where the caller can do
+        // nothing about it. It stays the read path's problem, where it is merely unreadable.
+        //
+        // BOTH of the reader's refusals, not only the governor's (found by ISSUES 4 reviewing
+        // this change). `parse_physical_batch` rejects a line when the validator DECLINED to run
+        // and also when it ran and found the document invalid. Checking only the first left the
+        // door admitting a document the read would still refuse -- the same write-accepted /
+        // read-refused pair one arm over, and the comment above claimed the stronger property.
+        // The two refusals keep DIFFERENT codes because they mean different things: a document
+        // too complex to validate is a bound the caller can act on, and one the validator ran and
+        // rejected is not a bound at all.
+        let readable_back: serde_json::Value =
+            serde_json::from_slice(&line).map_err(|_| EventRepositoryError::Integrity)?;
+        let (attempt, diagnostics) = self.schemas.validate_batch_attempted(&readable_back);
+        if matches!(
+            attempt,
+            ValidationAttempt::Refused(
+                ValidationRefusal::InstanceComplexity | ValidationRefusal::ValidationWork
+            )
+        ) {
+            return Err(EventRepositoryError::LimitExceeded);
+        }
+        if attempt == ValidationAttempt::Ran && !diagnostics.is_empty() {
+            return Err(EventRepositoryError::Invalid);
+        }
         line.push(b'\n');
         ensure_inclusive_limit(line.len() as u64, MAX_BATCH_BYTES as u64)?;
         if self.failpoint == Some(LocalFailpoint::Validation) {
@@ -2877,8 +2922,36 @@ fn parse_physical_batch(
 ) -> Result<PhysicalBatch, EventRepositoryError> {
     let raw: serde_json::Value =
         serde_json::from_slice(line).map_err(|_| EventRepositoryError::Integrity)?;
-    if canonical_bytes(&raw)? != line || !schemas.validate_batch(&raw).is_empty() {
+    if canonical_bytes(&raw)? != line {
         return Err(EventRepositoryError::Integrity);
+    }
+    // Two different facts used to arrive here as one (#744). The schema validator answers with
+    // diagnostics whether it CHECKED the document and found it wrong, or DECLINED to check it
+    // because its own deterministic work governor refused -- and folding both into `Integrity`
+    // told an operator that a journal line was corrupt or tampered with when the bytes were
+    // never examined. The recovery paths are opposite: a corrupt line is quarantined and
+    // restored from a backup, while an unvalidatable one is intact and wants smaller batches.
+    // `LimitExceeded` is the code this crate already uses for every other bound the batch can
+    // cross (`serialized_len_bounded`, the journal ceiling), so the refusal joins them rather
+    // than minting a fourteenth code for the same sentence.
+    //
+    // `UnregisteredRoot` deliberately stays `Integrity`: it means this build's schema set does
+    // not contain the physical-batch root, which is a fault in the binary rather than a
+    // property of the stored line, and calling it a limit would send the operator to trim a
+    // batch that was never too big.
+    let (attempt, diagnostics) = schemas.validate_batch_attempted(&raw);
+    match attempt {
+        ValidationAttempt::Refused(
+            ValidationRefusal::InstanceComplexity | ValidationRefusal::ValidationWork,
+        ) => return Err(EventRepositoryError::LimitExceeded),
+        ValidationAttempt::Refused(ValidationRefusal::UnregisteredRoot) => {
+            return Err(EventRepositoryError::Integrity);
+        }
+        ValidationAttempt::Ran => {
+            if !diagnostics.is_empty() {
+                return Err(EventRepositoryError::Integrity);
+            }
+        }
     }
     serde_json::from_value(raw).map_err(|_| EventRepositoryError::Integrity)
 }
@@ -5948,6 +6021,75 @@ mod limit_tests {
             parse_physical_batch(graphhelm_schema::repository_schema_set().unwrap(), &bytes),
             Err(EventRepositoryError::Integrity)
         ));
+    }
+
+    /// One physical batch carrying `events` copies of the same (deliberately invalid) event.
+    ///
+    /// The per-event content is FIXED and the count is the only thing that varies, so a verdict
+    /// that changes across sizes changed because of the count and nothing else.
+    fn batch_json_of(events: usize) -> serde_json::Value {
+        let one = serde_json::json!({
+            "schemaVersion":"1.0.0",
+            "eventId":"event-1",
+            "scope":{"workspaceId":"workspace-1","projectId":"project-1","executionId":"execution-1"},
+            "streamId":"stream-1",
+            "sequence":1,
+            "occurredAt":"2026-08-10T12:00:00Z",
+            "idempotencyKey":"request-1",
+            "actor":{"type":"system","id":"system-1"},
+            "sensitivity":"internal",
+            "kind":{"type":"graph_imported","data":{"sourceSha256":"a".repeat(64),"sourceKind":"graph_document"}},
+            "evidenceRefs":[],
+            "artifactRefs":[],
+            "previousHash":format!("sha256:{}", "0".repeat(64)),
+            "eventHash":format!("sha256:{}", "1".repeat(64))
+        });
+        serde_json::json!({
+            "formatVersion":"1.0.0",
+            "requestDigest":"not-a-sha256",
+            "scope":{"workspaceId":"workspace-1","projectId":"project-1","executionId":"execution-1"},
+            "streamId":"stream-1",
+            "expectedNextSequence":1,
+            "checksum":format!("sha256:{}", "3".repeat(64)),
+            "evidenceIds":[],
+            "artifacts":[],
+            "events":vec![one; events]
+        })
+    }
+
+    /// A stored line the validator DECLINED to check is not a corrupt line (#744).
+    ///
+    /// This is the read half, and it needs its own cell because the write-side guard makes the
+    /// integration path unable to reach it: an oversized batch is now refused at the door, so
+    /// nothing the store itself writes can produce such a line again. Journals written by earlier
+    /// builds still can, and this is the classification they meet.
+    ///
+    /// The control is the SAME batch at a size the validator will process. Both documents carry
+    /// the identical, deliberately malformed event -- `requestDigest` is not a sha256 -- so the
+    /// small one must come back `Integrity` from a validator that RAN and rejected it. Only the
+    /// event count differs between the two, which is what makes the differing verdicts evidence
+    /// about the governor rather than about the shape.
+    #[test]
+    fn a_batch_the_validator_declines_to_check_is_a_limit_not_an_integrity_failure() {
+        let schemas = graphhelm_schema::repository_schema_set().unwrap();
+
+        let small = canonical_bytes(&batch_json_of(1)).unwrap();
+        assert!(
+            matches!(
+                parse_physical_batch(schemas, &small),
+                Err(EventRepositoryError::Integrity)
+            ),
+            "the control must be rejected by a validator that ran, or the size below is not being compared against a working validator"
+        );
+
+        let large = canonical_bytes(&batch_json_of(4_000)).unwrap();
+        assert!(
+            matches!(
+                parse_physical_batch(schemas, &large),
+                Err(EventRepositoryError::LimitExceeded)
+            ),
+            "a line the governor declined to validate was reported with the code that means the journal is corrupt or tampered with; the bytes were never examined"
+        );
     }
 
     #[test]

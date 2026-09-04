@@ -528,11 +528,36 @@ fn artifact_identity_cannot_be_reused_from_a_different_producer_stream() {
     );
 }
 
+/// A batch of tiny events is charged the bytes it actually serializes to, not a per-event
+/// synthetic charge against `MAX_EVENT_BYTES`.
+///
+/// **The count moved from 4,096 to 128, and the reason is a defect this cell used to certify
+/// (#744).** A 4,096-event batch was accepted here and then could not be read back at all: the
+/// physical-batch schema validator declines to process a document that large, `parse_physical_batch`
+/// reported the refusal as `Integrity`, and because `open` parses every journal line, the whole
+/// repository became unopenable -- measured on `361080f5`, where sizes at and above roughly 160
+/// tiny events all ended `open: GHE005_INTEGRITY_FAILURE`. This cell never re-read what it wrote,
+/// so it passed on a store it had bricked, and the append it was proving legal is now correctly
+/// refused with `GHE006_LIMIT_EXCEEDED`.
+///
+/// 128 still discriminates the property this cell is for. A synthetic per-event charge of
+/// `MAX_EVENT_BYTES` (1 MiB) puts 128 events at 128 MiB against a 16 MiB `MAX_BATCH_BYTES`, so
+/// the synthetic accounting this cell exists to forbid is refused eight times over at the reduced
+/// count -- verified by restoring that accounting and watching this cell go red, not by arithmetic
+/// alone.
+///
+/// The read-back is new. Its absence is why the count was wrong for as long as it was.
+///
+/// **Do not raise this count back "to be thorough."** 4,096 was not too big by accident; it was
+/// too big BECAUSE nothing here re-read what it wrote, so the cell passed on a store it had
+/// bricked. The read-back below is what makes a raised count fail loudly instead of quietly, and
+/// the store now refuses such a batch at the door -- but a reviewer who sees a small number and
+/// reads it as timidity is the person this paragraph is for.
 #[test]
-fn thousands_of_tiny_events_use_real_serialized_bytes_not_synthetic_charges() {
+fn many_tiny_events_use_real_serialized_bytes_not_synthetic_charges() {
     let directory = tempfile::tempdir().unwrap();
     let repository = repository(directory.path());
-    let events = (0..4_096)
+    let events = (0..128)
         .map(|index| event_with_key(&format!("request-{index}")))
         .collect::<Vec<_>>();
     let request = PreparedAppend::new(
@@ -544,7 +569,16 @@ fn thousands_of_tiny_events_use_real_serialized_bytes_not_synthetic_charges() {
         vec![],
     )
     .unwrap();
-    assert_eq!(repository.append_atomic(&request).unwrap().len(), 4_096);
+    assert_eq!(repository.append_atomic(&request).unwrap().len(), 128);
+    assert_eq!(
+        repository
+            .read_stream(&scope(), "stream-1", 1_000, None)
+            .unwrap()
+            .events
+            .len(),
+        128,
+        "a batch this store accepted must be one it can read back"
+    );
 }
 
 #[test]

@@ -655,6 +655,32 @@ fn layout_behind_a_swapped_ancestor(
     (claim, installed, second, marker)
 }
 
+/// **THE FOUR ANCESTOR CELLS DO NOT PROVE THE SAME THING, and the count invites that reading.**
+///
+/// Measured by neutering `root_still_anchored` and reading WHICH assertion fires in each:
+///
+/// ```text
+/// an_ancestor_replaced_by_a_symlink...  THE REMOVAL FOLLOWED THE ANCESTOR LINK:
+///                                        a tree outside the claimed root was deleted
+/// install_behind_a_swapped_ancestor      ... got Err(Invalid)
+/// switch_behind_a_swapped_ancestor       ... got Err(Invalid)
+/// roll_back_behind_a_swapped_ancestor    ... got Err(NoPreviousVersion)
+/// ```
+///
+/// Only the first demonstrates DAMAGE. In the other three the verb, with the guard removed, still
+/// refuses -- for an unrelated reason -- and the marker outside the claimed root survives: their
+/// first assertion passes and the second does all the work. So `uninstall_version` is the
+/// destructive face, and the other three are pinned on THE CAUSE THEY REPORT.
+///
+/// That is still a defect worth a cell. "Your package is invalid" is a lie about a redirected
+/// root, and an operator who believes it edits a package that was never the problem. But it is one
+/// destructive face and three misreported causes, not four destructive faces, and a reader seeing
+/// four near-identical cells will otherwise assume four identical hazards.
+///
+/// Found by a peer who asked which assertion fires in each rather than taking "four red" as one
+/// fact. Not answered here: whether a decoy shaped for `install` rather than for `uninstall` could
+/// let an adoption actually land outside the root. This fixture is built for uninstall's lookup.
+///
 /// #772 blast radius, 1 of 3: `install_package` behind a swapped ancestor.
 ///
 /// The cell that shipped with the fix exercises `uninstall_version` ALONE — `install_package`

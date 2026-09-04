@@ -4242,6 +4242,23 @@ impl ProcessWatchdog {
         } else if self.timed_out.load(Ordering::Acquire) {
             Err(BackupError::DeadlineElapsed)
         } else if self.swept_incomplete.load(Ordering::Acquire) {
+            // SAFE ONLY BECAUSE `finish_inner()` ABOVE JOINS THE WATCHDOG THREAD. That join is
+            // the happens-before edge for this read: the thread's `store(Release)` on the cancel
+            // and timeout arms is ordered before it, so this `load(Acquire)` cannot miss a sweep
+            // the watchdog recorded. Notifying the condvar is NOT enough on its own -- it wakes
+            // the thread, it does not wait for it. And there is exactly ONE join in this type:
+            // `Drop` reaches `finish_inner()` as well, but `finish()` has already taken the
+            // handle by then, so `Drop` is NOT a backstop for this read -- do not read the
+            // `self.thread.take()` below as belonging to it.
+            //
+            // Move the join, make it conditional, or hoist this load above `finish_inner()`, and
+            // the failure is SILENT and points the WRONG WAY: a missed store reads as `false`,
+            // which says the tree is gone for a sweep that actually hit its bound.
+            //
+            // The `Release`/`Acquire` pair is redundant GIVEN the join, and stays on purpose:
+            // it is what keeps this read correct if the join is ever legitimately moved, and
+            // relaxing it to `Relaxed` would remove the second of two guarantees while the
+            // first is the one people edit.
             // #805: the sweep ran out of passes while descendants were still appearing, so the
             // leader's exit status does not mean the tree is gone. Reported LAST so it never
             // masks a cancel or a deadline, both of which are facts about why the work stopped;
@@ -4258,6 +4275,12 @@ impl ProcessWatchdog {
             *completed = true;
             condition.notify_one();
         }
+        // LOAD-BEARING, NOT CLEANUP. `finish()` reads `swept_incomplete` after calling this, and
+        // this join is the happens-before edge that makes the read see the watchdog's
+        // `store(Release)`. The discarded `Result` is the thread's panic payload and nothing
+        // else -- discarding it does not make the join optional. Removing it, making it
+        // conditional, or moving it below `close_process_group` breaks a read thirty lines away
+        // in `finish()`, silently, in the direction that says the tree is gone.
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

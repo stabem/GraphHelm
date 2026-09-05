@@ -55,7 +55,26 @@
     Defaults to the repository this script sits in.
 
 .EXAMPLE
+    NOT the supported invocation, and it is here to be recognised rather than copied. Run from the
+    candidate's own checkout, THE PULL REQUEST SUPPLIES THE PREDICATE THAT JUDGES IT: replacing
+    this file with `exit 0` certifies anything, and the self-check below is removed by the same
+    edit (#733). Use it only against a checkout you already trust -- your own branch, before you
+    ask anyone else to look.
+
     powershell -NoProfile -ExecutionPolicy Bypass -File ci/merge-proof.ps1 -PullRequest 696
+
+.EXAMPLE
+    THE SUPPORTED INVOCATION: the file executed is one the candidate cannot edit. See
+    `ci/merge-proof-from-main.ps1`, which does this and additionally VERIFIES that the extracted
+    bytes are main's rather than assuming the extraction was faithful.
+
+    git fetch --quiet origin main
+    git worktree add --detach --quiet $env:TEMP\mp-main origin/main
+    powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\mp-main\ci\merge-proof-from-main.ps1 -PullRequest 696 -RepositoryRoot .
+    git worktree remove --force $env:TEMP\mp-main
+
+    NOT `git show ... > file`: on Windows PowerShell 5.1 `>` is `Out-File` and re-encodes, which
+    produces a runner that is not main's bytes and still parses (#811 review).
 #>
 param(
     [Parameter(Mandatory)] [int] $PullRequest,
@@ -570,7 +589,10 @@ if ($selfAtMain.exitCode -ne 0) {
     if (-not $Json) {
         Write-Host ('[merge-proof] NOTE: this verifier checked ITSELF against origin/main. That catches ' +
             'drift, not a candidate that removed the check -- for that, run the copy from origin/main:' +
-            "`n    git show origin/main:ci/merge-proof.ps1 > <somewhere outside the checkout>") -ForegroundColor Yellow
+            "`n    git worktree add --detach --quiet `$env:TEMP\mp-main origin/main" +
+            "`n    powershell -NoProfile -ExecutionPolicy Bypass -File `$env:TEMP\mp-main\ci\merge-proof-from-main.ps1 -PullRequest <n> -RepositoryRoot ." +
+            "`n    git worktree remove --force `$env:TEMP\mp-main" +
+            "`n  NOT ``git show ... > file``: on Windows PowerShell 5.1 ``>`` is Out-File and re-encodes, so the runner is not main's bytes and still parses.") -ForegroundColor Yellow
     }
 }
 

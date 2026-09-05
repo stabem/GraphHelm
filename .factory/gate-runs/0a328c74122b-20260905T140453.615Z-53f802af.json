@@ -1,0 +1,2267 @@
+{
+    "status":  "RED",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "0a328c74122b81e1c0bf359c59ba0103046d9032",
+    "pullRequest":  811,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-733-merge-proof-from-main on origin IS this commit, read from the server",
+    "upstreamSha":  "0a328c74122b81e1c0bf359c59ba0103046d9032",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "included",
+                     "complete":  true
+                 },
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "E:/issues3-targets",
+    "runStartUtc":  "2026-09-05T13:35:26.2890381Z",
+    "runEndUtc":  "2026-09-05T14:04:53.5758161Z",
+    "canaryPassed":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.67
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.196
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  25.217
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  349.51
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  29.775
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  45.453
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.081
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.067
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.241
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.807
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.607
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.361
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.669
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.304
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.008
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.994
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.647
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.096
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.066
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.114
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.238
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.807
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.492
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.232
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.256
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.498
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.68
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.348
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.999
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.81
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.693
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.346
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.513
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  12.053
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.095
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.995
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.835
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.215
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.011
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  23.452
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.519
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.179
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.005
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.937
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.378
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.637
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.033
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  68.229
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  71.245
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.709
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.577
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.075
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.048
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  332.484
+                   },
+                   {
+                       "name":  "PostgreSQL ignored matrix",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  350.821
+                   },
+                   {
+                       "name":  "PostgreSQL matrix under a non-C collation",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  162.704,
+                       "outputTail":  [
+                                          "test admin_operator_binds_pool_profile_and_source_identity ... FAILED",
+                                          "test constructor_bounds_reconciliation_catalog_locks ... ok",
+                                          "",
+                                          "failures:",
+                                          "",
+                                          "---- admin_operator_binds_pool_profile_and_source_identity stdout ----",
+                                          "",
+                                          "thread \u0027admin_operator_binds_pool_profile_and_source_identity\u0027 (76052) panicked at adapters\\postgres-event-store\\tests\\backup_restore.rs:1421:13:",
+                                          "assertion `left == right` failed: terminated restore",
+                                          "  left: Ok(RestoreReceipt { source_identity_sha256: \"9b9f31dc3b85ae7440805bb484777c9b944fa952e8fc967e5014d121a94b003a\", target_identity_sha256: \"5f1a1ce0a94003ab0322ebcb9564de4911396849d41749d11e48b238b20152a7\", manifest_sha256: \"abb5a4d63ed838efe8c47da583430e7d11e0cd103531ae11a5961b96da934233\", authentication_tag: \"[redacted]\" })",
+                                          " right: Err(InvalidRestore)",
+                                          "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+                                          "",
+                                          "",
+                                          "failures:",
+                                          "    admin_operator_binds_pool_profile_and_source_identity",
+                                          "",
+                                          "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 10.65s",
+                                          "",
+                                          "[ci/postgres] Test command exited with code 101.",
+                                          "[ci/postgres] Stopping throwaway cluster.",
+                                          "waiting for server to shut down.... done",
+                                          "server stopped",
+                                          "[ci/postgres] Throwaway cluster removed.",
+                                          "     Running tests\\frozen_files.rs (E:/issues3-targets\\debug\\deps\\frozen_files-6e629bb755e1f909.exe)",
+                                          "     Running tests\\generator_arming_site.rs (E:/issues3-targets\\debug\\deps\\generator_arming_site-a59ae77fd530f265.exe)",
+                                          "     Running tests\\live_provider.rs (E:/issues3-targets\\debug\\deps\\live_provider-4b6db3cb31920138.exe)",
+                                          "     Running tests\\manifest_freeze.rs (E:/issues3-targets\\debug\\deps\\manifest_freeze-1a3ab0cbc9d324f7.exe)",
+                                          "     Running tests\\oracle_isolation.rs (E:/issues3-targets\\debug\\deps\\oracle_isolation-0a179792d404fcaf.exe)",
+                                          "     Running tests\\paired_contexts.rs (E:/issues3-targets\\debug\\deps\\paired_contexts-3fbf2c1cd366357a.exe)",
+                                          "     Running tests\\run_directory.rs (E:/issues3-targets\\debug\\deps\\run_directory-f32865bb5554c10e.exe)",
+                                          "     Running tests\\runner_cli.rs (E:/issues3-targets\\debug\\deps\\runner_cli-e218479fbd3499d1.exe)",
+                                          "     Running tests\\zero_bar.rs (E:/issues3-targets\\debug\\deps\\zero_bar-4f39a9f006d03ec0.exe)",
+                                          "     Running unittests src\\lib.rs (E:/issues3-targets\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe)",
+                                          "[gate] ... 65 lines omitted between the first named failure above and the end of the stage ...",
+                                          "     Running tests\\sources.rs (E:/issues3-targets\\debug\\deps\\sources-34d13b120430073c.exe)",
+                                          "     Running tests\\waivers.rs (E:/issues3-targets\\debug\\deps\\waivers-cbb39a2c850ac39d.exe)",
+                                          "     Running unittests src\\lib.rs (E:/issues3-targets\\debug\\deps\\graphhelm_postgres_event_store-c057ecefb124fe5f.exe)",
+                                          "     Running tests\\backup_restore.rs (E:/issues3-targets\\debug\\deps\\backup_restore-c3831cb839247472.exe)",
+                                          "error: test failed, to rerun pass `-p graphhelm-postgres-event-store --test backup_restore`"
+                                      ]
+                   }
+               ],
+    "artifactBuildExit":  0,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "E93F6F9C16AEFB9117136EF01333DB5A0DF0D801D231591E3C830EC959CC410E",
+                              "mtimeUtc":  "2026-09-05T13:35:43.1992589Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "EF464ADBDDF49A9988429E366B7A2E43ED93F981A5A5634621D31D091ADE2541",
+                              "mtimeUtc":  "2026-09-05T13:35:45.3414013Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "8DD0AFE296782D8CCB84951DD214BE962E10D7F7C2C2DF19B180747E6CD05AED",
+                              "mtimeUtc":  "2026-09-05T13:35:45.8259075Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "8D4B05CE1D1CAF2304D43F6F11647D67A60075BA3032AAC278DCF326FC983653",
+                              "mtimeUtc":  "2026-09-05T13:35:48.0649488Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "3ECA759DBEB87C753F7172099BCC5871EC89F1A600F18E5D19A4445CEA709955",
+                              "mtimeUtc":  "2026-09-05T13:35:48.2708251Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "1D05D0654B2645CB45F55B6E53040BF3C7246CB1A743FEF4487B0F36ADDA3DC8",
+                              "mtimeUtc":  "2026-09-05T13:35:48.3279502Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "0253436E330F5D04CD4F4918995B775196D258379B79EAB95AA281FE4F9D11F0",
+                              "mtimeUtc":  "2026-09-05T13:35:48.3239402Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "1B066B17CDF92F99D38DB2FFB98D7078EF9FBC427CF27F4CB95B5273847157EF",
+                              "mtimeUtc":  "2026-09-05T13:35:48.4089745Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "17D62C9812814E52941F8AB95D30FC7BA999D04570768E4E342650DB6735DCF1",
+                              "mtimeUtc":  "2026-09-05T13:35:48.7717554Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "554058B2CA61F6E5ED7194A7FEA8B408B0ED1F3FDA607E39DF0D4EC421340D42",
+                              "mtimeUtc":  "2026-09-05T13:35:48.8441188Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "0AA737D63C50FCEA2F77893DCD5133A840F417325BB4DDEC92DC9C2D8ABE4579",
+                              "mtimeUtc":  "2026-09-05T13:35:48.8616486Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "C55FB32EDBA7A1FE0275C9081E9C5BDE220328B1D7E9C007F32022E116B7E918",
+                              "mtimeUtc":  "2026-09-05T13:35:49.0616911Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "EB487AC467F693BEF60F3E3224242A251C12F0055C091116D77A033378F6FE9B",
+                              "mtimeUtc":  "2026-09-05T13:35:54.6380787Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "A962BE04AEAF8BD4A8DEC0216FD4D760953BEF5E77EF068F30631B814D846A29",
+                              "mtimeUtc":  "2026-09-05T13:35:54.6546829Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "3292B789B6E4647DEE6001E71C648DF8F760A2AA1FE73206155FC7277680295C",
+                              "mtimeUtc":  "2026-09-05T13:35:54.6862695Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "4BDB104A1AD4096B6A07B161BA13EE95CF4956FF7508BB2B041C0A0DE9E3C183",
+                              "mtimeUtc":  "2026-09-05T13:35:54.6772650Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "2752D26F41F0CC81C6634382E258770A75174CAE3018E2FC1718300007D62D2A",
+                              "mtimeUtc":  "2026-09-05T13:35:54.6757654Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "1DF23BE4BCAA3EA4A77477C3E4EA2BCEA7F0699D119AA914B0879FA49F674F4B",
+                              "mtimeUtc":  "2026-09-05T13:35:54.7839148Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "9930468504BF4DEE6CABBC646CE9AE5F00DA287B6A4B131CF39FBFBE2732EE10",
+                              "mtimeUtc":  "2026-09-05T13:35:54.9065687Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "DCE97E595BFB35F9694358A6958E75AE922A1C78CB288A71096355F403B3B1DC",
+                              "mtimeUtc":  "2026-09-05T13:35:54.9915385Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "B54ABE83EB630298216299D2F9F486EA4D7CB36C88E656FD4892D4E0BC858FA9",
+                              "mtimeUtc":  "2026-09-05T13:35:55.0321915Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "E86BA857713B89C402438096F3160A238BE960BECAC39BD0214AEC2D7323FFBF",
+                              "mtimeUtc":  "2026-09-05T13:35:55.0452478Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "node_type_vocabularies_agree",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\node_type_vocabularies_agree-5f955cea1aeafc7b.exe",
+                              "sha256":  "94918D728BE6C6D2253C9EE4A02B73A23069A6B3ED8EB9BAE4A7107303E9017C",
+                              "mtimeUtc":  "2026-09-05T13:35:55.2501992Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-2c09319e77d6c715.exe",
+                              "sha256":  "10D7FE1A1B90AB57895331734839E32AB154420A631D5138C1A3CC0761DD1636",
+                              "mtimeUtc":  "2026-09-05T13:35:56.3077011Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "dead_letter_is_declared_only",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\dead_letter_is_declared_only-76a4b315a835a5e0.exe",
+                              "sha256":  "1D961DDBF595AE513B768796E542BEBB3EE8FE9520144346C48199CF504E1056",
+                              "mtimeUtc":  "2026-09-05T13:35:56.4302180Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "countersign_append_is_declared_only",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\countersign_append_is_declared_only-fe8f10eb3bf551f2.exe",
+                              "sha256":  "79C34CF8189813CBA84D7C29DBC142F8250062EF06EE52F3D414BF5BD9EB378D",
+                              "mtimeUtc":  "2026-09-05T13:35:56.4327241Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "authored_strings_across_the_workspace",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\authored_strings_across_the_workspace-54f127c13b4393fb.exe",
+                              "sha256":  "FE81AB7734B6CCC6C4CE4EE3D83C2EDE8E3D6C9E0F76628C827E5D2D4ABD0839",
+                              "mtimeUtc":  "2026-09-05T13:35:56.4899415Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\wire_roundtrip-8742b077772ce03f.exe",
+                              "sha256":  "4A4095D9742FC14EDE7F12697118A3709FE870303694E24EEFFBA5D665A7D67B",
+                              "mtimeUtc":  "2026-09-05T13:35:57.2106726Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "BD050EE989505BC46408D4F34A78BFD01ECEFC25DD8A9BB0B059EC18072AFDB8",
+                              "mtimeUtc":  "2026-09-05T13:35:58.6418576Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\determinism-b4ef1ff5b98abd0b.exe",
+                              "sha256":  "85B6C1CA247124F71EF5499E8BAA37F1776EF7D92B165D21E57F5BB626CB6AF7",
+                              "mtimeUtc":  "2026-09-05T13:35:58.7262958Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "FA012E59841E6B0523263BDCB32564CB7977564E651E890D47D99C59D0C3729E",
+                              "mtimeUtc":  "2026-09-05T13:35:58.8296008Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_schema_evolution-7a31b58337ac09d8.exe",
+                              "sha256":  "FCEB84D618C79617F436DA8BFA679E058E072CAFCB21DF7483BF704DD6BB3FF0",
+                              "mtimeUtc":  "2026-09-05T13:35:59.1257077Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "sources",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\sources-34d13b120430073c.exe",
+                              "sha256":  "2C13515C4F24A1A2CC647EC1C5E5A60428CD4051717C8EB5BD81CDF5F0740857",
+                              "mtimeUtc":  "2026-09-05T13:35:59.1559613Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "waivers",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\waivers-cbb39a2c850ac39d.exe",
+                              "sha256":  "C1B7FFE13A2D7E70691127AE53FA244AA4D9E80A9D53D6911F08EC9CD12C6859",
+                              "mtimeUtc":  "2026-09-05T13:35:59.2383458Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "staging",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\staging-059fd7c3bdebfefa.exe",
+                              "sha256":  "4FA79970BB4BD48C51835477A123887AF75A4B7693976A62EB0D0EC101BB9C58",
+                              "mtimeUtc":  "2026-09-05T13:35:59.5321282Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "discovery",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\discovery-1efadc049bd94c59.exe",
+                              "sha256":  "1FF89B59C5FCB96FE63CEE56ABE0890E047547724A336A62B5BD28FD6E848687",
+                              "mtimeUtc":  "2026-09-05T13:35:59.4579965Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "mcp_capability_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\mcp_capability_contract-b701f4fb345d7382.exe",
+                              "sha256":  "AC6E73468DCB0C74869B5ECEE899BD96A6D4425047FBEAB1BE70836BF975BE3D",
+                              "mtimeUtc":  "2026-09-05T13:35:59.9588312Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "551C14F7BEC3D4388787B92C47C3DC1967C63FA3889EECB8618DE1285054A88A",
+                              "mtimeUtc":  "2026-09-05T13:36:00.0633319Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\offline_registry-ea42ba19b11ac336.exe",
+                              "sha256":  "7B9BEC76D6E8594744D5E579A078CCEB0E8575BE8FE6F0AE315B43159CF71ADD",
+                              "mtimeUtc":  "2026-09-05T13:36:00.1868568Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "claim_binding",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\claim_binding-2ccd5d23309cf407.exe",
+                              "sha256":  "E87BD9AEE055F6D3AC3712A724467B442B2F97C0787AF9EB17541704D50174E7",
+                              "mtimeUtc":  "2026-09-05T13:36:00.7149073Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "install",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\install-9b2df37189a74b0b.exe",
+                              "sha256":  "92010C906B4FAB5E79587DEC913B3C22691F4EEE79C86CF8DB6577CEBAFDCC32",
+                              "mtimeUtc":  "2026-09-05T13:36:00.7184070Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\canonical_examples-ccc8943dc2022713.exe",
+                              "sha256":  "85F1F2CEE591DDA0D639A9B4F95E98732D1E70B94B581A2E30CBB899790273C6",
+                              "mtimeUtc":  "2026-09-05T13:36:01.7381759Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "activation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\activation-c84433336266f7f3.exe",
+                              "sha256":  "573BE9D8589562696E2606734D1027B0E045C68C605A4B4E87D84969A0EDB866",
+                              "mtimeUtc":  "2026-09-05T13:36:01.6954906Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "graphhelm_extension_host",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_extension_host-aa0dffd89be0ef5e.exe",
+                              "sha256":  "7A9EE86C0059D5A6D382EFBFD1D2D2CEBF324417EB24D422760A5204E2AF135C",
+                              "mtimeUtc":  "2026-09-05T13:36:01.7356702Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\immutability-a5da5cd8d4d2dccf.exe",
+                              "sha256":  "1AB766E6782B3178A6F2B8EE7B4B9033159D7AD94B3F8058742CF353A342F097",
+                              "mtimeUtc":  "2026-09-05T13:36:01.7642950Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "uninstall",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\uninstall-ee5868f99cb11131.exe",
+                              "sha256":  "EE06AC750097B4C1A5567C90AFDF626AB48ED26C83344542933F8FE6AD25F3AE",
+                              "mtimeUtc":  "2026-09-05T13:36:02.2113604Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "653226C42DC382368AC4D3ED5F37F03C8BC8A4B1D25A07E62A9FE05C2945BB3D",
+                              "mtimeUtc":  "2026-09-05T13:36:02.4344118Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "links",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\links-f3752a1522032326.exe",
+                              "sha256":  "AF1F9BEF3C9DCBB61054A389E2C5CEB7BE63E0A85C6BD334226179C9C5DE1408",
+                              "mtimeUtc":  "2026-09-05T13:36:01.8396817Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "AFECD6FD3CBD35A7888790132EA11B38BA1294C59B10E925BAB26CFF4A206522",
+                              "mtimeUtc":  "2026-09-05T13:36:03.3693252Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "resolve_once",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\resolve_once-fcea40ea492ac6a3.exe",
+                              "sha256":  "9B907F6599B862BC81282E1823EBAA748CC7893A833068F8120951702A94347B",
+                              "mtimeUtc":  "2026-09-05T13:36:03.6220323Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\obligations-0dddb8a8246f33aa.exe",
+                              "sha256":  "F46C60163A91C12D3FF9C5837641AA137C6215E9E0BFC1E7FF3C5BFCC4F505F0",
+                              "mtimeUtc":  "2026-09-05T13:36:03.6360783Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "pin_defence",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\pin_defence-6ead11b2846af5fd.exe",
+                              "sha256":  "EDA266BA495FDEA997A0A725398EB1798DBB897CB2CFAC29E7C9649C3D19D1C9",
+                              "mtimeUtc":  "2026-09-05T13:36:03.8594657Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-1ccabf37030f08df.exe",
+                              "sha256":  "A9EAB4BF3A736043939BA6F08D49B77A886291FBB3524ECF2AAF80C0E3A9F4C3",
+                              "mtimeUtc":  "2026-09-05T13:36:03.8899786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_policy-c8e4dc4c07225c77.exe",
+                              "sha256":  "9F011AB741199822522E9BC7FA02033833496CC287D94E45415C093F9D9432B8",
+                              "mtimeUtc":  "2026-09-05T13:36:04.0955474Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-2be709cd77865655.exe",
+                              "sha256":  "8B243E459A835D191E8719AE4CF76A564D94284ADD51CCE1EAA2D97A557A70FE",
+                              "mtimeUtc":  "2026-09-05T13:36:04.1477779Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\release_gate-afc6476bec06067f.exe",
+                              "sha256":  "75876CFC57202BD520AAA01840471A0B3DAA782ECD26AC992DCBF7E382AEEF02",
+                              "mtimeUtc":  "2026-09-05T13:36:04.6437468Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "baseline_origin",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\baseline_origin-d4ed2ce391470b68.exe",
+                              "sha256":  "F774B4E99C937B1652592AC52CFAB8A8039750D176CA464ADC39542EBDAD5DCB",
+                              "mtimeUtc":  "2026-09-05T13:36:05.0317985Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\determinism-26fefe07d08fbd7d.exe",
+                              "sha256":  "F122DD04AA3B67E6B76664356EB7477A1EA0ACF23C71F376F95F1BA85A9ECCBE",
+                              "mtimeUtc":  "2026-09-05T13:36:05.0549088Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "22CE7A91BC1AF97D3A54F10E11F6B742CD1015F05E44B9556A91927A52B317AA",
+                              "mtimeUtc":  "2026-09-05T13:36:05.1304835Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\compatibility-7c7c1eac5aa68118.exe",
+                              "sha256":  "C63A6B91C30C54657049F13B4E56DB9E39A4A711F7DD439C9C058AE453AFA5D3",
+                              "mtimeUtc":  "2026-09-05T13:36:05.1631057Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "precedence",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\precedence-9acd4764e95463cc.exe",
+                              "sha256":  "E36105F3CAD614DD0F39847940A31A29656253E5F6ED9398AEC4D533E6EA061E",
+                              "mtimeUtc":  "2026-09-05T13:36:05.2682232Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "union_provability",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\union_provability-8d512724d92cac32.exe",
+                              "sha256":  "21B3CD22038F92C5412E72406EAAAD81DF0619D0A1A15F5F6BF9E8602F8A81B7",
+                              "mtimeUtc":  "2026-09-05T13:36:05.3646413Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\lint_rules-1ac0c1eca4c1ab0f.exe",
+                              "sha256":  "DD96603CBA9D3831FCC3E84738D367979A343432315F62A9CE2DD79E738C88F7",
+                              "mtimeUtc":  "2026-09-05T13:36:08.0273740Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_protocols-8ab75a56c0d22bed.exe",
+                              "sha256":  "5AA74FB93249DC551CF1EAABBB56385B26BA5545F68B91EFBE5A2BCCC6F23EAB",
+                              "mtimeUtc":  "2026-09-05T13:36:08.0047917Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\persistence_projection-b40819e83414e2c3.exe",
+                              "sha256":  "6AC54A0D0086C4A27E0CFCC1D2265FBF7B0A6CF5A421575B1734124A3FDA6B75",
+                              "mtimeUtc":  "2026-09-05T13:36:07.9580752Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\canonical_hash-2721c3c9f71b749f.exe",
+                              "sha256":  "F60247B8CE3767AE2CE4289008D26D123CFEFE93C1DB2E1434FD139750AC5DDD",
+                              "mtimeUtc":  "2026-09-05T13:36:08.0957329Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\catalog_integrity-df4cdb690dc800dc.exe",
+                              "sha256":  "64B6D30496FC59F280D3DC1CC2A655C8A89C2C9233BE2742288B30C235319C0D",
+                              "mtimeUtc":  "2026-09-05T13:36:10.0983212Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\migration-4403d5b377d7338a.exe",
+                              "sha256":  "0A45D693D9A95C4FAEE850B3BFB0949494769983A8120A138DCC6AAC76270ECD",
+                              "mtimeUtc":  "2026-09-05T13:36:10.0673071Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_graph-ffeaf7778401df45.exe",
+                              "sha256":  "5056C72F3AACB174624C688D13D89E334D7A1D90B4CBA82C2A41E94A161AD707",
+                              "mtimeUtc":  "2026-09-05T13:36:10.5571440Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\persistence_wire-6db9814264c30e6e.exe",
+                              "sha256":  "877F615F6FFC74532736953F2DA19901B0C48C7CF23FA6327371A912A9E3596D",
+                              "mtimeUtc":  "2026-09-05T13:36:24.2487022Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\conformance-0da39bf4da031a1b.exe",
+                              "sha256":  "BF81416DC80B650021945D6AEF4D61C98E511FC4091AFF771786470B24D40E7E",
+                              "mtimeUtc":  "2026-09-05T13:36:24.2587321Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_schema-446c571838924ac8.exe",
+                              "sha256":  "40EA842AAB3DFD5ED359BA948C03F6D9D666E5C1E10D7312CB7E9A96E9721909",
+                              "mtimeUtc":  "2026-09-05T13:36:24.2446975Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance-map",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\acceptance_map-321f003458e6b752.exe",
+                              "sha256":  "DDC9584EE94294745B3CCF1297E5F6DDA5B5DAAFD3FD2AE84759DC995BEE70EC",
+                              "mtimeUtc":  "2026-09-05T13:36:26.7418432Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "recoverable_layout",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\recoverable_layout-d56a562edc0d9572.exe",
+                              "sha256":  "1BB5157CF303CC0C5D38E6642ED696ADD099001242BD619D6A26ED5E1E78BF05",
+                              "mtimeUtc":  "2026-09-05T13:36:28.0917882Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/acceptance-map#0.1.0",
+                              "target":  "record_demonstration",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\record_demonstration-6307d9bd57d5344c.exe",
+                              "sha256":  "499B29DA6D14B926B9D0308055C6E602E963954A5FFFECF54EE504614D5ED807",
+                              "mtimeUtc":  "2026-09-05T13:36:28.9158419Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "graphhelm_model_gateway",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_model_gateway-a343aba2fe39a51e.exe",
+                              "sha256":  "CB60EFA9306FD8A674E3E74F19C7398518205F3115BD54CE54AAA8D9BE428B40",
+                              "mtimeUtc":  "2026-09-05T13:36:29.2502423Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_stage_vocabularies_agree",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\customs_stage_vocabularies_agree-badb5dfa7a6a3a54.exe",
+                              "sha256":  "010D428A7483A63943A882D6678BC3F69779C425701DC3634FE799D51815E996",
+                              "mtimeUtc":  "2026-09-05T13:36:29.2146042Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "shared_lock_blocks_writers",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\shared_lock_blocks_writers-ebf5a7f12408b8f4.exe",
+                              "sha256":  "59C69D1AA3C8EF4F31955230CC207F53C2EE431D82B79834A1CFA4E0BDE15FBE",
+                              "mtimeUtc":  "2026-09-05T13:36:29.6820902Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "graphhelm_simulation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_simulation-0bf61f7ec30fc42a.exe",
+                              "sha256":  "767D81D889EB2A1416D8B69E04C37E9953F81579B76EA3DE0EA16F5B2E8ABCCF",
+                              "mtimeUtc":  "2026-09-05T13:36:30.3458828Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_concurrency",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\read_concurrency-9b10a993c1c5b668.exe",
+                              "sha256":  "7CDCF2B7430D3EF04EFD2E97A18C4BFDDDC939509685B69B7B345CFC0375203C",
+                              "mtimeUtc":  "2026-09-05T13:36:31.8132407Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/acceptance-map#0.1.0",
+                              "target":  "committed_journals",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\committed_journals-2cc055246fad6504.exe",
+                              "sha256":  "FC1B3B7895FD2C11B553A3E388A75A84A7BBEFB6CFC63420C264C77ECF7E1297",
+                              "mtimeUtc":  "2026-09-05T13:36:31.7871563Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/acceptance-map#0.1.0",
+                              "target":  "committed_stores",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\committed_stores-a92a7ae4f5260e87.exe",
+                              "sha256":  "C669618EE02B41C68AE6EDED9029DCCA3FF2D593FC6FE164E4009216AA73DA43",
+                              "mtimeUtc":  "2026-09-05T13:36:31.8701294Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\repository_conformance-0c3020abfa5d2a90.exe",
+                              "sha256":  "0E32AC828264B99E9F50A6EFE44D076791699FB7D7B40FD70923657D9696620A",
+                              "mtimeUtc":  "2026-09-05T13:36:31.8711335Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-3d50a7ec65d3b728.exe",
+                              "sha256":  "72B9406E064B9C3A887AF8F8BBA999148176A1EC6863E2432807FFA43ABEE45D",
+                              "mtimeUtc":  "2026-09-05T13:36:32.7059189Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_budget",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\read_budget-ca2527bd6f847f16.exe",
+                              "sha256":  "C242E6E651063DB251AB4B5CAB5292B0C8591A620C32BA47A8E5FB4D8C35F86F",
+                              "mtimeUtc":  "2026-09-05T13:36:34.7462065Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-bc0e67e272615c51.exe",
+                              "sha256":  "5A64E3EB399948768AC63AC596798EA65F4DF849038C92CC576A3B5D9A795678",
+                              "mtimeUtc":  "2026-09-05T13:36:36.4754024Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "memory",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\memory-07e4c3f0c6ae6a13.exe",
+                              "sha256":  "5033A241099384EC0C2B14667D177CFADA02363CE03F7391C3E322B72AFAA69E",
+                              "mtimeUtc":  "2026-09-05T13:36:36.6391280Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "local_atomicity",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\local_atomicity-e89d0a3f6e53c87d.exe",
+                              "sha256":  "69D668D1CC76F7D328CECDF4406144A1000E93DFAA2C802DC0D05E8B2B9D1A84",
+                              "mtimeUtc":  "2026-09-05T13:36:36.6586949Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "graphhelm_governor",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_governor-c62b833bbf5e7def.exe",
+                              "sha256":  "C5CF751BD4964744616E94FAD2E9B6E62F779F8E97CAC305A80DBB85D14D7BAD",
+                              "mtimeUtc":  "2026-09-05T13:36:36.6327394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "replay",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\replay-8fb0270f8cf6d943.exe",
+                              "sha256":  "14473CB0545A360937DB8D470370D2D2018B7CDDBBCF095067324B49B4C0BB2E",
+                              "mtimeUtc":  "2026-09-05T13:36:36.9979078Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "attention",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\attention-a51521956919f1d6.exe",
+                              "sha256":  "6CC83266CBACC1446B7EC735E20692D64EC9B87AC84414C4BA37A6E68816D30A",
+                              "mtimeUtc":  "2026-09-05T13:36:36.3036261Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "sweep_verb",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\sweep_verb-832785868e6262de.exe",
+                              "sha256":  "8BDBC522593E727BC120572CCD1B2250BCDA3D778B317F4DFC8C19531B8485CA",
+                              "mtimeUtc":  "2026-09-05T13:36:38.3549487Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "evidence_crypto",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\evidence_crypto-fc3878dda7e94bee.exe",
+                              "sha256":  "82CF752C854FE60E7D871010B7CBA3CFA9917132E04609ABCE44C876762070AF",
+                              "mtimeUtc":  "2026-09-05T13:36:38.4158395Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_compiler",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\context_compiler-8d6eac50b954423c.exe",
+                              "sha256":  "DE346BB6E9EE8C938B93EBFF4C95EAF07A54CA654DCF3EE2E0314808E055E58F",
+                              "mtimeUtc":  "2026-09-05T13:36:44.9390472Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "scheduling_properties",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\scheduling_properties-cbc5e0edb658ccdc.exe",
+                              "sha256":  "DB25934074E1D3A7B3DDE0EB4E9B57A1AC06A6C756E62AE3C53AD9B01963B801",
+                              "mtimeUtc":  "2026-09-05T13:36:39.5522362Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "graphhelm_sealed_key_provider",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_sealed_key_provider-de71c3c2c569e26b.exe",
+                              "sha256":  "6B5959BD7E193D84F31028F489315DE105493E9C2892AE3626BDD8F1EDE47331",
+                              "mtimeUtc":  "2026-09-05T13:36:44.9410587Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_tool_host-d8d78210bf28994e.exe",
+                              "sha256":  "2130D4074AD1AC507E4C107F1DA6FAAB1B5B183B8F2855E7F820B422A2FF715F",
+                              "mtimeUtc":  "2026-09-05T13:36:45.2722116Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "declared_gap_delta_application",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\declared_gap_delta_application-518eea92248ad1b5.exe",
+                              "sha256":  "526741B3A3B13BBF300715365BF1AF0B3D3E9C8874C5BA3EA3437686ECF440D5",
+                              "mtimeUtc":  "2026-09-05T13:36:55.4063003Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-843066d2709875c1.exe",
+                              "sha256":  "C73BAA60DF6AD318C6CF54D03E32691AE17D99C5CC67816E86A75DA55281EB0C",
+                              "mtimeUtc":  "2026-09-05T13:36:55.6054219Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "fake-index-provider",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\fake_index_provider-969265811b76c0d7.exe",
+                              "sha256":  "5D7EEA6BF9575239813764916F37E3561A46B3B7C1C869CBFA83562F538E5BD4",
+                              "mtimeUtc":  "2026-09-05T13:36:55.9808809Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "surface_completeness",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\surface_completeness-ba8e60b0b94324f6.exe",
+                              "sha256":  "1342C08CC0F9A97B4019E0DC6A1DF33E3C0D910FDABD3D89AD378AC13FA79DFB",
+                              "mtimeUtc":  "2026-09-05T13:36:56.3216285Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_url",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\mcp_url-18fc87bee2ccd682.exe",
+                              "sha256":  "C3CD5B3C0B1D8FAC7935AD625F0922B6DE2A3997435064FFCB4D4F11930CAEA3",
+                              "mtimeUtc":  "2026-09-05T13:36:56.4758463Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "prompt_assembly",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\prompt_assembly-458d9899b3ed5725.exe",
+                              "sha256":  "30AEC1D50C9C0E2AD48793C1C7138C3E9BA2BE70E0D411E2C29CF60BD4743879",
+                              "mtimeUtc":  "2026-09-05T13:36:56.8232023Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "blind_judge",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\blind_judge-5db6855d6bec171f.exe",
+                              "sha256":  "AB2CB0906A48B16247D4992965A31F8796EE899329C48860791AE2E1BEE3CE1B",
+                              "mtimeUtc":  "2026-09-05T13:36:57.5804722Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "graphhelm_execution",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe",
+                              "sha256":  "0879367A7C079AED2536D600881FB9EB8445CF4474D10941F492346E8B3927F5",
+                              "mtimeUtc":  "2026-09-05T13:36:57.1798872Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "execution_projection",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\execution_projection-6304d0816eea1539.exe",
+                              "sha256":  "719AD73BEBA7A2FC9816D3AB8D2AAE03A98598F5F07B13C31E80FF0DC4057088",
+                              "mtimeUtc":  "2026-09-05T13:36:58.1283705Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_accounting",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\context_accounting-f956e16e0379926e.exe",
+                              "sha256":  "1E7B2CC56A78A41615CBD8D9DB3A657B6602D77A6A7ACC08B6EF2E86E944D3B5",
+                              "mtimeUtc":  "2026-09-05T13:36:58.0353865Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_citation_fixtures",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\context_citation_fixtures-9f3baa4154d4a09c.exe",
+                              "sha256":  "0BD5B5B236A627EED0AE64E96413110EFD3D0BADF061359EDD0AB000BFD973B6",
+                              "mtimeUtc":  "2026-09-05T13:36:58.1022704Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "decoder",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\decoder-cd2a64e7b426267c.exe",
+                              "sha256":  "972DB7F101F97A976EB23C87F27407BFF7662EBBBF996F90182ADC197487AB5F",
+                              "mtimeUtc":  "2026-09-05T13:36:58.0750665Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_package_inventory",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_package_inventory-0e125ccb68aa9faf.exe",
+                              "sha256":  "9D390D3053D346F5EFBF50AA37E693BE4AA1A75BF9DAE3D04DF06FA1798ABEED",
+                              "mtimeUtc":  "2026-09-05T13:36:57.9526562Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "arm_symmetry",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\arm_symmetry-62360d814335dc34.exe",
+                              "sha256":  "A1279DB89BA377BD066669D54C6038E8623BD03BC6273758E0753831EC05772F",
+                              "mtimeUtc":  "2026-09-05T13:36:58.4051844Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired_contexts",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\paired_contexts-3fbf2c1cd366357a.exe",
+                              "sha256":  "1278FE43FBE67F46554B5A038B81158F539908D8FDB91F55462246B51B351BFE",
+                              "mtimeUtc":  "2026-09-05T13:36:58.4067165Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "oracle_isolation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\oracle_isolation-0a179792d404fcaf.exe",
+                              "sha256":  "DE90431B55706A56876F728A8DBDDFB6F790103B782C65C20634677F215ACED1",
+                              "mtimeUtc":  "2026-09-05T13:36:58.4046824Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_channel",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\workspace_source_channel-02cbefa24788b521.exe",
+                              "sha256":  "6B4DAEC362723C2B8887233E3A277701866031B486778FE934D4AC87C5F4FC38",
+                              "mtimeUtc":  "2026-09-05T13:36:58.6842452Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "evaluator_policy",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\evaluator_policy-b41d11f1dcab78c6.exe",
+                              "sha256":  "E36E52D977502502C85AEA7944978EB58AB3AB6B7286F2F328B678E033C98A46",
+                              "mtimeUtc":  "2026-09-05T13:36:58.6682028Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "migration",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\migration-e6cf28a560f444c5.exe",
+                              "sha256":  "6B6D36C33ECB5719D2F6FE280AE25C247F174735125EA3F01999AC4CD3CC8F88",
+                              "mtimeUtc":  "2026-09-05T13:36:59.0822213Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "isolation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\isolation-094673799ea954d6.exe",
+                              "sha256":  "5C6151E603E6630ACE5423823D261D7E1CF99A50B32BCF9F5B1A6AA74BA999FE",
+                              "mtimeUtc":  "2026-09-05T13:36:58.9231277Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "fake_mcp_server",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\fake_mcp_server-d3a7c93c9a0e436c.exe",
+                              "sha256":  "CB6DA63AA582EEE79FECB1B879B5F9FEC0423233E9C5D7668886BFAD40D10B26",
+                              "mtimeUtc":  "2026-09-05T13:37:01.7700761Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "projection",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\projection-7f30d49b0e7a8fb5.exe",
+                              "sha256":  "5F576E9EA01E7F60C5DC1A99D0FA0D6150DF251794E6F11FA90C654536983A1F",
+                              "mtimeUtc":  "2026-09-05T13:36:59.0631504Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "gate_nodes",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\gate_nodes-2c40cbe713334b3b.exe",
+                              "sha256":  "EB7AAF9DBC27A0D3026051E40AC8017D300FC5809604C5255A9A76222A8DE1F0",
+                              "mtimeUtc":  "2026-09-05T13:36:59.0782122Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\broker_end_to_end-6af77c5069aa51fc.exe",
+                              "sha256":  "7BC95264C3E11162C161946E9171F7DF3661BEF486F6973814D669A61F6DABE9",
+                              "mtimeUtc":  "2026-09-05T13:37:03.4693255Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\fake_tool-4b9956ceda5ce728.exe",
+                              "sha256":  "27EF3E84CB7EF502DF9D261C23EAD36D35787A16257AE9D43BE8D45B5CB05EEB",
+                              "mtimeUtc":  "2026-09-05T13:37:06.6892703Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-3a0f7480874a6a5b.exe",
+                              "sha256":  "D3A6F76AF8102EAC84295233ECCD26A1DA46A9224E2A8DF42D6F0BC59C5B6EBA",
+                              "mtimeUtc":  "2026-09-05T13:37:06.8923002Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_local_backup",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\event_store_local_backup-5f7e3f3aa2ed2dc2.exe",
+                              "sha256":  "511A8EFC09B59DA4C0F191F223C03F26DEAB71697A2684055B992B5BA916D95C",
+                              "mtimeUtc":  "2026-09-05T13:37:07.2091845Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "concurrency",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\concurrency-a807a30b68e85850.exe",
+                              "sha256":  "659D6D75BD1643806E61227EDE0EB7A2E8D0AC4DE087688EB7CE2F3A5C862BF5",
+                              "mtimeUtc":  "2026-09-05T13:37:06.9832739Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired-driver",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\paired_driver-bc3e225770a17a5a.exe",
+                              "sha256":  "42C2D3CE82D22B4C332C434535FB18E6052D832DC6263BDD378013A5946FE264",
+                              "mtimeUtc":  "2026-09-05T13:37:08.3593228Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_cli-c186d5397bb53fa0.exe",
+                              "sha256":  "847FCC5502899AF4D6622D7B95296A69CA379A0BE012C639607870F914E849C8",
+                              "mtimeUtc":  "2026-09-05T13:37:08.4844812Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\event_store_cli-1af1ba34bc1104df.exe",
+                              "sha256":  "02A921170D8B4674BDF37F205399CE1B4986A485931CE84D2BAE3B7451F08F6F",
+                              "mtimeUtc":  "2026-09-05T13:37:08.1617401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "graphhelm_postgres_event_store",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_postgres_event_store-c057ecefb124fe5f.exe",
+                              "sha256":  "EF53454F5D6332652E98D333ED8B93BE36D2C4AC5E8DC59FAB063571CAE4538E",
+                              "mtimeUtc":  "2026-09-05T13:37:08.8462464Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_journey",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_journey-61fa2a3755e02732.exe",
+                              "sha256":  "018E78378FDF2AF01ABA5DF41EDEB501CE1E710446EDE908BE0BC49FEEBEA4EA",
+                              "mtimeUtc":  "2026-09-05T13:37:08.9810254Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_plugin",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_plugin-5650f1c204c73c56.exe",
+                              "sha256":  "65AD07FB6CD9BEE321703A7556CCE40D1164C1BDC31083EF1E8EDE229EFC0EEF",
+                              "mtimeUtc":  "2026-09-05T13:37:09.1628248Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm_development_benchmark",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_development_benchmark-7d115949016b800b.exe",
+                              "sha256":  "15B20659EB5C1426F4D132E9A8AA442BE0E6FCEDDE19BA3707A49EDA89A65FA7",
+                              "mtimeUtc":  "2026-09-05T13:37:08.7695218Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_lifecycle",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\extension_lifecycle-1e1e42bbc035e1b3.exe",
+                              "sha256":  "803A84539DAA7E98477F2277B95AD6717A7892D94A58A7477208EBC6EBB66842",
+                              "mtimeUtc":  "2026-09-05T13:37:09.3080963Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\process_isolation-2e17423cebee073e.exe",
+                              "sha256":  "1AF366FAAB95E37472B80576DED6734C21490DAC97EF80C927E8E31FD7C72E83",
+                              "mtimeUtc":  "2026-09-05T13:37:09.2905360Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "tool_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\tool_cli-8b07e9438d7aab69.exe",
+                              "sha256":  "BA22EFE1BFF2EA0BDADEDDC9B52EB379192F395407FA972F6DA1497787A3A9D6",
+                              "mtimeUtc":  "2026-09-05T13:37:09.4468348Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\extension_cli-916d5efd3e43eff9.exe",
+                              "sha256":  "BFEEE4525EF4E98291F404BE2A8448628F7664DC5D582D40E3985BD9B693E5E8",
+                              "mtimeUtc":  "2026-09-05T13:37:09.5412948Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\workspace_containment-f6fafec95a0856da.exe",
+                              "sha256":  "180D7E952644D070F33296C7843659C75F2A0D57831A8DEE242E6ADC717F74CA",
+                              "mtimeUtc":  "2026-09-05T13:37:10.0168021Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_observer_trust",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_observer_trust-7992aa0a7e192252.exe",
+                              "sha256":  "6FBE4CC51AB4F90659901A97F49145855D7F0F08182C58DC4E097068F1CA9C8A",
+                              "mtimeUtc":  "2026-09-05T13:37:09.9535173Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "retention",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\retention-581ea0642a79126d.exe",
+                              "sha256":  "4371437CF56B0365A70F7591491E40C7462854F153849042FE955623BF1436B1",
+                              "mtimeUtc":  "2026-09-05T13:37:10.0492771Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "cost_provenance",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\cost_provenance-18314d4d0ba59c53.exe",
+                              "sha256":  "1EBC5816EABB7074CF9C81A6B95B2AE39E1E47683E038030F9DCC490D8ECD26D",
+                              "mtimeUtc":  "2026-09-05T13:37:10.3065379Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_reader",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\workspace_source_reader-5a2af3b7be05c379.exe",
+                              "sha256":  "43108352E4E375E024C5DF70DA57B1F5CA4D759FBC79B5ED5DD75FB895C4CF80",
+                              "mtimeUtc":  "2026-09-05T13:37:10.5951813Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_promotion_policy",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_promotion_policy-93936c36e2567223.exe",
+                              "sha256":  "06C26FC0E7719B574072350B306C0D175CFBF8B121EFED3A13BA9C480A856D57",
+                              "mtimeUtc":  "2026-09-05T13:37:10.4689715Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_capsule_authority",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_capsule_authority-ddd33a73de231504.exe",
+                              "sha256":  "BD98FFCA0B851F55DFCFFA2F2A6C729D836EA11248694A935739C44ACDEA6F31",
+                              "mtimeUtc":  "2026-09-05T13:37:10.5881618Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "contained_provider",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\contained_provider-7f1ef5cd0cb94955.exe",
+                              "sha256":  "9E268B35C5BB1D0F8BD9F99A7EB6A87CF789ADC040EF54A8D4433779DB2E58B7",
+                              "mtimeUtc":  "2026-09-05T13:37:10.5404617Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_retry_semantics",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_retry_semantics-0af1a8ce2d432707.exe",
+                              "sha256":  "F989F1B5070C72B4842F3275CE59F3923C4A19A04C8ED27DB446E90459FF8452",
+                              "mtimeUtc":  "2026-09-05T13:37:10.4584294Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "axis_completeness",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\axis_completeness-f8519796ad4dd589.exe",
+                              "sha256":  "B2F6CCE00EC3458C260810F04C961EC25C19F246A47520631CB6A7CE51D61A2F",
+                              "mtimeUtc":  "2026-09-05T13:37:12.1428833Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_plugin",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_plugin-1ce0d54d93b4c908.exe",
+                              "sha256":  "832A3BE026242E2F53BAD526C14D1B6458D607FCEAB76F8511E421F140F7E571",
+                              "mtimeUtc":  "2026-09-05T13:37:12.0676319Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "critical_miss",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\critical_miss-87557a11ed891851.exe",
+                              "sha256":  "9B46F1AFA52B08DE253206D569995010B41C3983C1A743471FF4D16667A30C6D",
+                              "mtimeUtc":  "2026-09-05T13:37:18.9122638Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_sabotage",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_sabotage-74816488e6f44389.exe",
+                              "sha256":  "AC7076D471E9DE32779B124300ADB61676A2B23FAE3A562EB61DBDC3435A5C3C",
+                              "mtimeUtc":  "2026-09-05T13:37:12.1453981Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "artifact_from_rows",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\artifact_from_rows-34517b4e0523221c.exe",
+                              "sha256":  "543AF887AD24CCB51FCCEAB31870676F5F9F05B82D7CF3098852FEC47287600A",
+                              "mtimeUtc":  "2026-09-05T13:37:15.9133009Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_capability",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\mcp_capability-da1294f8b9dba749.exe",
+                              "sha256":  "D305223DFB61AD5EB63A6969DF3B199480102E8A0CF2C252B8787A3CCFBDC12A",
+                              "mtimeUtc":  "2026-09-05T13:37:15.9143076Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\repository_conformance-fb6e3d72bc2db301.exe",
+                              "sha256":  "68CDDFB33F191748D8C27ABE57B2E1DC33EE7962D01B72D570B139B38E51C3E3",
+                              "mtimeUtc":  "2026-09-05T13:37:20.5808356Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "driver_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\driver_contract-13b5f18442448912.exe",
+                              "sha256":  "1816A38E4B3E43E7762DDE73D4D13F522482F6D0ECC5FB3E1009D3B371EB030B",
+                              "mtimeUtc":  "2026-09-05T13:37:19.6979898Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "request_set_ceiling",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\request_set_ceiling-35ac314383cfbd5d.exe",
+                              "sha256":  "208B33B5B83E454E7E78D5335E5F75E2772C4B9ED0249B1AF7947D063B5D64A7",
+                              "mtimeUtc":  "2026-09-05T13:37:26.0438534Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "attention_tag_domain",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\attention_tag_domain-3180db9cef343c30.exe",
+                              "sha256":  "5E6E866647ED0957EAC762900401E0CBE4DE26CF7BEFF620733A469B50CC3511",
+                              "mtimeUtc":  "2026-09-05T13:37:26.4936776Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "backup_restore",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\backup_restore-c3831cb839247472.exe",
+                              "sha256":  "FAB09C66B0A589300E458826DF1B2DC4E01C958CAA42F54637D1B0CDC123CF46",
+                              "mtimeUtc":  "2026-09-05T13:37:26.1553986Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_concurrency",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_concurrency-c3fb95c423ddfc52.exe",
+                              "sha256":  "4E63DE2603628E8675158D2DA788F10BDA9FEC369DF0768E69FDCFA9F59A029B",
+                              "mtimeUtc":  "2026-09-05T13:37:26.8589440Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_context_budget",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_context_budget-ce82ffc8c8047aec.exe",
+                              "sha256":  "A23D4948422D66A8FEE3883810B6161CBE2D161A9BE52D567754A4523DC30F1F",
+                              "mtimeUtc":  "2026-09-05T13:37:27.0207279Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "graphhelm_codebase_memory_mcp",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_codebase_memory_mcp-c816b32b8753c4b3.exe",
+                              "sha256":  "3D02DD0AFE987064C31DAD9BE91578FF277EA6DC9FAF66A09E283DB6F8AEDC0C",
+                              "mtimeUtc":  "2026-09-05T13:37:27.1331520Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generate-retrieval",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\generate_retrieval-796deb74d6bf4bf8.exe",
+                              "sha256":  "EFC5CCD67B9B3075F0E852D6C701346C2F01F1AFB1BEBAFDF0469BDB3231F012",
+                              "mtimeUtc":  "2026-09-05T13:37:27.1675343Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_graph_contract",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\jpd_graph_contract-e641547a3eb9a005.exe",
+                              "sha256":  "B48B5DFA96EE3F20747EDCE4EC8969830668510AF6968A866E735B3F13F048E1",
+                              "mtimeUtc":  "2026-09-05T13:37:27.2038819Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "shipped_package_coverage",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\shipped_package_coverage-adeedde494d0b81d.exe",
+                              "sha256":  "60A9EF625FF9B641634744CE794CB8F73B5B3DBAEB92835F8FBEDFBCD474F0C1",
+                              "mtimeUtc":  "2026-09-05T13:37:27.3263569Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm-development-benchmark",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_development_benchmark-c75cdadb61dc01ee.exe",
+                              "sha256":  "E47C4E9E688EB3E006BDB179D263898F83FCCC02D479A790ADC23C103D1D8921",
+                              "mtimeUtc":  "2026-09-05T13:37:27.4967898Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gate_http",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\gate_http-9a89c0049bbd1295.exe",
+                              "sha256":  "6839C5147C803E036AA4EFE8F02E4D5ED9BA149B5E1DC4BDF2B3CA4FB0B7FFE7",
+                              "mtimeUtc":  "2026-09-05T13:37:27.6958775Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_project_default",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\resume_project_default-3c3cca3d743319f3.exe",
+                              "sha256":  "66F38E49EA5D501787BCC464FFF38A4F5B7E1E3B55E2F85B1F702849898B5A5F",
+                              "mtimeUtc":  "2026-09-05T13:37:27.7645960Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_benchmark",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_benchmark-4ff3c971974db79e.exe",
+                              "sha256":  "AF21C1BE074A4DC1BFDA2112CB0C6F026A06BE9B872A662C9E3AC9A969F72DBF",
+                              "mtimeUtc":  "2026-09-05T13:37:27.9762389Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "dry_run_pipeline",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\dry_run_pipeline-57bd4ab6b109aba5.exe",
+                              "sha256":  "96BF6C3E99BFB3284303326FBC5F0629E00B2A5DC21C8C42AD386AD37D20ED58",
+                              "mtimeUtc":  "2026-09-05T13:37:27.9933063Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "contained_session",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\contained_session-cadb55f4f8ecfb84.exe",
+                              "sha256":  "88660108480E5DDA1EEF09CBB9AC7D84C2D8838D4ABEA39DD293B67600193FA5",
+                              "mtimeUtc":  "2026-09-05T13:37:28.1987649Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "run_directory",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\run_directory-f32865bb5554c10e.exe",
+                              "sha256":  "D33250F57A25E29ACD7F377B0C1C40D5DCE747F4CC37104F3131BE0B68EF8974",
+                              "mtimeUtc":  "2026-09-05T13:37:28.2436617Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "amend_budget",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\amend_budget-bdd983fe5702f68a.exe",
+                              "sha256":  "6AF72D07B47DE80D8163C63B6E028A7ABE1558877BE735D9FD147328A70F14FC",
+                              "mtimeUtc":  "2026-09-05T13:37:28.6137973Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_redaction",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_redaction-7c437bd97549f073.exe",
+                              "sha256":  "4A9F15B3828DAEF77A1EE08E98197DFA641E07BF68EF504D407F588F92A58455",
+                              "mtimeUtc":  "2026-09-05T13:37:28.9135588Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "runtime_http",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\runtime_http-923ab121815d1577.exe",
+                              "sha256":  "B2960CAB2D5CA12BC36C5CA5715E7F5895EB05EE3468B6C0B53A2889A1767A9B",
+                              "mtimeUtc":  "2026-09-05T13:37:28.7574652Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "frozen_files",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\frozen_files-6e629bb755e1f909.exe",
+                              "sha256":  "0573295F60797029D8D1A477BA49B14B79A471562613A23702DC9DB8C37F617A",
+                              "mtimeUtc":  "2026-09-05T13:37:29.0265392Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "manifest_freeze",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\manifest_freeze-1a3ab0cbc9d324f7.exe",
+                              "sha256":  "727D9C7474A8AEE1A0F6CBAB12C6A8E47B6634C1689EC3345087C5757FCEEEF3",
+                              "mtimeUtc":  "2026-09-05T13:37:29.1112793Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "zero_bar",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\zero_bar-4f39a9f006d03ec0.exe",
+                              "sha256":  "67F83C90CC00505CEFFBA5ED1FBDC85A7602D7E816887BEAABAB7B1CE546636A",
+                              "mtimeUtc":  "2026-09-05T13:37:29.0557094Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "ceiling_reproduction",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\ceiling_reproduction-733eb00a87eaec30.exe",
+                              "sha256":  "1AACA79FD9876DE18EE09B4DB319501179285646C03EB87ADDDECC77DB648BEA",
+                              "mtimeUtc":  "2026-09-05T13:37:29.0562089Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "live_provider",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\live_provider-4b6db3cb31920138.exe",
+                              "sha256":  "AFD765DCDEBA9B47D60D9C328FDF37F9F1A6C3A59A1FE0BE4BAD2B29B0B1978A",
+                              "mtimeUtc":  "2026-09-05T13:37:29.3594448Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generator_arming_site",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\generator_arming_site-a59ae77fd530f265.exe",
+                              "sha256":  "894C09623C41454981EDCC81F4AF4C7FB8B05AF53CF7133D90BD6EACF54D90E7",
+                              "mtimeUtc":  "2026-09-05T13:37:29.6545089Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_atomicity",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\resume_atomicity-ddf05fa3a1bec12a.exe",
+                              "sha256":  "DBDF989501131940E28D5CF326F4340EA56D40826328B6D142539E49464E0478",
+                              "mtimeUtc":  "2026-09-05T13:37:29.6294210Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "pinned_snapshot",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\pinned_snapshot-f7b139b3d7a6429c.exe",
+                              "sha256":  "89C0FD75348E0B42045A95036A6A2A78D1907B711A31FF4F596D166AD94D95AB",
+                              "mtimeUtc":  "2026-09-05T13:37:29.9739780Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_contract_schemas",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_contract_schemas-febd801bb48f4528.exe",
+                              "sha256":  "221D39DBB686AC56EFFF1F688BD116E80289DC0EFC044D76A8A0A01FB28E8DC7",
+                              "mtimeUtc":  "2026-09-05T13:37:29.7194836Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "wake_http",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\wake_http-990e8ea331da58cb.exe",
+                              "sha256":  "64F2E2B89832C3E04360651C197AE5D1B68B7D03563B76D1773358A33C865147",
+                              "mtimeUtc":  "2026-09-05T13:37:29.7999940Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "monitor_http",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\monitor_http-4945ccbda322cdc8.exe",
+                              "sha256":  "5AA5E721B1DFD07DBDCABE6C373AF053DD87FE4FC15E80910F1F0CD6C41D1DD8",
+                              "mtimeUtc":  "2026-09-05T13:37:29.9935871Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gateway_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\gateway_cli-1282f164bb418d42.exe",
+                              "sha256":  "719A22B805FF385A7E90ECE0EF1D5B2752934E4BAFB9C6241A5181B6232E7057",
+                              "mtimeUtc":  "2026-09-05T13:37:32.5470060Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "sweep_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\sweep_cli-df9fbe7b1483fd8a.exe",
+                              "sha256":  "E5E27F98C27F25E96A97B88A35B7181237AA9627D0BD4D5606A5B03D4F4477A3",
+                              "mtimeUtc":  "2026-09-05T13:37:30.3395611Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "runner_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\runner_cli-e218479fbd3499d1.exe",
+                              "sha256":  "9EDF818CD7B387FD3D58C5E956B8784184821232B3EB09C1BE418DCFB08959F3",
+                              "mtimeUtc":  "2026-09-05T13:37:33.3984247Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "graphhelm_events",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe",
+                              "sha256":  "63B0B11B00356F96EF11A6B9B2D400FCE1A5EE7921795683A29FD783B301EC61",
+                              "mtimeUtc":  "2026-09-05T13:37:30.4882402Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "verified_executable",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\verified_executable-af338a477179f1ea.exe",
+                              "sha256":  "2B97E1CB03895B26BDAEA10D9EC2AE18CB50FF9B670A14A94A0DD1D63AD7961F",
+                              "mtimeUtc":  "2026-09-05T13:37:33.6817806Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "fake_runtime",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\fake_runtime-a2ef77a3e3ee68ac.exe",
+                              "sha256":  "D7F2DC7175B22992C97B12454CA143BADC78C9D7A7ECCC9138C53B8B43969991",
+                              "mtimeUtc":  "2026-09-05T13:37:33.8611633Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "cli_smoke",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\cli_smoke-726831a1c5e45405.exe",
+                              "sha256":  "46F1DB6EA75FF9839A81981768A5649E263A1F5BE5F73DC456C43BB6054BD933",
+                              "mtimeUtc":  "2026-09-05T13:37:33.9434294Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "test_support_has_no_dead_helpers",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\test_support_has_no_dead_helpers-1f6de88541a1257f.exe",
+                              "sha256":  "915C723AADD30F45E891A0E64A14FDFECA71992E823F76B1BD90C9EBE092679B",
+                              "mtimeUtc":  "2026-09-05T13:37:34.1484653Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-90796774f267a234.exe",
+                              "sha256":  "4A5D4AC0FE36C8EA8EAF825A759FC3CD13ABA15BFAD5ED7570858E53A1ABC92A",
+                              "mtimeUtc":  "2026-09-05T13:37:34.1933953Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "mcp_client_population",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\mcp_client_population-06f6775903d79f4b.exe",
+                              "sha256":  "D467D75E3F5EB35C6447DDF11229F59DDEBE9F95294D0C061EA36C6342E0C6B6",
+                              "mtimeUtc":  "2026-09-05T13:37:34.2397935Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_surface_parity",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\development_surface_parity-b0d6edf13795e094.exe",
+                              "sha256":  "5AA621E984A1E9E5F606624055DB0677D37ABFE2CC3224DAB15A986683F0C65F",
+                              "mtimeUtc":  "2026-09-05T13:37:34.2659475Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_cancellation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\workspace_cancellation-2a14c9ee451c7096.exe",
+                              "sha256":  "F0C2DC1F28922F10E1A08C6E980048C67E372C0BE3D0A26AD581A827529DA216",
+                              "mtimeUtc":  "2026-09-05T13:37:34.6252721Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\authored_string_invariants-166056ee454f9353.exe",
+                              "sha256":  "F7ACBA0B81F44A0551407984D1730141C2DE6A3F29E3868FD7B08C71D372400B",
+                              "mtimeUtc":  "2026-09-05T13:37:35.0541231Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\authored_string_invariants-8e237a4ccbcf0333.exe",
+                              "sha256":  "D4E19FABD9DD4106D10BC3C14203A9AF56165279E337A2870918527E67B9D104",
+                              "mtimeUtc":  "2026-09-05T13:37:35.1108368Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "inflight_governance",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\inflight_governance-1f730f32bb17e655.exe",
+                              "sha256":  "CE8A9AD462C14A87C545761F4721699970A98B84A8405647592833ADB332CA6A",
+                              "mtimeUtc":  "2026-09-05T13:37:35.3482071Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "owner_output",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\owner_output-1e9990c7d788d837.exe",
+                              "sha256":  "5965C3C27C516D9F363077D68C5FEDFC0367A096C56BF4CFBB32D35E206586F0",
+                              "mtimeUtc":  "2026-09-05T13:37:35.3381730Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_stdio",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\mcp_stdio-d408babdd7f86d06.exe",
+                              "sha256":  "F91A7940F1978C66FC3A251A8B70657D7F4B16705A4DF498697ADA7EF3C45D77",
+                              "mtimeUtc":  "2026-09-05T13:37:35.1199644Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "apply_overflow",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\apply_overflow-1c6105c3ef74988d.exe",
+                              "sha256":  "C02FFE675AE2503C863D4A226C58C34E21579D7D5F94DDA72DB7B757091269A9",
+                              "mtimeUtc":  "2026-09-05T13:37:35.5664831Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "schema_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\schema_cli-d8462fcfb50acfb1.exe",
+                              "sha256":  "F08F9F0F021CD76F0535D7B653E25218F737F0496A5663897FA2555177B33B78",
+                              "mtimeUtc":  "2026-09-05T13:37:35.3657737Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "failure_causes",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\failure_causes-1a7a4b97b394efac.exe",
+                              "sha256":  "80B11659F9BFEBB59E452A8E76EA3A009A116D12021F12E94E46622432780FE9",
+                              "mtimeUtc":  "2026-09-05T13:37:35.9578488Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "execution_cli",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\execution_cli-081794c780331fc3.exe",
+                              "sha256":  "B8CEB9A667A088F3F2134BD4AADA82CDB4C29B493A5159385DF926763695902A",
+                              "mtimeUtc":  "2026-09-05T13:37:36.1827385Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "async_repository_contracts",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\async_repository_contracts-cdce2517298f5fe4.exe",
+                              "sha256":  "553EEFA036CD5C769E99D64D87FFB02560999CB84806570D659CDB5647DAD9E4",
+                              "mtimeUtc":  "2026-09-05T13:37:38.6889211Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "runtime_adapters",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\runtime_adapters-0474f886cb92197f.exe",
+                              "sha256":  "C0EEB12B0FCB8662D30543D373DF47ED95258C80E601FA9D97B4CA959F220A7F",
+                              "mtimeUtc":  "2026-09-05T13:37:39.0839897Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/acceptance-map#0.1.0",
+                              "target":  "grounded",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\grounded-7c2a0af6de776b03.exe",
+                              "sha256":  "A363F6042FF288BD0A850BDC71968CA8C53CB77DB1925A8C6E75EE8BC70A811B",
+                              "mtimeUtc":  "2026-09-05T13:37:47.4437176Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\source_invariants-664e14f765c25973.exe",
+                              "sha256":  "347AE23A846E70E6E7DE3798883346378B04A99CD26755E30C70B942E3543820",
+                              "mtimeUtc":  "2026-09-05T13:37:47.4372082Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "append_only",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\append_only-d3b04e4de346911f.exe",
+                              "sha256":  "2158FBC1021B21359C685D8D6A5F4492D0CDC47E5D8933454B698DBC43B40C09",
+                              "mtimeUtc":  "2026-09-05T13:37:49.0942575Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "deterministic_simulation",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\deterministic_simulation-99e24efdcf0830b8.exe",
+                              "sha256":  "8D54A9B4FAA7C5CEEBCC1A01087E0054C7E8E36313933A92CF1924F7F73891F0",
+                              "mtimeUtc":  "2026-09-05T13:37:49.0932511Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "memory",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\memory-81f73a9b3fde4f89.exe",
+                              "sha256":  "0B0C62C6C8391FAD721E9D1EDCF74BA44E2F9D1EF23078B1D4C2F4C48CAF6DFA",
+                              "mtimeUtc":  "2026-09-05T13:37:49.5912181Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "api_http",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\api_http-555cf297c3114479.exe",
+                              "sha256":  "7A5FFCDE6DF45FB0BCCBA72C469F52445B9FBD8C47C69D26730335E75C53EF8C",
+                              "mtimeUtc":  "2026-09-05T13:37:49.0942575Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "draft_application",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\draft_application-ab87e56c93c286fd.exe",
+                              "sha256":  "FB75C42BD04702C12B94AF82C865B66181273782FB8E1D34D4AE2CDAE1ED2C18",
+                              "mtimeUtc":  "2026-09-05T13:37:50.0086066Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "transition_properties",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\transition_properties-629d673df7741e98.exe",
+                              "sha256":  "DFB024FD658898F66C58FAB5554F40B751A24890E084D5843926FC76E2E035EC",
+                              "mtimeUtc":  "2026-09-05T13:37:51.9742992Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "byok_adapters",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\byok_adapters-1f281ba02c4805ed.exe",
+                              "sha256":  "68CD2E0BA4C4E2CF0F2E94D7CF1DC1DE6370E5A2CA605C08565703869032A9D8",
+                              "mtimeUtc":  "2026-09-05T13:37:52.8190392Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "retention",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\retention-58fab46cc1cfa7bc.exe",
+                              "sha256":  "E15F65EDE021A93041B3EEF42518F74E13442F976246F59636F1422025F797D4",
+                              "mtimeUtc":  "2026-09-05T13:37:53.6718415Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "execution_lifecycle",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\execution_lifecycle-05778634293f70de.exe",
+                              "sha256":  "BD7B7A283BC2F8969B46515A6B60D0002A900BD82E683075312C276A814EC0D2",
+                              "mtimeUtc":  "2026-09-05T13:37:54.0764295Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "amendment_replay",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\amendment_replay-f07b0d5fcd1e3a51.exe",
+                              "sha256":  "00B07734DBC8636E3FC06C695872BD304BBCC4F1001F9D858D19694F79BF0259",
+                              "mtimeUtc":  "2026-09-05T13:37:54.8514027Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance_map",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\acceptance_map-243ed95c375b4d83.exe",
+                              "sha256":  "2BFF92216F7EE2DD273C0E25D0E1F29D03637A4FC3220E8D8F65E5F8E3E76EDF",
+                              "mtimeUtc":  "2026-09-05T13:37:54.8680113Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "sealed_provider",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\sealed_provider-c70b1891a5c142ab.exe",
+                              "sha256":  "1A88CF17F24F222986A81FE4673128B6E85A2EA5E1B6E9B4089F2B6673EE878A",
+                              "mtimeUtc":  "2026-09-05T13:37:54.8680113Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "graphhelm_runtime",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm_runtime-18a57336538146cd.exe",
+                              "sha256":  "76C1125995F712CE807DFA67CFFC4E67A6C4D1D42E72592F01757C2CF6981D40",
+                              "mtimeUtc":  "2026-09-05T13:37:55.0121422Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "broker",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\broker-9f6fe0b849cda787.exe",
+                              "sha256":  "5B16073170C2557C1550D4AED9E5EE842BE848EEC6ADE5EC2221791A13815792",
+                              "mtimeUtc":  "2026-09-05T13:37:54.9778270Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "retrieval",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\retrieval-46409bf261a4bd19.exe",
+                              "sha256":  "4580424AF9B14B12FF7E03D7721C5D9A8C471F816F7F8FCB0950B5610A587DF4",
+                              "mtimeUtc":  "2026-09-05T13:37:54.9738112Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "dlq_kinds_are_declared",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\dlq_kinds_are_declared-3de3e2d9d51dc4d3.exe",
+                              "sha256":  "3C95E06F3E0E9C9F88019DDD117697A53FC3378A9FFAA1287975CA08C5103B4D",
+                              "mtimeUtc":  "2026-09-05T13:37:55.3271982Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "held_file_contention",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\held_file_contention-edbb7653b3d891cb.exe",
+                              "sha256":  "1801FC4BDD5CFD305A29392D9E3C40D4B1DFEA9035885A19F047664BA8EFFA7E",
+                              "mtimeUtc":  "2026-09-05T13:37:55.3574283Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "safe_publication",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\safe_publication-e3ba45ef37d7d8b6.exe",
+                              "sha256":  "79C3780CEDFA00289323F252D9FC8A9A7496C133505FC84F648819508C06B17C",
+                              "mtimeUtc":  "2026-09-05T13:37:55.4342203Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "projection_rebuild",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\projection_rebuild-f084cdc5cf2ff2ec.exe",
+                              "sha256":  "07B5DAC0E9776712F8B4C49BB4E871E1B8E5582952C12A51BF65B68FFE61C655",
+                              "mtimeUtc":  "2026-09-05T13:37:55.3700324Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "materialization",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\materialization-8d94fcaba91ba046.exe",
+                              "sha256":  "C7E8361E359503D884C960DB97F40A32095FB9DCA749F34E63953B690E2D7DF3",
+                              "mtimeUtc":  "2026-09-05T13:37:55.3742341Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/core/events#graphhelm-events@0.1.0",
+                              "target":  "batch_validation_bound",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\batch_validation_bound-b590b333fa6ff55f.exe",
+                              "sha256":  "6ABFFE128858B332A917570A5E4D0FB9930D5066C4A4CA679C50430C08B165EB",
+                              "mtimeUtc":  "2026-09-05T13:37:55.3302033Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/issues3-wt/pr811/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "graphhelm",
+                              "executable":  "E:/issues3-targets\\debug\\deps\\graphhelm-86e73b23287905fd.exe",
+                              "sha256":  "27C580E5E13C1BA11117D912E59B39908668543997CC0D144316F8423121EFBE",
+                              "mtimeUtc":  "2026-09-05T13:37:57.0736924Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "indeterminate",
+                            "reason":  "GRAPHHELM_SLOT_LOCK_PATH not set",
+                            "observedAtUtc":  "2026-09-05T13:35:26.6702708Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "indeterminate",
+                          "reason":  "GRAPHHELM_SLOT_LOCK_PATH not set",
+                          "observedAtUtc":  "2026-09-05T14:04:49.4487102Z"
+                      },
+    "slotLockStartEndIdentical":  true,
+    "instrumentSuspect":  false,
+    "overallPassed":  false
+}

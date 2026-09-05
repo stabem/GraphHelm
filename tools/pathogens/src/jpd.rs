@@ -100,6 +100,25 @@ pub enum JpdFailureAxis {
     ///
     /// `recovered_success` under `accepted_with_waiver` is a legitimate outcome and is not this.
     FlakyClaimedAsProven,
+    /// A waiver whose `coverage.verificationId` names a DIFFERENT verification than the result
+    /// it is attached to: a waiver transplanted from elsewhere.
+    ///
+    /// This is the one wrong-but-LEGAL waiver left once the schema has done its work. Every
+    /// waiver site binds `blockerKind` by `const`, the receipt and digests are typed, and the
+    /// waiver schema id is a constant -- so a kind mismatch or a malformed receipt never reaches
+    /// this gate. Identity across records is what JSON Schema cannot express, and the repository's
+    /// own positive fixture pins the rule: its waivers all cover the verification they ride on.
+    ///
+    /// Walked at EVERY site (`retry`, `bindings.observers[]`, `obligations[]`, `disagreements[]`,
+    /// `gate`), because a transplant at the obligation site is the same pathogen at a different
+    /// address, and a check that reads only `/gate/waiver` passes it.
+    ///
+    /// Deliberately there is no `Refused` axis beside this one. Gate `rejected` under any success
+    /// claim without a covering waiver is schema-invalid (`allOf[3]`, `allOf[8]` of the
+    /// verification-result schema), so an axis keyed to it would refuse only documents the schema
+    /// already refuses -- the trap `CapabilityMissingUnderClaimedSuccess` documents. The refused
+    /// outcome is a result that ADMITS the rejection (`unresolved`), and the gate lets it through.
+    WaiverIssuedForAnotherVerification,
 }
 
 /// Whether a document claims success at all. `proven` and `accepted_with_waiver` both do;
@@ -136,8 +155,52 @@ impl FailureAxis<JpdEvidence> for JpdFailureAxis {
                         .and_then(Value::as_str)
                         == Some("flaky_pass")
             }
+            Self::WaiverIssuedForAnotherVerification => {
+                claims_success(document) && !foreign_waiver_sites(document).is_empty()
+            }
         }
     }
+}
+
+/// Every waiver whose coverage names a verification other than the document's own, by site.
+///
+/// Absent `verificationId` on the document means no identity to compare against, and the schema
+/// requires the field -- so a document without it is not a legal input and this reports nothing
+/// rather than inventing a mismatch.
+fn foreign_waiver_sites(document: &Value) -> Vec<String> {
+    let Some(own) = document.get("verificationId").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let mut sites: Vec<(String, &Value)> = Vec::new();
+    if let Some(w) = document.pointer("/retry/waiver") {
+        sites.push(("retry".to_owned(), w));
+    }
+    if let Some(w) = document.pointer("/gate/waiver") {
+        sites.push(("gate".to_owned(), w));
+    }
+    for (name, path) in [
+        ("observer", "/bindings/observers"),
+        ("obligation", "/obligations"),
+        ("disagreement", "/disagreements"),
+    ] {
+        if let Some(items) = document.pointer(path).and_then(Value::as_array) {
+            for (index, item) in items.iter().enumerate() {
+                if let Some(w) = item.get("waiver") {
+                    sites.push((format!("{name}[{index}]"), w));
+                }
+            }
+        }
+    }
+    sites
+        .into_iter()
+        .filter(|(_, waiver)| {
+            waiver
+                .pointer("/coverage/verificationId")
+                .and_then(Value::as_str)
+                .is_some_and(|covered| covered != own)
+        })
+        .map(|(site, _)| site)
+        .collect()
 }
 
 /// A JPD specimen: typed evidence plus the axis it defeats.
@@ -625,6 +688,7 @@ impl EvidenceGate<JpdEvidence> for VerificationResultGate {
         for axis in [
             JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
             JpdFailureAxis::FlakyClaimedAsProven,
+            JpdFailureAxis::WaiverIssuedForAnotherVerification,
         ] {
             if axis.is_defeated_by(evidence) {
                 findings.push(finding_for(axis));
@@ -650,6 +714,10 @@ fn finding_for(axis: JpdFailureAxis) -> String {
         }
         JpdFailureAxis::FlakyClaimedAsProven => {
             "a run classified flaky_pass is presented as proven; flaky success is not proven success"
+                .to_owned()
+        }
+        JpdFailureAxis::WaiverIssuedForAnotherVerification => {
+            "a waiver covers another verification than the result it is attached to; a transplanted waiver waives nothing here"
                 .to_owned()
         }
     }
@@ -681,6 +749,25 @@ pub fn jpd_suite() -> Vec<JpdSpecimen> {
                 "proposedResultStatus": "proven",
                 "gate": { "status": "evaluated" },
                 "retry": { "outcomeClassification": "flaky_pass" }
+            })),
+        },
+        JpdSpecimen {
+            id: "verification/waiver-transplanted-from-another-verification".to_owned(),
+            axis: JpdFailureAxis::WaiverIssuedForAnotherVerification,
+            evidence: JpdEvidence::VerificationResult(serde_json::json!({
+                "verificationId": "verification/this-run",
+                "proposedResultStatus": "accepted_with_waiver",
+                "gate": {
+                    "status": "evaluated",
+                    "result": "rejected",
+                    "waiver": {
+                        "coverage": {
+                            "verificationId": "verification/some-other-run",
+                            "blockerKind": "gate"
+                        }
+                    }
+                },
+                "retry": { "outcomeClassification": "recovered_success" }
             })),
         },
     ]

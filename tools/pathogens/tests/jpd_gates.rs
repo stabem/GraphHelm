@@ -1090,3 +1090,132 @@ fn the_repositorys_positive_fixtures_are_accepted_by_the_gate() {
 // disagree with it — a suite written by the same hand as the gate agrees with it about language by
 // construction, and language was the defect. Anchoring the suite to the schema's words is what
 // gives those arms the power to fail at all; the real fixtures are what proved the words.
+
+// ---------------------------------------------------------------------------------------------
+// #211 B5: the WAIVED and REFUSED outcomes of the acceptance journey, as cells of their own.
+//
+// Waived is a pathogen axis: a waiver whose `coverage.verificationId` names a DIFFERENT
+// verification than the result it is attached to. Every other property of a waiver the schema
+// already pins (`blockerKind` is `const` per site; the receipt, the digests, the schema id are all
+// typed), so the transplanted waiver is the one wrong-but-LEGAL shape left -- the exact
+// cross-record comparison this gate exists for.
+//
+// Refused is NOT an axis, and saying so is part of the delivery: gate `rejected` under any success
+// claim without a covering waiver is schema-INVALID (`allOf[3]` restricts the status to
+// `accepted_with_waiver | unresolved`; `allOf[8]` requires the gate accepted or waived under
+// `accepted_with_waiver`). An axis keyed to it would refuse only documents the schema already
+// refuses -- the trap `CapabilityMissingUnderClaimedSuccess`'s doc records. The refused outcome is
+// a document that ADMITS the rejection (`unresolved`), and the gate's obligation is to let it
+// through: nothing there is falsely certified.
+
+/// Every specimen is one field away from the repository's own positive waiver fixture, so its
+/// schema-validity is inherited from a document the repository already accepts.
+fn waived_fixture_with(mutate: impl FnOnce(&mut serde_json::Value)) -> serde_json::Value {
+    let mut document = jpd_fixture("positive/journey-verification-accepted-with-waiver.json");
+    assert_eq!(
+        document.get("proposedResultStatus").and_then(Value::as_str),
+        Some("accepted_with_waiver"),
+        "HARNESS-BROKE: the waiver fixture no longer claims accepted_with_waiver; these arms would be comparing against something else"
+    );
+    assert_eq!(
+        document
+            .pointer("/gate/waiver/coverage/verificationId")
+            .and_then(Value::as_str),
+        document.get("verificationId").and_then(Value::as_str),
+        "HARNESS-BROKE: the fixture's own gate waiver must cover THIS verification, or the mutation below is not the only difference"
+    );
+    mutate(&mut document);
+    document
+}
+
+/// WAIVED, negative face: a gate waiver transplanted from another verification must be refused.
+///
+/// One field differs from the accepted fixture. Before this axis existed the gate PASSED this
+/// document: the waiver is well-formed, its blockerKind is `gate`, and nothing compared its
+/// identity to the result it rides on.
+#[test]
+fn a_gate_waiver_issued_for_another_verification_is_refused() {
+    let document = waived_fixture_with(|d| {
+        d["gate"]["waiver"]["coverage"]["verificationId"] = json!("verification/issue-210/other");
+    });
+    let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
+    assert!(
+        !verdict.passed,
+        "a waiver covering a different verification must not rescue this one; findings were {:?}",
+        verdict.findings
+    );
+    assert!(
+        verdict
+            .findings
+            .iter()
+            .any(|f| f.contains("another verification")),
+        "the refusal must name the transplant, not some neighbouring axis: {:?}",
+        verdict.findings
+    );
+}
+
+/// The walk covers EVERY waiver site, not only the gate's. An obligation waiver transplanted from
+/// elsewhere is the same pathogen at a different address; a check that only reads `/gate/waiver`
+/// would pass this document.
+#[test]
+fn an_obligation_waiver_issued_for_another_verification_is_refused() {
+    let document = waived_fixture_with(|d| {
+        d["obligations"][0]["waiver"]["coverage"]["verificationId"] =
+            json!("verification/issue-210/other");
+    });
+    let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
+    assert!(
+        !verdict.passed,
+        "the transplant hides at the obligation site and must still be refused; findings were {:?}",
+        verdict.findings
+    );
+}
+
+/// CONTROL for the pair above: the same fixture with the field put BACK is accepted. Without this
+/// the two refusals are satisfied by a gate that refuses every waiver, which is the cheapest false
+/// fix and would kill the waived outcome the issue asks for.
+#[test]
+fn the_same_waiver_covering_this_verification_is_accepted() {
+    let document = waived_fixture_with(|d| {
+        let own = d["verificationId"].clone();
+        d["gate"]["waiver"]["coverage"]["verificationId"] = own;
+    });
+    let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
+    assert!(
+        verdict.passed,
+        "a waiver that covers THIS verification is the legitimate waived outcome; findings were {:?}",
+        verdict.findings
+    );
+}
+
+/// REFUSED, as an outcome: a result whose gate was rejected and which ADMITS it (`unresolved`)
+/// carries no false certification, and the gate must let it through. This is the fifth outcome
+/// B5 names, and it is deliberately not an axis -- see the block comment above for the schema
+/// coordinates that make "refused but claims success" unrepresentable.
+#[test]
+fn a_rejected_gate_admitted_as_unresolved_is_the_refused_outcome_and_passes() {
+    let document = waived_fixture_with(|d| {
+        d["proposedResultStatus"] = json!("unresolved");
+    });
+    assert_eq!(
+        document.pointer("/gate/result").and_then(Value::as_str),
+        Some("rejected"),
+        "HARNESS-BROKE: the fixture's gate must be rejected for this to be the refused outcome"
+    );
+    let verdict = VerificationResultGate.evaluate(&JpdEvidence::VerificationResult(document));
+    assert!(
+        verdict.passed,
+        "an admitted refusal has nothing to falsely certify; findings were {:?}",
+        verdict.findings
+    );
+}
+
+/// The axis knows its own specimen, like every other axis in the suite.
+#[test]
+fn the_waived_axis_can_say_whether_its_own_specimen_is_genuinely_defeated() {
+    let specimen = jpd_suite()
+        .into_iter()
+        .find(|s| matches!(s.axis, JpdFailureAxis::WaiverIssuedForAnotherVerification))
+        .expect("the suite carries the waived specimen");
+    assert!(is_defeated_on_its_axis(&specimen));
+}

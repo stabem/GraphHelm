@@ -2253,8 +2253,10 @@ fn the_shipped_gate_is_certified_against_the_shipped_suite() {
     });
     assert_eq!(certification.gate_id, "gate/jpd-verification-result");
     assert_eq!(
-        certification.specimens, 2,
-        "the shipped floor is two specimens; a change here must be read against this corpus"
+        certification.specimens, 3,
+        "the shipped floor is three specimens -- capability-missing-claimed-proven, \
+         flaky-claimed-proven, and (since #859) waiver-transplanted-from-another-verification; a \
+         change here must be read against this corpus"
     );
 
     let journey_certification = certify(&JourneyContractGate, &journey_contract_suite())
@@ -2278,14 +2280,22 @@ fn the_shipped_gate_is_certified_against_the_shipped_suite() {
 /// step, and its required observer identity must differ from that step's actor identity.
 #[test]
 fn the_axis_set_includes_s1b_while_the_other_red_window_entries_remain_open() {
+    // DECLARED LIMIT: this guard counts the array IT writes, not the enum. When #859 added the
+    // fourth axis the enum grew and this stayed green -- a guard fed by the list it checks is green
+    // by construction, and its doc's "when a third axis lands this fails" was true of the list,
+    // never of the vocabulary. The gate caught the change through the specimen pin above instead.
+    // Counting the enum needs an enumeration the crate does not export today; until it does, the
+    // rule is that whoever adds a variant adds it HERE in the same commit, and the specimen pin is
+    // the tripwire that says they forgot.
     let axes = [
         JpdFailureAxis::ActorUsedAsOwnObserver,
         JpdFailureAxis::CapabilityMissingUnderClaimedSuccess,
         JpdFailureAxis::FlakyClaimedAsProven,
+        JpdFailureAxis::WaiverIssuedForAnotherVerification,
     ];
     assert_eq!(
         axes.len(),
-        3,
+        4,
         "the JPD failure axes changed: re-read this corpus for entries that now have a home"
     );
 }

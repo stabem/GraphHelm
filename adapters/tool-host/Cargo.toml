@@ -26,5 +26,21 @@ thiserror.workspace = true
 # Authorized workspace dep: O_NOFOLLOW/O_NONBLOCK candidate opens in source_channel.
 libc.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# #726: PeekNamedPipe, to poll a reader's pipe for readiness without blocking on it. Production
+# code never calls CreatePipe, so Win32_Security (its SECURITY_ATTRIBUTES parameter type) is not
+# needed here -- see the dev-dependency below.
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+] }
+
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+# #726: Win32_Security is CreatePipe's SECURITY_ATTRIBUTES parameter type, needed only by the
+# synthetic-pipe test fixture in process.rs's own `mod tests` -- a test-controlled pipe standing in
+# for a real escaped descendant, which Windows has no way to stage (CREATE_BREAKAWAY_FROM_JOB is
+# never granted by this job).
+windows-sys = { workspace = true, features = ["Win32_Security"] }

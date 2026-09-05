@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -620,6 +620,281 @@ const DRAIN_POLL: Duration = Duration::from_millis(50);
 /// already been handed.
 const POST_RELEASE_GRACE: Duration = Duration::from_secs(2);
 
+/// How often a reader thread checks whether its capture has been abandoned, between attempts to
+/// read (#726).
+///
+/// This is the poll's timeout, never the capture's: a reader that is neither abandoned nor has
+/// data yet just loops again, exactly as if it were still blocked in a plain `read`. Shortening
+/// or lengthening this changes only how promptly an ALREADY-abandoned reader notices and ends --
+/// it decides nothing about a live capture, which is bounded by `READER_SILENCE_GRACE` and
+/// `POST_RELEASE_GRACE` above, several layers removed from this thread.
+const READER_POLL: Duration = Duration::from_millis(20);
+
+/// A raw OS handle to one end of a pipe, cheap to copy into the reader thread alongside the
+/// `Box<dyn Read>` that owns the real handle -- this is a second, non-owning view of the SAME
+/// handle, used only to ask the OS "is there anything to read, or has every writer end closed"
+/// without blocking.
+///
+/// A bare `RawHandle` is `*mut c_void` and is not `Send`, even though moving the opaque VALUE
+/// (never dereferencing it as a pointer) between threads is exactly what every `AsRawHandle`
+/// consumer already does. Wrapped rather than transmuted past the check: the real owner of the
+/// handle is the boxed `Read` moved into the same thread alongside it, and this is never used to
+/// close or duplicate the handle -- only to ask about it.
+#[derive(Clone, Copy)]
+struct RawPipeHandle(RawPipeHandleInner);
+#[cfg(windows)]
+type RawPipeHandleInner = std::os::windows::io::RawHandle;
+#[cfg(unix)]
+type RawPipeHandleInner = std::os::unix::io::RawFd;
+unsafe impl Send for RawPipeHandle {}
+
+/// Whether a pipe end has bytes waiting, is at EOF (every writer closed), or has neither yet.
+enum Readiness {
+    HasBytes,
+    Eof,
+    NotYet,
+}
+
+/// Windows: `PeekNamedPipe` reports how many bytes are buffered without consuming them and
+/// without blocking. A broken pipe (every write handle closed) fails the call with
+/// `ERROR_BROKEN_PIPE` -- any other failure is treated the same way, because a handle this
+/// function cannot even ask about cannot be read from either, and the difference does not change
+/// what the reader does next.
+#[cfg(windows)]
+fn readiness(raw: RawPipeHandle) -> Readiness {
+    use windows_sys::Win32::Foundation::HANDLE;
+    let mut available: u32 = 0;
+    let ok = unsafe {
+        windows_sys::Win32::System::Pipes::PeekNamedPipe(
+            raw.0 as HANDLE,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::addr_of_mut!(available),
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Readiness::Eof;
+    }
+    if available > 0 {
+        Readiness::HasBytes
+    } else {
+        Readiness::NotYet
+    }
+}
+
+/// Unix: `poll` with a short timeout on the raw fd. `POLLIN` fires both when data is buffered and
+/// when the peer has hung up with nothing left to deliver -- the subsequent real `read` tells
+/// those two apart on its own (a positive count, or `Ok(0)`), the same as it always has.
+#[cfg(unix)]
+fn readiness(raw: RawPipeHandle) -> Readiness {
+    let mut fds = [libc::pollfd {
+        fd: raw.0,
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    let timeout_ms = i32::try_from(READER_POLL.as_millis()).unwrap_or(i32::MAX);
+    let ready = unsafe { libc::poll(fds.as_mut_ptr(), 1, timeout_ms) };
+    if ready < 0 {
+        return Readiness::Eof;
+    }
+    if ready == 0 {
+        return Readiness::NotYet;
+    }
+    if fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+        Readiness::HasBytes
+    } else {
+        Readiness::NotYet
+    }
+}
+
+/// What a reader thread hands back to its caller: the answer channel, the byte counter #708
+/// samples, and the give-up signal #726 sets once the drain has genuinely abandoned this stream --
+/// never on a merely-quiet one.
+///
+/// Named `give_up`, not `abandoned`, to stay distinct from `DrainedReaders::abandoned` just below
+/// -- that field is the PAST-TENSE fact a finished drain reports outward ("this call's capture was
+/// abandoned"); this one is the signal a still-running reader thread watches for, in the other
+/// direction. The two are related but never the same value at the same time: this is set only
+/// once that becomes true.
+struct ReaderHandle {
+    receiver: Receiver<(Vec<u8>, bool)>,
+    progress: Arc<AtomicU64>,
+    give_up: Arc<AtomicBool>,
+}
+
+/// Spawn one reader thread over `pipe`. ANSWERS THROUGH A CHANNEL rather than a join handle, so
+/// the wait for it can be bounded from outside -- and, as of #726, the thread's OWN loop is
+/// bounded too, so a caller that gives up is not left with a thread it can never reap.
+///
+/// `raw` is a second, non-owning view of the exact handle `pipe` owns, used only to poll
+/// readiness (#726) -- `pipe` itself remains the single owner and is what actually reads and, on
+/// drop, closes its end.
+/// TEST-ONLY SEAM (#726): how many reader threads are alive right now, process-wide. A private
+/// counter rather than an OS thread-table snapshot, deliberately -- `cargo test` runs many cells
+/// concurrently, each free to spawn its own unrelated threads, so a global OS count would be
+/// noisy in exactly the way this counter is not: it counts only what `spawn_reader` itself spawns.
+#[cfg(test)]
+static LIVE_READER_THREADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+struct ReaderThreadGuard;
+
+#[cfg(test)]
+impl ReaderThreadGuard {
+    fn new() -> Self {
+        LIVE_READER_THREADS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ReaderThreadGuard {
+    fn drop(&mut self) {
+        LIVE_READER_THREADS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn spawn_reader(mut pipe: Box<dyn Read + Send>, raw: RawPipeHandle, cap: usize) -> ReaderHandle {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // The reader answers ONCE, at EOF. That is what makes "still busy" and "wedged" the same
+    // observation from outside, and #708 is the consequence: a drain that can only wait, and
+    // on expiry throws the whole capture away. The counter is the second observable -- bytes
+    // seen so far -- and it is what lets the drain below tell a stream that is producing from
+    // one that has gone quiet.
+    //
+    // A counter rather than a progress MESSAGE per chunk, and the difference is a leak: this
+    // channel is unbounded and nobody drains it until the wait starts, so a chatty stream
+    // would queue one allocation per 8 KiB read for the whole run. An atomic that the reader
+    // stores into and the drain samples costs one word and cannot grow.
+    let progress = Arc::new(AtomicU64::new(0));
+    let reported = Arc::clone(&progress);
+    let give_up = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&give_up);
+    std::thread::spawn(move || {
+        // TEST-ONLY SEAM (#726), in the style of `off_reactor_witness` (#854): a live-count of
+        // reader threads, so a cell can ask "did N abandoned captures leave N threads behind"
+        // directly rather than by inference. The guard's `Drop` runs on every exit from this
+        // closure -- the normal EOF break, the abandonment break, and the read-error break alike
+        // -- so a cell cannot pass by covering only one of the three.
+        #[cfg(test)]
+        let _reader_thread_guard = ReaderThreadGuard::new();
+        // #177 tail half: keep the HEAD *and* the TAIL, eliding the middle.
+        //
+        // Keeping only the head is biased against the reason anyone opens the log. In a red
+        // suite the failing assertion and the `test result: FAILED` line are at the END, so a
+        // head-only capture reliably discards the one part a triager needs. Both ends carry
+        // real failures, each with a live instance from this repository's own work: a
+        // toolchain fault (`invalid metadata for crate core`) prints as the build STARTS, and
+        // the assertion that failed prints LAST. Tail-only would just move the blind spot.
+        //
+        // Memory stays bounded by `cap`: the head stops at `head_cap`, and the tail is a ring
+        // holding at most `tail_cap`. The pipe is still drained to EOF either way -- dropping
+        // bytes must never mean leaving them in the pipe, which is what would deadlock the
+        // child.
+        let head_cap = cap / 2;
+        let tail_cap = cap - head_cap;
+        let mut head = Vec::new();
+        let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+        let mut elided: u64 = 0;
+        let mut chunk = [0_u8; 8192];
+        'outer: loop {
+            // #726: poll readiness before the real read, rather than calling `pipe.read`
+            // directly. A writer end that never closes -- an escaped descendant holding the
+            // pipe open -- blocks a plain `read` forever, and a thread blocked in `read` cannot
+            // be interrupted from outside in safe Rust. This loop CAN be interrupted, between
+            // polls, by `signal`: the timeout belongs to the poll, never to the capture, so a
+            // stream that is genuinely producing (or genuinely silent but not yet abandoned)
+            // is never cut here -- it just polls again. Only `signal` being set, which nothing
+            // sets except the drain having already exhausted its own silence grace AND its
+            // post-release grace, ends the loop early.
+            loop {
+                if signal.load(Ordering::Relaxed) {
+                    break 'outer;
+                }
+                match readiness(raw) {
+                    Readiness::HasBytes | Readiness::Eof => break,
+                    Readiness::NotYet => std::thread::sleep(READER_POLL),
+                }
+            }
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    // Published BEFORE the bytes are filed, so the drain's view of "something
+                    // arrived" can never lag the work. `Relaxed` is right: the only consumer
+                    // asks whether the value CHANGED, never what it orders against.
+                    reported.fetch_add(count as u64, Ordering::Relaxed);
+                    let mut rest = &chunk[..count];
+                    let room = head_cap.saturating_sub(head.len());
+                    if room > 0 {
+                        let take = rest.len().min(room);
+                        head.extend_from_slice(&rest[..take]);
+                        rest = &rest[take..];
+                    }
+                    if rest.is_empty() {
+                        continue;
+                    }
+                    // NOT `truncated = true` here (D's finding 1 on #582). Bytes past the head
+                    // are not lost -- they go to the tail. Setting the flag here made every
+                    // stream over `head_cap` claim data loss even when every byte survived,
+                    // which under the production cap is every stream over 4 MiB. The flag is
+                    // derived from `elided` below, where loss is actually known.
+                    tail.extend(rest.iter().copied());
+                    while tail.len() > tail_cap {
+                        tail.pop_front();
+                        elided = elided.saturating_add(1);
+                    }
+                }
+            }
+        }
+        let kept = if elided == 0 {
+            // Everything after the head still fit: the original bytes, unmarked.
+            head.extend(tail.iter().copied());
+            head
+        } else {
+            // The marker is paid for out of the TAIL so the capture still fits `cap`.
+            //
+            // D's finding 2 on #582: the previous version formatted the marker TWICE and
+            // budgeted with the first length. Popping a byte raises `elided`, which can carry
+            // it across a power of ten and make the second marker one byte longer -- measured
+            // at `cap = 7_388_638`, one byte over. The same defect in a worse shape: when the
+            // cap is smaller than the marker itself, the loop exited on `!tail.is_empty()` and
+            // appended the whole marker anyway -- 52 bytes under a 40-byte cap.
+            //
+            // One cause: the budgeted length and the emitted length came from different values
+            // of `elided`. So the loop now re-formats each round and exits only when the marker
+            // it will actually emit fits beside the tail it will actually keep.
+            let mut marker = elision_marker(elided);
+            while head.len() + marker.len() + tail.len() > cap && !tail.is_empty() {
+                tail.pop_front();
+                elided = elided.saturating_add(1);
+                marker = elision_marker(elided);
+            }
+            if head.len() + marker.len() + tail.len() > cap {
+                // The tail is empty and the marker alone still does not fit: the cap is smaller
+                // than the sentence. Shorten the marker rather than exceed the budget -- the
+                // capture's size is a promise to the caller, the marker's completeness is not.
+                marker.truncate(cap.saturating_sub(head.len()));
+            }
+            head.extend_from_slice(&marker);
+            head.extend(tail.iter().copied());
+            debug_assert!(head.len() <= cap, "the capture must never exceed its cap");
+            head
+        };
+        let truncated = elided > 0;
+        // A closed receiver means the caller stopped listening -- it reached the reader deadline
+        // and moved on. Nothing to report and nothing to fail: this thread is the abandoned
+        // one, and it ends here rather than outliving the call with an answer nobody wants.
+        let _ = sender.send((kept, truncated));
+    });
+    ReaderHandle {
+        receiver,
+        progress,
+        give_up,
+    }
+}
+
 /// What the drain came back with.
 struct DrainedReaders {
     stdout: (Vec<u8>, bool),
@@ -674,8 +949,8 @@ struct DrainedReaders {
 /// THIS copy of it would not. (Predicted by a peer reviewing PR #779; the prediction was run and
 /// held.)
 fn drain_readers(
-    stdout: (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>),
-    stderr: (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>),
+    stdout: ReaderHandle,
+    stderr: ReaderHandle,
     hard_deadline: Instant,
     silence_grace: Duration,
     poll: Duration,
@@ -690,9 +965,10 @@ fn drain_readers(
 
     loop {
         for index in 0..pending.len() {
-            let Some((receiver, progress)) = pending[index].as_ref() else {
+            let Some(handle) = pending[index].as_ref() else {
                 continue;
             };
+            let (receiver, progress) = (&handle.receiver, &handle.progress);
             match receiver.recv_timeout(poll) {
                 Ok(answer) => {
                     answers[index] = Some(answer);
@@ -750,9 +1026,10 @@ fn drain_readers(
         released = true;
         release();
         for index in 0..pending.len() {
-            let Some((receiver, _)) = pending[index].take() else {
+            let Some(handle) = pending[index].take() else {
                 continue;
             };
+            let receiver = &handle.receiver;
             // PER STREAM, not one window shared by both (#788). Computed once outside this loop,
             // a first stream that used the whole grace left the second with a zero timeout -- so
             // its answer was discarded even though the release had already turned its held pipe
@@ -780,6 +1057,14 @@ fn drain_readers(
             // steps bounded by a caller's single deadline is not.
             if let Ok(answer) = receiver.recv_timeout(post_release_grace) {
                 answers[index] = Some(answer);
+            } else {
+                // #726: every wait this function offers is now exhausted for this stream --
+                // the silence grace, the hard deadline, the release, and the post-release
+                // grace all passed with no answer. Only NOW is it safe to say so to the reader
+                // itself: it stops polling and ends within one more `READER_POLL` tick instead
+                // of leaking for the life of the process. Setting this here, never earlier,
+                // is what keeps a merely-slow stream from ever being told to give up.
+                handle.give_up.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -1115,118 +1400,22 @@ pub fn run_in_workspace(
     let cap = limits.max_output_bytes;
     let stdout_pipe = child.stdout.take().expect("stdout was piped");
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
-    // Each reader ANSWERS THROUGH A CHANNEL rather than a join handle, so the wait for it can be
-    // bounded. A thread blocked in `read` cannot be interrupted from outside, so the only way to
-    // stop waiting on one is to stop listening -- which is what the deadline below does.
-    let reader = |mut pipe: Box<dyn Read + Send>| {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        // The reader answers ONCE, at EOF. That is what makes "still busy" and "wedged" the same
-        // observation from outside, and #708 is the consequence: a drain that can only wait, and
-        // on expiry throws the whole capture away. The counter is the second observable -- bytes
-        // seen so far -- and it is what lets the drain below tell a stream that is producing from
-        // one that has gone quiet.
-        //
-        // A counter rather than a progress MESSAGE per chunk, and the difference is a leak: this
-        // channel is unbounded and nobody drains it until the wait starts, so a chatty stream
-        // would queue one allocation per 8 KiB read for the whole run. An atomic that the reader
-        // stores into and the drain samples costs one word and cannot grow.
-        let progress = Arc::new(AtomicU64::new(0));
-        let reported = Arc::clone(&progress);
-        std::thread::spawn(move || {
-            // #177 tail half: keep the HEAD *and* the TAIL, eliding the middle.
-            //
-            // Keeping only the head is biased against the reason anyone opens the log. In a red
-            // suite the failing assertion and the `test result: FAILED` line are at the END, so a
-            // head-only capture reliably discards the one part a triager needs. Both ends carry
-            // real failures, each with a live instance from this repository's own work: a
-            // toolchain fault (`invalid metadata for crate core`) prints as the build STARTS, and
-            // the assertion that failed prints LAST. Tail-only would just move the blind spot.
-            //
-            // Memory stays bounded by `cap`: the head stops at `head_cap`, and the tail is a ring
-            // holding at most `tail_cap`. The pipe is still drained to EOF either way -- dropping
-            // bytes must never mean leaving them in the pipe, which is what would deadlock the
-            // child.
-            let head_cap = cap / 2;
-            let tail_cap = cap - head_cap;
-            let mut head = Vec::new();
-            let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
-            let mut elided: u64 = 0;
-            let mut chunk = [0_u8; 8192];
-            loop {
-                match pipe.read(&mut chunk) {
-                    Ok(0) | Err(_) => break,
-                    Ok(count) => {
-                        // Published BEFORE the bytes are filed, so the drain's view of "something
-                        // arrived" can never lag the work. `Relaxed` is right: the only consumer
-                        // asks whether the value CHANGED, never what it orders against.
-                        reported.fetch_add(count as u64, Ordering::Relaxed);
-                        let mut rest = &chunk[..count];
-                        let room = head_cap.saturating_sub(head.len());
-                        if room > 0 {
-                            let take = rest.len().min(room);
-                            head.extend_from_slice(&rest[..take]);
-                            rest = &rest[take..];
-                        }
-                        if rest.is_empty() {
-                            continue;
-                        }
-                        // NOT `truncated = true` here (D's finding 1 on #582). Bytes past the head
-                        // are not lost -- they go to the tail. Setting the flag here made every
-                        // stream over `head_cap` claim data loss even when every byte survived,
-                        // which under the production cap is every stream over 4 MiB. The flag is
-                        // derived from `elided` below, where loss is actually known.
-                        tail.extend(rest.iter().copied());
-                        while tail.len() > tail_cap {
-                            tail.pop_front();
-                            elided = elided.saturating_add(1);
-                        }
-                    }
-                }
-            }
-            let kept = if elided == 0 {
-                // Everything after the head still fit: the original bytes, unmarked.
-                head.extend(tail.iter().copied());
-                head
-            } else {
-                // The marker is paid for out of the TAIL so the capture still fits `cap`.
-                //
-                // D's finding 2 on #582: the previous version formatted the marker TWICE and
-                // budgeted with the first length. Popping a byte raises `elided`, which can carry
-                // it across a power of ten and make the second marker one byte longer -- measured
-                // at `cap = 7_388_638`, one byte over. The same defect in a worse shape: when the
-                // cap is smaller than the marker itself, the loop exited on `!tail.is_empty()` and
-                // appended the whole marker anyway -- 52 bytes under a 40-byte cap.
-                //
-                // One cause: the budgeted length and the emitted length came from different values
-                // of `elided`. So the loop now re-formats each round and exits only when the marker
-                // it will actually emit fits beside the tail it will actually keep.
-                let mut marker = elision_marker(elided);
-                while head.len() + marker.len() + tail.len() > cap && !tail.is_empty() {
-                    tail.pop_front();
-                    elided = elided.saturating_add(1);
-                    marker = elision_marker(elided);
-                }
-                if head.len() + marker.len() + tail.len() > cap {
-                    // The tail is empty and the marker alone still does not fit: the cap is smaller
-                    // than the sentence. Shorten the marker rather than exceed the budget -- the
-                    // capture's size is a promise to the caller, the marker's completeness is not.
-                    marker.truncate(cap.saturating_sub(head.len()));
-                }
-                head.extend_from_slice(&marker);
-                head.extend(tail.iter().copied());
-                debug_assert!(head.len() <= cap, "the capture must never exceed its cap");
-                head
-            };
-            let truncated = elided > 0;
-            // A closed receiver means the caller stopped listening -- it reached the reader deadline
-            // and moved on. Nothing to report and nothing to fail: this thread is the abandoned
-            // one, and it ends here rather than outliving the call with an answer nobody wants.
-            let _ = sender.send((kept, truncated));
-        });
-        (receiver, progress)
-    };
-    let stdout_reader = reader(Box::new(stdout_pipe));
-    let stderr_reader = reader(Box::new(stderr_pipe));
+    #[cfg(windows)]
+    let (stdout_raw, stderr_raw) = (
+        RawPipeHandle(std::os::windows::io::AsRawHandle::as_raw_handle(
+            &stdout_pipe,
+        )),
+        RawPipeHandle(std::os::windows::io::AsRawHandle::as_raw_handle(
+            &stderr_pipe,
+        )),
+    );
+    #[cfg(unix)]
+    let (stdout_raw, stderr_raw) = (
+        RawPipeHandle(std::os::unix::io::AsRawFd::as_raw_fd(&stdout_pipe)),
+        RawPipeHandle(std::os::unix::io::AsRawFd::as_raw_fd(&stderr_pipe)),
+    );
+    let stdout_reader = spawn_reader(Box::new(stdout_pipe), stdout_raw, cap);
+    let stderr_reader = spawn_reader(Box::new(stderr_pipe), stderr_raw, cap);
 
     // The 05b runtime-adapter pattern: poll every 50 ms against the deadline; on expiry kill
     // and reap, never leaving a zombie.
@@ -1345,11 +1534,12 @@ fn elision_marker(elided: u64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelSignal, CapturedProcess, DrainedReaders, HostError, MINIMUM_DRAIN, drain_deadline,
-        drain_readers, reject_lost_capture,
+        CancelSignal, CapturedProcess, DrainedReaders, HostError, LIVE_READER_THREADS,
+        MINIMUM_DRAIN, ReaderHandle, drain_deadline, drain_readers, reject_lost_capture,
     };
+    use std::io::Read;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::time::{Duration, Instant};
 
@@ -1365,6 +1555,7 @@ mod tests {
         sender: Sender<(Vec<u8>, bool)>,
         receiver: Option<Receiver<(Vec<u8>, bool)>>,
         progress: Arc<AtomicU64>,
+        give_up: Arc<AtomicBool>,
     }
 
     impl FakeReader {
@@ -1374,20 +1565,28 @@ mod tests {
                 sender,
                 receiver: Some(receiver),
                 progress: Arc::new(AtomicU64::new(0)),
+                give_up: Arc::new(AtomicBool::new(false)),
             }
         }
 
-        fn stream(&mut self) -> (Receiver<(Vec<u8>, bool)>, Arc<AtomicU64>) {
-            (
-                self.receiver.take().expect("the stream is taken once"),
-                Arc::clone(&self.progress),
-            )
+        fn stream(&mut self) -> ReaderHandle {
+            ReaderHandle {
+                receiver: self.receiver.take().expect("the stream is taken once"),
+                progress: Arc::clone(&self.progress),
+                give_up: Arc::clone(&self.give_up),
+            }
         }
 
         fn answer(&self, bytes: &[u8], truncated: bool) {
             self.sender
                 .send((bytes.to_vec(), truncated))
                 .expect("the drain is still listening");
+        }
+
+        /// Whether `drain_readers` told this reader's (fake) thread to give up (#726) -- the
+        /// signal a real `spawn_reader` would use to end its poll loop.
+        fn was_told_to_abandon(&self) -> bool {
+            self.give_up.load(Ordering::Relaxed)
         }
     }
 
@@ -1903,6 +2102,18 @@ mod tests {
             "an unanswered stream is empty and NOT marked truncated: truncated means bytes were \
              read and dropped, and none were"
         );
+        // #726: the drain does not just RECORD the escape, it now TELLS the stuck reader so its
+        // own thread can end. Only the stream that never answered is told -- the healthy one
+        // beside it must not be, or a real reader would be cut off mid-flight for no reason.
+        assert!(
+            out.was_told_to_abandon(),
+            "the stream that never answered, even after the release and its grace, must be \
+             signalled so its thread can end"
+        );
+        assert!(
+            !err.was_told_to_abandon(),
+            "a stream that answered normally must never be told to abandon"
+        );
     }
 
     /// The defect this replaced: the drain used to start a fresh clock, so a call that spent almost
@@ -1949,5 +2160,185 @@ mod tests {
                 drain_ends - deadline
             );
         }
+    }
+
+    /// A synthetic pipe pair, in place of a real escaped descendant. Neither platform has a way to
+    /// stage the real thing reliably from inside this suite: Windows has no breakaway from this
+    /// job at all (#717, per the comment on `FakeReader` above), and on Unix a descendant that
+    /// escapes via `setsid` is now reaped by #805's subreaper before it can hold the pipe open --
+    /// measured directly (`fake_tool`'s own `spawn-escaping-grandchild`, run under WSL2, inherits
+    /// no copy of the pipe: `Stdio::null()` on the grandchild's own 0/1/2 leaves nothing else
+    /// pointing at it, unlike Windows' `bInheritHandles = TRUE`). So on both platforms the
+    /// mechanism under test -- does the READER THREAD itself end once told to give up -- is
+    /// exercised directly: the test owns both ends and controls exactly when, if ever, the write
+    /// end closes.
+    #[cfg(windows)]
+    fn synthetic_pipe() -> (Box<dyn Read + Send>, super::RawPipeHandle, std::fs::File) {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+
+        let mut read_handle: HANDLE = std::ptr::null_mut();
+        let mut write_handle: HANDLE = std::ptr::null_mut();
+        let ok = unsafe {
+            windows_sys::Win32::System::Pipes::CreatePipe(
+                std::ptr::addr_of_mut!(read_handle),
+                std::ptr::addr_of_mut!(write_handle),
+                std::ptr::null(),
+                0,
+            )
+        };
+        assert_ne!(
+            ok, 0,
+            "CreatePipe must succeed for the test to mean anything"
+        );
+        let raw = super::RawPipeHandle(read_handle as std::os::windows::io::RawHandle);
+        // SAFETY: both handles came from `CreatePipe` above and are owned exactly once each --
+        // `read_file` by the `File` that will be boxed into the reader, `write_file` by the one
+        // returned to the caller. Neither handle is used or closed anywhere else.
+        let read_file = unsafe {
+            std::fs::File::from_raw_handle(read_handle as std::os::windows::io::RawHandle)
+        };
+        let write_file = unsafe {
+            std::fs::File::from_raw_handle(write_handle as std::os::windows::io::RawHandle)
+        };
+        (Box::new(read_file), raw, write_file)
+    }
+
+    #[cfg(unix)]
+    fn synthetic_pipe() -> (Box<dyn Read + Send>, super::RawPipeHandle, std::fs::File) {
+        use std::os::unix::io::FromRawFd;
+
+        let mut fds: [std::os::unix::io::RawFd; 2] = [0; 2];
+        let ok = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        assert_eq!(ok, 0, "pipe(2) must succeed for the test to mean anything");
+        let [read_fd, write_fd] = fds;
+        let raw = super::RawPipeHandle(read_fd);
+        // SAFETY: both fds came from `pipe(2)` above and are owned exactly once each -- `read_file`
+        // by the `File` that will be boxed into the reader, `write_file` by the one returned to the
+        // caller. Neither fd is used or closed anywhere else.
+        let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        let write_file = unsafe { std::fs::File::from_raw_fd(write_fd) };
+        (Box::new(read_file), raw, write_file)
+    }
+
+    /// Serializes the two `LIVE_READER_THREADS` cells against EACH OTHER, never against the rest
+    /// of the suite. `cargo test` runs cells concurrently by default, and this counter is
+    /// process-wide: two of these cells racing would read each other's threads in their own
+    /// before/after snapshot. No other cell in this file touches `spawn_reader`, so this pair is
+    /// the counter's only possible source of cross-cell noise.
+    static READER_COUNT_CELLS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// CONTROL, mandatory before the abandonment cell below means anything: a LIVE capture whose
+    /// writer goes silent for well past what a real caller's grace would be, and THEN writes, must
+    /// still receive the byte it sent -- the reader's poll loop must never treat "nothing yet" as
+    /// "abandoned" on its own. Nothing in `spawn_reader` ever sets `give_up`; only a caller does,
+    /// and this cell never calls one.
+    #[test]
+    fn a_live_reader_survives_silence_and_still_delivers_what_arrives_after_it() {
+        let _serialized = READER_COUNT_CELLS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = LIVE_READER_THREADS.load(Ordering::Relaxed);
+        let (pipe, raw, mut write_end) = synthetic_pipe();
+        let handle = super::spawn_reader(pipe, raw, 4096);
+
+        // Well past several `READER_POLL` ticks (20 ms) -- long enough that a reader which gave
+        // up on silence alone would already have done so.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            handle
+                .receiver
+                .recv_timeout(Duration::from_millis(10))
+                .is_err(),
+            "the reader answered before EOF or abandonment -- it must not have"
+        );
+        assert!(
+            !handle.give_up.load(Ordering::Relaxed),
+            "nothing signalled abandonment, so the flag must still read false"
+        );
+
+        use std::io::Write as _;
+        write_end
+            .write_all(b"still here")
+            .expect("the write end is open");
+        drop(write_end); // the only writer; dropping it is what makes EOF happen
+
+        let (bytes, truncated) = handle
+            .receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("a live capture must answer once its one writer closes");
+        assert_eq!(bytes, b"still here");
+        assert!(!truncated);
+
+        // The thread answered via ordinary EOF, not via the abandonment path -- give it a moment
+        // to actually return from the closure (the guard's `Drop` runs after `sender.send`) and
+        // confirm it left no count behind.
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            LIVE_READER_THREADS.load(Ordering::Relaxed),
+            before,
+            "a normally-ending reader must not leave its count incremented"
+        );
+    }
+
+    /// THE CELL #726 EXISTS FOR. A pipe whose write end the test keeps open throughout -- exactly
+    /// what an escaped descendant's inherited handle looks like from the reader's side, with no
+    /// process, escape or job object needed to produce it. Before the fix this hangs (the reader
+    /// blocks in `read` forever); confirmed red-first by hand: commenting out the
+    /// `signal.load(...)` check in `spawn_reader`'s poll loop makes this cell's `recv_timeout`
+    /// below time out and the assertion fail, rather than the whole run hanging -- the bounded
+    /// wait is deliberate so a regression here is a red, never a stuck gate.
+    ///
+    /// Run N times: the closing criterion is that abandoning N captures leaves the reader-thread
+    /// count where it started, not growing by N.
+    #[test]
+    fn an_abandoned_reader_ends_within_the_grace_and_leaves_no_thread_behind() {
+        let _serialized = READER_COUNT_CELLS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        const REPETITIONS: usize = 5;
+        let before = LIVE_READER_THREADS.load(Ordering::Relaxed);
+        // Held for the whole test: nothing ever closes it, which is the one property an escaped
+        // descendant's inherited handle has that this fixture must reproduce.
+        let mut writers_never_closed = Vec::new();
+
+        for _ in 0..REPETITIONS {
+            let (pipe, raw, write_end) = synthetic_pipe();
+            writers_never_closed.push(write_end);
+            let handle = super::spawn_reader(pipe, raw, 4096);
+
+            assert!(
+                handle
+                    .receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "nothing was written and the pipe is open -- there is no answer yet"
+            );
+
+            // The one and only mechanism that ends this reader (#726): the drain has already
+            // exhausted its own silence grace, hard deadline, release and post-release grace,
+            // and only THEN says so.
+            handle.give_up.store(true, Ordering::Relaxed);
+
+            let (bytes, truncated) = handle.receiver.recv_timeout(Duration::from_secs(2)).expect(
+                "an abandoned reader must end within a small multiple of READER_POLL, not \
+                     leak for the life of the process",
+            );
+            assert_eq!(bytes, Vec::<u8>::new(), "nothing was ever written to it");
+            assert!(!truncated);
+        }
+
+        // Give the last thread's guard a moment to run past `sender.send` before reading the
+        // count.
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            LIVE_READER_THREADS.load(Ordering::Relaxed),
+            before,
+            "{REPETITIONS} abandoned captures must not leave {REPETITIONS} threads behind"
+        );
+        // The write ends outlive every reader in this test, on purpose -- dropping them here,
+        // after every assertion, so a premature EOF (from an early drop) can never be mistaken
+        // for the abandonment path actually being exercised.
+        drop(writers_never_closed);
     }
 }

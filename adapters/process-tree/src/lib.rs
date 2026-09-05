@@ -734,8 +734,10 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
 const SYNCHRONIZE: u32 = 0x0010_0000;
 
 /// `WAIT_OBJECT_0`: the handle is SIGNALED, which for a process handle means it has exited.
+#[cfg_attr(not(windows), allow(dead_code))]
 const WAIT_SIGNALED: u32 = 0;
 /// `WAIT_TIMEOUT`: nothing happened in the interval, so the process is still running.
+#[cfg_attr(not(windows), allow(dead_code))]
 const WAIT_STILL_RUNNING: u32 = 258;
 
 /// What a zero-timeout wait on a process handle says about liveness, or `None` when the wait failed.
@@ -747,6 +749,14 @@ const WAIT_STILL_RUNNING: u32 = 258;
 /// binds arbitrary executables, and the operator picks the tests runner.
 ///
 /// A handle's signaled state has no such overlap. No exit code can imitate it.
+///
+/// **A pure match over `u32`, nothing Windows in the body** (C's review of #877): unlike
+/// `SYNCHRONIZE`, its only production caller is `#[cfg(windows)]`, but the function itself is not,
+/// which is exactly what makes it testable off the platform. `#[cfg(windows)]` here would have
+/// removed that -- the same `#[cfg_attr(not(windows), allow(dead_code))]` shape as
+/// `windows_wait_milliseconds` below silences the dead-code lint without removing the code (or its
+/// cells) from Linux.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[must_use]
 fn liveness_from_wait(waited: u32) -> Option<bool> {
     match waited {
@@ -1074,18 +1084,6 @@ impl ProcessIdentity {
         Ok(watched.revents & libc::POLLIN == 0)
     }
 
-    /// Kill exactly the process this identity names -- never a tree, and never a successor.
-    ///
-    /// Through the `pidfd`, not through the number. A pidfd refers to the PROCESS, so this cannot
-    /// reach a successor; sending to the bare id could, because holding a pidfd does NOT reserve
-    /// the id the way a Windows handle does. That asymmetry is the whole reason this method exists
-    /// rather than callers running `kill` (Codex, on #703): the Windows side was already safe and
-    /// the Linux side was not, and one API hides the difference from every caller.
-    ///
-    /// # Errors
-    /// [`IdentityUnavailable`] when `pidfd_send_signal` is unavailable (kernels before 5.1) or the
-    /// signal is refused.
-
     /// Block until the process this identity names is gone, or until `patience` elapses.
     ///
     /// **The point is that the OS reports the exit, rather than a caller sampling for it.** A poll
@@ -1120,6 +1118,17 @@ impl ProcessIdentity {
         Ok(watched.revents & libc::POLLIN != 0)
     }
 
+    /// Kill exactly the process this identity names -- never a tree, and never a successor.
+    ///
+    /// Through the `pidfd`, not through the number. A pidfd refers to the PROCESS, so this cannot
+    /// reach a successor; sending to the bare id could, because holding a pidfd does NOT reserve
+    /// the id the way a Windows handle does. That asymmetry is the whole reason this method exists
+    /// rather than callers running `kill` (Codex, on #703): the Windows side was already safe and
+    /// the Linux side was not, and one API hides the difference from every caller.
+    ///
+    /// # Errors
+    /// [`IdentityUnavailable`] when `pidfd_send_signal` is unavailable (kernels before 5.1) or the
+    /// signal is refused.
     pub fn terminate(&self) -> Result<(), IdentityUnavailable> {
         let sent = unsafe {
             libc::syscall(
@@ -1265,6 +1274,7 @@ mod tests {
     /// `GetExitCodeProcess` answered 259 for a process that had NOT exited and for one that exited
     /// WITH 259, so those two states were indistinguishable and the fixture guard covered only
     /// `fake_tool`. A signaled handle has no such overlap.
+    ///
     #[test]
     fn no_wait_code_means_both_running_and_exited() {
         assert_ne!(

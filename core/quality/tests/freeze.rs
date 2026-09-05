@@ -226,3 +226,50 @@ fn every_frozen_prefix_matches_at_least_one_tracked_file() {
          (#282)"
     );
 }
+
+/// The gate's OWN run manifest is not gated code (#898).
+///
+/// #674(a) makes every authoritative gate commit its manifest under `.factory/gate-runs/` onto the
+/// branch it judged. Read as "code side" by `freeze_violation`, that receipt paired with any
+/// gate-machinery path -- so every branch touching `core/quality/` or `tools/pathogens/` was RED at
+/// `this_branch_does_not_move_the_judge_and_the_judged_together` from its SECOND run on, and a
+/// gate-machinery change could never carry the GREEN manifest `merge-proof` requires. The rule
+/// condemned its own receipt. Measured on #859's third gate (manifest `c6887f05`).
+///
+/// The exemption is the store's prefix and nothing wider, and the three controls below are what
+/// keep it from becoming a bypass: the real pairing still refuses, code-only stays clean, and a
+/// non-manifest file under `.factory/` still counts as code.
+#[test]
+fn the_gates_own_run_manifest_is_not_gated_code() {
+    const MANIFEST: &str = ".factory/gate-runs/22a92349944f-20260905T064634.239Z-b99c28d2.json";
+    const GATE: &str = "tools/pathogens/src/jpd.rs";
+
+    assert!(
+        freeze_violation(&[GATE, MANIFEST]).is_none(),
+        "a gate-machinery branch paired with the manifest its own gate committed was refused: the \
+         rule is condemning its own receipt, and no gate-machinery change can ever go GREEN"
+    );
+    assert!(
+        freeze_violation(&[MANIFEST, GATE]).is_none(),
+        "same pair, manifest first: the exemption must not depend on path order"
+    );
+
+    // CONTROL 1: the rule itself is untouched -- judge and judged still refuse.
+    assert!(
+        freeze_violation(&[GATE, "apps/cli/src/commands/serve/monitor.rs"]).is_some(),
+        "CONTROL FAILED: a gate path beside production code no longer refuses, so the exemption \
+         widened into a bypass"
+    );
+    // CONTROL 2: code-only with a manifest is clean, as code-only always was.
+    assert!(
+        freeze_violation(&[MANIFEST, "apps/cli/src/commands/serve/monitor.rs"]).is_none(),
+        "CONTROL FAILED: a manifest beside production code reads as a violation, so the manifest \
+         is being treated as gate machinery instead of as neither"
+    );
+    // CONTROL 3: the exemption is the STORE, not the whole `.factory/` tree.
+    assert!(
+        freeze_violation(&[GATE, ".factory/orchestrator-board.md"]).is_some(),
+        "CONTROL FAILED: a non-manifest file under .factory/ stopped counting as code, so the \
+         exemption is wider than the store it names"
+    );
+}

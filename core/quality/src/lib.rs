@@ -470,8 +470,19 @@ pub fn freeze_violation(changed_paths: &[&str]) -> Option<(String, String)> {
         "docs/gates/",
         "tools/source-invariants/",
     ];
+    // THE GATE'S OWN RECEIPT IS NEITHER SIDE (#898). #674(a) makes every authoritative run commit
+    // its manifest under this prefix onto the branch it judged, so from a branch's second run on
+    // the store is always in its diff. Read as gated code, that receipt paired with any gate
+    // path -- every `core/quality/` or `tools/pathogens/` branch went RED at the freeze cell
+    // from its second run, and no gate-machinery change could carry the GREEN manifest
+    // `merge-proof` requires. The rule was condemning its own receipt. The exemption is this
+    // prefix and nothing wider: a non-manifest file under `.factory/` still counts as code.
+    const RUN_MANIFEST_STORE: &str = ".factory/gate-runs/";
     let is_gate = |path: &str| GATE_MACHINERY.iter().any(|prefix| path.starts_with(prefix));
+    let is_receipt = |path: &str| path.starts_with(RUN_MANIFEST_STORE);
     let gate_side = changed_paths.iter().find(|path| is_gate(path))?;
-    let code_side = changed_paths.iter().find(|path| !is_gate(path))?;
+    let code_side = changed_paths
+        .iter()
+        .find(|path| !is_gate(path) && !is_receipt(path))?;
     Some(((*gate_side).to_owned(), (*code_side).to_owned()))
 }

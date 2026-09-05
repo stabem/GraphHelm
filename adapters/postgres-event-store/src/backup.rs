@@ -1610,29 +1610,21 @@ impl PostgresBackupOperator {
         // grep for the wrapper misses it and the fix has to include it BY HAND. The exit
         // decision lives in `classify_exclusivity` — a pure function, so the split below
         // is unit-testable without a database.
-        let deadline = Instant::now() + budget.step(Duration::from_secs(10));
-        loop {
-            let connected: i64 = sqlx::query_scalar(
+        // `tokio::time::Instant`, not `std::time::Instant`: this is the clock `timeout_at`
+        // enforces, so the bound and the classification read the same one. Unpaused -- which is
+        // every non-test runtime -- it IS the system clock.
+        let deadline = tokio::time::Instant::now() + budget.step(Duration::from_secs(10));
+        let admin_pool = &self.admin_pool;
+        poll_until_exclusive(deadline, || {
+            sqlx::query_scalar(
                 "SELECT count(*)::bigint FROM pg_stat_activity \
                  WHERE datid=(SELECT oid FROM pg_database WHERE datname=current_database()) \
                    AND application_name=$1",
             )
             .bind(application)
-            .fetch_one(&self.admin_pool)
-            .await
-            .map_err(|_| BackupError::InvalidRestore)?;
-            match classify_exclusivity(connected, Instant::now(), deadline) {
-                ExclusivityPoll::Proceed => break,
-                // A rival holds the target: NOT a timing fact — the restore target is
-                // genuinely not exclusively ours, however much time remains. Folding this
-                // into "elapsed" would replace one flattening with another.
-                ExclusivityPoll::Contention => return Err(BackupError::InvalidRestore),
-                // Nobody rivals us and the budget ran out: a timing fact, named as one.
-                ExclusivityPoll::Elapsed => return Err(BackupError::DeadlineElapsed),
-                ExclusivityPoll::Waiting => {}
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+            .fetch_one(admin_pool)
+        })
+        .await?;
         let access = database_access_contract(&self.admin_pool).await?;
         let target_identity = self.source_identity_sha256().await?;
         let quarantine = format!("graphhelm_restore_q_{}", &target_identity[..32]);
@@ -4648,6 +4640,66 @@ enum ExclusivityPoll {
     Waiting,
 }
 
+/// Poll until the target is exclusively ours, the target is contended, or the budget is gone.
+///
+/// THE BOUND LIVES HERE, NOT IN THE CALLER'S QUERY (#866). The loop this replaces consulted the
+/// clock once per iteration and awaited the status query with no bound of its own, so ten seconds
+/// bounded HOW MANY TIMES it looked rather than how long it took. `DeadlineElapsed` was then a
+/// timing fact reported for a budget that had not actually been enforced.
+///
+/// The remedy #796 declined -- give the innermost blocking call the remaining budget -- is the one
+/// #763 has since merged in this same subsystem (`54e4e3b5`), so the argument for leaving this
+/// advisory rests on a decision that was reversed.
+///
+/// The poll is a closure that takes NOTHING and returns the query. That is deliberate: handing the
+/// closure a `remaining` to honour would leave the real caller free to ignore it, and a cell
+/// exercising a well-behaved test closure would pass while production stayed unbounded -- the bound
+/// would be armed in one place and fired in another. Wrapping `poll()` here makes the subject own
+/// the clock, so no caller can opt out.
+///
+/// The precedence of [`classify_exclusivity`] is preserved exactly: the query still runs before the
+/// classification, so a target that is free AT the deadline still proceeds. A deadline already gone
+/// is not a short-circuit -- `timeout_at` polls once before it checks -- which is the same rule
+/// [`OperationDeadline::step`] documents for a step begun after exhaustion.
+///
+/// The deadline is a [`tokio::time::Instant`] because that is the clock `timeout_at` enforces.
+/// Measuring the bound against `std::time::Instant` while the timer runs on tokio's makes the two
+/// disagree the moment a test pauses time -- and the first version of the cells below passed with
+/// this bound REMOVED for exactly that reason.
+async fn poll_until_exclusive<P, F>(
+    deadline: tokio::time::Instant,
+    mut poll: P,
+) -> Result<(), BackupError>
+where
+    P: FnMut() -> F,
+    F: std::future::Future<Output = Result<i64, sqlx::Error>>,
+{
+    loop {
+        let connected = tokio::time::timeout_at(deadline, poll())
+            .await
+            // The wait itself ran out: a timing fact, and now a true one.
+            .map_err(|_| BackupError::DeadlineElapsed)?
+            .map_err(|_| BackupError::InvalidRestore)?;
+        // Converted to the std instant the pure classifier takes. Both sides come from the SAME clock,
+        // which is the whole reason the deadline changed type.
+        match classify_exclusivity(
+            connected,
+            tokio::time::Instant::now().into_std(),
+            deadline.into_std(),
+        ) {
+            ExclusivityPoll::Proceed => return Ok(()),
+            // A rival holds the target: NOT a timing fact -- the restore target is genuinely not
+            // exclusively ours, however much time remains. Folding this into "elapsed" would
+            // replace one flattening with another.
+            ExclusivityPoll::Contention => return Err(BackupError::InvalidRestore),
+            // Nobody rivals us and the budget ran out: a timing fact, named as one.
+            ExclusivityPoll::Elapsed => return Err(BackupError::DeadlineElapsed),
+            ExclusivityPoll::Waiting => {}
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn classify_exclusivity(connected: i64, now: Instant, deadline: Instant) -> ExclusivityPoll {
     if connected == 1 {
         ExclusivityPoll::Proceed
@@ -5088,6 +5140,111 @@ mod process_tests {
         assert_eq!(
             classify_exclusivity(0, now, later),
             ExclusivityPoll::Waiting
+        );
+    }
+
+    /// #866: the budget bounds the WAIT, not the number of times the loop looks.
+    ///
+    /// The clock used to be consulted once per iteration with an unbounded query between the
+    /// readings, so a status read that hung made ten seconds bound HOW MANY TIMES this looked.
+    /// `DeadlineElapsed` came back either way -- which is why an assertion on the returned error
+    /// cannot see this defect at all. **The measured quantity has to be elapsed time.**
+    ///
+    /// Time is paused, so the elapsed figure is the virtual clock and not a race with the machine
+    /// this runs on: a real-time assertion here would be exactly the load-dependent flake this
+    /// subsystem's own deadline work exists to remove.
+    #[tokio::test(start_paused = true)]
+    async fn a_poll_that_hangs_cannot_outlive_the_budget() {
+        // tokio's clock, the one `start_paused` pauses and the one the subject's bound obeys.
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_millis(100);
+
+        let outcome = poll_until_exclusive(deadline, || async {
+            // The status read that never answers. Nothing here honours any bound -- that is the
+            // point: the bound belongs to the subject, and a poll cannot opt out of it.
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok(0)
+        })
+        .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(outcome, Err(BackupError::DeadlineElapsed)),
+            "a hanging status read did not end as a timing fact: {outcome:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "the wait outlived its own deadline by {elapsed:?}: a 100 ms budget that returns after \
+             an hour bounds the polls rather than the wait, which is the defect and not the fix"
+        );
+    }
+
+    /// CONTROL for the cell above: an ordinary poll must still spend the WHOLE budget.
+    ///
+    /// Without this, a "fix" that refused immediately -- or that mistook a zero remaining for a
+    /// short-circuit -- would satisfy the elapsed assertion above and look correct while making
+    /// every contended restore fail on its first look.
+    #[tokio::test(start_paused = true)]
+    async fn a_fast_poll_still_waits_out_the_whole_budget() {
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_millis(100);
+
+        let outcome = poll_until_exclusive(deadline, || async { Ok(0) }).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(outcome, Err(BackupError::DeadlineElapsed)),
+            "a target that never frees up did not end as a timing fact: {outcome:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "the budget was abandoned after {elapsed:?} of a 100 ms deadline: refusing early passes \
+             the hang assertion for the wrong reason"
+        );
+    }
+
+    /// CONTROL: the classifier's precedence survives the bound.
+    ///
+    /// `Proceed` and `Contention` outrank `Elapsed` by design, and a bound that short-circuited a
+    /// spent budget would answer `DeadlineElapsed` for a target that is free, or for one a rival
+    /// genuinely holds. Both are asked at a deadline that is ALREADY gone, which is the instant a
+    /// short-circuit would get wrong.
+    #[tokio::test(start_paused = true)]
+    async fn a_spent_budget_still_reports_what_the_query_saw() {
+        let spent = tokio::time::Instant::now() - Duration::from_secs(1);
+
+        assert!(
+            matches!(
+                poll_until_exclusive(spent, || async { Ok(1) }).await,
+                Ok(())
+            ),
+            "an exclusively-ours target was refused because the budget was gone: `Proceed` outranks \
+             `Elapsed`, and a step begun after exhaustion still gets its one look"
+        );
+        assert!(
+            matches!(
+                poll_until_exclusive(spent, || async { Ok(2) }).await,
+                Err(BackupError::InvalidRestore)
+            ),
+            "a contended target was reported as a timing fact: an operator told to retry a restore \
+             whose target someone else holds is the flattening #81 removed"
+        );
+    }
+
+    /// CONTROL: a failing query is a restore failure, not a timing one.
+    ///
+    /// The two error kinds arrive through the same `?` chain now, and swapping them would tell an
+    /// operator to wait when the database refused.
+    #[tokio::test(start_paused = true)]
+    async fn a_query_error_is_not_a_deadline() {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+
+        let outcome =
+            poll_until_exclusive(deadline, || async { Err(sqlx::Error::PoolClosed) }).await;
+
+        assert!(
+            matches!(outcome, Err(BackupError::InvalidRestore)),
+            "a refused query was reported as an elapsed deadline: {outcome:?}"
         );
     }
 

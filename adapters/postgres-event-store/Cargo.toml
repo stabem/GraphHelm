@@ -32,6 +32,12 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 graphhelm-graph = { path = "../../core/graph" }
+# `test-util` is what makes the #866 cells measure a CLOCK instead of racing the machine they run
+# on: it pauses time so an hour-long hang and a 100 ms budget are exact rather than approximately
+# ordered. A real-time assertion there would be the same load-dependent flake this crate's own
+# deadline work (#81) exists to remove. `macros`/`rt`/`time` are what `#[tokio::test]` needs; the
+# same set core/runtime already carries in its dev-dependencies.
+tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }
 
 [[test]]
 name = "concurrency"

@@ -128,7 +128,29 @@ fn read_regular_file(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
+/// One directory listing yields one `Result` per ENTRY, and the second kind of `Err` is the one
+/// this seam exists for (#444). `read_dir` itself can fail, and that was always reported; each
+/// entry the iterator hands back can ALSO be an `Err` -- a name the OS could not read, an entry
+/// that vanished mid-walk -- and those were `flatten`ed away, so the archive was written smaller
+/// than the source and the command said success. The lister is a parameter so a test can hand
+/// the capture an iterator whose second item is an error, deterministically, from outside the
+/// filesystem; production passes `std::fs::read_dir` and nothing else.
+type BlobEntries = Box<dyn Iterator<Item = std::io::Result<std::fs::DirEntry>>>;
+type BlobLister<'a> = &'a mut dyn FnMut(&Path) -> std::io::Result<BlobEntries>;
+
+fn read_dir_lister(directory: &Path) -> std::io::Result<BlobEntries> {
+    std::fs::read_dir(directory).map(|entries| Box::new(entries) as BlobEntries)
+}
+
 fn execute_local(root: &Path, output: &Path) -> Result<serde_json::Value, Failure> {
+    execute_local_with(root, output, &mut read_dir_lister)
+}
+
+fn execute_local_with(
+    root: &Path,
+    output: &Path,
+    list: BlobLister<'_>,
+) -> Result<serde_json::Value, Failure> {
     super::require_supported_format(root)?;
     require_absent_file(output, "/output", "--output")?;
 
@@ -156,7 +178,7 @@ fn execute_local(root: &Path, output: &Path) -> Result<serde_json::Value, Failur
     // REPORTED rather than assumed - `lockHeld` in the envelope - because a snapshot that
     // silently could not lock is the same false confidence, one level down.
     let (captured, lock_held) =
-        graphhelm_events::with_repository_read_lock(root, || capture_local(root)).map_err(
+        graphhelm_events::with_repository_read_lock(root, || capture_local(root, list)).map_err(
             |_| local_error("the repository could not be held for a consistent snapshot"),
         )?;
     let (journal, blobs) = captured?;
@@ -185,6 +207,7 @@ fn execute_local(root: &Path, output: &Path) -> Result<serde_json::Value, Failur
 /// unchanged from what shipped, so what this commit changes is WHEN it runs, not what it does.
 fn capture_local(
     root: &Path,
+    list: BlobLister<'_>,
 ) -> Result<(String, serde_json::Map<String, serde_json::Value>), Failure> {
     let journal = read_regular_file(&root.join("journal.jsonl"))
         .map_err(|_| local_error("the repository journal could not be read"))?;
@@ -203,9 +226,21 @@ fn capture_local(
             "the repository blob directory is a link, so it was not archived",
         ));
     }
-    let entries = std::fs::read_dir(&blobs_root)
+    let entries = list(&blobs_root)
         .map_err(|_| local_error("the repository blob directory could not be read"))?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        // AN ENTRY THE LISTING COULD NOT PRODUCE IS A FAILED BACKUP, NOT A SHORTER ONE (#444).
+        // This loop used to `flatten()` the iterator, which discards every per-entry `Err`: the
+        // archive was then written without that blob and the envelope reported success. A backup
+        // that is complete and a backup that is missing an entry are the same bytes to whoever
+        // restores it, and the second is worse than an explicit failure because it is false
+        // recovery evidence. So the error is returned as the class it is, before anything is
+        // written -- and, like every other local failure here, it names no path.
+        let entry = entry.map_err(|_| {
+            local_error(
+                "a repository blob entry could not be listed, so the archive was not written",
+            )
+        })?;
         let name = entry.file_name().to_string_lossy().into_owned();
         // #601: REFUSE anything that is not a regular file, BEFORE reading it.
         //
@@ -250,4 +285,115 @@ fn local_error(message: &str) -> Failure {
 /// path, DSN, or credential and none is reconstructed here.
 fn operator_error(message: &str) -> Failure {
     config_error(message, "/backup")
+}
+
+#[cfg(test)]
+mod entry_errors {
+    //! #444: the listing's per-entry errors reach the operator as a failure, never as a smaller
+    //! successful archive. Injected at the enumeration boundary, because no filesystem can be
+    //! asked to produce a per-entry `Err` on demand, and a cell that waits for one never runs.
+
+    use std::path::{Path, PathBuf};
+
+    use super::{BlobEntries, execute_local_with, read_dir_lister};
+
+    /// The bytes `require_supported_format` compares against, taken from a committed store rather
+    /// than retyped: the check is byte-exact.
+    const FORMAT_JSON: &[u8] =
+        include_bytes!("../../../../../docs/acceptance/m05-run-2026-08-16/events/format.json");
+
+    /// A root the local backup accepts: a format marker, a journal, and two regular blobs. No
+    /// `repository.lock` -- the capture reports the unlocked snapshot rather than refusing it.
+    fn root_with_two_blobs(directory: &Path) -> PathBuf {
+        let root = directory.join("source");
+        std::fs::create_dir_all(root.join("blobs")).unwrap();
+        std::fs::write(root.join("format.json"), FORMAT_JSON).unwrap();
+        std::fs::write(root.join("journal.jsonl"), b"{\"line\":1}\n").unwrap();
+        std::fs::write(root.join("blobs").join("first.json"), b"{}").unwrap();
+        std::fs::write(root.join("blobs").join("second.json"), b"{}").unwrap();
+        root
+    }
+
+    /// The real listing, with its `at`-th entry (0-based) replaced by an error. Everything before
+    /// it is genuine, so the failure lands in the MIDDLE of a walk that had already produced a
+    /// blob -- the shape in which a `flatten` quietly produces a smaller archive.
+    fn listing_failing_at(at: usize) -> impl FnMut(&Path) -> std::io::Result<BlobEntries> {
+        move |directory: &Path| {
+            let real = read_dir_lister(directory)?;
+            let entries = real.enumerate().map(move |(index, entry)| {
+                if index == at {
+                    Err(std::io::Error::other(
+                        "injected: this entry could not be listed",
+                    ))
+                } else {
+                    entry
+                }
+            });
+            Ok(Box::new(entries) as BlobEntries)
+        }
+    }
+
+    /// CONTROL FIRST: the same root and the real listing succeed, or the failure below is about
+    /// the fixture rather than about the injected entry.
+    #[test]
+    fn the_real_listing_archives_both_blobs() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = root_with_two_blobs(directory.path());
+        let output = directory.path().join("archive.json");
+
+        // `let ... else` rather than `expect`: `Failure` carries no `Debug`, deliberately.
+        let Ok(envelope) = execute_local_with(&root, &output, &mut read_dir_lister) else {
+            panic!("CONTROL: the real listing must back this root up")
+        };
+
+        assert_eq!(
+            envelope["blobCount"], 2,
+            "both blobs are archived: {envelope}"
+        );
+        assert!(output.is_file(), "the archive is written on success");
+    }
+
+    /// THE CELL. Before #444 this root produced an archive holding ONE blob and an envelope
+    /// reporting success; the operator had recovery evidence that could not recover the store.
+    #[test]
+    fn an_entry_the_listing_cannot_produce_fails_the_backup_and_writes_no_archive() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = root_with_two_blobs(directory.path());
+        let output = directory.path().join("archive.json");
+
+        let failure = execute_local_with(&root, &output, &mut listing_failing_at(1))
+            .expect_err("a per-entry listing error is a failed backup");
+
+        assert_eq!(
+            failure.message,
+            "a repository blob entry could not be listed, so the archive was not written"
+        );
+        assert_eq!(failure.pointer, "/repository");
+        // The class and nothing else: no path, no OS text, no temp directory.
+        let leaked = directory.path().to_string_lossy();
+        assert!(
+            !failure.message.contains(&*leaked) && !failure.message.contains("injected"),
+            "the failure must name a class, not the filesystem: {}",
+            failure.message
+        );
+        assert!(
+            !output.exists(),
+            "NO archive may exist after a listing error: a smaller archive reporting success is exactly the defect"
+        );
+    }
+
+    /// The first entry failing is the other edge: nothing was archived yet, and the answer is the
+    /// same failure rather than an empty success.
+    #[test]
+    fn a_failure_on_the_very_first_entry_is_the_same_refusal() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = root_with_two_blobs(directory.path());
+        let output = directory.path().join("archive.json");
+
+        let failure = execute_local_with(&root, &output, &mut listing_failing_at(0))
+            .expect_err("a per-entry listing error is a failed backup");
+
+        assert_eq!(failure.pointer, "/repository");
+        assert!(!output.exists(), "no archive after a listing error");
+    }
 }

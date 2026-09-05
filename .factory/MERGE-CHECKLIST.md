@@ -1,0 +1,111 @@
+# Merge checklist — for any lane pressing the button
+
+Owner order, 2026-09-04: lanes review each other and merge each other; "if approved it can go".
+This list is the part of the Observer's gate that caught REAL loss on 2026-09-03. Each line names
+the incident that produced it. It takes minutes, not seconds — items 5, 6 and 7 are reading, and
+they are the ones that caught #746, #754 and #758. Run it; do not remember it.
+
+## Before `gh pr merge`
+
+0. **Measure from a fresh worktree of `origin/main`, not from your session's.** Measured 2026-09-04:
+   session worktrees sat 315–374 commits behind main (a sweep found 3 of 35 `.ps1` files because the
+   tree it ran in had 3). Print `git rev-list --count HEAD..origin/main` before any count — the hook does.
+1. **Head at the instant.** `gh pr view N --json headRefOid` — press against THAT sha. If it moved
+   since a pass was written, that pass does not cover the head: **do not press; ask both reviewers
+   to re-pin against the new sha** (a one-line "re-read at `<sha>`, still approve" is a pass;
+   silence is not). Say "no open roots AGAINST `<sha>`", never "no open roots".
+2. **Did the gate run on THIS head? Ask the committed store, not the PR page.** With hosted CI
+   disabled by policy, `mergeStateStatus CLEAN` means clean of checks that never ran. The rule is
+   #674(b) as the owner decided it — a GREEN manifest in the committed store whose `headSha` is the
+   PR head — and the repository has the reader:
+   ```
+   ./ci/merge-proof.ps1 -PullRequest N          # exit 0 SATISFIED · 1 HARNESS-BROKE · 2 NOT (a run that does not vouch) · 3 ABSENT (no run recorded)
+   ```
+   Predicate, whole: `status == GREEN AND pushed == true AND pullRequest == N AND (headSha == head
+   OR (headSha == parent(head) AND the tip touches only .factory/gate-runs/))`. **Exit 0 is
+   necessary, not sufficient, while #825's P1 is open:** the reader checks `status` only, so open
+   the manifest it names and confirm the stage list is green. Exit 3 (ABSENT) means nobody
+   ran the gate on this head — a gate run owed, not a merge; exit 2 (NOT) means a run exists and does
+   not vouch — that is a finding. The two are different answers (#811 introduced the distinction). (Found by A's review
+   of this very file: no line asked whether the gate ran.)
+3. **The PR's file list is exactly what it claims.** `gh pr view N --json files` — a docs-only PR that
+   shows a production file is a REWIND of the base, not a diff: a branch collapsed with `reset --soft`
+   onto a moved main keeps the old tree in the index, and the single commit silently reverts whatever
+   landed on main in between (this very PR, `acf4c5fc`, carried `core/events/src/local.rs +13/−90`
+   against #823; caught by H, invisible to any "deleted files" check because nothing was deleted).
+4. **Mergeable asked twice.** First answer `UNKNOWN` means "not computed yet", never "no problem".
+   Wait for `MERGEABLE` + `mergeStateStatus CLEAN`.
+5. **Closing keywords in FOUR places, union == intent.** GitHub's parser reads no negation, and the
+   three readings are NOT redundant: on #746 the PR body was fixed before the merge and
+   `closingIssuesReferences` came back clean — and the squash `34cced9c` still shut #717 two seconds
+   after the merge, through the negated sentence left in a COMMIT body (reopened by hand 49 s later,
+   #757). **The instrument that frees the PR is blind to the field that shuts the issue.**
+   ```
+   gh pr view N --json title   --jq .title                        # the squash's FIRST line (COMMIT_OR_PR_TITLE)
+   gh pr view N --json body    --jq .body
+   gh pr view N --json commits --jq '.commits[].messageBody'      # what a SQUASH carries
+   gh api graphql -f query='{repository(owner:"stabem",name:"GraphHelm"){pullRequest(number:N){closingIssuesReferences(first:10){nodes{number}}}}}'
+   ```
+   `closingIssuesReferences` reads the BODY only; the squash acts on the TITLE plus COMMIT MESSAGES
+   (repository setting `squash_merge_commit_title: COMMIT_OR_PR_TITLE` — found by ISSUES 3 on this PR). All four,
+   `grep -iEo '(close[sd]?|fixe[sd]?|resolve[sd]?|refs?) #[0-9]+'`, and the union must equal what
+   the PR means to close. A keyword next to a number you do not want closed — even inside a
+   negation, even in a commit body — must be reworded (`Refs #N`, "#N stays open").
+6. **Read the CARRY BODIES, not the count.** `reviewThreads` unresolved = 0 was true on #758 with
+   a soundness finding sitting in a review body, and on #754 with a section titled "One thing I
+   did NOT verify" in plain sight. Grep each carry and review for: `did not`, `not verified`,
+   `cannot tell`, `roots without a verdict`, `stated rather than implied`, `finding`, `latent`.
+   Each item is either closed by another pass, marked non-blocking BY ITS AUTHOR, or written into
+   the merge comment as accepted risk with an issue number.
+   A *carry* is a review-shaped comment by a lane other than the author that names the sha it
+   measured. It lives in one of two boxes; list both, every time:
+   ```
+   gh api --paginate repos/stabem/GraphHelm/issues/N/comments --jq '.[] | select(.user.login != "chatgpt-codex-connector[bot]") | "\(.created_at) \(.body[0:80])"'
+   gh api repos/stabem/GraphHelm/pulls/N/reviews --jq '.[] | "\(.submitted_at) \(.state) \(.body[0:80])"'
+   ```
+7. **Read the STATE of each review, not its existence.** Every review in this repo is
+   `COMMENTED` (the fleet shares one account; GitHub refuses self-approval), so "approve" is the
+   reviewer's own word in the text, never a GitHub state. A `COMMENTED` whose body declines to
+   verify — "not a pin", "I will not record this as verified", "the sweep reads Running" — is
+   NOT a pass, and a merge comment that links it as one is citing the wrong object (#745: the
+   text described the approving review, the link pointed at the earlier "Not a pin" comment).
+8. **Two passes while Codex is out of quota** (since 2026-09-03T13:04:45Z): different lanes,
+   neither the author, each naming the sha it measured. It is a SUBSTITUTION, not equivalence —
+   the merge comment names what the mechanical sweep would have caught and did not:
+   prose contradicting code, form-vs-instance matching, the third actor.
+   Lanes are told apart by the **identity line** every comment starts with (`Lane: … · Session: …
+   · Head: …`, see `AGENTS.md`), never by the GitHub login — every login here is one account.
+9. **Stacked PR before `--delete-branch`.** `gh pr list --base <head-branch> --state all`.
+   Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729).
+10. **Content coupling with other OPEN PRs.** If another open PR writes a field/file this one
+   reads (or vice versa), there is an ORDER; measure who writes and who reads at each head.
+
+## After the merge (read the output — do not report what you intended)
+
+- `gh pr view N --json mergedAt,mergeCommit` — cite these, not the branch head.
+- `git log -1 --format=%B origin/main | grep -iEo '(close[sd]?|fixe[sd]?|resolve[sd]?) #[0-9]+'`
+  — what the squash ACTUALLY carried; then `gh issue view` each cited issue and confirm state.
+- `gh api repos/stabem/GraphHelm/branches/<branch>` → expect `404` "Branch not found"
+  (the text is `Branch not found`, not `Not Found`; a wrong grep read a deleted branch as alive).
+- Merge comment on the PR: measurement instant, head, mergeable×2, threads, carries with ids and
+  timestamps, closing-keyword reading, stacked check, and one paragraph of what the PR is.
+  Corrections go INSIDE the same PR as a follow-up comment, never elsewhere.
+
+## Tooling traps that produced false readings on 2026-09-03/04 (each measured)
+
+- `git cat-file -e "<ref>:<path>"` under MSYS is mangled for some path shapes and not others
+  (measured: `origin/main:core/x` fine; `origin/main:.factory/x` and `origin/main:/core/x` mangled to
+  `origin\main;…`, git says "ambiguous argument" / "invalid object name"). Do not learn the rule —
+  use the SHA instead of the ref, or `MSYS_NO_PATHCONV=1`.
+- A failed `git fetch` leaves the ref with its OLD value; the next `rev-parse` succeeds. Check
+  the fetch rc immediately, or fetch into a NEW ref name each time.
+- PowerShell: after `<cmd> | Select-Object -First N`, `$LASTEXITCODE` is not the command's. Instance, same
+  host and git version: `Git\cmd\git.exe` (launcher) → `-1` in 8/8 successful runs; `Git\mingw64in\git.exe`
+  (the binary) → `0` in 8/8. Which one `git` resolves to is `(Get-Command git).Source`, and it can change
+  between sessions without you touching anything. Read nothing from that code — test the VALUE.
+- Bash: after a pipe, `$?` is the LAST element's. `cmd 2>&1 | head -2; echo $?` reports head.
+- `git ls-tree -r --name-only <sha>` without `--full-tree` is scoped to the CWD PREFIX and
+  returns empty with rc=0 from inside a subdirectory. Always `--full-tree` when the subject is
+  a sha.
+- Any zero produced by a filter YOU wrote (`grep`, `head -N`, `sed`, a regex calibrated on the
+  old format) is a measurement of the filter. Put a known positive in the same command.

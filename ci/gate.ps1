@@ -105,6 +105,9 @@ function ConvertTo-SlotEventField {
 }
 
 $toolchain = '+1.97.1'
+# #896: the exit code a stage body reports when it set none. 99 is the sentinel this repository
+# already runs merge-proof behind; here it is what `Invoke-Stage` poisons `$LASTEXITCODE` with.
+$MuteStageExitCode = 99
 $failed = @()
 $stageRecords = New-Object System.Collections.Generic.List[object]
 $runStartUtc = [DateTime]::UtcNow
@@ -218,6 +221,15 @@ function Invoke-Stage {
         # stream 6 in Windows PowerShell 5.1 and PowerShell Core. Merge only that stream into the
         # success stream here, then redact once before both evidence sinks. Without 6>&1 the child
         # is visible at best in the console but absent from outputTail (#484).
+        # #896: POISON, DO NOT CLEAR. `$LASTEXITCODE` is written only by a native command, so a body
+        # that fails on the PowerShell side -- a lookup over MAX_PATH, a missing root, a cmdlet that
+        # throws -- writes nothing and the stage would inherit its NEIGHBOUR's verdict. Clearing to 0
+        # would be worse than the inheritance: a mute body would then PASS every time, and nobody
+        # investigates good news. The sentinel fails in the safe direction: a body that never spoke
+        # exits $MuteStageExitCode and reddens, and the neighbour's value is destroyed before the body
+        # runs so inheritance is impossible. `Invoke-Postgres` already sets the code itself (:179);
+        # this moves that discipline from memory into the structure.
+        $global:LASTEXITCODE = $MuteStageExitCode
         & $Body 6>&1 | ForEach-Object {
             $line = Protect-GateEvidenceLine -Line ([string]$_)
             $capturedLines.Add($line)

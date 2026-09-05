@@ -17,6 +17,13 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    re-read BOTH boxes, paginated, in the same breath as the head re-check**: a reading older than the
    newest comment is a cache; a BLOCK published after your read and before your press is your absence,
    not theirs (H pressed #852 on 6 of 9 comments — two re-pins and a measurement were already there; #888).
+   The same for whoever ASSIGNS: an order written from a reading older than the newest comment is a cache
+   too (three stale orders in one morning; a pass already on #826 at 10:28Z while the order to give it went
+   out). **A rebase is not a manifest-only tip.** Before asking for or giving a re-pin: `git merge-base
+   --is-ancestor <pinned-sha> <new-head>`. If it fails, the branch was REBUILT and a sentence does not carry —
+   run `git range-diff <old-base>..<pinned> <new-base>..<head>`: `=` on every line means the measurements
+   transfer; any `!` names the commit to re-review. `git diff --stat` between two tips does not serve: it
+   shows main moving and looks like the author's work (15 files, +1089 on #836 with nothing changed — H).
    **One carry, and only one:** when the gate's manifest-only commit moves the head, a pass that names the
    PARENT carries to the new head — the presser verifies `git diff --name-only <parent> <head>` lists only
    `.factory/gate-runs/*.json` (`--name-only`, never `--stat`: `--stat` truncates the path from the LEFT to
@@ -48,6 +55,36 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    failed stages; the two passes read the JSON (sha, `pushed`, `dirtyDiffHash`, `staleArtifactCount`,
    failed stages) instead of a diff; one other path touched and the exception is void (#885 is the first:
    `45f43a3e` RED on one cell, ticket #886).
+   **Known fleet reds — a CLOSED list (owner's delegation, 2026-09-05 11:5xZ: 26 PRs open, 6 with two passes
+   waiting on a gate, nearly every red of the day a flake or an artefact).** A manifest with `pushed: True`
+   naming the PR, whose reds are ALL on this list, is PRESSABLE: the merge comment names each red and its
+   issue; `merge-proof` NOT is expected there and written as such; ANY red outside the list blocks. **And a
+   listed red is pressable ONLY IF the PR does not touch the mechanism the listed test exercises, OR a tree
+   that contains no line of the PR reproduces the same red at the same site** — the fleet's own manifests
+   count as that tree. The presser writes which arm applies, with the shas: the first arm names the test's
+   subject and shows the PR's file list does not reach it; the second names the foreign tree and the site
+   (#826: J's run 2 landed a listed red on a PR that changes the very thing the test measures — the first arm
+   fails there — and the second holds: `:1421 InvalidRestore` is recorded on #830 @ `069c37b9` and #825 @
+   `69ab5004`, trees with no `drain_terminated_job` and not descendants of `20554e9c`; ISSUES 3, 12:50Z).
+   The second arm answers whether the red EXISTS without the PR, never whether the PR changed its RATE: where
+   a listed red is recorded as a frequency (#641: 3/40 under concurrency 4), one foreign manifest and one
+   local one are one sample each and say nothing about 3/40 versus 12/40 — there the press is ACCEPTED RISK
+   with an issue number, not "not a finding" (K).
+   The list grows only by a docs PR carrying a measured instance:
+   - `admin_operator_binds_pool_profile_and_source_identity` — #880 (both PostgreSQL matrices; and the
+     `Unavailable` at `:847` under two concurrent gates);
+   - `cancelled_watchdog_kills_the_owned_process_tree` — #824;
+   - `eof_arriving_after_the_deadline_is_not_silently_accepted` — #785 / #886;
+   - `this_branch_does_not_move_the_judge_and_the_judged_together` accusing ONLY a `.factory/gate-runs/*.json`
+     — #859 (predicate to be fixed);
+   - `rustfmt` exit 1 with an EMPTY tail — #895 (os error 206 on a long bench path; the presser re-measures
+     from a short path and writes the rc=0 in the merge comment);
+   - `server_guard_sabotage_ignored` (`apps/cli/tests/api_http.rs:425`) and the sibling panel that runs it as a
+     subprocess — #641 (closed: the pair fails 3/40 under concurrency 4, the child is killed before it prints).
+     Measured instance: D's gate on #870 (`f1233310`, 12:04→13:30Z) — the cell diagnoses itself ("HARNESS-BROKE:
+     the sabotage child did not exit within 2s … this is the harness or the machine, not the drain/print
+     path"), the claim recorded 37 cargo/rustc alive before the first stage, and the PR's symbols appear 0× in
+     the two files — the subject guard satisfied by measurement.
    Running the gate yourself: **a gate launched inside a turn dies with the turn** (measured twice:
    log ~700 bytes, task "alive", no signal). Launch it detached — `Start-Process … -PassThru`, PID and
    exit code written to a file — the wrapper's PID is the only identifier you own. **Those proof-of-life
@@ -106,12 +143,21 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    those with ≥1 live descendant. **The pattern is a hint; the DESCENDANT is the fact**: it over-counts
    (readers) and under-counts (a wrapper script — B launches by `-File gate859_wrapper.ps1`, and the
    command line never says `ci/gate.ps1`: the Orchestrator read ZERO with a gate alive, 2026-09-05). Count
-   `powershell.exe` processes with a live `cargo`/`rustc` descendant — and know the count has holes between
+   `powershell.exe` processes with a live `cargo`/`rustc` descendant — READ THE PATTERN FROM THIS FILE and
+   print its bytes before trusting the number: a pattern retyped from memory (`[\\/]` became `[\/]`) counted
+   0 with G's gate alive on the SSD and would have authorised a second gate on the same disk; the atomic
+   claim is what decided (H, #891) — and know the count has holes between
    stages: LIFE is `Get-Process -Id <pid>` with the same StartTime, ACTIVITY is the `cargo.exe` child. **The
    count is the check; the CLAIM is the handshake** — two lanes measuring zero within the same minute both
    launched (C #862 09:17:18Z, M #871 09:17:38Z → two gates on the one platter, D: queue 16, C:/E:/F: 0).
    Before launching, the WRAPPER claims the slot with `.factory/tools/slot-claim.sh` and releases it when
-   the run ends. **Launch only on exit 0; ANY non-zero exit means you did NOT claim** — the script has
+   the run ends. **ONE lock file per disk, and the script is its only writer**: HDD = `D:/graphhelm-slot/SLOT.lock`
+   (the script's default, `slot-claim.sh:50` `LOCK="${SLOT_LOCK:-D:/graphhelm-slot/SLOT.lock}"`); SSD = the same
+   script with `SLOT_LOCK=E:/graphhelm-slot/SLOT.lock`. The hand ledgers `D:\SLOT-HDD.claim` / `E:\SLOT-SSD.claim`
+   are retired: two conventions that cannot see each other let D hold the HDD through the script while the
+   ledger showed it free, and L hold the SSD through the ledger while the script never read it (12:07Z) — a
+   lane reading one saw a free disk that was taken. Each lane deletes its own ledger line by name; a stale line
+   is not a holder. **Launch only on exit 0; ANY non-zero exit means you did NOT claim** — the script has
    five non-zero codes today (1 lock present, 2 write did not land, 3 path/permission failure whose
    message says "Nobody holds the slot", 4/5 holder pair missing/unusable), and a reader who learns
    "1 = busy" from a list reads 3 as free and launches (D, #889). The clause stays right when a sixth
@@ -189,6 +235,8 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    a soundness finding sitting in a review body, and on #754 with a section titled "One thing I
    did NOT verify" in plain sight. Grep each carry and review for: `did not`, `not verified`,
    `cannot tell`, `roots without a verdict`, `stated rather than implied`, `finding`, `latent`.
+   **A criteria SEAL is not a pass**: "frozen before the diff … nothing below is a finding" is the reviewer
+   saying they have NOT read yet — it was counted as a pass twice in one day (#871, #826; D).
    Each item is either closed by another pass, marked non-blocking BY ITS AUTHOR, or written into
    the merge comment as accepted risk with an issue number.
    A *carry* is a review-shaped comment by a lane other than the author that names the sha it
@@ -221,7 +269,13 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    told from the author's own comment — and asks for the line. The line is for addressing, the count is
    by content (A, #863; #874).
 9. **Stacked PR before `--delete-branch`.** `gh pr list --base <head-branch> --state all`.
-   Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729).
+   Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729). And what is known
+   about `--delete-branch` when a worktree holds the branch — only this, measured (L, #862, #889): (i) the
+   LOCAL delete fails (`cannot delete branch used by worktree at …` — `D:/c-815`, `D:/x-843d`); (ii) the
+   REMOTE's state at that instant is NOT reported and was not settled 20 s later (both remotes were gone
+   minutes after, as separate events — by hand or by gh, the reading cannot tell); so (iii) after the press,
+   `git ls-remote --heads origin <branch>` says whether you cleaned up, and you never delete a branch another
+   lane has a bench on — ask the lane. No mechanism is claimed beyond that.
 10. **Content coupling with other OPEN PRs.** If another open PR writes a field/file this one
    reads (or vice versa), there is an ORDER; measure who writes and who reads at each head.
 
@@ -257,5 +311,11 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
 - `git ls-tree -r --name-only <sha>` without `--full-tree` is scoped to the CWD PREFIX and
   returns empty with rc=0 from inside a subdirectory. Always `--full-tree` when the subject is
   a sha.
+- The gate log is UTF-16: `iconv -f UTF-16LE -t UTF-8 | tr -d '\r'` before any grep, or `Select-String`. And
+  **a zero count of failures in a log that produced `rc != 0` is a CONTRADICTION, not a result** — four zeros
+  in a row nearly reported "red with no failures" (D, #870).
+- In a Markdown diff a "removed" line is almost always a RE-WRAPPED line: `grep -F` of the whole old
+  line against the new file returns 0 and accuses a deletion. Use `--name-only` for paths (never `--stat`)
+  and a word-frequency control over the whole file, before and after, for content (D, #889).
 - Any zero produced by a filter YOU wrote (`grep`, `head -N`, `sed`, a regex calibrated on the
   old format) is a measurement of the filter. Put a known positive in the same command.

@@ -76,8 +76,10 @@ cannot touch persistence; a run using it is not a full gate and must be reported
 lock (`SLOT.lock`) exists for a **shared** `CARGO_TARGET_DIR`; with an isolated target directory
 per lane there is nothing to contaminate — but `D:` is one platter and five concurrent gates stalled the
 machine (measured 2026-09-05), so the ceiling is **one gate on the HDD plus one on the SSD** (`E:/<lane>-targets`
-while `E:` keeps >30 GB free — `Get-PSDrive E` first), never `C:` (the system disk: a full `C:` takes the
-machine down) or `F:` (the repository disk, 15 GB free). Before launching, count LAUNCHES, not cargos — one
+while `E:` keeps >30 GB free — `Get-PSDrive E` first); `C:` (the system SSD) may hold ONE build or review
+target per lane, at most TWO on the board, only while ≥ 100 GB stay free, removed by its creator, never a gate
+target — a full `C:` takes the machine down, so the floor is the rule; and never `F:` (the repository disk,
+15 GB free). The long form is `.factory/MERGE-CHECKLIST.md` item 2. Before launching, count LAUNCHES, not cargos — one
 gate is 2–9 cargo processes: live `powershell.exe` launching `ci/gate.ps1` (by `-File` or by `-Command … &`;
 the regex in `.factory/MERGE-CHECKLIST.md`, tested against real command lines) with at least one descendant;
 at most one other live gate, on the other spindle. Proof of life is a CPU delta on the

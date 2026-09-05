@@ -14,6 +14,12 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    since a pass was written, that pass does not cover the head: **do not press; ask both reviewers
    to re-pin against the new sha** (a one-line "re-read at `<sha>`, still approve" is a pass;
    silence is not). Say "no open roots AGAINST `<sha>`", never "no open roots".
+   **One carry, and only one:** when the gate's manifest-only commit moves the head, a pass that names the
+   PARENT carries to the new head — the presser verifies `git diff --name-only <parent> <head>` lists only
+   `.factory/gate-runs/*.json` (`--name-only`, never `--stat`: `--stat` truncates the path from the LEFT to
+   `...45f43a3e66f9-…json` and hides the directory the rule tells you to see — K, measured on #885) and
+   writes that in the merge comment; any other path in that diff voids
+   the carry (#674(b) for the proof, #852 for the passes — decided on #826, 2026-09-04).
 2. **Did the gate run on THIS head? Ask the committed store, not the PR page.** With hosted CI
    disabled by policy, `mergeStateStatus CLEAN` means clean of checks that never ran. The rule is
    #674(b) as the owner decided it — a GREEN manifest in the committed store whose `headSha` is the
@@ -27,16 +33,36 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    the manifest it names and confirm the stage list is green. Exit 3 (ABSENT) means nobody
    ran the gate on this head — a gate run owed, not a merge; exit 2 (NOT) means a run exists and does
    not vouch — that is a finding. The two are different answers (#811 introduced the distinction). (Found by A's review
+   **The docs-only exception, written (D, #865):** a PR whose file list is entirely Markdown that no path
+   under `ci/` reads may record `merge-proof` ABSENT as a NAMED exception — the merge comment cites the
+   file list, the empty `grep -rn <file> ci/`, and its positive control (a grep that does find
+   something). One non-Markdown file, or one Markdown file that `ci/` reads, and the exception is void;
+   item 3 exists because a "docs-only" PR once carried `core/events/src/local.rs +13/−90`. Precedent
+   (#829, #832, #863) is not a rule; this line is.
+   **The manifest-only exception (#752, #674(b)):** a PR whose only change is `.factory/gate-runs/*.json`
+   produced by the gate, and nothing else, RECORDS a run — it does not vouch for a merge. It may merge with
+   `merge-proof` NOT or ABSENT under a NAMED exception: the merge comment cites the run's sha, status and
+   failed stages; the two passes read the JSON (sha, `pushed`, `dirtyDiffHash`, `staleArtifactCount`,
+   failed stages) instead of a diff; one other path touched and the exception is void (#885 is the first:
+   `45f43a3e` RED on one cell, ticket #886).
    Running the gate yourself: **a gate launched inside a turn dies with the turn** (measured twice:
    log ~700 bytes, task "alive", no signal). Launch it detached — `Start-Process … -PassThru`, PID and
-   exit code written to a file — the wrapper's PID is the only identifier you own. **Detached from the
+   exit code written to a file — the wrapper's PID is the only identifier you own. **Those proof-of-life
+   files (pid, log, rc) live OUTSIDE the worktree**: inside it they dirty the tree, `dirtyDiffHash` goes
+   non-null, the gate refuses to publish the manifest and a run with every stage green ends `status: RED`
+   ("run manifest not published") — two lanes in one night (C on #830 run 2, H on the main gate run 1,
+   2026-09-05). **And the bench must be ON A BRANCH** (`git symbolic-ref --quiet HEAD` non-empty) whose tip
+   equals the PR head on origin: the gate publishes by `git update-ref … $branchRef` after reading
+   `symbolic-ref` (D; `ci/gate.ps1:1819` and `:1124`), so a DETACHED bench runs every stage and publishes
+   nothing — the same "run manifest not published" with everything green. For a main run, create a local
+   branch at the sha and push it; any "green but ABSENT" run is a candidate for this cause. **Detached from the
    session is not detached from the app**: a restart of the Claude app (fleet recycle, 2026-09-05 ~04:11Z)
    killed every gate including the detached ones (#830 1h+ into `workspace tests`, #826); what survives
    is what is PUSHED and the target on disk (cargo resumes). Push the manifest the instant it exists; a
    gate that must outlive the app is launched from outside it (Task Scheduler / a service), not from a
    session. **Proof of life is the
    child chain from that PID** (`Get-CimInstance Win32_Process | ? ParentProcessId -eq <pid>`, recursively)
-   **with the log growing** — the log is the primary signal because it is MONOTONE (94 KB → 520 KB across
+   **with the log GROWING** — growth proves life; it is the primary POSITIVE signal because it is MONOTONE (94 KB → 520 KB across
    the main gate, #867); descendant count and descendant CPU are weaker: children die and leave the sum
    (70.1 s → 6.1 s in 15 s, measured), so "CPU equal = wedged" and "CPU greater = alive" are BOTH
    false, and a healthy gate sits 45 s flat between stages (`desc=1`, no rustc — design, not pathology).
@@ -46,7 +72,7 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    False" on the main gate every merge-proof waits for, and nearly did). Log silence
    mid-stage is capture, not death: the gate captures a stage's output and writes it when the stage ends
    (`Start-Process -Redirect` and `*>` both grow the file — measured, H), so a quiet log says nothing
-   either way. `Get-Process -Id` answers *alive*, not *progressing* — the wrapper's CPU is 0 by
+   either way — **silence is never a negative signal**; only the ≥ 5 min all-three-flat rule below decides (A, #863). `Get-Process -Id` answers *alive*, not *progressing* — the wrapper's CPU is 0 by
    construction (it waits for its child), so a wedged gate looks identical to a building one (A, J, G).
    The inverse holds too (M): a background task that ended does not prove the process ended — look for a
    live chain before relaunching on the same target; two gates on one branch are two manifest commits
@@ -58,8 +84,10 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    first — the floor is a PRECONDITION, not a budget: `E:` went 79 → 38 GB free in three hours of
    accumulated review and gate targets at ~10.7 GB each, so **a target on `E:` is removed by its creator
    when the gate or review ends** — `Remove-Item` by name, never a sweep; `E:` is a lane, not a
-   warehouse)**; never `C:` (the system disk — a full `C:` takes the machine down; the disk-fill incident) or
-   `F:` (the repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is
+   warehouse)**; `C:` (the system SSD, 127 GB free measured 2026-09-05) may hold ONE build or review target per lane, `C:/<lane>-targets/<n>`, only while ≥ 100 GB stay free, removed by its creator when the build ends, and **never a gate target** — the reason stands: a full `C:` takes the machine down (the disk-fill incident), so the floor is the rule, not the exception — and a CEILING on the board: at most TWO `C:`
+   targets at once, whoever owns them, because a per-lane floor does not bound the sum (13 lanes × 10.7 GB
+   against 27 GB of headroom; `E:` sat at 33.5 GB today under a 30 GB floor — K); and never `F:` (the
+   repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is
    2–9 cargo processes by design (measured): `Get-CimInstance Win32_Process | ? { $_.Name -eq
    'powershell.exe' -and $_.CommandLine -match '(-File\s+\S*|&\s*\S*)ci[\\/]gate\.ps1' }`, keeping only
    those with ≥1 live descendant. **The count reads its own reader**: the shell running this query, and
@@ -104,6 +132,10 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    ```
    gh pr view N --json title   --jq .title                        # the squash's FIRST line ONLY when the PR has 2+ commits
    gh pr view N --json commits --jq '.commits[0].messageHeadline'  # with ONE commit the squash takes THIS (COMMIT_OR_PR_TITLE); retitling the PR changes nothing (A, #849)
+   # edges (#875; documented behaviour, not measured on this board): ZERO commits → GitHub disables the button, nothing
+   # to read; ONE commit that is itself a merge commit → its headline (`Merge branch …`) becomes the squash subject —
+   # reword (or squash locally) before pressing. `allow_merge_commit` is ON in this repo (measured): a merge-commit
+   # press carries every commit message verbatim — the board squashes; a non-squash press is a checklist violation.
    gh pr view N --json body    --jq .body
    gh pr view N --json commits --jq '.commits[].messageBody'      # what a SQUASH carries
    # PowerShell eats the quotes of an inline query; a JSON file works from both shells (measured):
@@ -153,7 +185,12 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    never by the GitHub login — every login here is one account. `AGENTS.md` asks writers to put it
    FIRST; the counter looks for it **anywhere in the body** (C's pass on #833 signs on its last line —
    H counted one pass too few by reading the top line only, #840). A writer's slip must not become the
-   counter's absence: absence blocks correct work.
+   counter's absence: absence blocks correct work. A pass with NO identity line in any position (C's four
+   passes on #833 sign `## Implementer (C), re-review`) is counted by its BODY — lane named, sha named,
+   verdict word — whatever signature it carries (`Lane: C`, `## Reviewer (K)`, `## Implementer (C)`); the
+   writer is asked to add the line. **A pass that names no lane at all does not count** — it cannot be
+   told from the author's own comment — and asks for the line. The line is for addressing, the count is
+   by content (A, #863; #874).
 9. **Stacked PR before `--delete-branch`.** `gh pr list --base <head-branch> --state all`.
    Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729).
 10. **Content coupling with other OPEN PRs.** If another open PR writes a field/file this one
@@ -183,6 +220,11 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
   (the binary) → `0` in 8/8. Which one `git` resolves to is `(Get-Command git).Source`, and it can change
   between sessions without you touching anything. Read nothing from that code — test the VALUE.
 - Bash: after a pipe, `$?` is the LAST element's. `cmd 2>&1 | head -2; echo $?` reports head.
+- PowerShell: `$LASTEXITCODE` is the last PROCESS's, not the last command's. `& .\ci\merge-proof.ps1` in a
+  tree 335 commits behind raised `CommandNotFoundException` — a shell error, no process — and
+  `$LASTEXITCODE` still held the `0` of the `git rev-list` before it: "merge-proof exit 0" in the colour
+  that authorises (D, #865). Set `$global:LASTEXITCODE = 99` before invoking `merge-proof`; a 99 after the
+  call means it never ran; run it from a fresh worktree of `origin/main`, where the script exists.
 - `git ls-tree -r --name-only <sha>` without `--full-tree` is scoped to the CWD PREFIX and
   returns empty with rc=0 from inside a subdirectory. Always `--full-tree` when the subject is
   a sha.

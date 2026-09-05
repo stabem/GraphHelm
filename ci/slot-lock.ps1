@@ -59,6 +59,33 @@ function Test-SlotLockPathMatchesTargetDirShape {
 # DIFFERENT purely because of key ordering. Keep every branch a flat literal; if a branch ever
 # needs conditional keys, Test-SlotLockSnapshotsIdentical needs to compare a sorted/normalized
 # form instead, not the raw JSON string.
+# #700: the holder pair, read out of the lock's own text.
+#
+# `slot-claim.sh` writes `holder: pid=<pid> start=<iso8601>` as the last line of the claim. The
+# snapshot carried that text as `content` and nothing extracted the pair, which is why
+# `Test-SlotHolderLiveness` had ZERO non-test callers: the reader had no caller because nothing
+# produced its two arguments in-process. The gap was a parse, not a policy.
+#
+# ABSENT IS NOT MALFORMED, and neither is death. A lock with no holder line returns empty strings,
+# which `Test-SlotHolderLiveness` answers 'indeterminate' for -- the promise `slot-claim.sh:85`
+# already makes in writing ("DEGRADES SAFELY: unset -> written empty -> ... 'indeterminate'").
+# An unattributable lock must never be declared recoverable.
+function Get-SlotHolderPairFromContent {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [AllowNull()] [string] $Content)
+
+    $pair = [ordered]@{ pid = ''; startUtc = '' }
+    if ([string]::IsNullOrEmpty($Content)) { return $pair }
+    # LAST match, not first: the word "holder" appears in the claim's prose above the line that
+    # carries the values, and a first-match read would return the prose's non-match or an older
+    # line if a lock were ever appended to.
+    $matches = [regex]::Matches($Content, 'holder:\s*pid=(\S+)\s+start=(\S+)')
+    if ($matches.Count -eq 0) { return $pair }
+    $last = $matches[$matches.Count - 1]
+    $pair.pid = $last.Groups[1].Value
+    $pair.startUtc = $last.Groups[2].Value
+    return $pair
+}
+
 function Read-SlotLockSnapshot {
     if (-not $env:GRAPHHELM_SLOT_LOCK_PATH) {
         # Unset must NEVER resolve to "no lock" - that folds a third, semantically distinct fact
@@ -112,17 +139,26 @@ function Read-SlotLockSnapshot {
         }
     }
 
+    # #700: the verdict travels WITH the observation. A reader of this manifest could see a lock
+    # and could not tell a live hold from a corpse; now the same record answers both.
+    $holder = Get-SlotHolderPairFromContent -Content $content
     return [ordered]@{
-        schemaVersion = 2
-        status        = 'present'
-        path          = $lockPath
-        content       = $content
-        observedAtUtc = [DateTime]::UtcNow.ToString('o')
+        schemaVersion  = 2
+        status         = 'present'
+        path           = $lockPath
+        content        = $content
+        holderVerdict  = (Test-SlotHolderLiveness -HolderPid $holder.pid -HolderStartUtc $holder.startUtc)
+        observedAtUtc  = [DateTime]::UtcNow.ToString('o')
     }
 }
 
 # Gate 9 (L, from re-measuring a real committed manifest): slotLockAtStart and slotLockAtEnd are
-# both captured specifically so they COULD be compared, and nothing did the comparing. An
+# both captured specifically so they COULD be compared. `Test-SlotLockSnapshotsIdentical`
+# now does the comparing (gate.ps1), and since #700 each snapshot also carries a
+# `holderVerdict`, which the comparison deliberately IGNORES. Identical still means
+# the lock's text did not change; the two verdicts sit beside it, so a holder that was already
+# dead at both reads and a holder that died between them are distinguishable -- the first is a
+# stale lock, the second is a hold that ended mid-run. An
 # untouched, stale lock produces identical start/end reads BY CONSTRUCTION; a genuinely live lock
 # held across the same span often would not, though a real hold nobody touches for the whole run
 # would ALSO read identical - so a match is a tripwire worth surfacing, not a determination.
@@ -147,13 +183,20 @@ function Test-SlotLockSnapshotsIdentical {
     # Rebuild rather than .Clone(): OrderedDictionary implements Clone() as an EXPLICIT ICloneable
     # member, which PowerShell's method adapter does not surface as a callable instance method -
     # caught live, the direct way, rather than assumed to work.
+    # #700 (M, reviewing this change): `holderVerdict` is excluded for the same reason as
+    # `observedAtUtc`, and NOT for the same reason as the rest. This comparison answers ONE question --
+    # did the lock's own text change between the two reads -- and a verdict is not part of the text.
+    # Left in, a holder that DIED mid-run made the pair differ, which reads as "somebody touched the
+    # lock": the benign answer, for the least benign event. The verdict travels BESIDE the comparison,
+    # where live -> dead is visible as two verdicts rather than hidden as an identity change.
+    $ignored = @('observedAtUtc', 'holderVerdict')
     $a = [ordered]@{}
     foreach ($key in $Start.Keys) {
-        if ($key -ne 'observedAtUtc') { $a[$key] = $Start[$key] }
+        if ($ignored -notcontains $key) { $a[$key] = $Start[$key] }
     }
     $b = [ordered]@{}
     foreach ($key in $End.Keys) {
-        if ($key -ne 'observedAtUtc') { $b[$key] = $End[$key] }
+        if ($ignored -notcontains $key) { $b[$key] = $End[$key] }
     }
 
     return (($a | ConvertTo-Json -Depth 8 -Compress) -eq ($b | ConvertTo-Json -Depth 8 -Compress))

@@ -24,7 +24,7 @@
 # same pattern matches once, but which fires once per Assert-Equal CALL at runtime, not as an
 # independent assertion beyond the call that triggers it. 13 direct Assert-True calls + 11
 # Assert-Equal calls = 24 actual runtime assertions; that's the number this harness itself counts.
-$ExpectedAssertionCount = 33
+$ExpectedAssertionCount = 38
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -90,6 +90,48 @@ try {
     Assert-Equal -Expected $lockContent -Actual $resultA.content -Message 'Fixture A: content matches the real lock file'
     Assert-Equal -Expected 2 -Actual $resultA.schemaVersion -Message 'Fixture A: schemaVersion is 2'
     Assert-True -Condition ($null -ne $resultA.observedAtUtc) -Message 'Fixture A: observedAtUtc is stamped'
+
+    # --- #700: the snapshot answers WHOSE lock it is, not just that there is one ----------------
+    #
+    # Read-SlotLockSnapshot returned the lock's raw `content` and nothing extracted the holder pair
+    # from it, so Test-SlotHolderLiveness had zero non-test callers: the reader had no caller because
+    # nothing produced its two arguments in-process. These cells pin the parse and the verdict.
+    Write-Host "`n=== #700: holderVerdict on a present snapshot ==="
+    $me = Get-Process -Id $PID
+    $meStart = $me.StartTime.ToUniversalTime().ToString('o')
+
+    # (1) LIVE: a lock whose holder line names a process that is running, with the start time that
+    # identifies it. A held slot whose owner is alive must never read as recoverable.
+    Set-Content -LiteralPath $lockFile -Encoding utf8 -Value @(
+        'HELD by tester | stamp | lane | STATUS: working',
+        'cargo/rustc alive at claim: 0',
+        "holder: pid=$PID start=$meStart")
+    $live = Read-SlotLockSnapshot
+    Assert-Equal -Expected 'present' -Actual $live.status -Message '#700 live: status is still present'
+    Assert-Equal -Expected 'live' -Actual $live.holderVerdict -Message '#700: a running holder reads live'
+
+    # (2) DEAD by recycled pid: the same pid, a different start. The pair is the identity; the pid
+    # alone would hold the slot hostage after the owner exited and its number was reused.
+    $shiftedStart = $me.StartTime.ToUniversalTime().AddHours(-1).ToString('o')
+    Set-Content -LiteralPath $lockFile -Encoding utf8 -Value @(
+        'HELD by tester | stamp | lane | STATUS: working',
+        "holder: pid=$PID start=$shiftedStart")
+    Assert-Equal -Expected 'dead' -Actual (Read-SlotLockSnapshot).holderVerdict -Message '#700: a recycled pid reads dead'
+
+    # (3) INDETERMINATE by omission: a lock with no holder line at all. slot-claim.sh's own comment
+    # promises this degrades to indeterminate rather than to dead -- an unattributable lock must
+    # never be declared recoverable, which is the fail-CLOSED direction.
+    Set-Content -LiteralPath $lockFile -Encoding utf8 -Value @(
+        'HELD by tester | stamp | lane | STATUS: working',
+        'cargo/rustc alive at claim: 0')
+    Assert-Equal -Expected 'indeterminate' -Actual (Read-SlotLockSnapshot).holderVerdict -Message '#700: no holder line reads indeterminate, never dead'
+
+    # (4) The verdict is BESIDE the identity comparison, not inside it (#700, M's review). A holder
+    # that dies mid-run must not make the snapshots differ: that would read as "somebody touched the
+    # lock", the benign answer, for the least benign event.
+    $sA = [ordered]@{ schemaVersion = 2; status = 'present'; path = 'x'; content = 'same text'; holderVerdict = 'live'; observedAtUtc = '2026-01-01T00:00:00.0000000Z' }
+    $sB = [ordered]@{ schemaVersion = 2; status = 'present'; path = 'x'; content = 'same text'; holderVerdict = 'dead'; observedAtUtc = '2026-01-01T00:05:00.0000000Z' }
+    Assert-True -Condition (Test-SlotLockSnapshotsIdentical -Start $sA -End $sB) -Message '#700: a holder dying mid-run leaves the lock text identical'
 
     # --- Fixture B: unset GRAPHHELM_SLOT_LOCK_PATH is indeterminate, never absent ---------------
     # This is the case the orchestrator named as the one that must not reproduce today's bug: an

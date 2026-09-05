@@ -960,7 +960,10 @@ impl LocalEventRepository {
         let journal_guard = self
             .journal
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)?;
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "validate-anchors:journal-mutex-poisoned",
+                os: None,
+            })?;
         if root_path_identity != self.root_identity
             || file_identity(&self.root_handle)? != self.root_identity
             || lock_path_identity != self.lock_identity
@@ -983,12 +986,18 @@ impl LocalEventRepository {
             return Ok(());
         }
         if self.failpoint == Some(LocalFailpoint::JournalSync) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:journal-sync@sync-loaded-journal",
+                os: None,
+            });
         }
         let journal = self
             .journal
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)?;
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "sync-loaded-journal:journal-mutex-poisoned",
+                os: None,
+            })?;
         journal.sync_data()?;
         #[cfg(test)]
         self.journal_sync_count.fetch_add(1, Ordering::SeqCst);
@@ -1116,26 +1125,41 @@ impl LocalEventRepository {
         line.push(b'\n');
         ensure_inclusive_limit(line.len() as u64, MAX_BATCH_BYTES as u64)?;
         if self.failpoint == Some(LocalFailpoint::Validation) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:validation@append-locked",
+                os: None,
+            });
         }
 
         let mut staged = self.stage_evidence(request.evidence())?;
         if self.failpoint == Some(LocalFailpoint::EvidenceStaging) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:evidence-staging@append-locked",
+                os: None,
+            });
         }
         self.sync_staged(&staged)?;
         if self.failpoint == Some(LocalFailpoint::BlobSync) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:blob-sync@append-locked",
+                os: None,
+            });
         }
         self.publish_staged(&mut staged)?;
         if self.failpoint == Some(LocalFailpoint::BlobPublish) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:blob-publish@append-locked",
+                os: None,
+            });
         }
 
         let mut journal = self
             .journal
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)?;
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "append-locked:journal-mutex-poisoned",
+                os: None,
+            })?;
         let current_len = journal.metadata()?.len();
         let resulting_len = current_len
             .checked_add(
@@ -1149,17 +1173,26 @@ impl LocalEventRepository {
         if self.failpoint == Some(LocalFailpoint::PhysicalBatchAppend) {
             journal.write_all(&line[..line.len() / 2])?;
             journal.flush()?;
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:physical-batch-append@append-locked",
+                os: None,
+            });
         }
         journal.write_all(&line)?;
         journal.flush()?;
         if self.failpoint == Some(LocalFailpoint::JournalSync) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:journal-sync@append-locked",
+                os: None,
+            });
         }
         journal.sync_data()?;
         sync_directory_handle(&self.root_handle)?;
         if self.failpoint == Some(LocalFailpoint::ActiveMarker) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:active-marker@append-locked",
+                os: None,
+            });
         }
         self.publish_active_marker(&envelopes, true)?;
         Ok(envelopes)
@@ -1333,7 +1366,10 @@ impl LocalEventRepository {
         fail_if_injected: bool,
     ) -> Result<(), EventRepositoryError> {
         if fail_if_injected && self.failpoint == Some(LocalFailpoint::ActiveMarker) {
-            return Err(EventRepositoryError::Storage);
+            return Err(EventRepositoryError::StorageAt {
+                site: "failpoint:active-marker@publish-active-marker",
+                os: None,
+            });
         }
         let mut marker_indexes = BTreeMap::<String, BTreeMap<String, String>>::new();
         let mut marker_budget =
@@ -3219,8 +3255,11 @@ fn initialize_root_shared_fast(
         return Ok(None);
     }
     let lock = open_child_file(root_handle, root, "repository.lock", true, false)?;
-    if FileExt::lock_shared(&lock).is_err() {
-        return Err(EventRepositoryError::Storage);
+    if let Err(error) = FileExt::lock_shared(&lock) {
+        return Err(EventRepositoryError::StorageAt {
+            site: "initialize-root:lock-shared",
+            os: error.raw_os_error(),
+        });
     }
     if classify_layout(root, root_handle)? != LayoutState::Complete {
         let _ = FileExt::unlock(&lock);
@@ -3242,7 +3281,10 @@ fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, Event
         open_or_create_repository_lock(root_handle, root)?
     };
     lock.lock_exclusive()
-        .map_err(|_| EventRepositoryError::Storage)?;
+        .map_err(|error| EventRepositoryError::StorageAt {
+            site: "initialize-root:lock-exclusive",
+            os: error.raw_os_error(),
+        })?;
 
     repair_layout_locked(root, root_handle)?;
     Ok(lock)

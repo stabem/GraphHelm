@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{
-    ArtifactRegistration, LocalEventRepository, LocalFailpoint, LocalRepositoryInspection,
-    PreparedAppend, SealedEvidence, WrappedKey,
+    ArtifactRegistration, EventRepositoryError, LocalEventRepository, LocalFailpoint,
+    LocalRepositoryInspection, PreparedAppend, SealedEvidence, WrappedKey,
 };
 
 #[test]
@@ -1919,4 +1919,84 @@ fn open_sharing_read_only(path: &std::path::Path) -> std::fs::File {
         .share_mode(FILE_SHARE_READ)
         .open(path)
         .expect("ARRANGEMENT: the foreign reader opens the orphan")
+}
+
+/// The site a storage failure names, or a legible panic when it names none.
+///
+/// The bare `Storage` variant is the thing under test here: it is not a wrong
+/// name, it is the absence of one, so the panic has to say which provocation
+/// produced it and what the error actually was.
+#[track_caller]
+fn storage_site(error: &EventRepositoryError, provocation: &str) -> &'static str {
+    match error {
+        EventRepositoryError::StorageAt { site, .. } => site,
+        other => panic!(
+            "{provocation} answered a storage failure that names no site. \
+             The error was: {other:?}"
+        ),
+    }
+}
+
+/// One injected fault, two check sites, and today one indistinguishable error.
+///
+/// `LocalFailpoint::JournalSync` is checked twice on separate paths: once in
+/// `append_locked`, after the journal line is flushed and before `sync_data`,
+/// and once in `sync_loaded_journal`, which only the open path reaches when it
+/// resyncs a journal left dirty by an earlier crash. Both answer
+/// `GHE008_STORAGE_FAILURE`, so a caller holding the error cannot tell a failed
+/// append from a failed recovery — the two want opposite responses.
+///
+/// The assertion is on the pair, not on either name alone: a single site could
+/// be named while the other stayed silent and a per-error check would still
+/// pass. Both names must also mention the fault that was actually injected, so
+/// that naming the sites cannot degrade into two arbitrary distinct constants.
+#[test]
+fn one_injected_fault_checked_at_two_sites_names_the_site_it_fired_from() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::JournalSync,
+    )
+    .unwrap();
+
+    // Site one: the append path. Two appends, matching the crash the recovery
+    // test relies on, so the journal is left dirty for the reopen below.
+    let append_error = repository
+        .append_atomic(&prepared(None, vec![]))
+        .unwrap_err();
+    assert_eq!(append_error.code(), "GHE008_STORAGE_FAILURE");
+    assert!(repository.append_atomic(&prepared(None, vec![])).is_err());
+    let append_site = storage_site(&append_error, "the append path under JournalSync");
+    drop(repository);
+
+    // Site two: the open path, resyncing the journal the crash left behind.
+    let reopen_error = match LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::JournalSync,
+    ) {
+        Ok(_) => panic!(
+            "the reopen was expected to fail while resyncing the dirty journal; \
+             it succeeded, so this cell no longer reaches the second site"
+        ),
+        Err(error) => error,
+    };
+    assert_eq!(reopen_error.code(), "GHE008_STORAGE_FAILURE");
+    let reopen_site = storage_site(&reopen_error, "the reopen path under JournalSync");
+
+    assert_ne!(
+        append_site, reopen_site,
+        "the same injected fault fired at two different sites and named them \
+         identically ({append_site}), which leaves the caller where it started"
+    );
+    for site in [append_site, reopen_site] {
+        assert!(
+            site.contains("journal-sync"),
+            "site {site} does not name the fault that produced it, so the name \
+             distinguishes the two paths by accident rather than by cause"
+        );
+    }
 }

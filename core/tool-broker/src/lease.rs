@@ -76,6 +76,13 @@ pub enum BrokerRefusal {
     CapabilityMissing { capability: Capability },
     #[error("the program is not in the lease's allowlist")]
     ProgramDenied,
+    /// The program name failed the SHAPE rule (`[a-z0-9_-]{1,64}`), so it could never have been
+    /// in any allowlist. Split from `ProgramDenied` (#247): the two have opposite remedies -- fix
+    /// the spelling at the call site, versus change the lease -- and one refusal for both cost a
+    /// lane two full fix-and-rerun cycles, each a reasonable reading of the same text. Names the
+    /// rule and nothing else: the offending string is caller content and is never echoed.
+    #[error("the program name is not a bare validated name")]
+    ProgramNameInvalid,
     #[error("the lease's program allowlist is invalid")]
     ProgramAllowlistInvalid,
     #[error("the actor identifier is not valid")]
@@ -123,10 +130,19 @@ pub fn authorize(
     }
     let programs = lease.validated_program_allowlist()?;
     if let ToolCall::Shell(action) = call {
-        // A malformed program name is denied through the same door as an unlisted one: the
-        // allowlist only ever holds bare validated names, so failing the shape check IS
-        // failing the allowlist.
-        if validate_program_name(&action.program).is_err() || !programs.contains(&action.program) {
+        // TWO DOORS, BECAUSE THE TWO CAUSES HAVE OPPOSITE REMEDIES (#247). This used to deny a
+        // malformed name through the allowlist door, on the argument that the allowlist only
+        // ever holds bare validated names, so failing the shape check IS failing the allowlist.
+        // That is true and it is the wrong thing to optimise for: the refusal loses no
+        // information about WHETHER the call is permitted, and loses exactly the information
+        // about what to do next. "Fix the spelling" and "change the lease, or you are being
+        // denied on purpose" are the two readings, and a lane spent two runs trying each
+        // against the same refusal. The shape check comes first, so an unlisted name is only
+        // ever reported as unlisted once it is a name the allowlist could have held.
+        if validate_program_name(&action.program).is_err() {
+            return Err(BrokerRefusal::ProgramNameInvalid);
+        }
+        if !programs.contains(&action.program) {
             return Err(BrokerRefusal::ProgramDenied);
         }
     }

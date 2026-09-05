@@ -63,6 +63,7 @@ fn refusal_rule(refusal: &BrokerRefusal) -> &'static str {
         BrokerRefusal::ActorMismatch { .. } => "actor_mismatch",
         BrokerRefusal::CapabilityMissing { .. } => "capability_missing",
         BrokerRefusal::ProgramDenied => "program_denied",
+        BrokerRefusal::ProgramNameInvalid => "program_name_invalid",
         BrokerRefusal::ProgramAllowlistInvalid => "program_allowlist_invalid",
         BrokerRefusal::ActorInvalid => "actor_invalid",
         BrokerRefusal::EffectUnsupported(_) => "effect_unsupported",

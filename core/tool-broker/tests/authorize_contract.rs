@@ -106,6 +106,40 @@ fn a_program_outside_the_lease_allowlist_is_denied() {
     ));
 }
 
+/// #247: a malformed name is refused by the SHAPE rule, not reported as an allowlist miss.
+///
+/// Both refusals are correct answers to "is this call permitted"; they are different answers to
+/// "what do I do now". A path, a dotted name, an uppercase letter can never be in any allowlist,
+/// so telling the caller to change the lease sends them to the wrong place.
+#[test]
+fn a_malformed_program_name_is_refused_by_shape_not_reported_as_unlisted() {
+    let lease = full_lease("agent-builder");
+    for malformed in ["Curl", "bin/curl", "curl.exe", "", "C:\\tools\\git"] {
+        assert!(
+            matches!(
+                authorize(&shell_call(malformed), &lease, "agent-builder").unwrap_err(),
+                BrokerRefusal::ProgramNameInvalid
+            ),
+            "{malformed:?} must be refused by shape"
+        );
+    }
+}
+
+/// The split must not weaken the no-echo rule: a malformed NAME is caller content too, and the
+/// shape refusal names the rule without repeating the string that broke it.
+#[test]
+fn a_shape_refusal_never_echoes_the_malformed_program_name() {
+    let lease = full_lease("agent-builder");
+    let sentinel = "SENTINEL-program-name/with-path";
+    let refusal = authorize(&shell_call(sentinel), &lease, "agent-builder").unwrap_err();
+    assert!(matches!(refusal, BrokerRefusal::ProgramNameInvalid));
+    let rendered = format!("{refusal} {refusal:?}");
+    assert!(
+        !rendered.contains("SENTINEL"),
+        "the malformed name travelled into the refusal: {rendered}"
+    );
+}
+
 #[test]
 fn an_invalid_member_makes_the_complete_program_allowlist_fail_closed() {
     let mut lease = full_lease("agent-builder");

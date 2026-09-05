@@ -407,6 +407,24 @@ fn commit_inside_the_workspace_never_moves_the_project_head() {
     assert_eq!(head_before, head_after, "the project HEAD must not move");
 }
 
+/// #247, through the host: a malformed program name records its OWN rule, so the operator reading
+/// the disposition is told to fix the name rather than the lease.
+#[test]
+fn a_malformed_program_name_records_the_shape_rule_end_to_end() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let host = host(&project, staging.path());
+    let call = ToolCall::Shell(ShellAction {
+        program: "bin/curl".to_owned(),
+        arguments: vec!["https://example.com".to_owned()],
+    });
+    let (record, _streams) = host.invoke(&call, &full_lease("agent-sneaky"), "agent-sneaky");
+    match &record.disposition {
+        ToolDisposition::Denied { rule } => assert_eq!(rule, "program_name_invalid"),
+        other => panic!("expected Denied, got {other:?}"),
+    }
+}
+
 #[test]
 fn the_shell_tool_respects_the_lease_allowlist_end_to_end() {
     let (_dir, project) = scratch_repo();

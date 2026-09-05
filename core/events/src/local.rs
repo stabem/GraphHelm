@@ -355,12 +355,18 @@ pub fn with_repository_read_lock<T>(
     // The same order `with_lock` takes: root directory first, then the lock file, shared. A
     // reader that reversed them would serialise against a different thing than every writer.
     FileExt::lock_shared(&lock)
-        .map_err(|_| EventRepositoryError::Storage)
+        .map_err(|error| EventRepositoryError::StorageAt {
+            site: "read-lock:shared-acquire",
+            os: error.raw_os_error(),
+        })
         .inspect_err(|_| {
             let _ = unlock_root(&root_handle);
         })?;
     let value = operation();
-    let released = FileExt::unlock(&lock).map_err(|_| EventRepositoryError::Storage);
+    let released = FileExt::unlock(&lock).map_err(|error| EventRepositoryError::StorageAt {
+        site: "read-lock:shared-release",
+        os: error.raw_os_error(),
+    });
     let root_released = unlock_root(&root_handle);
     released?;
     root_released?;
@@ -427,7 +433,7 @@ impl LocalEventRepository {
     ) -> Result<LocalRepositoryInspection, EventRepositoryError> {
         let Some(root_handle) = (match opened {
             Ok(handle) => handle,
-            Err(EventRepositoryError::Storage) => {
+            Err(EventRepositoryError::Storage | EventRepositoryError::StorageAt { .. }) => {
                 return Ok(LocalRepositoryInspection::Storage);
             }
             Err(error) => return Err(error),
@@ -443,7 +449,9 @@ impl LocalEventRepository {
             Err(EventRepositoryError::Integrity | EventRepositoryError::IntegrityAt(_)) => {
                 Ok(LocalRepositoryInspection::Integrity)
             }
-            Err(EventRepositoryError::Storage) => Ok(LocalRepositoryInspection::Storage),
+            Err(EventRepositoryError::Storage | EventRepositoryError::StorageAt { .. }) => {
+                Ok(LocalRepositoryInspection::Storage)
+            }
             Err(error) => Err(error),
         }
     }
@@ -625,13 +633,23 @@ impl LocalEventRepository {
                 // another process may have acted in the gap, so the cache is dropped
                 // and the world re-read; correctness equals a fresh exclusive open.
                 {
-                    let lock = repository
-                        .lock
-                        .lock()
-                        .map_err(|_| EventRepositoryError::Storage)?;
-                    FileExt::unlock(&*lock).map_err(|_| EventRepositoryError::Storage)?;
+                    let lock =
+                        repository
+                            .lock
+                            .lock()
+                            .map_err(|_| EventRepositoryError::StorageAt {
+                                site: "recover:lock-mutex-poisoned",
+                                os: None,
+                            })?;
+                    FileExt::unlock(&*lock).map_err(|error| EventRepositoryError::StorageAt {
+                        site: "recover:release-before-exclusive",
+                        os: error.raw_os_error(),
+                    })?;
                     lock.lock_exclusive()
-                        .map_err(|_| EventRepositoryError::Storage)?;
+                        .map_err(|error| EventRepositoryError::StorageAt {
+                            site: "recover:exclusive-acquire",
+                            os: error.raw_os_error(),
+                        })?;
                 }
                 // D's finding (a): the Complete verdict predates this lock — re-run
                 // the same post-lock repair a fresh exclusive open would.
@@ -639,7 +657,10 @@ impl LocalEventRepository {
                 *repository
                     .verified
                     .lock()
-                    .map_err(|_| EventRepositoryError::Storage)? = None;
+                    .map_err(|_| EventRepositoryError::StorageAt {
+                        site: "recover:verified-mutex-poisoned",
+                        os: None,
+                    })? = None;
                 repository.validate_anchors()?;
                 let state = repository.load_state("open")?;
                 repository.sync_loaded_journal(&state)?;
@@ -661,8 +682,14 @@ impl LocalEventRepository {
             let lock = repository
                 .lock
                 .lock()
-                .map_err(|_| EventRepositoryError::Storage)?;
-            FileExt::unlock(&*lock).map_err(|_| EventRepositoryError::Storage)
+                .map_err(|_| EventRepositoryError::StorageAt {
+                    site: "open:lock-mutex-poisoned",
+                    os: None,
+                })?;
+            FileExt::unlock(&*lock).map_err(|error| EventRepositoryError::StorageAt {
+                site: "open:named-release",
+                os: error.raw_os_error(),
+            })
         };
         let root_unlock = unlock_root(&repository.root_handle);
         match (recovery, named_unlock, root_unlock) {
@@ -863,12 +890,18 @@ impl LocalEventRepository {
         let _gate = self
             .operation_gate
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)?;
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "with-lock:gate-mutex-poisoned",
+                os: None,
+            })?;
         lock_root_exclusive(&self.root_handle)?;
         let file = self
             .lock
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "with-lock:file-mutex-poisoned",
+                os: None,
+            })
             .inspect_err(|_| {
                 let _ = unlock_root(&self.root_handle);
             })?;
@@ -876,9 +909,17 @@ impl LocalEventRepository {
             Exclusivity::Exclusive => file.lock_exclusive(),
             Exclusivity::Shared => FileExt::lock_shared(&*file),
         };
-        if taken.is_err() {
+        if let Err(error) = taken {
             let _ = unlock_root(&self.root_handle);
-            return Err(EventRepositoryError::Storage);
+            // The error was not even BOUND here before (#824): a lock refused by a sharing
+            // violation and one refused by a denial left through the same nameless value.
+            return Err(EventRepositoryError::StorageAt {
+                site: match exclusivity {
+                    Exclusivity::Exclusive => "with-lock:exclusive-acquire",
+                    Exclusivity::Shared => "with-lock:shared-acquire",
+                },
+                os: error.raw_os_error(),
+            });
         }
         let result = self.validate_anchors().and_then(|()| operation());
         let result = match (result, self.validate_anchors()) {
@@ -886,7 +927,11 @@ impl LocalEventRepository {
             (_, Err(error)) => Err(error),
             (Err(error), Ok(())) => Err(error),
         };
-        let named_unlock = FileExt::unlock(&*file).map_err(|_| EventRepositoryError::Storage);
+        let named_unlock =
+            FileExt::unlock(&*file).map_err(|error| EventRepositoryError::StorageAt {
+                site: "with-lock:release",
+                os: error.raw_os_error(),
+            });
         let root_unlock = unlock_root(&self.root_handle);
         match (result, named_unlock, root_unlock) {
             (Ok(value), Ok(()), Ok(())) => Ok(value),
@@ -1491,16 +1536,25 @@ impl LocalEventRepository {
         let mut journal = self
             .journal
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)?;
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "load-state:journal-mutex-poisoned",
+                os: None,
+            })?;
         let length = journal
             .metadata()
-            .map_err(|_| EventRepositoryError::Storage)?
+            .map_err(|error| EventRepositoryError::StorageAt {
+                site: "load-state:journal-metadata",
+                os: error.raw_os_error(),
+            })?
             .len();
         ensure_inclusive_limit(length, MAX_JOURNAL_BYTES)?;
         let mut verified = self
             .verified
             .lock()
-            .map_err(|_| EventRepositoryError::Storage)?;
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "load-state:verified-mutex-poisoned",
+                os: None,
+            })?;
         // The prefix is TAKEN out while working: if suffix verification fails partway,
         // a half-updated context must not survive as "verified" — the next load runs
         // the full path and surfaces the same error the full path always surfaced.
@@ -3765,7 +3819,7 @@ fn open_or_create_repository_lock(
 ) -> Result<File, EventRepositoryError> {
     match create_repository_lock(directory, path) {
         Ok(file) => Ok(file),
-        Err(EventRepositoryError::Storage) => {
+        Err(EventRepositoryError::Storage | EventRepositoryError::StorageAt { .. }) => {
             open_child_file(directory, path, "repository.lock", true, false)
         }
         Err(error) => Err(error),
@@ -3881,7 +3935,18 @@ fn open_failure(create: bool, error: &std::io::Error) -> EventRepositoryError {
     if !create && error.kind() == std::io::ErrorKind::NotFound {
         EventRepositoryError::Integrity
     } else {
-        EventRepositoryError::Storage
+        // The error was already IN HAND here and thrown away (#824): this helper serves every
+        // `open_child_file`, so one discard made every open failure -- a sharing violation, a
+        // denial, a full disk -- arrive as the same nameless value. It even reads `kind()` one
+        // line above, which is what makes the discard visible once you look for it.
+        EventRepositoryError::StorageAt {
+            site: if create {
+                "open-child:create"
+            } else {
+                "open-child:existing"
+            },
+            os: error.raw_os_error(),
+        }
     }
 }
 
@@ -4432,7 +4497,15 @@ fn open_child_file_for_reconcile(
         // nothing could disagree with what it should be, which is the only thing `Integrity`
         // is entitled to mean. Reporting a failed open as an integrity failure is what made
         // ordinary contention read back to callers as `GHE005_INTEGRITY_FAILURE` (#311).
-        Err(_) => return Err(EventRepositoryError::Storage),
+        // The cause travels (#824): this is the one open on the read path where a sharing
+        // violation other than the one handled above, a lock held elsewhere, or a permission
+        // denial would surface, and until now all three arrived as one sentence.
+        Err(error) => {
+            return Err(EventRepositoryError::StorageAt {
+                site: "reconcile:child-open",
+                os: error.raw_os_error(),
+            });
+        }
     };
     validate_opened_regular(&file)?;
     Ok(Some(file))
@@ -6646,7 +6719,10 @@ mod limit_tests {
             Arc::new(FixedIds),
             LocalFailpoint::JournalSync,
         );
-        assert!(matches!(failed_reopen, Err(EventRepositoryError::Storage)));
+        assert!(matches!(
+            failed_reopen,
+            Err(EventRepositoryError::Storage | EventRepositoryError::StorageAt { .. })
+        ));
         assert_eq!(
             std::fs::read_dir(directory.path().join("active"))
                 .unwrap()
@@ -7758,6 +7834,44 @@ mod limit_tests {
         assert!(
             marker.exists(),
             "the upgrade path must republish the missing marker"
+        );
+    }
+}
+
+#[cfg(test)]
+mod storage_at_witnesses {
+    //! #824: the arms widened from `Storage` to `Storage | StorageAt { .. }` have a witness each.
+    //! Without one, narrowing an arm back to bare `Storage` would route a `StorageAt` raised by
+    //! `?` into a DIFFERENT arm and nothing would go red.
+    use super::*;
+
+    /// The inspection arm: a storage failure at open is classified `Storage`, whichever spelling.
+    #[test]
+    fn inspection_classifies_a_storage_at_open_failure_as_storage() {
+        let directory = tempfile::tempdir().unwrap();
+        let carried = EventRepositoryError::StorageAt {
+            site: "witness",
+            os: Some(32),
+        };
+        let outcome = LocalEventRepository::inspect_repository_from_opened(
+            directory.path(),
+            Err(carried),
+            |_| {},
+        );
+        assert!(
+            matches!(outcome, Ok(LocalRepositoryInspection::Storage)),
+            "a StorageAt at open must classify as Storage, not fall to another arm: {outcome:?}"
+        );
+        // CONTROL: the bare variant takes the same arm, so the widening changed routing for
+        // the new spelling only.
+        let bare = LocalEventRepository::inspect_repository_from_opened(
+            directory.path(),
+            Err(EventRepositoryError::Storage),
+            |_| {},
+        );
+        assert!(
+            matches!(bare, Ok(LocalRepositoryInspection::Storage)),
+            "{bare:?}"
         );
     }
 }

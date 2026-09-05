@@ -236,10 +236,23 @@ fn a_file_held_without_sharing_is_a_storage_error_not_an_integrity_verdict() {
     let _held = hold_exclusively(&events.join("journal.jsonl"));
 
     match open(&events) {
-        Err(EventRepositoryError::Storage) => {}
+        // The class is not enough. A nameless `Storage` cannot tell a sharing violation from a full
+        // disk, and that is the whole of #824's failure #2: the provoked failure must NAME itself.
+        Err(EventRepositoryError::StorageAt { site, os }) => {
+            assert!(
+                !site.is_empty() && site != "io",
+                "a site this crate raised itself must name itself rather than fall back to the propagated label: site={site:?} os={os:?}"
+            );
+            assert!(
+                os.is_some(),
+                "a provoked OS failure must carry the OS code that caused it: site={site:?}"
+            );
+        }
+        Err(EventRepositoryError::Storage) => panic!(
+            "the held file still answers the NAMELESS variant, so the cause was discarded on the path this cell provokes"
+        ),
         Err(other) => panic!(
-            "a file another handle holds is contention, not corruption, and must not reach the \
-             caller as an integrity verdict: {other:?}"
+            "a file another handle holds is contention, not corruption, and must not reach the caller as an integrity verdict: {other:?}"
         ),
         Ok(_) => panic!("the store opened, so the held file never reached the site under test"),
     }

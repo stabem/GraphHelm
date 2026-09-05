@@ -87,7 +87,12 @@ impl ApplyError {
 
     #[must_use]
     pub const fn is_io(&self) -> bool {
-        matches!(self, Self::Repository(EventRepositoryError::Storage))
+        matches!(
+            self,
+            Self::Repository(
+                EventRepositoryError::Storage | EventRepositoryError::StorageAt { .. }
+            )
+        )
     }
 }
 
@@ -978,4 +983,25 @@ fn next_sequence(services: &ApplyServices<'_>) -> Result<u64, ApplyError> {
         .event_repository
         .next_sequence(&services.scope, services.stream_id.as_str())
         .map_err(ApplyError::Repository)
+}
+
+#[cfg(test)]
+mod storage_at_witnesses {
+    //! #824: `is_io` was widened to accept `StorageAt`; this is the cell that reddens if it is
+    //! narrowed back. A predicate with no witness is a comment.
+    use super::*;
+
+    #[test]
+    fn is_io_accepts_a_storage_failure_that_names_its_cause() {
+        let carried = ApplyError::Repository(EventRepositoryError::StorageAt {
+            site: "witness",
+            os: Some(33),
+        });
+        assert!(carried.is_io(), "a StorageAt is still an io failure");
+        let bare = ApplyError::Repository(EventRepositoryError::Storage);
+        assert!(bare.is_io(), "CONTROL: the bare variant still is");
+        // CONTROL in the other direction: the predicate is not `true` for everything.
+        let integrity = ApplyError::Repository(EventRepositoryError::Integrity);
+        assert!(!integrity.is_io(), "an integrity failure is not io");
+    }
 }

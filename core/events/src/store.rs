@@ -56,6 +56,28 @@ pub enum EventRepositoryError {
     StreamSelectionRequired,
     #[error("repository storage operation failed")]
     Storage,
+    /// The same failure as `Storage`, carrying WHERE it was raised and WHAT the operating system
+    /// said. Same form as [`IntegrityAt`](Self::IntegrityAt), for the same reason (#824).
+    ///
+    /// `Storage` is produced from 78 sites in `local.rs` and by every `?` on an `io::Result`
+    /// through the `From` impl below - and until this variant, ALL of them discarded the cause.
+    /// A sharing violation, a lock held by another handle, ENOSPC and a permission denial arrived
+    /// as one value with one sentence, so the failure that reddened `runtime_http`'s signal test
+    /// under gate load (#824, failure #2) could not be told apart from any other. An instrument
+    /// that fails without naming what it saw cannot be diagnosed by re-running it.
+    ///
+    /// `os` is the RAW OS ERROR CODE, not `io::ErrorKind`: on Windows both a sharing violation
+    /// (32) and a lock violation (33) map to `ErrorKind::Uncategorized`, so the kind alone would
+    /// erase exactly the distinction this variant exists to keep. A raw code is an integer from
+    /// the kernel, never caller input, so it is safe to cross the wire - the `&'static str` site
+    /// tag is load-bearing for the same reason `IntegrityAt`'s is: no runtime value can reach it.
+    ///
+    /// Wire behaviour is IDENTICAL to `Storage`: same `GHE008_STORAGE_FAILURE` code. Only the
+    /// human-readable message gains the site and the code, so no consumer keying on the code
+    /// can break. TRANSITIONAL like `IntegrityAt`: convert sites in small reviewed batches and
+    /// review the TAG TEXT, never sweep - a wrong tag sends the reader after a different fault.
+    #[error("repository storage operation failed at {site} (os error {os:?})")]
+    StorageAt { site: &'static str, os: Option<i32> },
     /// The read declared a wall-clock budget and the walk outlived it (#750).
     ///
     /// Distinct from `LimitExceeded` on purpose: that one says the input is larger than a
@@ -83,21 +105,63 @@ impl EventRepositoryError {
             Self::Invalid => "GHE004_INVALID_EVENT",
             Self::UnsafePersistence => "GHE009_EXTERNALIZATION_FAILED",
             Self::StreamSelectionRequired => "GHE010_STREAM_SELECTION_REQUIRED",
-            Self::Storage => "GHE008_STORAGE_FAILURE",
+            Self::Storage | Self::StorageAt { .. } => "GHE008_STORAGE_FAILURE",
             Self::ReadBudgetExceeded { .. } => "GHE013_READ_BUDGET_EXCEEDED",
         }
     }
 }
 
 impl From<std::io::Error> for EventRepositoryError {
-    fn from(_: std::io::Error) -> Self {
-        Self::Storage
+    /// Every `?` on an `io::Result` lands here, so this ONE conversion is where most storage
+    /// failures get their cause back (#824). The site tag is honest about what it does not know:
+    /// `io` says "propagated by `?`, site not named". A converted `map_err` site names itself.
+    fn from(error: std::io::Error) -> Self {
+        Self::StorageAt {
+            site: "io",
+            os: error.raw_os_error(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::EventRepositoryError;
+
+    /// #824: a storage failure NAMES WHAT THE OS SAID, and the wire code does not move.
+    ///
+    /// The raw code is asserted, not the kind: 32 is Windows ERROR_SHARING_VIOLATION, and the
+    /// whole point of carrying the raw value is that `ErrorKind` would have folded it into
+    /// `Uncategorized` alongside a lock violation.
+    #[test]
+    fn an_io_error_propagated_by_question_mark_keeps_its_os_code() {
+        let error: EventRepositoryError = std::io::Error::from_raw_os_error(32).into();
+        assert_eq!(
+            error.code(),
+            "GHE008_STORAGE_FAILURE",
+            "the wire code must not move"
+        );
+        let text = error.to_string();
+        assert!(text.contains("32"), "the OS code is in the message: {text}");
+        assert!(
+            text.contains("at io"),
+            "the `?` path says it did not name the site: {text}"
+        );
+    }
+
+    /// CONTROL: the bare variant is untouched, so nothing that matched its text before can drift.
+    #[test]
+    fn the_bare_storage_variant_is_unchanged() {
+        let error = EventRepositoryError::Storage;
+        assert_eq!(error.code(), "GHE008_STORAGE_FAILURE");
+        assert_eq!(error.to_string(), "repository storage operation failed");
+    }
+
+    /// And an error with NO os code (a synthetic io::Error) says so rather than inventing one.
+    #[test]
+    fn an_io_error_without_an_os_code_reports_none_not_a_sentinel() {
+        let error: EventRepositoryError = std::io::Error::other("synthetic").into();
+        assert!(error.to_string().contains("None"), "{error}");
+    }
 
     /// The whole point of `IntegrityAt`: the site must reach the reader.
     ///

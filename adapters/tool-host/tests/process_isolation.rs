@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use graphhelm_tool_host::process::{CapturedProcess, ProcessLimits, run_in_workspace};
 
@@ -877,8 +877,15 @@ fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
     // reads anyway — rather than a readiness signal added to `CancelSignal` for this test's benefit.
     // A `Condvar` on a production type, on the funnel every Tier 1 execution passes through, is API
     // surface bought for a harness; the poll costs nothing anyone else has to know about.
+    // THE BOUND IS ATTEMPTS, AND THE TIME IS A FLOOR (#697). `READINESS_ATTEMPTS` caps how many
+    // times this looks, not how long it takes: each pass also runs `spawned_processes()` and
+    // `is_running()`, which ask the operating system and are not themselves bounded. So
+    // `POLL * ATTEMPTS` is the sleeping alone -- a LOWER bound on the wall clock, never a limit on
+    // it -- and reporting it as the elapsed time would state a duration that did not happen.
+    // #796's class, in the message of a cell rather than in a production path.
     const READINESS_POLL: Duration = Duration::from_millis(50);
     const READINESS_ATTEMPTS: u32 = 400;
+    let readiness_started = Instant::now();
 
     let mut bound = None;
     let mut unbindable = None;
@@ -927,8 +934,12 @@ fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
     // report named.
     let Some((process_id, liveness)) = liveness else {
         panic!(
-            "HARNESS-BROKE: arrangement not met in {:?} — no child was ever observed running, so \
-             nothing here measures a reap and this run decides nothing about cancellation",
+            "HARNESS-BROKE: arrangement not met after {READINESS_ATTEMPTS} attempts in {:?} — no \
+             child was ever observed running, so nothing here measures a reap and this run decides \
+             nothing about cancellation. The attempt count is the bound; the elapsed time is what \
+             it cost on this machine, and it can exceed {:?} because each attempt asks the \
+             operating system (#697)",
+            readiness_started.elapsed(),
             READINESS_POLL * READINESS_ATTEMPTS
         );
     };

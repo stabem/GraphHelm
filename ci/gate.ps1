@@ -237,7 +237,19 @@ function Invoke-Stage {
         # runs so inheritance is impossible. `Invoke-Postgres` already sets the code itself (:179);
         # this moves that discipline from memory into the structure.
         $global:LASTEXITCODE = $MuteStageExitCode
-        & $Body 6>&1 | ForEach-Object {
+        #
+        # 2>&1 merges the ERROR stream for the same reason, one stream later (#816). Native tools
+        # put their diagnostics on stderr -- rustc's errors, a test harness's panic, cargo's own
+        # complaints -- and stderr is in neither the success stream nor stream 6, so the shell
+        # printed those lines straight to the console and $capturedLines never saw them. A stage
+        # could fail with its cause on screen and record a manifest naming the stage and nothing
+        # else. This ADDS a stream rather than trading one away: without 6>&1 the detached child
+        # of Invoke-Postgres goes missing again, which is what #484 already paid for.
+        #
+        # Safe here precisely because of the paragraph above the try: $ErrorActionPreference is
+        # 'Continue' for the duration, so the NativeCommandError that 5.1 manufactures for a
+        # redirected native stderr line stays non-terminating and arrives as an ordinary record.
+        & $Body 2>&1 6>&1 | ForEach-Object {
             $line = Protect-GateEvidenceLine -Line ([string]$_)
             $capturedLines.Add($line)
             Write-Host $line
@@ -268,7 +280,17 @@ function Invoke-Stage {
         # reporting `0 passed; 0 failed`. Select-GateEvidenceLines anchors on the first line that
         # names a failure and still keeps the stage's own ending; with no such line it returns the
         # last 40, which is what this did before and is right for the stages where it worked.
-        $record.outputTail = @(Select-GateEvidenceLines -Lines $capturedLines.ToArray() -Budget 40)
+        $tailLines = @(Select-GateEvidenceLines -Lines $capturedLines.ToArray() -Budget 40)
+        # AN EMPTY TAIL HAS TO SAY SO. Capturing stderr above removes the commonest way evidence
+        # went missing, and `outputTail: []` still cannot distinguish a stage that printed nothing
+        # from one whose output was lost some other way -- two states with one representation, the
+        # shape #751 and #755 were both about. A reader who sees an empty array cannot tell whether
+        # to go looking for the missing lines or to accept that there were none, so the record says
+        # which, in words, the way #858 writes `head=unknown` rather than leaving the field blank.
+        if ($tailLines.Count -eq 0) {
+            $tailLines = @("<absent: exit $code with no output on stdout, stderr or the information stream>")
+        }
+        $record.outputTail = $tailLines
     }
     $script:stageRecords.Add($record)
     return $code

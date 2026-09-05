@@ -33,6 +33,7 @@ $PinnedSuites = @(
     'gate-slot-claim.tests.ps1',
     'gate-script-paths.tests.ps1',
     'gate-stage-reddens.tests.ps1',
+    'gate-stage-stderr-evidence.tests.ps1',
     'gate-stage-verdict-source.tests.ps1',
     'gate-target-dir.tests.ps1',
     'manifest-name.tests.ps1',

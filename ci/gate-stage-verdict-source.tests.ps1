@@ -96,9 +96,27 @@ try {
 
     Write-Host ''
     Write-Host '-- the wiring, read from the file --' -ForegroundColor Cyan
+    # THE PROPERTY IS "NO STATEMENT RUNS BETWEEN THEM", not "the two are within 120 characters".
+    # The distance was a proxy for it and the literal `& $Body 6>&1` pinned a redirection list that
+    # is not this cell's subject: #816 adds `2>&1` to the same invocation, which moved the text and
+    # broke this cell while changing nothing it is about. A comment between the two is harmless -- a
+    # comment does not run -- and a native command is the whole danger, so the cell now reads the
+    # lines BETWEEN and requires every one of them to be blank or a comment (K, rebasing #882).
     $poisonAt = $gateText.IndexOf('$global:LASTEXITCODE = $MuteStageExitCode', [System.StringComparison]::Ordinal)
-    $bodyAt = $gateText.IndexOf('& $Body 6>&1 | ForEach-Object {', [System.StringComparison]::Ordinal)
-    Assert-True ($poisonAt -ge 0 -and $bodyAt -gt $poisonAt -and $bodyAt - $poisonAt -lt 120) 'the poison is the statement immediately before the body runs'
+    $bodyAt = $gateText.IndexOf('& $Body ', [System.StringComparison]::Ordinal)
+    # The anchors' success is its own boolean and is never inferred from the emptiness of the
+    # result: `$x = if (...) { @() }` yields $NULL, so a clean between-region and a failed anchor
+    # search came back identical -- two states, one representation, in the instrument that measures
+    # it. That is the #816 defect, and it caught its own author while writing this line.
+    $anchorsFound = ($poisonAt -ge 0 -and $bodyAt -gt $poisonAt)
+    $between = @()
+    if ($anchorsFound) {
+        $between = @($gateText.Substring($poisonAt, $bodyAt - $poisonAt) -split "`n" |
+                Select-Object -Skip 1 |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_.TrimStart() -notmatch '^#' })
+    }
+    Assert-True ($anchorsFound -and $between.Count -eq 0) `
+        "no statement runs between the poison and the body, so nothing can overwrite it (anchors found: $anchorsFound; offending lines: $($between.Count)$(if ($between.Count) { ' -> ' + ($between -join ' | ') }))"
     Assert-True ($gateText.IndexOf('$MuteStageExitCode = 99', [System.StringComparison]::Ordinal) -ge 0) 'the sentinel is the named 99, the value merge-proof already runs behind'
     Assert-True ($gateText.IndexOf('$global:LASTEXITCODE = 0', [System.StringComparison]::Ordinal) -lt 0) 'and nothing clears the code to 0 before a body, which would turn every mute body into a pass'
 } finally {

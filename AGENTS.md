@@ -171,3 +171,66 @@ Every new issue is created with exactly one of these labels — pass it at creat
 
 When an issue's situation changes (a debt gets scheduled, a wave task ships), swap the label —
 one label per issue, and the label states the drawer, not the severity.
+## Lane identity and multi-agent merge protocol
+
+Several sessions work this repository at once and **all of them push, comment, and merge under one
+GitHub account**. Nothing in the API says which session did what. The rules below are the only
+attribution that exists; they are read at session start and are not re-explained per task.
+
+### Identity line — first line of everything you write
+
+Every issue or PR comment, review, merge comment, and commit body starts with:
+
+```
+Session: <your ListAgents name [ref]> · Head: <sha8 you measured>
+```
+
+The session name is the line "This session is …" that `ListAgents` prints — it is the only address
+another session can message, and a hook cannot know it, so run `ListAgents` once and keep the line.
+(`local_<session_id>` from the hook JSON is **not** deliverable — measured.) A lane letter, when the
+board has given you one, goes in front: `Lane: <letter> · Session: … · Head: …`; it is a label for the
+board, never a substitute for the session name. A comment without this line cannot be addressed,
+re-asked, or audited; a carry without the head sha covers nothing.
+
+### Peer review and peer merge (owner order, 2026-09-04)
+
+- A PR needs **two passes from two different lanes, neither the author**, each naming the sha it
+  measured. Say "no open roots **against `<sha>`**", never "no open roots".
+- Approval is the reviewer's **word in the text**. GitHub cannot record it — self-approval is
+  refused on a shared account — so every review is `COMMENTED`, and a review whose body declines
+  to verify ("not a pin", "I will not record this as verified") is **not** a pass.
+- Read each carry's **body** for declared limits and roots without a verdict. Each is closed by
+  another pass, marked non-blocking by its author, or written into the merge comment as accepted
+  risk with an issue number. Thread counts do not see findings written in review bodies.
+- While the Codex sweep is unavailable, two passes are a **substitution, not an equivalence**: the
+  merge comment names what the mechanical sweep would have caught (prose contradicting code,
+  form-vs-instance matching, the third actor).
+
+### Before you press
+
+Run `.factory/MERGE-CHECKLIST.md` and cite its item numbers in the merge comment. The three that
+each caught a real loss: closing keywords read in **PR title, body, commit messages, and
+`closingIssuesReferences`** with the union equal to intent (the title is the squash's first line) — on #746 the body was fixed and the
+parser came back clean, and the squash `34cced9c` still shut issue #717 through the negated sentence
+left in a COMMIT body (the instrument that frees the PR is blind to the field that shuts the issue);
+carry bodies read, not counted (#754, #758); and `gh pr list --base <branch> --state all` before
+`--delete-branch` (#713's delete shut the stacked #729).
+
+### After you press — read the output, never your intent
+
+`gh pr view N --json mergedAt,mergeCommit`; `git log -1 --format=%B origin/main` for what the
+squash actually carried; `gh issue view` for every issue it names; the branch endpoint returns
+`404` with the text `Branch not found`. Corrections go in the same PR as a follow-up comment.
+
+### Tooling traps that produced false readings (each measured; long form in the checklist)
+
+- A failed `git fetch` leaves the ref at its **old** value and the next `rev-parse` succeeds —
+  check the fetch's exit code immediately, or fetch into a **new** ref name every time.
+- MSYS mangles `<ref>:<path>` for some path shapes (`origin/main:.factory/x`, `origin/main:/core/x`)
+  and not others (`origin/main:core/x`); git then says "ambiguous argument" or "invalid object name".
+  Do not learn the rule — use the sha instead of the ref, or `MSYS_NO_PATHCONV=1`.
+- Bash: `$?` after a pipe is the last command's. PowerShell: after `| Select-Object -First N` the exit
+  code is not the command's — different PATHs read `-1` in different quadrants. Test the value.
+- `git ls-tree` without `--full-tree` is scoped to the CWD prefix and returns empty with rc=0.
+- A zero produced by a filter you wrote (`grep`, `head`, a regex calibrated on the old format) is
+  a measurement of the filter. Put a known positive in the same command.

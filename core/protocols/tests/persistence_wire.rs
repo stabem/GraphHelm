@@ -5,11 +5,11 @@ use graphhelm_protocols::{
     ActorId, ArtifactId, ArtifactLocator, ArtifactReference, ContentFieldKind, ContentOwnerKind,
     ContentSlot, DiagnosticComponent, DiagnosticDomainPath, EdgeType, EventEnvelope, EventHash,
     EventKind, EvidenceId, EvidenceReference, ExecutionId, GraphVersionPublished,
-    GraphVersionRecord, MediaType, MemoryAdmissionRefused, NodeType, OpaqueId, Optionality,
-    PersistedBudgets, PersistedControl, PersistedDiagnostic, PersistedEdge, PersistedGraphVersion,
-    PersistedGraphVersionRef, PersistedNode, PersistedTopology, PolicyWaiver, ProjectId, RawSha256,
-    RepositoryScope, SafeKey, SafeValue, SemanticVersion, Sensitivity, Severity, WaiverScope,
-    WireHash, WorkspaceId,
+    GraphVersionRecord, MediaType, MemoryAdmissionRefused, MemoryPublicationTransitioned,
+    MemoryRecordSuperseded, NodeType, OpaqueId, Optionality, PersistedBudgets, PersistedControl,
+    PersistedDiagnostic, PersistedEdge, PersistedGraphVersion, PersistedGraphVersionRef,
+    PersistedNode, PersistedTopology, PolicyWaiver, ProjectId, RawSha256, RepositoryScope, SafeKey,
+    SafeValue, SemanticVersion, Sensitivity, Severity, WaiverScope, WireHash, WorkspaceId,
 };
 use jsonschema::{Draft, Registry};
 use serde_json::{Value, json};
@@ -127,6 +127,14 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
         ),
         (
             json!({"type":"memory_admission_refused","data":{"code":"secret_detected","local":"content","bytes":42}}),
+            true,
+        ),
+        (
+            json!({"type":"memory_publication_transitioned","data":{"recordId":"record-1","transition":"publish","resultingState":"published"}}),
+            true,
+        ),
+        (
+            json!({"type":"memory_record_superseded","data":{"predecessorId":"record-1","successorId":"record-2","reason":"contradicted","predecessorNewSemanticState":"contradicted"}}),
             true,
         ),
         (
@@ -345,6 +353,32 @@ fn memory_admission_refusal_code_and_local_are_closed_vocabularies() {
         assert!(
             serde_json::from_value::<MemoryAdmissionRefused>(invalid).is_err(),
             "an unknown refusal code or local crossed the typed wire"
+        );
+    }
+}
+
+#[test]
+fn memory_publication_transition_and_resulting_state_are_closed_vocabularies() {
+    for invalid in [
+        json!({"recordId":"record-1","transition":"made_up","resultingState":"published"}),
+        json!({"recordId":"record-1","transition":"publish","resultingState":"made_up"}),
+    ] {
+        assert!(
+            serde_json::from_value::<MemoryPublicationTransitioned>(invalid).is_err(),
+            "an unknown transition or resulting state crossed the typed wire"
+        );
+    }
+}
+
+#[test]
+fn memory_record_superseded_reason_and_semantic_state_are_closed_vocabularies() {
+    for invalid in [
+        json!({"predecessorId":"record-1","successorId":"record-2","reason":"made_up","predecessorNewSemanticState":"contradicted"}),
+        json!({"predecessorId":"record-1","successorId":"record-2","reason":"contradicted","predecessorNewSemanticState":"made_up"}),
+    ] {
+        assert!(
+            serde_json::from_value::<MemoryRecordSuperseded>(invalid).is_err(),
+            "an unknown reason or semantic state crossed the typed wire"
         );
     }
 }

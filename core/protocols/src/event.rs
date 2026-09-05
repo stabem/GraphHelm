@@ -195,6 +195,8 @@ pub enum EventKind {
     GraphImported(GraphImported),
     GraphValidationFailed(GraphValidationFailed),
     MemoryAdmissionRefused(MemoryAdmissionRefused),
+    MemoryPublicationTransitioned(MemoryPublicationTransitioned),
+    MemoryRecordSuperseded(MemoryRecordSuperseded),
     GraphVersionPublished(Box<GraphVersionPublished>),
     DraftProposed(DraftProposed),
     DraftRejected(DraftRejected),
@@ -406,6 +408,8 @@ wire_names! {
     GraphImported => "graph_imported",
     GraphValidationFailed => "graph_validation_failed",
     MemoryAdmissionRefused => "memory_admission_refused",
+    MemoryPublicationTransitioned => "memory_publication_transitioned",
+    MemoryRecordSuperseded => "memory_record_superseded",
     GraphVersionPublished => "graph_version_published",
     DraftProposed => "draft_proposed",
     DraftRejected => "draft_rejected",
@@ -456,6 +460,8 @@ impl EventKind {
             self,
             Self::IntegrityCheckpointCreated(_)
                 | Self::MemoryAdmissionRefused(_)
+                | Self::MemoryPublicationTransitioned(_)
+                | Self::MemoryRecordSuperseded(_)
                 | Self::EvidenceErasureRequested(_)
                 | Self::EvidenceErasureCompleted(_)
                 | Self::EvidenceCiphertextDeleted(_)
@@ -512,6 +518,77 @@ pub struct MemoryAdmissionRefused {
     pub code: MemoryAdmissionRefusalCode,
     pub local: MemoryAdmissionLocal,
     pub bytes: u64,
+}
+
+/// A memory record's PUBLICATION axis moved. Never the semantic axis (ADR-032 decision 3) --
+/// there is no field here for it, on purpose, the same way `MemoryAdmissionRefused` carries no
+/// field for content it must never persist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedMemoryPublicationTransition {
+    Propose,
+    Publish,
+    Withdraw,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedMemoryPublicationState {
+    Unpublished,
+    Proposed,
+    Published,
+    Withdrawn,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryPublicationTransitioned {
+    pub record_id: OpaqueId,
+    pub transition: PersistedMemoryPublicationTransition,
+    pub resulting_state: PersistedMemoryPublicationState,
+}
+
+/// Whether a memory record's content is still believed. Never touched by
+/// [`MemoryPublicationTransitioned`] -- this is the axis ADR-032 decision 3 keeps independent of
+/// publication, and the only durable event that moves it is [`MemoryRecordSuperseded`], for the
+/// PREDECESSOR side of a supersession, never as a standalone transition of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedMemorySemanticState {
+    Candidate,
+    Validated,
+    Contradicted,
+    Deprecated,
+    Expired,
+}
+
+/// Why a predecessor is superseded. Closed to exactly the two values ADR-032 names -- there is no
+/// generic "superseded" reason, because the reason is exactly what a caller must supply and this
+/// event must never infer from the relationship existing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedSupersessionReason {
+    Contradicted,
+    Deprecated,
+}
+
+/// A memory record supersedes another. Moves the PREDECESSOR's semantic axis to the reason's
+/// target and records the relationship on the SUCCESSOR -- a fact about two records, never a
+/// transition on one. Neither record's publication axis is touched: superseding is a
+/// semantic-axis fact, orthogonal to [`MemoryPublicationTransitioned`].
+///
+/// `predecessor_new_semantic_state` is carried explicitly rather than re-derived from `reason` at
+/// read time, the same reason `MemoryPublicationTransitioned` carries `resulting_state` alongside
+/// `transition`: the persisted fact must not depend on the CURRENT code's mapping from reason to
+/// state remaining unchanged forever. If that mapping ever changes, this event still says what
+/// actually happened when it was appended.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryRecordSuperseded {
+    pub predecessor_id: OpaqueId,
+    pub successor_id: OpaqueId,
+    pub reason: PersistedSupersessionReason,
+    pub predecessor_new_semantic_state: PersistedMemorySemanticState,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -1585,6 +1585,21 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             true,
         ),
         (
+            "memory_publication_transitioned",
+            json!({"recordId": "record-1", "transition": "publish", "resultingState": "published"}),
+            true,
+        ),
+        (
+            "memory_record_superseded",
+            json!({
+                "predecessorId": "record-1",
+                "successorId": "record-2",
+                "reason": "contradicted",
+                "predecessorNewSemanticState": "contradicted"
+            }),
+            true,
+        ),
+        (
             "graph_version_published",
             json!({"version": persisted_graph_version()}),
             false,

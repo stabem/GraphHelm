@@ -968,6 +968,25 @@ fn the_two_context_capsule_copies_are_the_same_bytes() {
     );
 }
 
+/// The two `event-envelope` copies are the SAME blob (#836, H's review): a second schema with two
+/// copies and only one of them guarded is the shape the NEXT PR falls through, editing the live
+/// copy and forgetting the released one while this cell stayed silent because it only ever named
+/// Context Capsule.
+///
+/// Two copies that agree today can drift tomorrow, and the released copy is the one nobody edits
+/// deliberately — so a divergence would appear as the released schema quietly falling behind.
+#[test]
+fn the_two_event_envelope_copies_are_the_same_bytes() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let live = std::fs::read(repo.join("schemas/event-envelope.schema.json")).expect("live copy");
+    let released = std::fs::read(repo.join("schemas/releases/1.0.0/event-envelope.schema.json"))
+        .expect("released copy");
+    assert_eq!(
+        live, released,
+        "the live and released event-envelope schemas diverged"
+    );
+}
+
 /// serde and `wire_name()` are TWO serialisers of one closed vocabulary, and they must agree.
 ///
 /// The three equality cells above compare `wire_name()` against the schema and never touch serde,

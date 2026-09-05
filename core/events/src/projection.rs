@@ -4,8 +4,8 @@ use graphhelm_protocols::{
     ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId,
     ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
     MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
-    PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus,
-    WireHash, WorkspaceId,
+    PersistedMemoryPublicationState, PersistedMemorySemanticState, PersistedTimestamp,
+    PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -354,6 +354,36 @@ pub struct MemoryAdmissionRefusalReceipt {
     pub bytes: u64,
 }
 
+/// A memory record's CURRENT lifecycle state, as of the last event replayed that named it.
+///
+/// Keyed by identity in `ExecutionProjection::memory_records`, mirroring `node_states`: a caller
+/// asking "is this published" or "is this still believed" needs the current answer, which a
+/// count-and-last-receipt shape (the one `MemoryAdmissionRefusalReceipt` uses) cannot give once
+/// more than one record exists. The two axes are independent fields, per ADR-032 decision 3 --
+/// each is `None` until an event that carries it has actually been replayed for this record, never
+/// defaulted or fabricated from the other axis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryRecordProjection {
+    /// `None` until a [`crate::EventKind::MemoryPublicationTransitioned`] is replayed for this
+    /// record -- absence here is "no durable publication move yet", never "unpublished" guessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<PersistedMemoryPublicationState>,
+    /// Envelope sequence of the transition that produced `publication` -- identifies WHICH
+    /// transition, the same reason `open_claims`/`open_waits` key their entries by sequence rather
+    /// than only by outcome. `None` exactly when `publication` is `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_transition_sequence: Option<u64>,
+    /// `None` until this record is named as a PREDECESSOR in a
+    /// [`crate::EventKind::MemoryRecordSuperseded`] -- independent of `publication`, per ADR-032
+    /// decision 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<PersistedMemorySemanticState>,
+    /// The predecessor this record supersedes, if this record has ever been named as a SUCCESSOR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<OpaqueId>,
+}
+
 const fn is_zero(value: &u64) -> bool {
     *value == 0
 }
@@ -393,6 +423,10 @@ pub struct ExecutionProjection {
     pub memory_admission_refusal_count: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_memory_admission_refusal: Option<MemoryAdmissionRefusalReceipt>,
+    /// Current publication state per memory record, keyed by `record_id`. See
+    /// [`MemoryRecordProjection`] for why this is a keyed map rather than a count-and-last-receipt.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub memory_records: BTreeMap<String, MemoryRecordProjection>,
     pub proposed_drafts: Vec<String>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
@@ -1250,6 +1284,41 @@ fn apply_projection_event(
                 local: payload.local,
                 bytes: payload.bytes,
             });
+        }
+        EventKind::MemoryPublicationTransitioned(payload) => {
+            let record_id = payload.record_id.to_string();
+            // The bound guards a NEW key; updating a record already tracked never grows the map,
+            // the same distinction `node_states`'s own bound check makes for ghost proposals.
+            if !projection.memory_records.contains_key(&record_id)
+                && projection.memory_records.len() >= MAX_PROJECTION_NODES
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            let record = projection.memory_records.entry(record_id).or_default();
+            record.publication = Some(payload.resulting_state);
+            record.last_transition_sequence = Some(event.sequence);
+        }
+        EventKind::MemoryRecordSuperseded(payload) => {
+            let predecessor_id = payload.predecessor_id.to_string();
+            let successor_id = payload.successor_id.to_string();
+            // Two keys, either or both possibly new -- the bound is checked against how many
+            // this event would actually ADD, not against each key in isolation (which could let
+            // a single event add two entries past the ceiling one at a time).
+            let new_keys = usize::from(!projection.memory_records.contains_key(&predecessor_id))
+                + usize::from(!projection.memory_records.contains_key(&successor_id));
+            if projection.memory_records.len().saturating_add(new_keys) > MAX_PROJECTION_NODES {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection
+                .memory_records
+                .entry(predecessor_id)
+                .or_default()
+                .semantic = Some(payload.predecessor_new_semantic_state);
+            projection
+                .memory_records
+                .entry(successor_id)
+                .or_default()
+                .supersedes = Some(payload.predecessor_id.clone());
         }
         EventKind::ExecutionFormDeclared(payload) => {
             // A second declaration on one stream would give the shape two owners, which is the
@@ -2323,6 +2392,206 @@ mod tests {
                 .map(|receipt| (receipt.sequence, receipt.bytes)),
             Some((10_001, 10_001))
         );
+    }
+
+    /// `memory_records`'s bound is a hard ceiling on NEW keys, not on updates to a key already
+    /// tracked -- the two claims the code comment at the bound check makes (mirroring
+    /// `node_states`'s own bound), neither of which had a test until now. Named for the pattern the
+    /// slice 4 cell 1 design comment asked to mirror; the literal precedent test
+    /// (`refusal_projection_remains_bounded_after_ten_thousand_events`, directly above) proves a
+    /// COUNTER never overflows, which is a different and weaker property than a KEYED map actually
+    /// refusing its (cap+1)-th distinct key -- a counter cannot fail to bound itself, so that test
+    /// could not have caught a missing check here.
+    ///
+    /// Fills `memory_records` to exactly `MAX_PROJECTION_NODES` with distinct `record_id`s via
+    /// `MemoryPublicationTransitioned`, in the same 10_000-scale shape as its sibling test above so
+    /// the real deployed constant is what gets exercised, not a stand-in. Two claims proven at the
+    /// cap: a transition to an ALREADY-tracked key still applies (the map does not grow, so nothing
+    /// should refuse it -- the false-refusal direction `node_states`'s own comment warns against),
+    /// and a transition introducing a genuinely NEW key is refused with `LimitExceeded`.
+    #[test]
+    fn memory_records_ceiling_refuses_a_new_key_but_not_an_update_to_a_tracked_one() {
+        fn envelope(id: &str, sequence: u64, kind: EventKind) -> EventEnvelope {
+            EventEnvelope::new(
+                OpaqueId::parse(id).unwrap(),
+                RepositoryScope::new(
+                    graphhelm_protocols::WorkspaceId::parse("workspace-memory").unwrap(),
+                    graphhelm_protocols::ProjectId::parse("project-memory").unwrap(),
+                    None,
+                ),
+                OpaqueId::parse("memory-lifecycle").unwrap(),
+                sequence,
+                PersistedTimestamp::parse("2026-08-28T12:00:00Z").unwrap(),
+                graphhelm_protocols::NewEvent::new(
+                    OpaqueId::parse(id).unwrap(),
+                    graphhelm_protocols::PersistedActor::new(
+                        graphhelm_protocols::PersistedActorType::System,
+                        graphhelm_protocols::ActorId::parse("governor-memory").unwrap(),
+                    ),
+                    graphhelm_protocols::Sensitivity::Internal,
+                    kind,
+                    vec![],
+                    vec![],
+                ),
+                EventHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
+                EventHash::parse(format!("sha256:{}", "1".repeat(64))).unwrap(),
+            )
+        }
+        fn transitioned(record: &str) -> EventKind {
+            EventKind::MemoryPublicationTransitioned(
+                graphhelm_protocols::MemoryPublicationTransitioned {
+                    record_id: OpaqueId::parse(record).unwrap(),
+                    transition: graphhelm_protocols::PersistedMemoryPublicationTransition::Propose,
+                    resulting_state: PersistedMemoryPublicationState::Proposed,
+                },
+            )
+        }
+
+        let mut projection = ExecutionProjection::default();
+        let mut holds = BTreeSet::new();
+        for sequence in 1..=MAX_PROJECTION_NODES as u64 {
+            let record = format!("record-{sequence}");
+            let event = envelope(
+                &format!("event-{sequence}"),
+                sequence,
+                transitioned(&record),
+            );
+            apply_projection_event(&mut projection, &mut holds, &event).unwrap();
+        }
+        assert_eq!(projection.memory_records.len(), MAX_PROJECTION_NODES);
+
+        // An update to a key already tracked must not grow the map, so it must not be refused --
+        // the false-refusal direction: a bound check that fires on EVERY write at the cap, not
+        // only on a genuinely new key, would silently stop legitimate lifecycle events from
+        // durable projection once the projection filled, with nothing distinguishing that from
+        // the correct refusal below.
+        let repeat = envelope(
+            "event-repeat",
+            MAX_PROJECTION_NODES as u64 + 1,
+            transitioned("record-1"),
+        );
+        apply_projection_event(&mut projection, &mut holds, &repeat)
+            .expect("a transition to an already-tracked key must apply even at the cap");
+        assert_eq!(projection.memory_records.len(), MAX_PROJECTION_NODES);
+
+        // A genuinely new key past the cap must be refused, not silently dropped or accepted past
+        // the ceiling.
+        let overflow = envelope(
+            "event-overflow",
+            MAX_PROJECTION_NODES as u64 + 2,
+            transitioned("record-overflow"),
+        );
+        assert_eq!(
+            apply_projection_event(&mut projection, &mut holds, &overflow),
+            Err(ReplayError::LimitExceeded)
+        );
+        assert_eq!(
+            projection.memory_records.len(),
+            MAX_PROJECTION_NODES,
+            "a refused key must not partially land in the map"
+        );
+    }
+
+    /// The HARDER half of the ceiling (ISSUES-lane review of #836): a single
+    /// `MemoryRecordSuperseded` event can introduce ZERO, ONE or TWO new keys at once, and the
+    /// bound above is checked against how many this event would actually ADD -- not against each
+    /// key in isolation, which could let one event add two entries past the ceiling one at a
+    /// time. The sibling test above only ever feeds `MemoryPublicationTransitioned`, which adds at
+    /// most one key, so it cannot exercise this arm at all: `saturating_add(new_keys)` silently
+    /// undercounted as `saturating_add(1)` would still pass every cell in this file. Three points,
+    /// covering 2, 1 and 0 new keys at the boundary.
+    #[test]
+    fn memory_records_ceiling_refuses_a_two_key_supersession_but_not_fewer() {
+        fn envelope(id: &str, sequence: u64, kind: EventKind) -> EventEnvelope {
+            EventEnvelope::new(
+                OpaqueId::parse(id).unwrap(),
+                RepositoryScope::new(
+                    graphhelm_protocols::WorkspaceId::parse("workspace-memory").unwrap(),
+                    graphhelm_protocols::ProjectId::parse("project-memory").unwrap(),
+                    None,
+                ),
+                OpaqueId::parse("memory-lifecycle").unwrap(),
+                sequence,
+                PersistedTimestamp::parse("2026-08-28T12:00:00Z").unwrap(),
+                graphhelm_protocols::NewEvent::new(
+                    OpaqueId::parse(id).unwrap(),
+                    graphhelm_protocols::PersistedActor::new(
+                        graphhelm_protocols::PersistedActorType::System,
+                        graphhelm_protocols::ActorId::parse("governor-memory").unwrap(),
+                    ),
+                    graphhelm_protocols::Sensitivity::Internal,
+                    kind,
+                    vec![],
+                    vec![],
+                ),
+                EventHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
+                EventHash::parse(format!("sha256:{}", "1".repeat(64))).unwrap(),
+            )
+        }
+        fn transitioned(record: &str) -> EventKind {
+            EventKind::MemoryPublicationTransitioned(
+                graphhelm_protocols::MemoryPublicationTransitioned {
+                    record_id: OpaqueId::parse(record).unwrap(),
+                    transition: graphhelm_protocols::PersistedMemoryPublicationTransition::Propose,
+                    resulting_state: PersistedMemoryPublicationState::Proposed,
+                },
+            )
+        }
+        fn superseded(predecessor: &str, successor: &str) -> EventKind {
+            EventKind::MemoryRecordSuperseded(graphhelm_protocols::MemoryRecordSuperseded {
+                predecessor_id: OpaqueId::parse(predecessor).unwrap(),
+                successor_id: OpaqueId::parse(successor).unwrap(),
+                reason: graphhelm_protocols::PersistedSupersessionReason::Contradicted,
+                predecessor_new_semantic_state: PersistedMemorySemanticState::Contradicted,
+            })
+        }
+
+        let mut projection = ExecutionProjection::default();
+        let mut holds = BTreeSet::new();
+        let mut sequence: u64 = 0;
+        let mut next_event = |kind: EventKind| {
+            sequence += 1;
+            envelope(&format!("event-{sequence}"), sequence, kind)
+        };
+
+        // Fill to ONE BELOW the ceiling, leaving exactly one slot -- the shape a two-key
+        // supersession can never fit into, and a one-key supersession can.
+        for index in 0..MAX_PROJECTION_NODES - 1 {
+            let event = next_event(transitioned(&format!("record-{index}")));
+            apply_projection_event(&mut projection, &mut holds, &event).unwrap();
+        }
+        assert_eq!(projection.memory_records.len(), MAX_PROJECTION_NODES - 1);
+
+        // POINT 1 (2 new keys): both `record-new-a` and `record-new-b` are unseen. Refused, and
+        // NEITHER lands -- not just the successor, or a sabotage that inserts the predecessor
+        // before checking the successor would pass this cell by accident.
+        let two_new = next_event(superseded("record-new-a", "record-new-b"));
+        assert_eq!(
+            apply_projection_event(&mut projection, &mut holds, &two_new),
+            Err(ReplayError::LimitExceeded)
+        );
+        assert_eq!(
+            projection.memory_records.len(),
+            MAX_PROJECTION_NODES - 1,
+            "a refused two-key supersession must not partially land in the map"
+        );
+        assert!(!projection.memory_records.contains_key("record-new-a"));
+        assert!(!projection.memory_records.contains_key("record-new-b"));
+
+        // POINT 2 (1 new key): `record-0` is already tracked; `record-new-c` is not. Exactly one
+        // new key fits in the one remaining slot, so this applies and fills the map to the cap.
+        let one_new = next_event(superseded("record-0", "record-new-c"));
+        apply_projection_event(&mut projection, &mut holds, &one_new)
+            .expect("a supersession adding exactly one new key must apply with one slot free");
+        assert_eq!(projection.memory_records.len(), MAX_PROJECTION_NODES);
+
+        // POINT 3 (0 new keys): both `record-0` and `record-new-c` are now tracked. An update to
+        // two keys already tracked must not be refused at the cap -- the false-refusal direction,
+        // mirrored from the sibling cell's single-key case.
+        let zero_new = next_event(superseded("record-0", "record-new-c"));
+        apply_projection_event(&mut projection, &mut holds, &zero_new)
+            .expect("a supersession touching only already-tracked keys must apply at the cap");
+        assert_eq!(projection.memory_records.len(), MAX_PROJECTION_NODES);
     }
 
     #[test]

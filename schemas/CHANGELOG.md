@@ -1,5 +1,27 @@
 # Schema Changelog
 
+## event-envelope 1.0.0 - `memory_publication_transitioned` and `memory_record_superseded` added
+
+Two durable events for the two lifecycle axes ADR-032 (decision 3) keeps independent: a memory
+record's PUBLICATION state (`unpublished`/`proposed`/`published`/`withdrawn`) and its SEMANTIC
+state (`candidate`/`validated`/`contradicted`/`deprecated`/`expired`). Both mirror `#488`'s shipped
+shape for `memory_admission_refused`: a closed enum variant, opaque ids, no candidate content, no
+provider output, no secret.
+
+**`memoryPublicationTransitioned`** carries `recordId`, the `transition` applied
+(`propose`/`publish`/`withdraw`) and the `resultingState`. It never touches the semantic axis --
+carrying a field this event cannot legitimately change would be exactly the wrong attribute on the
+wrong event.
+
+**`memoryRecordSuperseded`** is a relationship between two records, not a transition on one: it
+moves the PREDECESSOR's semantic axis to the reason's target (`contradicted`/`deprecated`) and
+records the relationship on the SUCCESSOR. Neither record's publication axis is touched.
+
+**Why this entry exists when `#488`'s did not.** `memory_admission_refused` landed without a
+CHANGELOG entry, which is itself worth naming rather than silently repeating: this file's own
+history is not as complete as later review assumed it was, and this is the point where that gets
+corrected rather than compounded.
+
 ## event-envelope 1.0.0 - the four customs events added
 
 `completion_claimed`, `completion_cleared`, `completion_rejected` and `completion_refused`, each

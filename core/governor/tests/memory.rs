@@ -20,17 +20,21 @@ use graphhelm_events::{
 };
 use graphhelm_governor::{
     CaptureOptIn, CaptureTouch, MemoryAdmissionRefusalRequest, MemoryCandidate, MemoryField,
-    MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition, MemoryRecord,
+    MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition,
+    MemoryPublicationTransitionRequest, MemoryRecord, MemoryRecordSupersededRequest,
     MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
     admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
     check_dependency_freshness, handoff_into_scope, publication_steps,
-    record_memory_admission_refusal, republish, supersede, validate_candidate,
+    record_memory_admission_refusal, record_memory_publication_transition,
+    record_memory_record_superseded, republish, supersede, validate_candidate,
 };
 use graphhelm_protocols::{
     ActorId, ArtifactId, Clock, DevelopmentScope, EventEnvelope, EventKind, EvidenceId,
     IdGenerator, MemoryAdmissionLocal,
     MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, OpaqueId, PersistedActor,
-    PersistedActorType, ProjectId, RepositoryScope, WorkspaceId,
+    PersistedActorType, PersistedMemoryPublicationState, PersistedMemoryPublicationTransition,
+    PersistedMemorySemanticState, PersistedSupersessionReason, ProjectId, RepositoryScope,
+    WorkspaceId,
 };
 
 /// A value that exists in the INPUT by construction, which is what makes an empty search
@@ -374,6 +378,116 @@ fn an_enabled_secret_refusal_persists_only_code_local_and_bytes() {
     assert!(!journal.contains(SENTINEL));
     assert!(!journal.contains("digest"));
     assert!(!format!("{refusal:?} {refusal}").contains(SENTINEL));
+}
+
+fn publication_transition_request() -> MemoryPublicationTransitionRequest {
+    MemoryPublicationTransitionRequest::new(
+        RepositoryScope::new(
+            WorkspaceId::parse("workspace-g9").unwrap(),
+            ProjectId::parse("project-g9").unwrap(),
+            None,
+        ),
+        OpaqueId::parse("memory-lifecycle").unwrap(),
+        1,
+        OpaqueId::parse("transition-publish").unwrap(),
+        PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("governor-memory").unwrap(),
+        ),
+    )
+}
+
+/// The producer maps the GOVERNOR record's post-transition state onto the wire, not a value the
+/// caller hands it separately -- so this proves the mapping from `record.publication()`, not from
+/// an argument that could silently disagree with the record.
+#[test]
+fn a_successful_transition_persists_the_records_new_publication_state() {
+    let mut record = MemoryRecord::new(OpaqueId::parse("record-g9").unwrap());
+    apply_publication_transition(&mut record, MemoryPublicationTransition::Propose)
+        .expect("unpublished record must accept propose");
+
+    let directory = TestDirectory::new();
+    let repository =
+        LocalEventRepository::open(&directory.0, Arc::new(FixedClock), Arc::new(Ids::default()))
+            .unwrap();
+    let events = record_memory_publication_transition(
+        &repository,
+        publication_transition_request(),
+        &record,
+        MemoryPublicationTransition::Propose,
+    )
+    .unwrap();
+
+    assert_eq!(events.len(), 1);
+    let EventKind::MemoryPublicationTransitioned(payload) = &events[0].kind else {
+        panic!("the Governor appended the wrong event kind");
+    };
+    assert_eq!(payload.record_id.as_str(), "record-g9");
+    assert_eq!(
+        payload.transition,
+        PersistedMemoryPublicationTransition::Propose
+    );
+    assert_eq!(
+        payload.resulting_state,
+        PersistedMemoryPublicationState::Proposed
+    );
+}
+
+fn supersession_request() -> MemoryRecordSupersededRequest {
+    MemoryRecordSupersededRequest::new(
+        RepositoryScope::new(
+            WorkspaceId::parse("workspace-g9").unwrap(),
+            ProjectId::parse("project-g9").unwrap(),
+            None,
+        ),
+        OpaqueId::parse("memory-lifecycle").unwrap(),
+        1,
+        OpaqueId::parse("supersession-1").unwrap(),
+        PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("governor-memory").unwrap(),
+        ),
+    )
+}
+
+/// The producer maps the PREDECESSOR's post-supersede semantic state, not a value the caller
+/// hands it separately, mirroring `a_successful_transition_persists_the_records_new_publication_state`
+/// one axis over.
+#[test]
+fn a_successful_supersession_persists_the_predecessors_new_semantic_state() {
+    let mut predecessor = MemoryRecord::new(OpaqueId::parse("record-g9-pred").unwrap());
+    let mut successor = MemoryRecord::new(OpaqueId::parse("record-g9-succ").unwrap());
+    supersede(
+        &mut predecessor,
+        &mut successor,
+        SupersessionReason::Contradicted,
+    )
+    .expect("two distinct, not-yet-superseding records must accept supersede");
+
+    let directory = TestDirectory::new();
+    let repository =
+        LocalEventRepository::open(&directory.0, Arc::new(FixedClock), Arc::new(Ids::default()))
+            .unwrap();
+    let events = record_memory_record_superseded(
+        &repository,
+        supersession_request(),
+        &predecessor,
+        &successor,
+        SupersessionReason::Contradicted,
+    )
+    .unwrap();
+
+    assert_eq!(events.len(), 1);
+    let EventKind::MemoryRecordSuperseded(payload) = &events[0].kind else {
+        panic!("the Governor appended the wrong event kind");
+    };
+    assert_eq!(payload.predecessor_id.as_str(), "record-g9-pred");
+    assert_eq!(payload.successor_id.as_str(), "record-g9-succ");
+    assert_eq!(payload.reason, PersistedSupersessionReason::Contradicted);
+    assert_eq!(
+        payload.predecessor_new_semantic_state,
+        PersistedMemorySemanticState::Contradicted
+    );
 }
 
 /// The vocabularies, written out BY HAND from the enum declarations.

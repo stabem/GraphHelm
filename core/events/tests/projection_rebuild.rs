@@ -737,6 +737,21 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             serde_json::json!({"type":"memory_admission_refused","data":{"code":"scope_mismatch","local":"content","bytes":1}}),
             true,
         ),
+        (
+            // Same shape as `memory_admission_refused` above: project-level, no prelude needed --
+            // the fold arm reads no prior projection state, only checks the keyed-map bound and
+            // inserts/updates one entry (`projection.rs`'s `MemoryPublicationTransitioned` arm),
+            // `LimitExceeded` its only failure.
+            serde_json::json!({"type":"memory_publication_transitioned","data":{"recordId":"record-1","transition":"publish","resultingState":"published"}}),
+            true,
+        ),
+        (
+            // Same class, TWO records instead of one: project-level, no prelude -- the fold arm
+            // reads no prior projection state for either record, it creates or updates each
+            // (`projection.rs`'s `MemoryRecordSuperseded` arm), bounded the same way.
+            serde_json::json!({"type":"memory_record_superseded","data":{"predecessorId":"record-1","successorId":"record-2","reason":"contradicted","predecessorNewSemanticState":"contradicted"}}),
+            true,
+        ),
     ];
     // No length literal (#190): the old `assert_eq!(variants.len() + 1, 16)` compared this
     // vec's own length to a hand-written number, so it could never fail regardless of how many

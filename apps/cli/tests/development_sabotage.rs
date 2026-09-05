@@ -1544,11 +1544,20 @@ fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
             last_line: 764,
             context: "` (a validator roster may not be the producer) and".to_owned(),
         },
-        // THREE entries for one citation, because `tests/memory.rs:63, 858, 887` names three
+        // THREE entries for one citation, because `tests/memory.rs:63, 858, 1001` names three
         // lines. `:63`'s section verifies TWO candidates (`MemoryRefusalCode`, `SecretDetected`)
         // against its line -- ambiguous, refused rather than picked, see the doc comment above.
-        // `:858` and `:887` verify ZERO: line 858 is a `///` doc-comment line, line 887 is
+        // `:858` and `:1001` verify ZERO: line 858 is a `///` doc-comment line, line 1001 is
         // `#[test]`, and neither word from the same fence is on either line.
+        //
+        // `:1001` was `:887` until #220 slice 4's later cells (cell 2, the ceiling test, the
+        // supersession-boundary test) added content to this file ahead of it, shifting the same
+        // `#[test]` line -- the one immediately above
+        // `a_record_built_against_a_moved_dependency_is_refused` -- down by 114 lines. Mechanical
+        // only: the citation still names the identical physical line, which is still `#[test]` and
+        // still unreachable for the same reason. Same class `9cf7b17b` already fixed for three
+        // `memory.rs` (src) citations; this is the fourth, in the tests file, caught by this guard
+        // rather than by inspection.
         UnreachedCitation {
             path: "core/governor/tests/memory.rs".to_owned(),
             first_line: 63,
@@ -1563,8 +1572,8 @@ fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
         },
         UnreachedCitation {
             path: "core/governor/tests/memory.rs".to_owned(),
-            first_line: 887,
-            last_line: 887,
+            first_line: 1001,
+            last_line: 1001,
             context: "```".to_owned(),
         },
         // The only source that cites this range at all is `producer-record.json`'s own trailing

@@ -7,12 +7,15 @@
 
 use graphhelm_events::{
     EventRepository, EventRepositoryError, MemoryAdmissionRefusalAppend,
-    prepare_memory_admission_refusal,
+    MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend,
+    prepare_memory_admission_refusal, prepare_memory_publication_transition,
+    prepare_memory_record_superseded,
 };
 use graphhelm_protocols::{
     DevelopmentScope, EventEnvelope, MemoryAdmissionLocal,
     MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, OpaqueId, PersistedActor,
-    RepositoryScope,
+    PersistedMemoryPublicationState, PersistedMemoryPublicationTransition,
+    PersistedMemorySemanticState, PersistedSupersessionReason, RepositoryScope,
 };
 use std::fmt;
 
@@ -700,6 +703,85 @@ pub fn apply_publication_transition(
     Ok(())
 }
 
+const fn persisted_publication_transition(
+    transition: MemoryPublicationTransition,
+) -> PersistedMemoryPublicationTransition {
+    match transition {
+        MemoryPublicationTransition::Propose => PersistedMemoryPublicationTransition::Propose,
+        MemoryPublicationTransition::Publish => PersistedMemoryPublicationTransition::Publish,
+        MemoryPublicationTransition::Withdraw => PersistedMemoryPublicationTransition::Withdraw,
+    }
+}
+
+const fn persisted_publication_state(
+    state: MemoryPublicationState,
+) -> PersistedMemoryPublicationState {
+    match state {
+        MemoryPublicationState::Unpublished => PersistedMemoryPublicationState::Unpublished,
+        MemoryPublicationState::Proposed => PersistedMemoryPublicationState::Proposed,
+        MemoryPublicationState::Published => PersistedMemoryPublicationState::Published,
+        MemoryPublicationState::Withdrawn => PersistedMemoryPublicationState::Withdrawn,
+    }
+}
+
+/// Bounded context needed to append one publication-transition event.
+pub struct MemoryPublicationTransitionRequest {
+    scope: RepositoryScope,
+    stream_id: OpaqueId,
+    expected_next_sequence: u64,
+    idempotency_key: OpaqueId,
+    actor: PersistedActor,
+}
+
+impl MemoryPublicationTransitionRequest {
+    #[must_use]
+    pub fn new(
+        scope: RepositoryScope,
+        stream_id: OpaqueId,
+        expected_next_sequence: u64,
+        idempotency_key: OpaqueId,
+        actor: PersistedActor,
+    ) -> Self {
+        Self {
+            scope,
+            stream_id,
+            expected_next_sequence,
+            idempotency_key,
+            actor,
+        }
+    }
+}
+
+/// Persist a memory record's publication-axis move.
+///
+/// The caller must call this only AFTER [`apply_publication_transition`] already succeeded on
+/// `record` -- this function persists whatever `(record, transition)` it is given; it does not
+/// re-derive or re-validate the transition matrix, the same division of labor
+/// `record_memory_admission_refusal` keeps between deciding a refusal and persisting one.
+///
+/// # Errors
+///
+/// Returns [`EventRepositoryError`] when the underlying append fails.
+pub fn record_memory_publication_transition(
+    repository: &dyn EventRepository,
+    request: MemoryPublicationTransitionRequest,
+    record: &MemoryRecord,
+    transition: MemoryPublicationTransition,
+) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+    let prepared = prepare_memory_publication_transition(MemoryPublicationTransitionAppend::new(
+        request.scope,
+        request.stream_id,
+        request.expected_next_sequence,
+        request.idempotency_key,
+        request.actor,
+        record.id().clone(),
+        persisted_publication_transition(transition),
+        persisted_publication_state(record.publication()),
+    ))?;
+
+    repository.append_atomic(&prepared)
+}
+
 /// Supersede `predecessor` with `successor`, for the stated reason.
 ///
 /// This is the relationship ADR-032 requires in place of the old `Superseded` STATE: it moves the
@@ -733,6 +815,83 @@ pub fn supersede(
     predecessor.semantic = reason.target();
     successor.supersedes = Some(predecessor.id.clone());
     Ok(())
+}
+
+const fn persisted_supersession_reason(reason: SupersessionReason) -> PersistedSupersessionReason {
+    match reason {
+        SupersessionReason::Contradicted => PersistedSupersessionReason::Contradicted,
+        SupersessionReason::Deprecated => PersistedSupersessionReason::Deprecated,
+    }
+}
+
+const fn persisted_semantic_state(state: MemorySemanticState) -> PersistedMemorySemanticState {
+    match state {
+        MemorySemanticState::Candidate => PersistedMemorySemanticState::Candidate,
+        MemorySemanticState::Validated => PersistedMemorySemanticState::Validated,
+        MemorySemanticState::Contradicted => PersistedMemorySemanticState::Contradicted,
+        MemorySemanticState::Deprecated => PersistedMemorySemanticState::Deprecated,
+        MemorySemanticState::Expired => PersistedMemorySemanticState::Expired,
+    }
+}
+
+/// Bounded context needed to append one memory-record-supersession event.
+pub struct MemoryRecordSupersededRequest {
+    scope: RepositoryScope,
+    stream_id: OpaqueId,
+    expected_next_sequence: u64,
+    idempotency_key: OpaqueId,
+    actor: PersistedActor,
+}
+
+impl MemoryRecordSupersededRequest {
+    #[must_use]
+    pub fn new(
+        scope: RepositoryScope,
+        stream_id: OpaqueId,
+        expected_next_sequence: u64,
+        idempotency_key: OpaqueId,
+        actor: PersistedActor,
+    ) -> Self {
+        Self {
+            scope,
+            stream_id,
+            expected_next_sequence,
+            idempotency_key,
+            actor,
+        }
+    }
+}
+
+/// Persist a memory-record supersession.
+///
+/// The caller must call this only AFTER [`supersede`] already succeeded on `predecessor` and
+/// `successor` -- this function persists whatever `(predecessor, successor, reason)` it is given;
+/// it does not re-derive or re-validate the two-record invariants `supersede` already checked,
+/// the same division of labor [`record_memory_publication_transition`] keeps.
+///
+/// # Errors
+///
+/// Returns [`EventRepositoryError`] when the underlying append fails.
+pub fn record_memory_record_superseded(
+    repository: &dyn EventRepository,
+    request: MemoryRecordSupersededRequest,
+    predecessor: &MemoryRecord,
+    successor: &MemoryRecord,
+    reason: SupersessionReason,
+) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+    let prepared = prepare_memory_record_superseded(MemoryRecordSupersededAppend::new(
+        request.scope,
+        request.stream_id,
+        request.expected_next_sequence,
+        request.idempotency_key,
+        request.actor,
+        predecessor.id().clone(),
+        successor.id().clone(),
+        persisted_supersession_reason(reason),
+        persisted_semantic_state(predecessor.semantic()),
+    ))?;
+
+    repository.append_atomic(&prepared)
 }
 
 /// What a published record binds to.

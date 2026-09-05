@@ -188,6 +188,29 @@
       },
       "additionalProperties": false
     },
+    "memoryPublicationTransitioned": {
+      "type": "object",
+      "required": ["recordId", "transition", "resultingState"],
+      "properties": {
+        "recordId": {"$ref": "#/$defs/opaqueId"},
+        "transition": {"enum": ["propose", "publish", "withdraw"]},
+        "resultingState": {"enum": ["unpublished", "proposed", "published", "withdrawn"]}
+      },
+      "additionalProperties": false
+    },
+    "memoryRecordSuperseded": {
+      "type": "object",
+      "required": ["predecessorId", "successorId", "reason", "predecessorNewSemanticState"],
+      "properties": {
+        "predecessorId": {"$ref": "#/$defs/opaqueId"},
+        "successorId": {"$ref": "#/$defs/opaqueId"},
+        "reason": {"enum": ["contradicted", "deprecated"]},
+        "predecessorNewSemanticState": {
+          "enum": ["candidate", "validated", "contradicted", "deprecated", "expired"]
+        }
+      },
+      "additionalProperties": false
+    },
     "versionPublished": {
       "type": "object",
       "required": ["version"],
@@ -888,6 +911,24 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "memory_publication_transitioned"},
+            "data": {"$ref": "#/$defs/memoryPublicationTransitioned"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "memory_record_superseded"},
+            "data": {"$ref": "#/$defs/memoryRecordSuperseded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "graph_version_published"},
             "data": {"$ref": "#/$defs/versionPublished"}
           },
@@ -1260,6 +1301,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "graph_imported"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_validation_failed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_admission_refused"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_publication_transitioned"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_record_superseded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},

@@ -247,7 +247,48 @@ pub enum TerminationOutcome {
     /// group survives. This is what the crate says on a Unix without `/proc` or without
     /// `PR_SET_CHILD_SUBREAPER` rather than claiming a property it cannot deliver — the same
     /// posture [`ProcessIdentity::capture`] already takes.
+    ///
+    /// THE SIGNAL WAS SENT. Every path that returns this has already called `kill(-pgid)`, and that
+    /// sentence is what a consumer is entitled to read off it -- see [`Self::NotAttempted`] for the
+    /// case where nothing was sent at all, which this variant used to carry too (#815).
     SweepUnavailable,
+    /// NOTHING WAS SIGNALLED. The call returned before `kill`, so the leader and every descendant
+    /// are untouched -- not "the sweep could not run", but "the termination never started".
+    ///
+    /// Split out of [`Self::SweepUnavailable`] (#815), which was returned by two paths meaning
+    /// opposite things: the platform limit above, and the pid conversion below it that returns
+    /// before the group signal. A consumer reading the documented meaning -- signal sent, sweep
+    /// skipped -- would classify a call that terminated NOTHING as a success, and one did.
+    ///
+    /// The producing path is effectively unreachable today: `i32::try_from(u32)` fails only above
+    /// 2_147_483_647 and Linux caps `pid_max` at 4_194_304. That is the argument for fixing it
+    /// cheaply rather than urgently, and it is also exactly why an overloaded variant survives every
+    /// review it passes through: nothing will ever produce a red here. The defect was in what the
+    /// TYPE permitted a consumer to conclude.
+    NotAttempted,
+}
+
+/// The negative pid `kill` needs, or the outcome to return instead.
+///
+/// EXTRACTED SO IT CAN BE TESTED WHERE THE TESTS RUN. Both producers of the overloaded variant are
+/// `#[cfg(unix)]`, so no cell on a Windows host could reach either -- #815 said as much and expected
+/// a Unix-gated cell or an argument at the construction site. A pure conversion has no platform in
+/// it, so the decision that used to hide inside a `let ... else` is a value this crate's own suite
+/// pins on any host, and the unix arm below simply asks it.
+///
+/// It returns the OUTCOME rather than a bool, because the caller's only honest answer for a pid it
+/// cannot signal is to say what it did: nothing.
+/// DEAD ON NON-UNIX, DELIBERATELY, AND THE ALLOW SAYS WHICH PLATFORM. The only production caller is
+/// the `#[cfg(unix)]` `terminate` below; the function itself carries no platform so that the cell can
+/// run on this host, which is the whole reason it exists as a function at all. Scoping the allow to
+/// `not(unix)` keeps it dead-code-checked where it does have a caller -- a bare `allow(dead_code)`
+/// would hide the day the unix arm stops calling it.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn group_signal_target(process_id: u32) -> Result<i32, TerminationOutcome> {
+    match i32::try_from(process_id) {
+        Ok(signed) => Ok(signed),
+        Err(_) => Err(TerminationOutcome::NotAttempted),
+    }
 }
 
 /// Kill the process and everything it spawned **that is still in its process group** (#717).
@@ -264,8 +305,12 @@ pub enum TerminationOutcome {
 /// infer from the absence of a comment.
 #[cfg(unix)]
 pub fn terminate(process_id: u32, _group: ProcessGroup) -> TerminationOutcome {
-    let Ok(signed) = i32::try_from(process_id) else {
-        return TerminationOutcome::SweepUnavailable;
+    // #815: NOT `SweepUnavailable`. This returns before `subtree_snapshot` and before `kill`, so
+    // nothing is signalled and the tree is untouched -- the opposite of what that variant's own
+    // documentation promises a reader.
+    let signed = match group_signal_target(process_id) {
+        Ok(signed) => signed,
+        Err(outcome) => return outcome,
     };
     // The group signal FIRST, unchanged: it reaches everything that did not escape, in one
     // syscall, and the sweep below then has almost nothing to find on the ordinary path.
@@ -1136,9 +1181,51 @@ impl ProcessIdentity {
 #[cfg(test)]
 mod tests {
     use super::{
-        IdentityUnavailable, ProcessIdentity, WAIT_SIGNALED, WAIT_STILL_RUNNING,
-        decide_liveness_from_signal, liveness_from_wait, windows_wait_milliseconds,
+        IdentityUnavailable, ProcessIdentity, TerminationOutcome, WAIT_SIGNALED,
+        WAIT_STILL_RUNNING, decide_liveness_from_signal, group_signal_target, liveness_from_wait,
+        windows_wait_milliseconds,
     };
+
+    /// #815: the pid a `kill(-pgid)` can take, or the outcome that says nothing was sent.
+    ///
+    /// THIS CELL RUNS ON EVERY HOST, WHICH IS THE POINT. Both producers of the outcome this splits
+    /// are `#[cfg(unix)]`, so the issue expected a Unix-gated cell or an argument at the
+    /// construction site -- and a cell that cannot run where the suite runs is a cell nobody sees
+    /// go red. Pulling the conversion out of the `let ... else` leaves a pure function with no
+    /// platform in it, and the decision becomes a value instead of a control-flow edge.
+    ///
+    /// The failing input is not reachable in production: `i32::try_from(u32)` fails only above
+    /// 2_147_483_647 and Linux caps `pid_max` at 4_194_304. That is exactly why this needs a cell
+    /// rather than a live reproduction -- an unreachable path is one nothing else will ever redden.
+    #[test]
+    fn a_pid_that_cannot_be_signalled_reports_that_nothing_was_attempted() {
+        assert_eq!(
+            group_signal_target(u32::MAX),
+            Err(TerminationOutcome::NotAttempted),
+            "a pid too large to signal reported an outcome other than NotAttempted: every path \
+             that returns before `kill` must say the tree is untouched, and SweepUnavailable \
+             promises the opposite -- that the group signal was sent"
+        );
+        assert_ne!(
+            group_signal_target(u32::MAX),
+            Err(TerminationOutcome::SweepUnavailable),
+            "the unsignallable pid still reports SweepUnavailable, whose own documentation says \
+             the group signal WAS sent -- which is the overload #815 exists to remove"
+        );
+        // The controls: an ordinary pid converts, and the boundary converts on the legal side.
+        assert_eq!(
+            group_signal_target(4_194_304),
+            Ok(4_194_304),
+            "CONTROL: a pid inside Linux's pid_max did not convert, so the assertions above would \
+             pass for a function that refuses everything"
+        );
+        assert_eq!(
+            group_signal_target(2_147_483_647),
+            Ok(2_147_483_647),
+            "CONTROL: the largest pid i32 can hold did not convert, so the refusal above is about \
+             the conversion boundary and not about large numbers in general"
+        );
+    }
 
     /// The direction is the property, so every outcome is pinned rather than the happy one.
     #[test]

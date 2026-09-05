@@ -4350,8 +4350,28 @@ fn terminate_process(process_id: u32, group: ProcessGroup) -> TerminationOutcome
 }
 
 /// Whether an outcome means descendants may still be running.
+///
+/// AN EXHAUSTIVE `match`, NOT `matches!` (#815). The predicate used to be one `matches!` arm, which
+/// means every variant that did not exist yet answered `false` -- "no descendants left" -- with no
+/// compiler complaint. That is a policy taken by omission, in the direction that says the tree is
+/// gone. When `NotAttempted` was split out of `SweepUnavailable`, a `matches!` here would have
+/// classified a call that terminated NOTHING as a clean tree: the type would have gained the
+/// distinction and the consumer would have thrown it away in the same commit.
+///
+/// Written out, the next variant does not compile until somebody decides what it means.
 const fn sweep_left_descendants(outcome: &TerminationOutcome) -> bool {
-    matches!(outcome, TerminationOutcome::BoundReached { .. })
+    match outcome {
+        // The sweep ran out of passes while descendants were still appearing.
+        TerminationOutcome::BoundReached { .. } => true,
+        // Nothing was signalled at all: the leader and every descendant are still running, which is
+        // strictly worse than a bounded sweep and cannot be read as a stopped tree.
+        TerminationOutcome::NotAttempted => true,
+        // Signalled everything reachable and a final pass found nothing new.
+        TerminationOutcome::Complete => false,
+        // The platform declared a limit it cannot exceed; the group signal WAS sent. Treating a
+        // documented limit as a backup failure would fail every host without `/proc`.
+        TerminationOutcome::SweepUnavailable => false,
+    }
 }
 
 #[cfg(test)]
@@ -6944,6 +6964,12 @@ mod termination_outcome_policy {
             !sweep_left_descendants(&TerminationOutcome::SweepUnavailable),
             "a platform that cannot sweep was read as a failed backup: the crate is declaring a \
              limit it cannot exceed, and every host without /proc would fail its backups"
+        );
+        assert!(
+            sweep_left_descendants(&TerminationOutcome::NotAttempted),
+            "a call that signalled NOTHING was read as a stopped tree: `NotAttempted` means the \
+             leader and every descendant are untouched, which is strictly worse than a bounded \
+             sweep -- and it is the variant it was split out of that must stay a non-failure"
         );
     }
 }

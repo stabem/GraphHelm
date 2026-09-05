@@ -1,0 +1,2 @@
+# A store's bytes are checked against their own checksum on every open. No eol conversion.
+* -text

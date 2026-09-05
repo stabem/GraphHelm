@@ -13,7 +13,10 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
 1. **Head at the instant.** `gh pr view N --json headRefOid` — press against THAT sha. If it moved
    since a pass was written, that pass does not cover the head: **do not press; ask both reviewers
    to re-pin against the new sha** (a one-line "re-read at `<sha>`, still approve" is a pass;
-   silence is not). Say "no open roots AGAINST `<sha>`", never "no open roots".
+   silence is not). Say "no open roots AGAINST `<sha>`", never "no open roots". **At the button,
+   re-read BOTH boxes, paginated, in the same breath as the head re-check**: a reading older than the
+   newest comment is a cache; a BLOCK published after your read and before your press is your absence,
+   not theirs (H pressed #852 on 6 of 9 comments — two re-pins and a measurement were already there; #888).
    **One carry, and only one:** when the gate's manifest-only commit moves the head, a pass that names the
    PARENT carries to the new head — the presser verifies `git diff --name-only <parent> <head>` lists only
    `.factory/gate-runs/*.json` (`--name-only`, never `--stat`: `--stat` truncates the path from the LEFT to
@@ -55,7 +58,17 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    equals the PR head on origin: the gate publishes by `git update-ref … $branchRef` after reading
    `symbolic-ref` (D; `ci/gate.ps1:1819` and `:1124`), so a DETACHED bench runs every stage and publishes
    nothing — the same "run manifest not published" with everything green. For a main run, create a local
-   branch at the sha and push it; any "green but ABSENT" run is a candidate for this cause. **Detached from the
+   branch at the sha and push it; any "green but ABSENT" run is a candidate for this cause. **And the head
+   is on origin**: the gate attributes the run by branch name AND by head sha (`ci/gate.ps1:614`/`:616` on
+   `dcfe60d8`, `gh pr list --head` and `gh pr list --search <sha>`, joined before the `headRefOid` filter — the search
+   survives a renamed branch), so any bench branch attributes IF the head is on origin; `pullRequest: null`
+   with both queries answering means the head was NOT pushed ("gh could not complete the lookup: nobody could
+   look"), not that the name was wrong (H, #889). **But the manifest commit is written to the BENCH's branch**
+   (`:1819` `git symbolic-ref --quiet HEAD` → `:1124` `git update-ref … $branchRef`), whatever its name — on
+   an alias the manifest is right inside and lands on a branch nobody merges, and the PR's `merge-proof`
+   never sees it (K, measured). Run from the PR's branch, or push the manifest commit to the PR branch
+   afterwards (a fast-forward: it is a child of the head). A DETACHED bench never reaches either query
+   (`:533-534` — "no branch to look up by" is attribution SKIPPED, not impossible; 6 of 19 manifests, #890). **Detached from the
    session is not detached from the app**: a restart of the Claude app (fleet recycle, 2026-09-05 ~04:11Z)
    killed every gate including the detached ones (#830 1h+ into `workspace tests`, #826); what survives
    is what is PUSHED and the target on disk (cargo resumes). Push the manifest the instant it exists; a
@@ -90,7 +103,23 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is
    2–9 cargo processes by design (measured): `Get-CimInstance Win32_Process | ? { $_.Name -eq
    'powershell.exe' -and $_.CommandLine -match '(-File\s+\S*|&\s*\S*)ci[\\/]gate\.ps1' }`, keeping only
-   those with ≥1 live descendant. **The count reads its own reader**: the shell running this query, and
+   those with ≥1 live descendant. **The pattern is a hint; the DESCENDANT is the fact**: it over-counts
+   (readers) and under-counts (a wrapper script — B launches by `-File gate859_wrapper.ps1`, and the
+   command line never says `ci/gate.ps1`: the Orchestrator read ZERO with a gate alive, 2026-09-05). Count
+   `powershell.exe` processes with a live `cargo`/`rustc` descendant — and know the count has holes between
+   stages: LIFE is `Get-Process -Id <pid>` with the same StartTime, ACTIVITY is the `cargo.exe` child. **The
+   count is the check; the CLAIM is the handshake** — two lanes measuring zero within the same minute both
+   launched (C #862 09:17:18Z, M #871 09:17:38Z → two gates on the one platter, D: queue 16, C:/E:/F: 0).
+   Before launching, the WRAPPER claims the slot with `.factory/tools/slot-claim.sh` and releases it when
+   the run ends. **Launch only on exit 0; ANY non-zero exit means you did NOT claim** — the script has
+   five non-zero codes today (1 lock present, 2 write did not land, 3 path/permission failure whose
+   message says "Nobody holds the slot", 4/5 holder pair missing/unusable), and a reader who learns
+   "1 = busy" from a list reads 3 as free and launches (D, #889). The clause stays right when a sixth
+   code arrives. The claim is made by an ATOMIC create-or-fail — `[System.IO.File]::Open(path,
+   CreateNew)` in PowerShell, `set -o noclobber` + `> file` or `mkdir` in bash — never "if absent, write"
+   (two steps, the same race). The holder pair (pid, StartTime) is supplied by the process that OUTLIVES
+   the claim — the gate wrapper, never a session's tool-call shell, which dies with the call (measured in
+   the script itself; #700). **The count reads its own reader**: the shell running this query, and
    every bash/PowerShell that invokes it, carries `gate.ps1` in its command line — C read **8** with zero
    gates alive (2026-09-05). The live-descendant clause filters them (a reader has no compiling child);
    without it, exclude your own PID and its ancestors, or the count never reaches zero and nobody

@@ -24,7 +24,7 @@
 # same pattern matches once, but which fires once per Assert-Equal CALL at runtime, not as an
 # independent assertion beyond the call that triggers it. 13 direct Assert-True calls + 11
 # Assert-Equal calls = 24 actual runtime assertions; that's the number this harness itself counts.
-$ExpectedAssertionCount = 38
+$ExpectedAssertionCount = 58
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -315,6 +315,145 @@ try {
     # (5) INDETERMINATE on a malformed record: an unparseable stored start time is a query the
     # instrument cannot answer, not evidence the holder died.
     Assert-Equal -Expected 'indeterminate' -Actual (Test-SlotHolderLiveness -HolderPid $PID -HolderStartUtc 'not-a-timestamp') -Message '#624 an unparseable recorded start time is indeterminate, NEVER dead'
+
+# ============================================================================================
+# #700: THE CLAIM AND THE RELEASE, as pure functions the gate can call and this file can measure.
+# Each cell below is guarded so an ABSENT function reads as a failed assertion, not a crash:
+# red at the assertion, or it is not red.
+# ============================================================================================
+function Test-FnPresent { param([string] $Name) return [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
+
+Write-Host "`n=== #700 (b) Get-SlotLockPath: one spelling of where the lock lives ==="
+$prev700 = $env:GRAPHHELM_SLOT_LOCK_PATH
+try {
+    if (Test-FnPresent 'Get-SlotLockPath') {
+        Remove-Item Env:\GRAPHHELM_SLOT_LOCK_PATH -ErrorAction SilentlyContinue
+        # Path.Combine, not Join-Path: Join-Path validates the DRIVE and throws DriveNotFound for X: here.
+        Assert-Equal -Expected ([System.IO.Path]::Combine('X:\some-slot', 'SLOT.lock')) -Actual (Get-SlotLockPath -SlotDir 'X:\some-slot') -Message '#700 (b1) unset env: <slotdir>\SLOT.lock, the file slot-claim.sh already uses'
+        $env:GRAPHHELM_SLOT_LOCK_PATH = 'Y:\override\the.lock'
+        Assert-Equal -Expected 'Y:\override\the.lock' -Actual (Get-SlotLockPath -SlotDir 'X:\some-slot') -Message '#700 (b2) GRAPHHELM_SLOT_LOCK_PATH wins when set, so tests and the reader agree on the path'
+    } else { 1..2 | ForEach-Object { Assert-True -Condition $false -Message "#700 (b$_) Get-SlotLockPath is absent" } }
+} finally { if ($null -ne $prev700) { $env:GRAPHHELM_SLOT_LOCK_PATH = $prev700 } else { Remove-Item Env:\GRAPHHELM_SLOT_LOCK_PATH -ErrorAction SilentlyContinue } }
+
+Write-Host "`n=== #700 (c) New-SlotClaim: create-or-fail, the pair embedded, bytes bash can read ==="
+$claimDir = New-TempTestDir -Name 'slot-claim-700'
+$claimPath = Join-Path $claimDir 'SLOT.lock'
+if (Test-FnPresent 'New-SlotClaim') {
+    $first = New-SlotClaim -Path $claimPath -HolderPid 4242 -HolderStartUtc '2026-09-05T02:25:29.5209025Z' -Detail 'gate ISSUES-4'
+    $readBack = if (Test-FnPresent 'Get-SlotHolderIdentity') { Get-SlotHolderIdentity -Content ([System.IO.File]::ReadAllText($claimPath)) } else { $null }
+    Assert-True -Condition ($first -and $null -ne $readBack -and [string]$readBack.pid -eq '4242') -Message '#700 (c1) a claim on a free path succeeds and its own pair reads back through the parser'
+    $bytesBefore = [System.IO.File]::ReadAllBytes($claimPath)
+    $second = New-SlotClaim -Path $claimPath -HolderPid 9999 -HolderStartUtc '2026-09-05T03:00:00.0000000Z' -Detail 'a second claimant'
+    Assert-True -Condition (-not $second) -Message '#700 (c2) a claim on a held path returns false: create-or-fail, the kernel refused'
+    $bytesAfter = [System.IO.File]::ReadAllBytes($claimPath)
+    Assert-True -Condition ([System.Linq.Enumerable]::SequenceEqual([byte[]]$bytesBefore, [byte[]]$bytesAfter)) -Message '#700 (c3) the refused claim wrote NOTHING: the holder file is byte-identical'
+    Assert-True -Condition (($bytesBefore.Length -ge 3) -and -not ($bytesBefore[0] -eq 0xEF -and $bytesBefore[1] -eq 0xBB -and $bytesBefore[2] -eq 0xBF) -and -not ([System.Text.Encoding]::UTF8.GetString($bytesBefore).Contains("`r"))) -Message '#700 (c4) no BOM and LF only, so head -1 in slot-claim.sh reads the same bytes'
+} else { 1..4 | ForEach-Object { Assert-True -Condition $false -Message "#700 (c$_) New-SlotClaim is absent" } }
+
+Write-Host "`n=== #700 (d) Remove-SlotClaim: release only what is yours ==="
+if (Test-FnPresent 'Remove-SlotClaim') {
+    $foreign = Remove-SlotClaim -Path $claimPath -HolderPid 9999
+    Assert-True -Condition ((-not $foreign) -and (Test-Path -LiteralPath $claimPath)) -Message '#700 (d1) a pid that is not the holder cannot release: returns false, file intact (never delete another lane''s lock)'
+    $own = Remove-SlotClaim -Path $claimPath -HolderPid 4242
+    Assert-True -Condition ($own -and -not (Test-Path -LiteralPath $claimPath)) -Message '#700 (d2) the holder releases: file gone, true returned'
+    $gone = Remove-SlotClaim -Path $claimPath -HolderPid 4242
+    Assert-True -Condition (-not $gone) -Message '#700 (d3) releasing an absent lock is false, never a throw'
+} else { 1..3 | ForEach-Object { Assert-True -Condition $false -Message "#700 (d$_) Remove-SlotClaim is absent" } }
+Remove-Item -LiteralPath $claimDir -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host "`n=== #700 (e) Enter-GateSlot: wait on a live or unreadable holder, reclaim a dead one, never guess ==="
+$enterDir = New-TempTestDir -Name 'slot-enter-700'
+$enterPath = Join-Path $enterDir 'SLOT.lock'
+$events = New-Object System.Collections.Generic.List[string]
+$record = { param($Event, $Detail) $events.Add("$Event|$Detail") }
+$selfPid = $PID
+$selfStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+$holder = $null
+try {
+    if (Test-FnPresent 'Enter-GateSlot') {
+        # (e1) free path -> claimed, and the lock carries OUR pair
+        $r1 = Enter-GateSlot -Path $enterPath -HolderPid $selfPid -HolderStartUtc $selfStart -Detail 'e1' -BudgetSeconds 3 -PollSeconds 1 -WriteEvent $record
+        $p1 = Get-SlotHolderIdentity -Content ([System.IO.File]::ReadAllText($enterPath))
+        Assert-True -Condition ($r1 -eq 'claimed' -and $null -ne $p1 -and $p1.pid -eq $selfPid) -Message '#700 (e1) a free slot is claimed and the lock names this process'
+        Remove-SlotClaim -Path $enterPath -HolderPid $selfPid | Out-Null
+
+        # (e2) a LIVE holder: a real process, its real pair -> expired, lock untouched, WAIT logged once
+        $holder = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru -WindowStyle Hidden
+        Start-Sleep -Milliseconds 300
+        $hStart = (Get-Process -Id $holder.Id).StartTime.ToUniversalTime().ToString('o')
+        New-SlotClaim -Path $enterPath -HolderPid $holder.Id -HolderStartUtc $hStart -Detail 'live holder' | Out-Null
+        $bytesLive = [System.IO.File]::ReadAllBytes($enterPath)
+        $events.Clear()
+        $r2 = Enter-GateSlot -Path $enterPath -HolderPid $selfPid -HolderStartUtc $selfStart -Detail 'e2' -BudgetSeconds 3 -PollSeconds 1 -WriteEvent $record
+        Assert-True -Condition ($r2 -eq 'expired') -Message '#700 (e2a) a live holder is waited on, and an exhausted budget answers expired - never claimed'
+        Assert-True -Condition ([System.Linq.Enumerable]::SequenceEqual([byte[]]$bytesLive, [byte[]][System.IO.File]::ReadAllBytes($enterPath))) -Message '#700 (e2b) the live holder lock is byte-identical: waiting touched nothing'
+        $waits = @($events | Where-Object { $_ -like 'SLOT-WAIT|*' }).Count
+        $expired = @($events | Where-Object { $_ -like 'SLOT-WAIT-EXPIRED|*' }).Count
+        Assert-True -Condition ($waits -eq 1 -and $expired -eq 1) -Message "#700 (e2c) the ledger gets ONE SLOT-WAIT (not one per poll) and ONE SLOT-WAIT-EXPIRED (got $waits/$expired)"
+        Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue; $holder.WaitForExit(5000) | Out-Null; $holder = $null
+        [System.IO.File]::Delete($enterPath)
+
+        # (e3) a DEAD pair: a pid nothing owns, a start it never had -> reclaimed, RECLAIM logged with the dead pair
+        $absent = 0; foreach ($c in 70000..70400) { if (-not (Get-Process -Id $c -ErrorAction SilentlyContinue)) { $absent = $c; break } }
+        New-SlotClaim -Path $enterPath -HolderPid $absent -HolderStartUtc '2026-09-05T00:00:00.0000000Z' -Detail 'dead holder' | Out-Null
+        $events.Clear()
+        $r3 = Enter-GateSlot -Path $enterPath -HolderPid $selfPid -HolderStartUtc $selfStart -Detail 'e3' -BudgetSeconds 3 -PollSeconds 1 -WriteEvent $record
+        $p3 = Get-SlotHolderIdentity -Content ([System.IO.File]::ReadAllText($enterPath))
+        Assert-True -Condition ($r3 -eq 'claimed' -and $null -ne $p3 -and $p3.pid -eq $selfPid) -Message '#700 (e3a) a pair the OS says is gone is reclaimed: the lock now names this process'
+        Assert-True -Condition (@($events | Where-Object { $_ -like "SLOT-RECLAIM|*pid=$absent*" }).Count -eq 1) -Message '#700 (e3b) the reclaim is on the ledger, naming the dead pair it replaced'
+        Remove-SlotClaim -Path $enterPath -HolderPid $selfPid | Out-Null
+
+        # (e4) INDETERMINATE: our own live pid with an unparseable start -> never dead, never freed
+        [System.IO.File]::WriteAllText($enterPath, "HELD by someone`nholder: pid=$selfPid start=not-a-timestamp`n", (New-Object System.Text.UTF8Encoding($false)))
+        $bytesInd = [System.IO.File]::ReadAllBytes($enterPath)
+        $r4 = Enter-GateSlot -Path $enterPath -HolderPid $selfPid -HolderStartUtc $selfStart -Detail 'e4' -BudgetSeconds 2 -PollSeconds 1 -WriteEvent $record
+        Assert-True -Condition ($r4 -eq 'expired' -and [System.Linq.Enumerable]::SequenceEqual([byte[]]$bytesInd, [byte[]][System.IO.File]::ReadAllBytes($enterPath))) -Message '#700 (e4) an unreadable holder is waited on and left intact: indeterminate never reads as free'
+        [System.IO.File]::Delete($enterPath)
+
+        # (e5) a path fault is not contention: no directory -> path-fault at once, nothing to wait for
+        $r5 = Enter-GateSlot -Path (Join-Path $enterDir 'no-such-dir\SLOT.lock') -HolderPid $selfPid -HolderStartUtc $selfStart -Detail 'e5' -BudgetSeconds 3 -PollSeconds 1 -WriteEvent $record
+        Assert-True -Condition ($r5 -eq 'path-fault') -Message '#700 (e5) a create that fails with NO file present is a path fault, answered immediately, not a 3-second wait'
+    } else { 1..8 | ForEach-Object { Assert-True -Condition $false -Message "#700 (e$_) Enter-GateSlot is absent" } }
+} finally {
+    if ($holder) { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $enterDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "`n=== #700 (e6/e7) the wrapper's claim is INHERITED by the gate it launched, never waited on ==="
+# .factory/MERGE-CHECKLIST.md: the WRAPPER claims the slot with slot-claim.sh before launching the gate, and
+# slot-claim.sh tells the shell to export GRAPHHELM_HOLDER_PID / GRAPHHELM_HOLDER_START. A gate started
+# inside that claim must recognise it as ITS OWN LANE'S -- by the exported pair equalling the lock's pair --
+# or it waits on itself for the whole budget. Parentage is not the signal: a detached gate's parent dies.
+$inhDir = New-TempTestDir -Name 'slot-inherit-700'
+$inhPath = Join-Path $inhDir 'SLOT.lock'
+$inhEvents = New-Object System.Collections.Generic.List[string]
+$inhRecord = { param($Event, $Detail) $inhEvents.Add("$Event|$Detail") }
+$prevHP = $env:GRAPHHELM_HOLDER_PID; $prevHS = $env:GRAPHHELM_HOLDER_START
+try {
+    if (Test-FnPresent 'Enter-GateSlot') {
+        $mePid = $PID; $meStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+        # (e6) the lock names a LIVE pair, and the environment carries the SAME pair -> inherited, untouched, silent
+        New-SlotClaim -Path $inhPath -HolderPid $mePid -HolderStartUtc $meStart -Detail 'wrapper claim' | Out-Null
+        $bytesInh = [System.IO.File]::ReadAllBytes($inhPath)
+        $env:GRAPHHELM_HOLDER_PID = "$mePid"; $env:GRAPHHELM_HOLDER_START = $meStart
+        $r6 = Enter-GateSlot -Path $inhPath -HolderPid 424242 -HolderStartUtc '2026-09-05T09:00:00.0000000Z' -Detail 'e6' -BudgetSeconds 3 -PollSeconds 1 -WriteEvent $inhRecord
+        Assert-True -Condition ($r6 -eq 'inherited') -Message '#700 (e6a) a live lock whose pair equals the exported GRAPHHELM_HOLDER pair is INHERITED, not waited on'
+        Assert-True -Condition ([System.Linq.Enumerable]::SequenceEqual([byte[]]$bytesInh, [byte[]][System.IO.File]::ReadAllBytes($inhPath)) -and $inhEvents.Count -eq 0) -Message '#700 (e6b) inheriting writes nothing: lock byte-identical, no ledger line'
+        # (e7) the environment carries a pair, but the lock is somebody ELSE's live pair -> not inherited, waited on
+        $other = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru -WindowStyle Hidden
+        Start-Sleep -Milliseconds 300
+        $otherStart = (Get-Process -Id $other.Id).StartTime.ToUniversalTime().ToString('o')
+        [System.IO.File]::Delete($inhPath)
+        New-SlotClaim -Path $inhPath -HolderPid $other.Id -HolderStartUtc $otherStart -Detail 'another lane' | Out-Null
+        $r7 = Enter-GateSlot -Path $inhPath -HolderPid 424242 -HolderStartUtc '2026-09-05T09:00:00.0000000Z' -Detail 'e7' -BudgetSeconds 2 -PollSeconds 1 -WriteEvent $inhRecord
+        Assert-True -Condition ($r7 -eq 'expired') -Message '#700 (e7) an exported pair that does not match the lock buys nothing: another lane''s live claim is waited on'
+        Stop-Process -Id $other.Id -Force -ErrorAction SilentlyContinue
+    } else { 1..3 | ForEach-Object { Assert-True -Condition $false -Message "#700 (e6/7-$_) Enter-GateSlot is absent" } }
+} finally {
+    if ($null -ne $prevHP) { $env:GRAPHHELM_HOLDER_PID = $prevHP } else { Remove-Item Env:\GRAPHHELM_HOLDER_PID -ErrorAction SilentlyContinue }
+    if ($null -ne $prevHS) { $env:GRAPHHELM_HOLDER_START = $prevHS } else { Remove-Item Env:\GRAPHHELM_HOLDER_START -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $inhDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host ''
 

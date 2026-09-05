@@ -329,3 +329,156 @@ function Test-SlotHolderLiveness {
 
     return Get-SlotHolderVerdict -RecordedUtc $recorded -ObservedStart $started
 }
+
+# ============================================================================================
+# #700: THE CLAIM AND THE RELEASE. The reader above could always answer live/dead/indeterminate
+# about a holder pair; nothing wrote a pair and nothing asked. These four connect both ends,
+# as pure functions so ci/slot-lock.tests.ps1 measures them without a gate, a slot, or a repo.
+# ============================================================================================
+
+# ONE spelling of where the lock lives. `GRAPHHELM_SLOT_LOCK_PATH` wins when set -- it is what
+# Read-SlotLockSnapshot already reads -- otherwise `<slotdir>/SLOT.lock`, the file
+# .factory/tools/slot-claim.sh already claims. The gate passes its own Get-SlotDir in, so the
+# 'D:/graphhelm-slot' default is not spelled a second time here.
+function Get-SlotLockPath {
+    param([Parameter(Mandatory)] [string] $SlotDir)
+    if ($env:GRAPHHELM_SLOT_LOCK_PATH) { return $env:GRAPHHELM_SLOT_LOCK_PATH }
+    # Path.Combine, not Join-Path: Join-Path validates the DRIVE and throws DriveNotFound on an
+    # unmounted one (gate.ps1 documents the same trap). A path is a string here, not a mount check.
+    return [System.IO.Path]::Combine($SlotDir, 'SLOT.lock')
+}
+
+# #881 owns the parse (`Get-SlotHolderPairFromContent`, above): last-match, because the word
+# "holder" appears in the claim's prose above the line that carries the values. This is the one
+# adaptation its callers here need. It returns STRINGS and an empty pair on a miss; a claimant
+# identity has to be a number, and a pid that will not parse is one `Test-SlotHolderLiveness`
+# could only answer 'indeterminate' about. So: $null unless the pid is a positive integer, and
+# every caller below reads one shape instead of three.
+function Get-SlotHolderIdentity {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [AllowNull()] [string] $Content)
+    $pair = Get-SlotHolderPairFromContent -Content $Content
+    $value = 0
+    if (-not [int]::TryParse([string]$pair.pid, [ref] $value)) { return $null }
+    if ($value -le 0) { return $null }
+    if ([string]::IsNullOrWhiteSpace([string]$pair.startUtc)) { return $null }
+    return [ordered]@{ pid = $value; startUtc = [string]$pair.startUtc }
+}
+
+# Create-or-fail, the same primitive slot-claim.sh gets from `noclobber`: FileMode.CreateNew is
+# refused by the kernel when the file exists, so two claimants can never both believe they won.
+# Returns $true on a claim, $false when the create was refused -- and writes NOTHING in the
+# second case. UTF-8 without BOM and LF only, so `head -1` in the bash tool reads the same bytes.
+function New-SlotClaim {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [int] $HolderPid,
+        [Parameter(Mandatory)] [string] $HolderStartUtc,
+        [string] $Detail = ''
+    )
+    $stamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $content = "HELD by gate | $stamp | $Detail | STATUS: gate run`n" +
+        "Claimed through create-or-fail: the kernel refused every other claimant.`n" +
+        "holder: pid=$HolderPid start=$HolderStartUtc`n"
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($content)
+    $stream = $null
+    try {
+        $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $stream.Write($bytes, 0, $bytes.Length)
+        return $true
+    } catch [System.IO.IOException] {
+        return $false
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
+# Release only what is yours. The file's own holder line is read back and its pid compared to the
+# caller's; a mismatch releases nothing and returns $false. Deleting another lane's lock is
+# stale-lock recovery (#619) and is decided by the liveness reader, never by whoever happens to
+# be exiting. Absent file: $false, no throw.
+function Remove-SlotClaim {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [int] $HolderPid
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $pair = Get-SlotHolderIdentity -Content ([System.IO.File]::ReadAllText($Path))
+        if ($null -eq $pair -or $pair.pid -ne $HolderPid) { return $false }
+        [System.IO.File]::Delete($Path)
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# The gate's entry to the slot: claim it, inherit the wrapper's claim, or wait on a live holder --
+# and NEVER free a lock this instrument cannot prove dead.
+#
+# Returns one of four words, and the gate branches on the word rather than on a boolean, because
+# three of them mean "do not run" for three different reasons:
+#   claimed     this process wrote the lock; it releases it in its finally
+#   inherited   the lock is held by the pair this process was handed in GRAPHHELM_HOLDER_PID/START
+#               -- the wrapper's claim (MERGE-CHECKLIST: the wrapper claims, then launches). Not
+#               ours to release. Parentage is NOT the signal: a detached gate's parent dies.
+#   expired     a live or unreadable holder outlasted the budget; nothing was touched
+#   path-fault  the create failed and no file exists: a path/permission fault, not contention
+#               (the same distinction slot-claim.sh draws before it says "held")
+#
+# 'dead' -- the pair's process is gone, or a recycled pid carries a different start time -- is the
+# one case this function recovers, by deleting and re-claiming, and it says so on the ledger with
+# the pair it replaced (#624's reader, #619's rule: only the pair may pronounce death).
+# 'indeterminate' -- pid or start unparseable, or the OS would not say -- is waited on exactly as a
+# live holder is. A wrong 'free' is the substitution every issue in this file exists to prevent.
+#
+# SLOT-WAIT is written ONCE per wait, not once per poll: the ledger records that a wait happened
+# and how long it was allowed, not a heartbeat.
+function Enter-GateSlot {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [int] $HolderPid,
+        [Parameter(Mandatory)] [string] $HolderStartUtc,
+        [string] $Detail = '',
+        [int] $BudgetSeconds = 10800,
+        [int] $PollSeconds = 30,
+        [scriptblock] $WriteEvent = { param($Event, $Detail) }
+    )
+    $deadline = [DateTime]::UtcNow.AddSeconds($BudgetSeconds)
+    $waited = $false
+    while ($true) {
+        if (New-SlotClaim -Path $Path -HolderPid $HolderPid -HolderStartUtc $HolderStartUtc -Detail $Detail) { return 'claimed' }
+        if (-not (Test-Path -LiteralPath $Path)) { return 'path-fault' }
+
+        $content = ''
+        try { $content = [System.IO.File]::ReadAllText($Path) } catch { $content = '' }
+        $pair = Get-SlotHolderIdentity -Content $content
+
+        if ($null -ne $pair) {
+            $envPid = 0
+            $handed = [int]::TryParse([string]$env:GRAPHHELM_HOLDER_PID, [ref] $envPid) -and
+                $envPid -eq $pair.pid -and
+                [string]::Equals([string]$env:GRAPHHELM_HOLDER_START, $pair.startUtc, [System.StringComparison]::Ordinal)
+            $verdict = Test-SlotHolderLiveness -HolderPid "$($pair.pid)" -HolderStartUtc $pair.startUtc
+            if ($handed -and $verdict -eq 'live') { return 'inherited' }
+            if ($verdict -eq 'dead') {
+                & $WriteEvent 'SLOT-RECLAIM' "dead-holder pid=$($pair.pid) start=$($pair.startUtc) path=$Path"
+                try { [System.IO.File]::Delete($Path) } catch { }
+                continue
+            }
+        } else {
+            $verdict = 'indeterminate'
+        }
+
+        if (-not $waited) {
+            $who = if ($null -ne $pair) { "pid=$($pair.pid) start=$($pair.startUtc)" } else { 'no readable holder pair' }
+            & $WriteEvent 'SLOT-WAIT' "holder $who verdict=$verdict budgetSeconds=$BudgetSeconds path=$Path"
+            $waited = $true
+        }
+        $remaining = ($deadline - [DateTime]::UtcNow).TotalSeconds
+        if ($remaining -le 0) {
+            & $WriteEvent 'SLOT-WAIT-EXPIRED' "verdict=$verdict budgetSeconds=$BudgetSeconds path=$Path"
+            return 'expired'
+        }
+        Start-Sleep -Seconds ([Math]::Max(1, [Math]::Min($PollSeconds, [Math]::Ceiling($remaining))))
+    }
+}

@@ -111,6 +111,13 @@ $MuteStageExitCode = 99
 $failed = @()
 $stageRecords = New-Object System.Collections.Generic.List[object]
 $runStartUtc = [DateTime]::UtcNow
+# #700: the slot this run holds, and how far it got. `slotOutcome` is Enter-GateSlot's word;
+# `stagesCompleted` is set as the LAST statement inside the stage try; `slotRunEnded` is set where
+# RUN-END is written. The finally reads all three so it can tell a run that left early from one
+# that finished, and release only a claim that is this process's own.
+$script:slotOutcome = $null
+$script:stagesCompleted = $false
+$script:slotRunEnded = $false
 
 # Evidence can contain connection strings printed by a failing test. Redact before the line reaches
 # either Write-Host (the human gate log) or $capturedLines (the machine-readable manifest). Keep
@@ -1794,6 +1801,7 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
     $endDetail = "status=$endStatus class=$endClass head=$($headSha.Substring(0, 12)) manifest=$fileName" +
         $(if (-not $script:manifestPublished) { ' publication=refused' } else { '' })
     Write-SlotEvent -Event 'RUN-END' -Detail $endDetail
+    $script:slotRunEnded = $true
 
     return $path
 }
@@ -1848,6 +1856,33 @@ if ($gatedBranchAtStart -and $gatedHeadAtStart) {
             'the two reads, so this run has no coherent subject to gate. Re-run on a stable checkout.') -ForegroundColor Red
         exit 1
     }
+}
+
+# #700: CLAIM THE MACHINE-WIDE SLOT before the first ledger line. Seven gates ran at once on this
+# machine on 2026-09-05 because the slot's reader had no consumer and its producer had no caller
+# (ci/slot-lock.ps1, #700). This is both halves connected: the gate is the durable process the pair
+# names -- its own pid and start time, at the precision Test-SlotHolderLiveness parses -- and it
+# waits on a live or unreadable holder, inherits the wrapper's claim when the exported pair matches
+# (MERGE-CHECKLIST: the wrapper claims, then launches), and reclaims only a pair the OS says is dead.
+# The lock path is Get-SlotLockPath over Get-SlotDir, and GRAPHHELM_SLOT_LOCK_PATH is defaulted to it
+# so Read-SlotLockSnapshot below reads the same file instead of answering 'not set' every run.
+$slotLockPath = Get-SlotLockPath -SlotDir (Get-SlotDir)
+if (-not $env:GRAPHHELM_SLOT_LOCK_PATH) { $env:GRAPHHELM_SLOT_LOCK_PATH = $slotLockPath }
+$gateStartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+$slotWaitMinutes = 180
+if ($env:GRAPHHELM_SLOT_WAIT_MINUTES -and [int]::TryParse($env:GRAPHHELM_SLOT_WAIT_MINUTES, [ref] $slotWaitMinutes)) { } else { $slotWaitMinutes = 180 }
+$script:slotOutcome = Enter-GateSlot -Path $slotLockPath -HolderPid $PID -HolderStartUtc $gateStartUtc `
+    -Detail "gate cwd=$repositoryRoot head=$gatedHeadAtStart" -BudgetSeconds ($slotWaitMinutes * 60) -PollSeconds 30 `
+    -WriteEvent { param($Event, $Detail) Write-SlotEvent -Event $Event -Detail $Detail }
+if ($script:slotOutcome -notin @('claimed', 'inherited')) {
+    Write-Host "[gate] NO SLOT ($($script:slotOutcome)): $slotLockPath" -ForegroundColor Magenta
+    if ($script:slotOutcome -eq 'expired') {
+        Write-Host "[gate] another gate held the machine-wide slot for the whole $slotWaitMinutes-minute budget (GRAPHHELM_SLOT_WAIT_MINUTES)." -ForegroundColor Magenta
+        Write-Host '[gate] Nothing here says anything about this head. Re-run when the ledger shows its RUN-END, or raise the budget.' -ForegroundColor Magenta
+    } else {
+        Write-Host '[gate] the lock could not be created and no lock file exists: a path or permission fault, not contention. Nobody holds the slot.' -ForegroundColor Magenta
+    }
+    exit 1
 }
 
 $slotLockAtStart = Read-SlotLockSnapshot
@@ -2008,8 +2043,22 @@ try {
             $env:GRAPHHELM_PG_LOCALE = $previousLocale
         }
     }
+    $script:stagesCompleted = $true
 } finally {
     Pop-Location
+    # #700: a run that leaves this block without completing its stages and without having written
+    # RUN-END -- an exception, an `exit` inside a stage, Ctrl-C -- says so on the ledger. The canary
+    # abort writes RUN-END before it exits, so it is not double-counted. A hard kill skips every
+    # finally and leaves the lock: that is the case the pair-liveness reader recovers on the NEXT
+    # gate, by design, not a gap.
+    if (-not $script:stagesCompleted -and -not $script:slotRunEnded) {
+        $abortHead = if ($gatedHeadAtStart) { $gatedHeadAtStart.Substring(0, [Math]::Min(12, $gatedHeadAtStart.Length)) } else { 'unknown' }
+        Write-SlotEvent -Event 'RUN-ABORT' -Detail "head=$abortHead reason=left-the-stage-block-before-RUN-END"
+    }
+    # Released HERE, before the manifest write: the slot serialises cargo, not git, and the next
+    # gate can start compiling while this one records itself. Only a claim this process made is
+    # released; an inherited claim belongs to the wrapper that made it.
+    if ($script:slotOutcome -eq 'claimed') { Remove-SlotClaim -Path $slotLockPath -HolderPid $PID | Out-Null }
 }
 
 # Freshness cross-check BEFORE the manifest write, deliberately - $Status and $failed must both

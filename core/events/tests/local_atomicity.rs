@@ -1788,3 +1788,135 @@ fn an_orphan_blob_nobody_holds_is_deleted_on_the_next_open() {
         orphan.display()
     );
 }
+
+/// THE WITNESS #823 MERGED WITHOUT (#834): the blobs scan requests no DELETE access.
+///
+/// #823's title is *"the read path stops taking DELETE on every blob it scans"*, and the cell it
+/// added asserts only that orphan removal still works afterwards. Revert the one token the PR
+/// changed -- `want_delete` back to `true` at the scan's open -- and every cell in the crate
+/// stayed green, because nothing observed what access the scan asked for.
+///
+/// What a DELETE request costs is observable from OUTSIDE the store, and that is what this cell
+/// holds up against it: a foreign handle that shares READ and not DELETE -- the antivirus,
+/// backup-agent and sync-client case #823's first paragraph names. Under a DELETE open that
+/// handle is a sharing violation, which the scan maps to `Ok(None)` and SKIPS, counting the file
+/// as clean for this cycle. Under a read-only open the scan reads the file. So the difference is
+/// whether the scan's content validation ever reaches a blob someone is reading -- and a
+/// NONCANONICAL orphan makes that visible: judged, it refuses the store with
+/// `GHE007_UNSUPPORTED_FORMAT`; skipped, the store opens and the corruption is invisible.
+///
+/// Red on the old token (the store opens), green on the new one. The refusal is the same one
+/// `noncanonical_orphan_blob_is_preserved_and_rejected` asserts with nobody holding the file; the
+/// holder is the only thing added, and the control cell next to this one shows the holder alone
+/// does not change the open's answer.
+///
+/// Windows only, by the property's own asymmetry: Unix removes by directory handle and name and
+/// requests no access right at open, so there is no DELETE for a read path to stop taking.
+#[cfg(windows)]
+#[test]
+fn a_noncanonical_orphan_a_foreign_reader_holds_is_still_judged() {
+    let directory = tempfile::tempdir().unwrap();
+    let orphan = noncanonical_orphan(directory.path());
+
+    // The foreign reader: shares READ, withholds DELETE. Held across the open.
+    let holder = open_sharing_read_only(&orphan);
+
+    let error = match LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    ) {
+        Ok(_) => panic!(
+            "the store opened over a noncanonical orphan a reader holds: the scan asked for DELETE \
+             access, took a sharing violation, and skipped the file instead of judging it -- the \
+             read path is taking destructive access again (#823, #834)"
+        ),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "GHE007_UNSUPPORTED_FORMAT");
+    drop(holder);
+    assert!(orphan.exists(), "the refused orphan was deleted");
+}
+
+/// The control for the cell above: the same foreign reader on a VALID orphan, and the open
+/// answers exactly as it does with nobody holding the file. Without this, the refusal above
+/// would be consistent with "a held blob breaks the open", which is not the property.
+///
+/// The orphan survives, deliberately: its removal happens by a DELETE-capable handle
+/// (`apply_reconcile`), and the reader withholds DELETE, so the removal is deferred to a cycle
+/// in which nobody holds it. That deferral is the documented price of the read path not taking
+/// DELETE, and asserting it here keeps the two halves of #823 in one place.
+#[cfg(windows)]
+#[test]
+fn a_valid_orphan_a_foreign_reader_holds_leaves_the_open_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let orphan = orphan_born_of_a_failed_publish(directory.path());
+
+    let holder = open_sharing_read_only(&orphan);
+    let repo = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    )
+    .expect("a reader holding a valid orphan does not change the open's answer");
+    drop(repo);
+    drop(holder);
+    assert!(
+        orphan.exists(),
+        "the orphan was removed while a handle without FILE_SHARE_DELETE held it, which is not \
+         possible by handle -- something deleted by path"
+    );
+}
+
+/// An orphan blob born the way one really is: `BlobPublish` fails after the blob is staged and
+/// before the journal append, so it sits in `blobs/` with nothing referencing it.
+#[cfg(windows)]
+fn orphan_born_of_a_failed_publish(root: &std::path::Path) -> std::path::PathBuf {
+    let repo = LocalEventRepository::open_with_failpoint(
+        root,
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+        LocalFailpoint::BlobPublish,
+    )
+    .unwrap();
+    let sealed = sealed_evidence();
+    let reference = sealed.reference().clone();
+    assert!(
+        repo.append_atomic(&prepared(Some(reference), vec![sealed]))
+            .is_err()
+    );
+    drop(repo);
+    let orphan = std::fs::read_dir(root.join("blobs"))
+        .unwrap()
+        .next()
+        .expect("ARRANGEMENT: the failed publish must leave a blob behind")
+        .unwrap()
+        .path();
+    assert!(orphan.exists(), "ARRANGEMENT: no orphan blob");
+    orphan
+}
+
+/// The orphan above with one byte appended: still an orphan, no longer canonical, so a scan
+/// that reads it refuses the store (`noncanonical_orphan_blob_is_preserved_and_rejected`).
+#[cfg(windows)]
+fn noncanonical_orphan(root: &std::path::Path) -> std::path::PathBuf {
+    let orphan = orphan_born_of_a_failed_publish(root);
+    let mut bytes = std::fs::read(&orphan).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&orphan, bytes).unwrap();
+    orphan
+}
+
+/// A handle that shares READ and nothing else -- in particular not DELETE -- which is what a
+/// scanner or a backup agent holds. `FILE_SHARE_READ` is `0x1`; spelled as a literal because
+/// this test crate does not depend on `windows-sys`, and the value is a stable Win32 constant.
+#[cfg(windows)]
+fn open_sharing_read_only(path: &std::path::Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+        .expect("ARRANGEMENT: the foreign reader opens the orphan")
+}

@@ -29,9 +29,21 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    not vouch — that is a finding. The two are different answers (#811 introduced the distinction). (Found by A's review
    Running the gate yourself: **a gate launched inside a turn dies with the turn** (measured twice:
    log ~700 bytes, task "alive", no signal). Launch it detached — `Start-Process … -PassThru`, PID and
-   exit code written to a file — the wrapper's PID is the only identifier you own. **Proof of life is the
+   exit code written to a file — the wrapper's PID is the only identifier you own. **Detached from the
+   session is not detached from the app**: a restart of the Claude app (fleet recycle, 2026-09-05 ~04:11Z)
+   killed every gate including the detached ones (#830 1h+ into `workspace tests`, #826); what survives
+   is what is PUSHED and the target on disk (cargo resumes). Push the manifest the instant it exists; a
+   gate that must outlive the app is launched from outside it (Task Scheduler / a service), not from a
+   session. **Proof of life is the
    child chain from that PID** (`Get-CimInstance Win32_Process | ? ParentProcessId -eq <pid>`, recursively)
-   **with a CPU delta on the descendant that compiles, and the stage banners advancing.** Log silence
+   **with the log growing** — the log is the primary signal because it is MONOTONE (94 KB → 520 KB across
+   the main gate, #867); descendant count and descendant CPU are weaker: children die and leave the sum
+   (70.1 s → 6.1 s in 15 s, measured), so "CPU equal = wedged" and "CPU greater = alive" are BOTH
+   false, and a healthy gate sits 45 s flat between stages (`desc=1`, no rustc — design, not pathology).
+   **Wedged is never a 30 s reading: require ≥ 5 min with ALL of log size, descendant count and
+   descendant CPU flat.** The only kill rule is the ownerless wrapper (15 min unclaimed, by (pid,
+   StartTime)) — a lane never kills a gate it did not launch on a liveness reading (H read "AVANCA =
+   False" on the main gate every merge-proof waits for, and nearly did). Log silence
    mid-stage is capture, not death: the gate captures a stage's output and writes it when the stage ends
    (`Start-Process -Redirect` and `*>` both grow the file — measured, H), so a quiet log says nothing
    either way. `Get-Process -Id` answers *alive*, not *progressing* — the wrapper's CPU is 0 by
@@ -43,11 +55,18 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    seconds under five gates; with five running the box was measured STALLED — 26 cargo + 100 rustc,
    17.8 s of CPU in 36 min, D: at 2685 % disk time, SSDs at 0–3 %). So the ceiling is **one gate on the
    HDD (`D:`) plus one on the SSD (`E:/<lane>-targets`, while `E:` has >30 GB free — `Get-PSDrive E`
-   first)**; never `C:` (the system disk — a full `C:` takes the machine down; the disk-fill incident) or
+   first — the floor is a PRECONDITION, not a budget: `E:` went 79 → 38 GB free in three hours of
+   accumulated review and gate targets at ~10.7 GB each, so **a target on `E:` is removed by its creator
+   when the gate or review ends** — `Remove-Item` by name, never a sweep; `E:` is a lane, not a
+   warehouse)**; never `C:` (the system disk — a full `C:` takes the machine down; the disk-fill incident) or
    `F:` (the repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is
    2–9 cargo processes by design (measured): `Get-CimInstance Win32_Process | ? { $_.Name -eq
    'powershell.exe' -and $_.CommandLine -match '(-File\s+\S*|&\s*\S*)ci[\\/]gate\.ps1' }`, keeping only
-   those with ≥1 live descendant. Two things this pattern had to survive, both measured: `[\\/]`, not
+   those with ≥1 live descendant. **The count reads its own reader**: the shell running this query, and
+   every bash/PowerShell that invokes it, carries `gate.ps1` in its command line — C read **8** with zero
+   gates alive (2026-09-05). The live-descendant clause filters them (a reader has no compiling child);
+   without it, exclude your own PID and its ancestors, or the count never reaches zero and nobody
+   relaunches. Two things this pattern had to survive, both measured: `[\\/]`, not
    `[\/]` — in .NET `\/` is an escaped slash, so `[\/]` misses every Windows path (`'a\b' -match 'a[\/]b'`
    → False) and under-counting fails OPEN (a low number says "launch"); and the `-Command … & ./ci/gate.ps1`
    launch shape beside `-File`. **A positive control for a matcher comes from the POPULATION — real
@@ -83,7 +102,8 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    after the merge, through the negated sentence left in a COMMIT body (reopened by hand 49 s later,
    #757). **The instrument that frees the PR is blind to the field that shuts the issue.**
    ```
-   gh pr view N --json title   --jq .title                        # the squash's FIRST line (COMMIT_OR_PR_TITLE)
+   gh pr view N --json title   --jq .title                        # the squash's FIRST line ONLY when the PR has 2+ commits
+   gh pr view N --json commits --jq '.commits[0].messageHeadline'  # with ONE commit the squash takes THIS (COMMIT_OR_PR_TITLE); retitling the PR changes nothing (A, #849)
    gh pr view N --json body    --jq .body
    gh pr view N --json commits --jq '.commits[].messageBody'      # what a SQUASH carries
    # PowerShell eats the quotes of an inline query; a JSON file works from both shells (measured):
@@ -129,8 +149,11 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    neither the author, each naming the sha it measured. It is a SUBSTITUTION, not equivalence —
    the merge comment names what the mechanical sweep would have caught and did not:
    prose contradicting code, form-vs-instance matching, the third actor.
-   Lanes are told apart by the **identity line** every comment starts with (`Lane: … · Session: …
-   · Head: …`, see `AGENTS.md`), never by the GitHub login — every login here is one account.
+   Lanes are told apart by the **identity line** (`Lane: … · Session: … · Head: …`, see `AGENTS.md`),
+   never by the GitHub login — every login here is one account. `AGENTS.md` asks writers to put it
+   FIRST; the counter looks for it **anywhere in the body** (C's pass on #833 signs on its last line —
+   H counted one pass too few by reading the top line only, #840). A writer's slip must not become the
+   counter's absence: absence blocks correct work.
 9. **Stacked PR before `--delete-branch`.** `gh pr list --base <head-branch> --state all`.
    Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729).
 10. **Content coupling with other OPEN PRs.** If another open PR writes a field/file this one

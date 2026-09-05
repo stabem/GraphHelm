@@ -29,6 +29,22 @@ fn mcp_session_with(
     env: &[(&str, &str)],
     lines: &[serde_json::Value],
 ) -> McpSession {
+    mcp_session_inner(args, env, &[], lines)
+}
+
+/// Like `mcp_session_with`, but the named variables are REMOVED from the child's environment
+/// rather than inherited (#855): a cell about a token being absent constructs the absence instead
+/// of trusting the test runner's environment to have none.
+fn mcp_session_without(args: &[&str], removed: &[&str], lines: &[serde_json::Value]) -> McpSession {
+    mcp_session_inner(args, &[], removed, lines)
+}
+
+fn mcp_session_inner(
+    args: &[&str],
+    env: &[(&str, &str)],
+    removed: &[&str],
+    lines: &[serde_json::Value],
+) -> McpSession {
     let mut input = String::new();
     for line in lines {
         input.push_str(&line.to_string());
@@ -38,6 +54,9 @@ fn mcp_session_with(
     command.arg("mcp").args(args);
     for (name, value) in env {
         command.env(name, value);
+    }
+    for name in removed {
+        command.env_remove(name);
     }
     let output = command
         .write_stdin(input)
@@ -179,12 +198,23 @@ fn a_non_loopback_url_is_refused_fail_closed_including_userinfo_shapes() {
 
 #[test]
 fn both_token_sources_absent_is_a_ghcli015_naming_the_two_options() {
-    let session = mcp_session_with(
+    // ABSENT IS CONSTRUCTED, NOT INHERITED (#855): the variable is removed from the child's
+    // environment, so a token set on the host or by the harness cannot turn this cell's
+    // "absent" into "present" without anyone seeing it.
+    let session = mcp_session_without(
         &["--url", "http://127.0.0.1:9", "--actor", "agent-chat"],
-        &[],
+        &["GRAPHHELM_API_TOKEN"],
         &[],
     );
-    assert!(!session.output.status.success());
+    // WITH THE EVIDENCE ITS SIBLING CARRIES (#855). This cell went red exactly once, under a full
+    // gate on a loaded box, and the bare `assert!` said nothing: no status, no stdout, no
+    // stderr, so nothing about the mechanism could be recovered from the record. The next red
+    // names what it saw.
+    assert!(
+        !session.output.status.success(),
+        "must be refused without a token: {:?}",
+        session.output
+    );
     let stdout = String::from_utf8_lossy(&session.output.stdout);
     assert!(stdout.contains("GHCLI015"), "{stdout}");
     assert!(

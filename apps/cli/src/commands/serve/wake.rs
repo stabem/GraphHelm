@@ -80,6 +80,50 @@ async fn ring(rendezvous_id: &str) -> WakeConsumeReason {
     }
 }
 
+/// Phase 1 of the sweep: what is due? Replay the stream and keep every live lease whose
+/// cursor lies before the latest NON-wake append. `None` on any failure — the sweep is
+/// fire-and-forget and every failure path is a silent no-op.
+///
+/// Its own function so the unit tests below build their captures by CALLING it rather than by
+/// copying it (#258). A copy cannot notice the original drifting, and that drift is exactly
+/// what those tests exist to catch: with `armed_at_sequence` corrupted here, every cell stayed
+/// green while the read was a copy, because none of them ran this code.
+fn due_leases(events: &Path, execution: &str) -> Option<Vec<DueLease>> {
+    let store = crate::commands::event_store(events).ok()?;
+    let streams = store.list_streams().ok()?;
+    let stream = streams
+        .into_iter()
+        .find(|stream| stream.stream_id == execution)?;
+    let history = store
+        .read_replay_stream(&stream.scope, &stream.stream_id)
+        .ok()?;
+    let projection = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).ok()?;
+    // Only NON-wake appends ring: bookkeeping past the cursor is not content.
+    let content_head = history
+        .iter()
+        .filter(|event| {
+            !matches!(
+                event.kind,
+                EventKind::WakeLease(_) | EventKind::WakeLeaseConsumed(_)
+            )
+        })
+        .map(|event| event.sequence)
+        .max()
+        .unwrap_or(0);
+    let due = projection
+        .wake_leases
+        .iter()
+        .filter(|(_, lease)| lease.cursor < content_head)
+        .map(|(session, lease)| DueLease {
+            execution_id: execution.to_owned(),
+            session_id: session.clone(),
+            rendezvous_id: lease.rendezvous_id.clone(),
+            armed_at_sequence: lease.armed_at_sequence,
+        })
+        .collect();
+    Some(due)
+}
+
 /// The sweep: read the stream's projection, ring every lease whose cursor lies before the
 /// latest NON-wake append, and record each consumption. Called fire-and-forget after a
 /// mutation route's own append succeeded; every failure path is a silent no-op.
@@ -87,46 +131,11 @@ pub(super) async fn sweep(events: Arc<Path>, execution: String) {
     // Phase 1 (blocking): what is due?
     let events_read = events.clone();
     let execution_read = execution.clone();
-    let due = tokio::task::spawn_blocking(move || -> Option<Vec<DueLease>> {
-        let store = crate::commands::event_store(&events_read).ok()?;
-        let streams = store.list_streams().ok()?;
-        let stream = streams
-            .into_iter()
-            .find(|stream| stream.stream_id == execution_read)?;
-        let history = store
-            .read_replay_stream(&stream.scope, &stream.stream_id)
-            .ok()?;
-        let projection =
-            graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).ok()?;
-        // Only NON-wake appends ring: bookkeeping past the cursor is not content.
-        let content_head = history
-            .iter()
-            .filter(|event| {
-                !matches!(
-                    event.kind,
-                    EventKind::WakeLease(_) | EventKind::WakeLeaseConsumed(_)
-                )
-            })
-            .map(|event| event.sequence)
-            .max()
-            .unwrap_or(0);
-        let due: Vec<DueLease> = projection
-            .wake_leases
-            .iter()
-            .filter(|(_, lease)| lease.cursor < content_head)
-            .map(|(session, lease)| DueLease {
-                execution_id: execution_read.clone(),
-                session_id: session.clone(),
-                rendezvous_id: lease.rendezvous_id.clone(),
-                armed_at_sequence: lease.armed_at_sequence,
-            })
-            .collect();
-        Some(due)
-    })
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    let due = tokio::task::spawn_blocking(move || due_leases(&events_read, &execution_read))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
     if due.is_empty() {
         return;
@@ -327,37 +336,82 @@ fn record_consumptions_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, Sensitivity, WakeLease};
+    use graphhelm_protocols::{
+        EventKind, NewEvent, NodeState, NodeStateChanged, OpaqueId, Sensitivity, WakeLease,
+    };
 
-    /// Builds a capture THE WAY THE SWEEP DOES — replay the stream, read the live lease out of
-    /// the projection, copy its fields — instead of hand-writing them.
+    /// The sweep's OWN read — `due_leases`, the function phase 1 of `sweep` runs — narrowed to
+    /// the one session a fixture cares about.
     ///
-    /// The distinction is not stylistic and it was found the expensive way. Hand-written
-    /// captures proved things about the fixture rather than about the production data flow:
-    /// with `armed_at_sequence` typed in as a literal, a sabotage that corrupts the FOLD moves
-    /// the live lease's value while the capture's stays put, so the two disagree and a stale
-    /// capture is dropped — the guard passes, for a reason production would never reproduce.
-    /// Built this way both sides move together, exactly as they do in the sweep, and the guard
-    /// measures the path it claims to.
-    fn capture_like_the_sweep(
+    /// Two generations of this helper came before it, each found wanting the expensive way.
+    /// Hand-written captures proved things about the fixture rather than about the production
+    /// data flow: with `armed_at_sequence` typed in as a literal, a sabotage that corrupts the
+    /// FOLD moves the live lease's value while the capture's stays put, so the two disagree and
+    /// a stale capture is dropped — the guard passes, for a reason production would never
+    /// reproduce. The replacement replayed the stream and copied the lease's fields "the way
+    /// the sweep does" — a copy of the read, which cannot notice the read drifting: with
+    /// `armed_at_sequence` corrupted INSIDE the sweep, every cell stayed green, because none of
+    /// them ran the sweep's code (#258). It also skipped the sweep's due-predicate outright,
+    /// handing back leases the sweep itself would never have captured.
+    ///
+    /// Now the fixture is judged by the production read, filter included. That is why every
+    /// fixture appends content after arming — see `append_content` — and why this panics rather
+    /// than returning an `Option`: a fixture whose lease the sweep would not capture is not a
+    /// fixture for the sweep's recorder.
+    fn captured_by_the_sweep(events: &std::path::Path, stream: &str, session: &str) -> DueLease {
+        due_leases(events, stream)
+            .expect("the sweep's read phase must find the fixture's stream")
+            .into_iter()
+            .find(|lease| lease.session_id == session)
+            .expect(
+                "the fixture's lease must be DUE under the sweep's own predicate: armed, with \
+                 content appended past its cursor",
+            )
+    }
+
+    /// One CONTENT event — a node moving state, the kind of append a sleeper is waiting on.
+    fn content_event() -> EventKind {
+        EventKind::NodeStateChanged(NodeStateChanged {
+            simulation_id: OpaqueId::parse("simulation-1").unwrap(),
+            node_id: OpaqueId::parse("node-1").unwrap(),
+            previous_state: None,
+            next_state: NodeState::Running,
+        })
+    }
+
+    /// Appends one content event, because a lease armed on an otherwise-empty stream is live
+    /// but NOT due: the sweep hands back only leases whose cursor lies before the latest
+    /// non-wake append. Arm, content, sweep is the interleaving #55 describes, not an extra
+    /// step — and it is the reason the sequence literals in these fixtures run 1, 2, 3 rather
+    /// than 1, 2.
+    fn append_content(
         events: &std::path::Path,
         scope: &graphhelm_protocols::RepositoryScope,
         stream: &str,
-        session: &str,
-    ) -> DueLease {
+        key: &str,
+        next: u64,
+    ) {
         let store = crate::commands::event_store(events).unwrap();
-        let history = store.read_replay_stream(scope, stream).unwrap();
-        let projection = graphhelm_events::replay(scope, stream, &history).unwrap();
-        let lease = projection
-            .wake_leases
-            .get(session)
-            .expect("the fixture must have a live lease to capture");
-        DueLease {
-            execution_id: stream.to_owned(),
-            session_id: session.to_owned(),
-            rendezvous_id: lease.rendezvous_id.clone(),
-            armed_at_sequence: lease.armed_at_sequence,
-        }
+        let request = graphhelm_events::PreparedAppend::new(
+            scope.clone(),
+            OpaqueId::parse(stream).unwrap(),
+            next,
+            vec![NewEvent::new(
+                OpaqueId::parse(key).unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-test").unwrap(),
+                ),
+                Sensitivity::Internal,
+                content_event(),
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        store.append_atomic(&request).unwrap();
     }
 
     /// The #55 interleaving, DETERMINISTIC: a sweep captured its due list, then a rival
@@ -412,8 +466,10 @@ mod tests {
             "arm-r",
             1,
         );
+        // Content past the cursor: what makes the lease due, and what the sweep is reacting to.
+        append(content_event(), "content-r", 2);
         let captured = vec![(
-            capture_like_the_sweep(events, &scope, "exec-race", "session-r"),
+            captured_by_the_sweep(events, "exec-race", "session-r"),
             WakeConsumeReason::StaleRendezvous,
         )];
 
@@ -427,7 +483,7 @@ mod tests {
                 captured_arming: None,
             }),
             "rival-consume",
-            2,
+            3,
         );
         drop(store); // release the handle so the recorder can take its own lock
 
@@ -505,9 +561,10 @@ mod tests {
             .unwrap();
             store.append_atomic(&request).unwrap();
         }
+        append_content(events, &scope, "exec-pin", "content-p", 2);
 
         let captured = vec![(
-            capture_like_the_sweep(events, &scope, "exec-pin", "session-p"),
+            captured_by_the_sweep(events, "exec-pin", "session-p"),
             WakeConsumeReason::StaleRendezvous,
         )];
 
@@ -582,9 +639,9 @@ mod tests {
             .expect("the rival's consumption is on record")
             .sequence;
         assert_eq!(
-            receipt, 2,
-            "the rival's burn at #2 must be the last consumption on this session — if ours \
-             had also landed it would be #3, and if the recorder had bailed early for an \
+            receipt, 3,
+            "the rival's burn at #3 must be the last consumption on this session — if ours \
+             had also landed it would be #4, and if the recorder had bailed early for an \
              unrelated reason there would be no receipt here at all"
         );
     }
@@ -651,11 +708,12 @@ mod tests {
             // The lease a sweep captured.
             arm("arm-old", "rdv-old", 1);
         }
+        append_content(events, &scope, "exec-swap", "content-swap", 2);
 
-        // The sweep's capture, taken off the projection the way phase 1 does — naming the
-        // rendezvous it rang and the arming it saw, both from the same read.
+        // The sweep's capture, taken by phase 1 itself — naming the rendezvous it rang and the
+        // arming it saw, both from the same read.
         let stale = vec![(
-            capture_like_the_sweep(events, &scope, "exec-swap", "session-p"),
+            captured_by_the_sweep(events, "exec-swap", "session-p"),
             WakeConsumeReason::Rung,
         )];
 
@@ -665,7 +723,7 @@ mod tests {
             let request = graphhelm_events::PreparedAppend::new(
                 scope.clone(),
                 stream.clone(),
-                2,
+                3,
                 vec![NewEvent::new(
                     OpaqueId::parse("arm-new").unwrap(),
                     actor.clone(),
@@ -778,22 +836,23 @@ mod tests {
             store.append_atomic(&request).unwrap();
         };
 
-        // The lease that exists when the sweep looks.
+        // The lease that exists when the sweep looks, and the content that makes it due.
         arm("arm-before", 0, 1);
+        append_content(events, &scope, "exec-rearm", "content-rearm", 2);
 
-        // THE SWEEP CAPTURES HERE — before the sleeper wakes. Built the way phase 1 builds it,
-        // off the projection, so a corrupted fold moves this and the live lease TOGETHER just
-        // as it would in production. Its ring already crossed, which is why the reason is Rung.
+        // THE SWEEP CAPTURES HERE — before the sleeper wakes. Taken by phase 1 itself, so a
+        // corrupted fold moves this and the live lease TOGETHER just as it would in production.
+        // Its ring already crossed, which is why the reason is Rung.
         let stale = vec![(
-            capture_like_the_sweep(events, &scope, "exec-rearm", "session-p"),
+            captured_by_the_sweep(events, "exec-rearm", "session-p"),
             WakeConsumeReason::Rung,
         )];
 
-        // Now the sleeper wakes and re-arms — same session, same rendezvous. Both arms land
-        // BEFORE the recorder runs: this is the OUT-of-window slice, the one the sequence pin
-        // cannot reach. An in-window variant would pass because of that fix and prove nothing
-        // about this defect.
-        arm("arm-after", 1, 2);
+        // Now the sleeper wakes and re-arms — same session, same rendezvous, cursor at the
+        // content it just read. Both arms land BEFORE the recorder runs: this is the
+        // OUT-of-window slice, the one the sequence pin cannot reach. An in-window variant
+        // would pass because of that fix and prove nothing about this defect.
+        arm("arm-after", 2, 3);
 
         let recorded = record_consumptions(events, "exec-rearm", &stale);
 
@@ -867,11 +926,12 @@ mod tests {
             .unwrap();
             store.append_atomic(&request).unwrap();
         }
+        append_content(events, &scope, "exec-live", "content-l", 2);
         let recorded = record_consumptions(
             events,
             "exec-live",
             &[(
-                capture_like_the_sweep(events, &scope, "exec-live", "session-l"),
+                captured_by_the_sweep(events, "exec-live", "session-l"),
                 WakeConsumeReason::Rung,
             )],
         );

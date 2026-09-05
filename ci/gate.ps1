@@ -109,6 +109,63 @@ $toolchain = '+1.97.1'
 # already runs merge-proof behind; here it is what `Invoke-Stage` poisons `$LASTEXITCODE` with.
 $MuteStageExitCode = 99
 $failed = @()
+# #822: how many test binaries predated this run's start. Kept apart from $failed because it is
+# not a failure of the code under test: it says whether the other stages measured this tree at all.
+$staleBinaryCount = 0
+
+# #822: A STALE TEST BINARY IS NOT A THIRD FAILURE. The freshness cross-check used to join $failed as
+# a peer of 'workspace tests', and the summary line printed the two side by side -- so a reader
+# went looking for the bug in 'workspace tests' when there had been no measurement of this head at
+# all: those binaries were built from the previous head, which is a DIFFERENT PROGRAM, not a flaky
+# result. The status stays RED (fail closed, as before); what changes is that the verdict says which
+# of the two happened. The manifest already carries the same distinction as `instrumentSuspect`.
+# THE ARMING SITE AND THE FILTER MUST SPELL IT THE SAME WAY, and a constant is the only version of
+# that sentence a rename cannot break. #822 separated the cross-check from the reds it invalidates by
+# EXCLUDING it from the peer list by name -- so the entry appended two thousand lines below and the
+# name filtered here were two copies of one string with nothing holding them together.
+#
+# Measured before this change: renaming only the arming literal (one hyphen, the most ordinary edit
+# anyone makes to a message) left ci/gate-verdict.tests.ps1 at 18/18 while the cross-check reappeared
+# in the peer list -- #822's defect back, silently, at the next rename. The cells could not see it
+# because they hand the decision the literal themselves.
+#
+# A cell that watches for the drift would have been the other remedy. This one removes the drift.
+$FreshnessStageName = 'binary freshness cross-check'
+
+function Get-GateVerdictLines {
+    param(
+        [AllowEmptyCollection()] [string[]] $Failed,
+        [int] $StaleBinaryCount,
+        # THE NAME IS PASSED IN, not repeated here. It is the same string the cross-check appends to
+        # `$failed` two thousand lines below, and the two used to be independent literals: renaming
+        # only the arming one left ci/gate-verdict.tests.ps1 at 18/18 while the cross-check went back
+        # to being printed as a peer of the reds it invalidates -- #822's defect, restored silently
+        # at the next rename, because the cells hand this function the literal themselves.
+        #
+        # A parameter keeps the function extractable (the suite cuts it out by anchor and dot-sources
+        # it alone, so a script-scope constant would not travel with it) AND lets the caller be the
+        # single place the string is written.
+        [Parameter(Mandatory)] [string] $FreshnessStageName
+    )
+    $lines = New-Object System.Collections.Generic.List[string]
+    # The cross-check's own entry is never printed as a peer; it is the frame the others are read in.
+    # ORDINAL, not -cne: PowerShell's case-sensitive operators are still culture comparisons (#753).
+    $others = @($Failed | Where-Object { -not [string]::Equals($_, $FreshnessStageName, [System.StringComparison]::Ordinal) })
+    if ($StaleBinaryCount -gt 0) {
+        $lines.Add("[gate] NOT A MEASUREMENT: $StaleBinaryCount test binary(ies) predate this run's start, so every stage that ran a test binary measured a DIFFERENT PROGRAM than this run's tree. This run's stage results are not readable as results for this head.")
+        if ($others.Count -gt 0) {
+            $lines.Add("[gate] RED - stages that failed while measuring that other program (not findings about this head): $($others -join ', ')")
+        } else {
+            $lines.Add('[gate] RED - no stage failed, and none of them measured this head.')
+        }
+        return $lines.ToArray()
+    }
+    if ($others.Count -gt 0) {
+        $lines.Add("[gate] RED - failed stages: $($others -join ', ')")
+    }
+    return $lines.ToArray()
+}
+# (end #822)
 $stageRecords = New-Object System.Collections.Generic.List[object]
 $runStartUtc = [DateTime]::UtcNow
 # #700: the slot this run holds, and how far it got. `slotOutcome` is Enter-GateSlot's word;
@@ -2092,8 +2149,12 @@ if ($artifactManifest -and $artifactManifest.artifacts) {
     $staleCount = @($artifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false }).Count
     if ($staleCount -gt 0) {
         Write-Host ''
-        Write-Host "[gate] FRESHNESS CROSS-CHECK: $staleCount test binary(ies) predate this run's start - see the manifest." -ForegroundColor Red
-        $failed += 'binary freshness cross-check'
+        # #822: the message says what it does to its siblings. A stale binary is a different program,
+        # so the stages that ran it did not measure this tree; their reds are not findings about it.
+        Write-Host "[gate] FRESHNESS CROSS-CHECK: $staleCount test binary(ies) predate this run's start, so every stage that ran a test binary measured a DIFFERENT PROGRAM than this run's tree - see the manifest. The other stage results are not readable as results for this head." -ForegroundColor Red
+        # The same constant the verdict filters by: one name, one place. (#822 follow-up.)
+        $failed += $FreshnessStageName
+        $staleBinaryCount = $staleCount
     }
 }
 
@@ -2147,7 +2208,11 @@ if ($script:headMovedDuringRun) {
     $failed += 'HEAD moved during the run'
 }
 if ($failed.Count -gt 0) {
-    Write-Host "[gate] RED - failed stages: $($failed -join ', ')" -ForegroundColor Red
+    # #822: the cross-check is printed as the FRAME the other reds are read in, never as their peer.
+    foreach ($line in (Get-GateVerdictLines -Failed $failed -StaleBinaryCount $staleBinaryCount `
+                -FreshnessStageName $FreshnessStageName)) {
+        Write-Host $line -ForegroundColor Red
+    }
     exit 1
 }
 Write-Host '[gate] GREEN - every stage passed.' -ForegroundColor Green

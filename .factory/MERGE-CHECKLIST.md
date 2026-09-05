@@ -27,6 +27,48 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    the manifest it names and confirm the stage list is green. Exit 3 (ABSENT) means nobody
    ran the gate on this head — a gate run owed, not a merge; exit 2 (NOT) means a run exists and does
    not vouch — that is a finding. The two are different answers (#811 introduced the distinction). (Found by A's review
+   Running the gate yourself: **a gate launched inside a turn dies with the turn** (measured twice:
+   log ~700 bytes, task "alive", no signal). Launch it detached — `Start-Process … -PassThru`, PID and
+   exit code written to a file — the wrapper's PID is the only identifier you own. **Proof of life is the
+   child chain from that PID** (`Get-CimInstance Win32_Process | ? ParentProcessId -eq <pid>`, recursively)
+   **with a CPU delta on the descendant that compiles, and the stage banners advancing.** Log silence
+   mid-stage is capture, not death: the gate captures a stage's output and writes it when the stage ends
+   (`Start-Process -Redirect` and `*>` both grow the file — measured, H), so a quiet log says nothing
+   either way. `Get-Process -Id` answers *alive*, not *progressing* — the wrapper's CPU is 0 by
+   construction (it waits for its child), so a wedged gate looks identical to a building one (A, J, G).
+   The inverse holds too (M): a background task that ended does not prove the process ended — look for a
+   live chain before relaunching on the same target; two gates on one branch are two manifest commits
+   racing. With an isolated `CARGO_TARGET_DIR` there is nothing to contaminate — but width is bounded:
+   `D:` is one platter (measured 2026-09-05: 121 `*target*` directories on it; an `ls` took tens of
+   seconds under five gates; with five running the box was measured STALLED — 26 cargo + 100 rustc,
+   17.8 s of CPU in 36 min, D: at 2685 % disk time, SSDs at 0–3 %). So the ceiling is **one gate on the
+   HDD (`D:`) plus one on the SSD (`E:/<lane>-targets`, while `E:` has >30 GB free — `Get-PSDrive E`
+   first)**; never `C:` (the system disk — a full `C:` takes the machine down; the disk-fill incident) or
+   `F:` (the repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is
+   2–9 cargo processes by design (measured): `Get-CimInstance Win32_Process | ? { $_.Name -eq
+   'powershell.exe' -and $_.CommandLine -match '(-File\s+\S*|&\s*\S*)ci[\\/]gate\.ps1' }`, keeping only
+   those with ≥1 live descendant. Two things this pattern had to survive, both measured: `[\\/]`, not
+   `[\/]` — in .NET `\/` is an escaped slash, so `[\/]` misses every Windows path (`'a\b' -match 'a[\/]b'`
+   → False) and under-counting fails OPEN (a low number says "launch"); and the `-Command … & ./ci/gate.ps1`
+   launch shape beside `-File`. **A positive control for a matcher comes from the POPULATION — real
+   command lines copied from the process table — not from your head; a fixture shaped like the pattern
+   passes by construction.** The controls this line was tested against (expected 1,1,1,0):
+   ```
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ci\gate.ps1                                  -> 1
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ci/gate.ps1                                    -> 1
+   powershell.exe … -Command "$env:CARGO_TARGET_DIR = \"D:\c-753-targets\"; & ./ci/gate.ps1 -SkipPostgres" -> 1
+   "C:\Program Files\Git\bin\bash.exe" -c -l "grep -c gate.ps1 ci/gate.ps1"                              -> 0
+   ```
+   A plain `CommandLine -match 'gate.ps1'` returned 11 for 3 real gates. At most one other live gate, on
+   the other spindle.
+   A target costs ~10.7 GB (measured); check the disk before you add one. New gates enter in
+   review-ready order. Proof of life with numbers (H): read
+   `(Get-Process -Id <pid>).CPU` twice, 30 s apart — dead = the read fails, wedged = equal, progressing
+   = greater — on the compiling descendant, not the wrapper. The package-cache lock
+   (`$CARGO_HOME/.package-cache`, one per machine, unchanged by `CARGO_TARGET_DIR`) is still shared:
+   on `Blocking waiting for file lock on package cache`, **wait** — the lock frees itself and the gate
+   proceeds; it is contention, not contamination and not a lost gate; **do not relaunch** (#833's
+   matcher).
    of this very file: no line asked whether the gate ran.)
 3. **The PR's file list is exactly what it claims.** `gh pr view N --json files` — a docs-only PR that
    shows a production file is a REWIND of the base, not a diff: a branch collapsed with `reset --soft`
@@ -44,8 +86,19 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    gh pr view N --json title   --jq .title                        # the squash's FIRST line (COMMIT_OR_PR_TITLE)
    gh pr view N --json body    --jq .body
    gh pr view N --json commits --jq '.commits[].messageBody'      # what a SQUASH carries
-   gh api graphql -f query='{repository(owner:"stabem",name:"GraphHelm"){pullRequest(number:N){closingIssuesReferences(first:10){nodes{number}}}}}'
+   # PowerShell eats the quotes of an inline query; a JSON file works from both shells (measured):
+   # q.json = {"query":"{repository(owner:\"stabem\",name:\"GraphHelm\"){pullRequest(number:N){closingIssuesReferences(first:10){nodes{number}}}}}"}
+   gh api graphql --input q.json --jq '[.data.repository.pullRequest.closingIssuesReferences.nodes[].number] | @csv'
+   # @csv, not join(","): PowerShell 5.1 strips the inner quotes of a native argument even inside '…',
+   # so join(",") reaches gh as join(,) and fails; @csv needs no quotes and prints nothing (not an error)
+   # when the parser links no issue. Measured from a .ps1 and from bash against #746 (735) and #825 (empty).
+   # (-f query=@file does NOT work: the @ is sent literally)
    ```
+   A keyword inside backticks or a code fence hides it from the parser; it does not hide it from the
+   squash. Measured on #825, not yet merged: the body's `` `Closes #822` `` is in a code span and the
+   parser reads nothing, while two commit bodies (`bdb8061b`, `78c3887f`) carry `Closes #822` in plain text — the
+   squash message is built from those. The first half is a reading; what the squash does is what
+   item 8 reads after the fact.
    `closingIssuesReferences` reads the BODY only; the squash acts on the TITLE plus COMMIT MESSAGES
    (repository setting `squash_merge_commit_title: COMMIT_OR_PR_TITLE` — found by ISSUES 3 on this PR). All four,
    `grep -iEo '(close[sd]?|fixe[sd]?|resolve[sd]?|refs?) #[0-9]+'`, and the union must equal what
@@ -58,7 +111,10 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    Each item is either closed by another pass, marked non-blocking BY ITS AUTHOR, or written into
    the merge comment as accepted risk with an issue number.
    A *carry* is a review-shaped comment by a lane other than the author that names the sha it
-   measured. It lives in one of two boxes; list both, every time:
+   measured. **Counting passes reads BOTH surfaces** — `repos/O/R/issues/N/comments` AND
+   `repos/O/R/pulls/N/reviews` — one surface read as the whole nearly blocked #833, which had two passes
+   and showed one (#840). **A zero on either surface is checked against a known positive** (a PR you know
+   has a pass there) before it is read as "none". Every time:
    ```
    gh api --paginate repos/stabem/GraphHelm/issues/N/comments --jq '.[] | select(.user.login != "chatgpt-codex-connector[bot]") | "\(.created_at) \(.body[0:80])"'
    gh api repos/stabem/GraphHelm/pulls/N/reviews --jq '.[] | "\(.submitted_at) \(.state) \(.body[0:80])"'

@@ -72,7 +72,19 @@ It runs rustfmt, Clippy with `-D warnings`, workspace tests, the CLI suites, the
 baseline compatibility and conformance commands, locked metadata, a whitespace check, and the
 ignored PostgreSQL matrix twice - once in the C locale and once under a real collation, because the
 C locale cannot reveal collation-dependent ordering defects. `-SkipPostgres` exists for changes that
-cannot touch persistence; a run using it is not a full gate and must be reported as such.
+cannot touch persistence; a run using it is not a full gate and must be reported as such. The slot
+lock (`SLOT.lock`) exists for a **shared** `CARGO_TARGET_DIR`; with an isolated target directory
+per lane there is nothing to contaminate — but `D:` is one platter and five concurrent gates stalled the
+machine (measured 2026-09-05), so the ceiling is **one gate on the HDD plus one on the SSD** (`E:/<lane>-targets`
+while `E:` keeps >30 GB free — `Get-PSDrive E` first), never `C:` (the system disk: a full `C:` takes the
+machine down) or `F:` (the repository disk, 15 GB free). Before launching, count LAUNCHES, not cargos — one
+gate is 2–9 cargo processes: live `powershell.exe` launching `ci/gate.ps1` (by `-File` or by `-Command … &`;
+the regex in `.factory/MERGE-CHECKLIST.md`, tested against real command lines) with at least one descendant;
+at most one other live gate, on the other spindle. Proof of life is a CPU delta on the
+compiling descendant read 30 s apart (dead = read fails, wedged = equal, progressing = greater). The package-cache lock
+(`$CARGO_HOME/.package-cache`, one per machine, unchanged by `CARGO_TARGET_DIR`) is still shared: on
+`Blocking waiting for file lock on package cache`, wait — it frees itself and the gate proceeds; it is not a
+lost gate; do not relaunch (see #833's matcher).
 
 **When you need to check the exit code, redirect to a file and check the exit code of that same
 command - never pipe the live run.** From PowerShell: `./ci/gate.ps1 > gate.log 2>&1; echo $LASTEXITCODE`.
@@ -195,10 +207,15 @@ re-asked, or audited; a carry without the head sha covers nothing.
 ### Peer review and peer merge (owner order, 2026-09-04)
 
 - A PR needs **two passes from two different lanes, neither the author**, each naming the sha it
-  measured. Say "no open roots **against `<sha>`**", never "no open roots".
+  measured. Say "no open roots **against `<sha>`**", never "no open roots". **Whoever presses is a
+  third lane** — neither the author nor either reviewer; with only two lanes available, the Observador
+  presses under interim authority and writes that in the merge comment.
 - Approval is the reviewer's **word in the text**. GitHub cannot record it — self-approval is
   refused on a shared account — so every review is `COMMENTED`, and a review whose body declines
-  to verify ("not a pin", "I will not record this as verified") is **not** a pass.
+  to verify ("not a pin", "I will not record this as verified") is **not** a pass. The identity line
+  records the head at the moment of writing, not the verdict: **the sha that holds the button is the
+  one in the comment that states the verdict** — not the most repeated, not the most recent.
+- Passes live on two surfaces, `issues/N/comments` and `pulls/N/reviews`; count both (#840).
 - Read each carry's **body** for declared limits and roots without a verdict. Each is closed by
   another pass, marked non-blocking by its author, or written into the merge comment as accepted
   risk with an issue number. Thread counts do not see findings written in review bodies.
@@ -230,7 +247,8 @@ squash actually carried; `gh issue view` for every issue it names; the branch en
   and not others (`origin/main:core/x`); git then says "ambiguous argument" or "invalid object name".
   Do not learn the rule — use the sha instead of the ref, or `MSYS_NO_PATHCONV=1`.
 - Bash: `$?` after a pipe is the last command's. PowerShell: after `| Select-Object -First N` the exit
-  code is not the command's — different PATHs read `-1` in different quadrants. Test the value.
+  code is not the command's — different PATHs read `-1` in different quadrants. Test the value. A gate's
+  log going quiet mid-stage is capture (output written when the stage ends), not death.
 - `git ls-tree` without `--full-tree` is scoped to the CWD prefix and returns empty with rc=0.
 - A zero produced by a filter you wrote (`grep`, `head`, a regex calibrated on the old format) is
   a measurement of the filter. Put a known positive in the same command.

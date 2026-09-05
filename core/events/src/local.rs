@@ -3339,12 +3339,18 @@ fn repair_layout_locked(root: &Path, root_handle: &File) -> Result<(), EventRepo
 #[cfg(unix)]
 fn lock_root_exclusive(root: &File) -> Result<(), EventRepositoryError> {
     root.lock_exclusive()
-        .map_err(|_| EventRepositoryError::Storage)
+        .map_err(|error| EventRepositoryError::StorageAt {
+            site: "lock-root:exclusive",
+            os: error.raw_os_error(),
+        })
 }
 
 #[cfg(unix)]
 fn unlock_root(root: &File) -> Result<(), EventRepositoryError> {
-    FileExt::unlock(root).map_err(|_| EventRepositoryError::Storage)
+    FileExt::unlock(root).map_err(|error| EventRepositoryError::StorageAt {
+        site: "lock-root:release",
+        os: error.raw_os_error(),
+    })
 }
 
 #[cfg(windows)]
@@ -3583,7 +3589,10 @@ fn file_identity(file: &File) -> Result<FileIdentity, EventRepositoryError> {
     let success =
         unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) };
     if success == 0 {
-        return Err(EventRepositoryError::Storage);
+        return Err(EventRepositoryError::StorageAt {
+            site: "file-identity",
+            os: std::io::Error::last_os_error().raw_os_error(),
+        });
     }
     // SAFETY: successful GetFileInformationByHandle initialized all fields.
     let information = unsafe { information.assume_init() };
@@ -3850,7 +3859,10 @@ fn create_repository_lock(_directory: &File, path: &Path) -> Result<File, EventR
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path.join("repository.lock"))
-        .map_err(|_| EventRepositoryError::Storage)?;
+        .map_err(|error| EventRepositoryError::StorageAt {
+            site: "repository-lock:create",
+            os: error.raw_os_error(),
+        })?;
     validate_opened_regular(&file)?;
     Ok(file)
 }

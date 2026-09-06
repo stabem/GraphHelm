@@ -188,23 +188,102 @@ fn shell_and_tests_are_always_tier_1_even_for_an_innocent_looking_program() {
     assert_eq!(tests.tier, IsolationTier::Tier1);
 }
 
+/// One row of the no-echo population: an input built to PRODUCE one refusal variant, with the
+/// caller-controlled sentinel placed where that variant's input goes.
+struct NoEchoRow {
+    name: &'static str,
+    sentinel: &'static str,
+    call: ToolCall,
+    caller: &'static str,
+    lease: ToolLease,
+    expect: fn(&BrokerRefusal) -> bool,
+}
+
+/// A refusal names the rule and the tool, never content: a denied patch, argument list, program
+/// name or caller identifier must not travel into logs through the error path.
+///
+/// ONE population, not one per variant (#860). The first version of this guard drove a listed
+/// program with a sentinel ARGUMENT, so it could only ever obtain the allowlist refusal -- when
+/// #845 added `ProgramNameInvalid`, the new door was protected by a cell of its own and this guard
+/// stayed green about a variant it never constructed. Two guards, one property, two disjoint
+/// populations: if a variant gains a field, the guard that never builds it cannot notice.
+///
+/// Each row asserts the variant it expects BEFORE asserting absence: a row that quietly stops
+/// producing its door would otherwise be testing the wrong one and passing. That precondition
+/// caught this file's own author on the first run -- a caller spelled in uppercase fails actor
+/// validation before mismatch is checked -- which is why every row carries a sentinel shaped to
+/// reach ITS door. The row name travels into every failure, so the output says which population
+/// caught it.
 #[test]
 fn refusals_never_echo_call_arguments() {
-    // A refusal names the rule and the tool, never content: a denied patch or argument list
-    // must not travel into logs through the error path.
-    let lease = full_lease("agent-builder");
-    let sentinel = "SENTINEL-argument-value";
-    let refusal = authorize(
-        &ToolCall::Shell(ShellAction {
-            program: "curl".to_owned(),
-            arguments: vec![sentinel.to_owned()],
-        }),
-        &lease,
-        "agent-builder",
-    )
-    .unwrap_err();
-    let rendered = format!("{refusal} {refusal:?}");
-    assert!(!rendered.contains(sentinel));
+    let shell = |program: &str, argument: &str| {
+        ToolCall::Shell(ShellAction {
+            program: program.to_owned(),
+            arguments: vec![argument.to_owned()],
+        })
+    };
+    let rows = [
+        NoEchoRow {
+            name: "unlisted program, sentinel in the argument (the original population)",
+            sentinel: "SENTINEL-argument-value",
+            call: shell("curl", "SENTINEL-argument-value"),
+            caller: "agent-builder",
+            lease: full_lease("agent-builder"),
+            expect: |r| matches!(r, BrokerRefusal::ProgramDenied),
+        },
+        NoEchoRow {
+            name: "malformed program: the sentinel IS the name (#845's new door)",
+            sentinel: "SENTINEL/bin",
+            call: shell("SENTINEL/bin", "status"),
+            caller: "agent-builder",
+            lease: full_lease("agent-builder"),
+            expect: |r| matches!(r, BrokerRefusal::ProgramNameInvalid),
+        },
+        NoEchoRow {
+            name: "capability missing, sentinel in the argument",
+            sentinel: "SENTINEL-argument-value",
+            call: shell("git", "SENTINEL-argument-value"),
+            caller: "agent-builder",
+            lease: ToolLease {
+                capabilities: [Capability::RepositoryRead].into_iter().collect(),
+                ..full_lease("agent-builder")
+            },
+            expect: |r| matches!(r, BrokerRefusal::CapabilityMissing { .. }),
+        },
+        NoEchoRow {
+            name: "actor mismatch: a VALID foreign caller is the sentinel (lease_actor may show; the caller must not)",
+            sentinel: "sentinel-foreign-caller",
+            call: shell("git", "status"),
+            caller: "sentinel-foreign-caller",
+            lease: full_lease("agent-builder"),
+            expect: |r| matches!(r, BrokerRefusal::ActorMismatch { .. }),
+        },
+        NoEchoRow {
+            name: "actor invalid: an INVALID caller is the sentinel",
+            sentinel: "SENTINEL-CALLER",
+            call: shell("git", "status"),
+            caller: "SENTINEL-CALLER",
+            lease: full_lease("agent-builder"),
+            expect: |r| matches!(r, BrokerRefusal::ActorInvalid),
+        },
+    ];
+    for row in rows {
+        let refusal = authorize(&row.call, &row.lease, row.caller).expect_err(&format!(
+            "row [{}] must be refused, or it tests nothing",
+            row.name
+        ));
+        assert!(
+            (row.expect)(&refusal),
+            "row [{}] produced a different variant than it was built for: {refusal:?}",
+            row.name
+        );
+        let rendered = format!("{refusal} {refusal:?}");
+        assert!(
+            !rendered.contains(row.sentinel),
+            "row [{}]: caller content travelled into the refusal: {rendered}",
+            row.name
+        );
+    }
 }
 
 #[test]

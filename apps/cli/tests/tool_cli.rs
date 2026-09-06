@@ -147,6 +147,45 @@ fn a_tier_1_apply_leaves_project_and_staging_untouched_after_the_call() {
     assert!(staging_left.is_empty(), "staging must be empty afterward");
 }
 
+/// #860, the CLI twin of #845's end-to-end cell: the operator-facing envelope names the NEW rule
+/// for a malformed program, and never echoes the name. `GHCLI013` carries the rule string by
+/// construction (`tool/mod.rs`), which is exactly the sentence that stops being true the day
+/// someone normalises messages -- so it is pinned at the last surface an operator reads.
+#[test]
+fn a_malformed_shell_program_is_ghcli013_naming_the_shape_rule_without_echo() {
+    let dirs = dirs();
+    let malformed = "SENTINEL-bin/curl";
+    let request = write_request(
+        dirs.project.parent().unwrap(),
+        &format!(
+            r#"{{"tool":"shell","program":"{malformed}","arguments":["https://example.com"]}}"#
+        ),
+    );
+    let output = base_invoke(&dirs, &request)
+        .args(["--capability", "shell.execute", "--allow-program", "git"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let reply = json(&output.stdout);
+    assert_eq!(reply["ok"], Value::Bool(false));
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI013_TOOL_DENIED");
+    let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("program_name_invalid"),
+        "the operator must be told to fix the NAME, not the lease: {message}"
+    );
+    let envelope = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !envelope.contains("SENTINEL"),
+        "the malformed name reached the envelope: {envelope}"
+    );
+    let staging_left: Vec<_> = std::fs::read_dir(&dirs.staging)
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert!(staging_left.is_empty(), "a denial must not provision");
+}
+
 #[test]
 fn a_non_allowlisted_shell_program_is_ghcli013_and_staging_untouched() {
     let dirs = dirs();

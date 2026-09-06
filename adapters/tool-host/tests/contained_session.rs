@@ -270,6 +270,7 @@ fn a_lost_capture_is_refused_rather_than_returned() {
         timed_out: false,
         readers_abandoned: true,
         reader_lost: false,
+        tree_kill: None,
         cancelled: false,
     };
 
@@ -303,6 +304,7 @@ fn an_ordinary_capture_passes_through_untouched() {
         timed_out: false,
         readers_abandoned: false,
         reader_lost: false,
+        tree_kill: None,
         cancelled: false,
     };
 

@@ -296,6 +296,7 @@ impl ToolHost {
                     // Nothing was read because nothing ran.
                     readers_abandoned: false,
                     reader_lost: false,
+                    tree_kill: None,
                     // A refusal before the spawn already carries its own code through
                     // `host_error_code`; this arm is about a child that never existed.
                     cancelled: false,
@@ -547,6 +548,7 @@ mod disposition_tests {
             timed_out,
             readers_abandoned,
             reader_lost: false,
+            tree_kill: None,
             cancelled,
         }
     }

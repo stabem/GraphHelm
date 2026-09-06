@@ -1295,3 +1295,162 @@ fn a_descendant_that_left_the_process_group_is_still_stopped() {
          kill went to the original process group and the escapee had already left it"
     );
 }
+
+/// #748, RED FIRST: the record must carry what the tree kill could PROVE, not merely the fact that
+/// a kill was issued.
+///
+/// PR #805 made `terminate` answer -- `Complete`, `BoundReached { passes, remaining }`, or
+/// `SweepUnavailable` -- and then every call site in `process.rs` dropped that answer by name,
+/// which is the half its own body says it did not finish. **While the answer was dropped, a
+/// `BoundReached` was indistinguishable from a clean tree at the only place a consumer reads:
+/// `CapturedProcess`.** That is #748's false GREEN, and it lives at the record rather than at the
+/// kill -- the sweep can be perfect and the record can still lie about it.
+///
+/// The assertion is on the FIELD and not on a log line: a value printed somewhere is not a value a
+/// caller can act on.
+#[test]
+fn the_record_carries_what_the_tree_kill_could_prove() {
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let root = workspace.path().to_path_buf();
+
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+    let handle = {
+        let root = root.clone();
+        let signal = signal.clone();
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &["sleep".to_owned()],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    // Generous on purpose: the DEADLINE must not be what stops this call, or the
+                    // cell would be measuring the timeout path and reporting it as the cancel one.
+                    timeout: Duration::from_secs(120),
+                    max_output_bytes: 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    // The child must actually be up before the cancel, or a kill that reached nothing would still
+    // satisfy the assertion below and the cell would pass without exercising a tree kill at all.
+    std::thread::sleep(Duration::from_millis(500));
+    signal.cancel();
+
+    let captured = handle
+        .join()
+        .expect("the call thread returns")
+        .expect("a cancelled call still yields a capture");
+
+    assert!(
+        captured.cancelled,
+        "HARNESS-BROKE: this call was not stopped by the cancellation, so whatever `tree_kill` \
+         holds was not produced by the path this cell exists to measure"
+    );
+    assert_eq!(
+        captured.tree_kill,
+        Some(graphhelm_process_tree::TerminationOutcome::Complete),
+        "the kill ran and proved the tree gone, and the record must SAY so. `None` here means the \
+         outcome is still being dropped at the call site, which is exactly the state in which a \
+         `BoundReached` would read as a clean tree (#748)"
+    );
+}
+
+/// #748, the control that keeps the field from becoming a constant.
+///
+/// A child that exits on its own is never swept, and `Complete` there would put a measurement that
+/// never happened into the record. `None` is not a weaker `Complete`; it is a different answer to a
+/// different question, and this cell is what stops the wiring from being an unconditional
+/// `Some(Complete)` -- the cheapest way to turn the cell above green while saying nothing true.
+///
+/// **Honest about its own colour:** before the wiring this passes vacuously, because every
+/// construction site says `None`. It earns its keep the moment the other cell is made to pass.
+#[test]
+fn a_capture_that_needed_no_kill_says_so_rather_than_claiming_a_clean_sweep() {
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let captured = run(workspace.path(), &["echo", "done"], &limits());
+
+    assert_eq!(
+        captured.exit_code,
+        Some(0),
+        "HARNESS-BROKE: the fixture did not exit cleanly, so this run does not observe the \
+         no-kill path"
+    );
+    assert_eq!(
+        captured.tree_kill, None,
+        "nothing was killed, so there is no sweep result to report. Answering `Complete` here \
+         would claim a measurement that never ran"
+    );
+}
+
+/// #748, RED FIRST on the path where the record was most likely to lie.
+///
+/// The twin above cancels a child with no descendants, so `terminate` has little to sweep. This one
+/// reuses the escape fixture -- a grandchild that calls `setsid` before writing a byte -- so the
+/// subtree sweep #805 added is genuinely exercised, and asserts that **what the sweep concluded
+/// reaches the record**. The escapee is precisely the process whose survival the capture would
+/// otherwise report as a clean EOF and a clean tree.
+///
+/// It shares its fixture and its cancellation with
+/// `a_descendant_that_left_the_process_group_is_still_stopped` on purpose, and differs from it in
+/// its SUBJECT: that cell asks the operating system whether the escapee is gone, this one asks the
+/// record what it says about it. A green there and a red here is the whole of #748.
+#[cfg(unix)]
+#[test]
+fn the_record_reports_the_sweep_that_chased_an_escaping_descendant() {
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let root = workspace.path().to_path_buf();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the readiness listener has an address")
+        .to_string();
+
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+    let handle = {
+        let root = root.clone();
+        let signal = signal.clone();
+        std::thread::spawn(move || {
+            run_in_workspace(
+                &root,
+                &fake_tool(),
+                &["spawn-escaping-grandchild".to_owned(), report_address],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    timeout: Duration::from_secs(120),
+                    max_output_bytes: 1024,
+                },
+                Some(&signal),
+            )
+        })
+    };
+
+    const READY_PATIENCE: Duration = Duration::from_secs(20);
+    let reported = wait_for_reported_grandchild(listener, READY_PATIENCE);
+
+    signal.cancel();
+    let captured = handle
+        .join()
+        .expect("the call thread returns")
+        .expect("a cancelled call still yields a capture");
+
+    assert!(
+        reported.is_some(),
+        "HARNESS-BROKE: the fixture never reported a grandchild in {READY_PATIENCE:?}, so no \
+         descendant ever escaped and this run says nothing about a sweep"
+    );
+    assert_eq!(
+        captured.tree_kill,
+        Some(graphhelm_process_tree::TerminationOutcome::Complete),
+        "the sweep chased the escapee and finished, and the record must carry that conclusion. \
+         `None` means the answer is still dropped at the call site; a `BoundReached` would mean \
+         the escapee outlived the sweep, and BOTH are things a caller must be able to read (#748)"
+    );
+}

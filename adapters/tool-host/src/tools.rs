@@ -69,6 +69,7 @@ fn in_process(stdout: Vec<u8>, truncated: bool) -> CapturedProcess {
         // No pipe and no reader: Tier 0 synthesizes its bytes rather than reading them.
         readers_abandoned: false,
         reader_lost: false,
+        tree_kill: None,
         // Tier 0 spawns nothing, so no cancellation could have stopped a child here. A
         // measurement about a path with no child, not a default.
         cancelled: false,
@@ -317,6 +318,7 @@ mod tests {
             timed_out: false,
             readers_abandoned,
             reader_lost: false,
+            tree_kill: None,
             cancelled: false,
         }
     }

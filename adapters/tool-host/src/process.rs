@@ -273,18 +273,22 @@ pub(crate) fn run_supervised(
             }
             Ok(None) => {
                 if interruptible && cancel.is_some_and(CancelSignal::is_cancelled) {
-                    // DROPPED BY NAME, AND THIS IS THE HALF #748 DOES NOT FINISH. `terminate`
-                    // now answers whether the sweep completed or hit its pass bound with
-                    // descendants still appearing; `BoundReached` means the tree may not be gone.
-                    // Nothing carries that to a caller yet, so the value is `#[must_use]` and is
-                    // discarded HERE, visibly, rather than silently at the call.
+                    // STILL DROPPED BY NAME, and #748 did not change that here -- what changed
+                    // is the reason. `run_in_workspace` now keeps this answer, because it builds a
+                    // `CapturedProcess` to put it in. THIS function does not: `supervise` returns
+                    // `SupervisedOutcome`, and its only consumer (`workspace.rs`) turns a
+                    // cancellation into `HostError::Cancelled` -- an error with no room for a
+                    // measurement and no reader for one.
                     //
-                    // Deliberately NOT folded into `readers_abandoned`, which is the cheap move
+                    // Carrying it here would mean widening `HostError`, and a value nothing reads
+                    // is not containment, it is a field to maintain. Provisioning CAN leave an
+                    // escapee the same way a tool call can, so the gap is real and FILED rather
+                    // than fixed by a value with no consumer: issue 868.
+                    //
+                    // Not folded into `readers_abandoned` there either, which was the cheap move
                     // available: that field means "something escaped the process group", and
                     // `reader_lost` was added BESIDE it rather than folded in, for the reason its
                     // own doc gives -- two causes under one name cannot be told apart afterwards.
-                    // A third cause earns its own field, and that is `CapturedProcess` across
-                    // thirteen construction sites, which belongs in its own commit.
                     let _ = graphhelm_process_tree::terminate(
                         child.id(),
                         graphhelm_process_tree::for_thread(group),
@@ -446,6 +450,24 @@ pub struct CapturedProcess {
     /// reaching it -- an allocation failure under memory pressure, or a panic inside the head/tail
     /// elision. Rare, and the rarity is exactly why it would never be noticed.
     pub reader_lost: bool,
+    /// What the tree kill could actually PROVE, or `None` when no kill was attempted (#748).
+    ///
+    /// **`None` is not `Complete`.** A child that exited on its own was never swept, and answering
+    /// `Complete` there would put a measurement that never happened into the record. They are
+    /// different questions and this field keeps them apart.
+    ///
+    /// **Why the whole outcome and not a bool.** `BoundReached` means the sweep KNOWS descendants
+    /// were still appearing when it ran out of passes; `SweepUnavailable` means it could not look
+    /// at all. A bool folds "I know something survived" into "I cannot tell", and those two call
+    /// for opposite responses -- the first is a containment failure to act on, the second is a
+    /// missing instrument. That is the fold `reader_lost` was added BESIDE `readers_abandoned` to
+    /// avoid (#790), one field above this one.
+    ///
+    /// This is the half PR #805 named and did not finish. `terminate` has answered since
+    /// `e0df54f1` and every call site in this file dropped the answer by name; while it was
+    /// dropped a `BoundReached` read exactly like a clean tree. That is the false GREEN #748
+    /// exists to close, and it closes at the RECORD rather than at the kill.
+    pub tree_kill: Option<graphhelm_process_tree::TerminationOutcome>,
     /// Whether a raised [`CancelSignal`] is what stopped this child (#609, Codex).
     ///
     /// `timed_out = expired && !cancelled` removes the WRONG cause from the record; it does not
@@ -1422,6 +1444,9 @@ pub fn run_in_workspace(
     let deadline = Instant::now() + limits.timeout;
     let mut timed_out = false;
     let mut was_cancelled = false;
+    // `None` until a kill is ATTEMPTED. A child that exits on its own is never swept, and starting
+    // this at `Complete` would report a measurement that never ran (#748).
+    let mut tree_kill = None;
     let exit_status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -1437,11 +1462,17 @@ pub fn run_in_workspace(
                     // inherited stdout or stderr holds those pipes open, so the reader joins below
                     // block after the direct child is already reaped. The leak was the visible
                     // half; the wedged caller was the one that mattered.
-                    // Dropped by name, for the reason at the first call site.
-                    let _ = graphhelm_process_tree::terminate(
+                    //
+                    // #748: KEPT, not dropped. This is the only `terminate` in this crate whose
+                    // caller has a record to put the answer in, and until it did, a
+                    // `BoundReached` -- descendants still appearing when the sweep ran out of
+                    // passes -- reached the caller as a `CapturedProcess` indistinguishable from
+                    // a clean tree. The sweep landed in #805; this is where its conclusion stops
+                    // being thrown away.
+                    tree_kill = Some(graphhelm_process_tree::terminate(
                         child.id(),
                         graphhelm_process_tree::for_thread(group),
-                    );
+                    ));
                     let status = child.wait().ok();
                     // Cancellation WINS when both are true (Codex, #609). A cancel raised inside
                     // the last poll interval before the deadline leaves both conditions true at
@@ -1517,6 +1548,7 @@ pub fn run_in_workspace(
         cancelled: was_cancelled,
         readers_abandoned,
         reader_lost,
+        tree_kill,
     })
 }
 
@@ -1981,6 +2013,7 @@ mod tests {
             cancelled: false,
             readers_abandoned: false,
             reader_lost: true,
+            tree_kill: None,
         };
         assert!(
             matches!(
@@ -2010,6 +2043,7 @@ mod tests {
             cancelled: false,
             readers_abandoned: false,
             reader_lost: false,
+            tree_kill: None,
         };
         let passed = reject_lost_capture(ordinary).expect("an ordinary capture is not refused");
         assert_eq!(passed.stdout, b"ordinary output".to_vec());

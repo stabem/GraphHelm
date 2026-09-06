@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+mod support;
+use support::{RawResponse, parse_response, raw_request, split_url};
+
 // -------------------------------------------------------------------------------------------
 // Harness
 // -------------------------------------------------------------------------------------------
@@ -140,29 +143,6 @@ fn wait_for_health(base: &str) {
     }
 }
 
-struct RawResponse {
-    status: u16,
-    body: String,
-}
-
-fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
-    let (host, port, path) = split_url(url);
-    let mut stream = TcpStream::connect((host.as_str(), port))?;
-    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
-
-    let mut request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
-    if let Some(token) = token {
-        request.push_str(&format!("Authorization: Bearer {token}\r\n"));
-    }
-    request.push_str("\r\n");
-    stream.write_all(request.as_bytes())?;
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw)?;
-    parse_response(&String::from_utf8_lossy(&raw))
-}
-
 fn post_request(
     url: &str,
     token: &str,
@@ -201,39 +181,6 @@ fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Valu
 fn json_body(response: &RawResponse) -> Value {
     serde_json::from_str(&response.body)
         .unwrap_or_else(|error| panic!("response body was not JSON ({error}): {:?}", response.body))
-}
-
-fn split_url(url: &str) -> (String, u16, String) {
-    let rest = url
-        .strip_prefix("http://")
-        .expect("test URLs are http://host:port/path");
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, "/".to_owned()),
-    };
-    let (host, port) = authority
-        .split_once(':')
-        .expect("test URLs always carry a port");
-    (host.to_owned(), port.parse().unwrap(), path)
-}
-
-fn parse_response(text: &str) -> std::io::Result<RawResponse> {
-    let (head, body) = text
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no header/body split"))?;
-    let status_line = head
-        .lines()
-        .next()
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status line"))?;
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status code"))?;
-    Ok(RawResponse {
-        status,
-        body: body.to_owned(),
-    })
 }
 
 fn get_json(url: &str, token: Option<&str>) -> Value {

@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+mod support;
+use support::{RawResponse, parse_response, split_url};
+
 /// Owns the `graphhelm serve` child process and kills it on drop — `Drop::drop` still runs while
 /// a panicking assertion unwinds the test thread, so a failing test never leaks a listening
 /// server into the rest of the suite.
@@ -595,11 +598,6 @@ fn wait_for_health(base: &str) {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-struct RawResponse {
-    status: u16,
-    body: String,
 }
 
 /// A minimal HTTP/1.1 GET: connects, writes a request with `Connection: close` (so the server
@@ -1273,6 +1271,12 @@ fn connect_with_retry(address: &std::net::SocketAddr) -> std::io::Result<TcpStre
     }
 }
 
+/// #179: this suite keeps its OWN `raw_request` while taking `RawResponse`, `split_url` and
+/// `parse_response` from `support`. The shared one connects with `TcpStream::connect` and no
+/// bound; this one goes through `connect_with_retry` and the hang guard because an unbounded
+/// connect under a full accept backlog retransmits for ~21s and outlives the caller's own
+/// deadline (the comment below is that measurement). Sharing the wrapper would push a retry
+/// policy onto four suites that never asked for one.
 fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
     let started = Instant::now();
     let (host, port, path) = split_url(url);
@@ -1312,46 +1316,6 @@ fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
         CLIENT_IO_HANG_GUARD,
     )?;
     parse_response(&String::from_utf8_lossy(&raw))
-}
-
-/// Splits a `http://host:port/path...` test URL. Not a general-purpose URL parser — the suite
-/// only ever builds URLs from `serve()`'s own `base` plus a literal path, always with an explicit
-/// numeric port and no query string in this task.
-fn split_url(url: &str) -> (String, u16, String) {
-    let rest = url
-        .strip_prefix("http://")
-        .expect("test helper URLs are always http://host:port/path");
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, "/".to_owned()),
-    };
-    let (host, port) = authority
-        .split_once(':')
-        .expect("test helper URLs always carry an explicit port");
-    (
-        host.to_owned(),
-        port.parse().expect("port must be numeric"),
-        path,
-    )
-}
-
-fn parse_response(text: &str) -> std::io::Result<RawResponse> {
-    let (head, body) = text
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no header/body split"))?;
-    let status_line = head
-        .lines()
-        .next()
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status line"))?;
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status code"))?;
-    Ok(RawResponse {
-        status,
-        body: body.to_owned(),
-    })
 }
 
 fn get_status(url: &str, token: Option<&str>) -> u16 {

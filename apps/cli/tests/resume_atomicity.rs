@@ -31,6 +31,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+
+mod support;
+use support::{RawResponse, parse_response, raw_request, split_url};
 struct ServerGuard {
     child: Child,
 }
@@ -79,72 +82,6 @@ fn wait_for_health(base: &str) {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-struct RawResponse {
-    status: u16,
-    body: String,
-}
-
-/// A minimal HTTP/1.1 GET: connects, writes a request with `Connection: close` (so the server
-/// closing its write side after the response is the client's own signal that the body is
-/// complete — no `Content-Length`/chunked-transfer parsing needed), and reads to EOF.
-fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
-    let (host, port, path) = split_url(url);
-    let mut stream = TcpStream::connect((host.as_str(), port))?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-
-    let mut request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
-    if let Some(token) = token {
-        request.push_str(&format!("Authorization: Bearer {token}\r\n"));
-    }
-    request.push_str("\r\n");
-    stream.write_all(request.as_bytes())?;
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw)?;
-    parse_response(&String::from_utf8_lossy(&raw))
-}
-
-/// Splits a `http://host:port/path...` test URL. Not a general-purpose URL parser — the suite
-/// only ever builds URLs from `serve()`'s own `base` plus a literal path, always with an explicit
-/// numeric port and no query string in this task.
-fn split_url(url: &str) -> (String, u16, String) {
-    let rest = url
-        .strip_prefix("http://")
-        .expect("test helper URLs are always http://host:port/path");
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, "/".to_owned()),
-    };
-    let (host, port) = authority
-        .split_once(':')
-        .expect("test helper URLs always carry an explicit port");
-    (
-        host.to_owned(),
-        port.parse().expect("port must be numeric"),
-        path,
-    )
-}
-
-fn parse_response(text: &str) -> std::io::Result<RawResponse> {
-    let (head, body) = text
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no header/body split"))?;
-    let status_line = head
-        .lines()
-        .next()
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status line"))?;
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status code"))?;
-    Ok(RawResponse {
-        status,
-        body: body.to_owned(),
-    })
 }
 
 fn get_json(url: &str, token: Option<&str>) -> Value {

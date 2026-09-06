@@ -188,6 +188,31 @@ impl Default for LoadLimits {
     }
 }
 
+/// #147: what `plan_active_marker` hands the writer for a marker that is not on disk yet. The
+/// handle is `None` only for the reader's "cannot open the stream directory" answer, which the
+/// writer never sees (it asks the planner to ensure the directory).
+struct ActiveMarkerPlan {
+    stream_name: String,
+    directory: PathBuf,
+    directory_handle: Option<File>,
+    marker_name: String,
+    bytes: Vec<u8>,
+    marker_digest: String,
+}
+
+impl ActiveMarkerPlan {
+    fn unopenable(stream_name: String, directory: PathBuf) -> Self {
+        Self {
+            stream_name,
+            directory,
+            directory_handle: None,
+            marker_name: String::new(),
+            bytes: Vec::new(),
+            marker_digest: String::new(),
+        }
+    }
+}
+
 struct DirectoryBudget {
     entries: usize,
     name_bytes: usize,
@@ -1360,6 +1385,81 @@ impl LocalEventRepository {
         sync_directory_handle(&self.temp_handle)
     }
 
+    /// #147: the ONE answer to "is this publication's active marker already on disk with the
+    /// canonical bytes" -- by its sequence name first, else by digest through the derived index
+    /// of the stream's directory. `publish_active_marker` applies the missing plans and
+    /// `active_markers_clean` reads them; neither carries its own copy of the check any more, so
+    /// the read-only fast path and the exclusive write path cannot drift apart (the mirror-drift
+    /// class PR #145 killed for blobs, one layer over). `None` means the envelope is not a
+    /// publication; `Some(None)` means already published; `Some(Some(plan))` means missing.
+    /// `ensure_directory` is the one difference the callers keep: the writer creates the stream
+    /// directory, the reader must not, and a directory the reader cannot open is "missing".
+    fn plan_active_marker(
+        &self,
+        envelope: &EventEnvelope,
+        marker_indexes: &mut BTreeMap<String, BTreeMap<String, String>>,
+        marker_budget: &mut DirectoryBudget,
+        ensure_directory: bool,
+    ) -> Result<Option<Option<ActiveMarkerPlan>>, EventRepositoryError> {
+        let EventKind::GraphVersionPublished(payload) = &envelope.kind else {
+            return Ok(None);
+        };
+        let stream_name = object_key(&envelope.scope, envelope.stream_id.as_str())?;
+        let directory = self.root.join("active").join(&stream_name);
+        let directory_handle = if ensure_directory {
+            ensure_child_directory(&self.active_handle, &self.root.join("active"), &stream_name)?
+        } else {
+            match open_child_directory(&self.active_handle, &self.root.join("active"), &stream_name)
+            {
+                Ok(handle) => handle,
+                Err(_) => {
+                    return Ok(Some(Some(ActiveMarkerPlan::unopenable(
+                        stream_name,
+                        directory,
+                    ))));
+                }
+            }
+        };
+        let marker = StoredActiveMarker {
+            format_version: FORMAT_VERSION.into(),
+            scope: envelope.scope.clone(),
+            stream_id: envelope.stream_id.to_string(),
+            number: payload.version.number(),
+            semantic_hash: payload.version.semantic_hash().to_string(),
+            sequence: envelope.sequence,
+            event_hash: envelope.event_hash.to_string(),
+        };
+        let bytes = canonical_bytes(&marker)?;
+        let marker_name = format!("{}.json", envelope.sequence);
+        let marker_digest = sha256_hex(&bytes);
+        let published = derived_marker_matches(&directory_handle, &directory, &marker_name, &bytes)
+            || {
+                if !marker_indexes.contains_key(&stream_name) {
+                    marker_indexes.insert(
+                        stream_name.clone(),
+                        derived_marker_index(&directory_handle, &directory, marker_budget)?,
+                    );
+                }
+                marker_indexes
+                    .get(&stream_name)
+                    .and_then(|index| index.get(&marker_digest))
+                    .is_some_and(|name| {
+                        derived_marker_matches(&directory_handle, &directory, name, &bytes)
+                    })
+            };
+        if published {
+            return Ok(Some(None));
+        }
+        Ok(Some(Some(ActiveMarkerPlan {
+            stream_name,
+            directory,
+            directory_handle: Some(directory_handle),
+            marker_name,
+            bytes,
+            marker_digest,
+        })))
+    }
+
     fn publish_active_marker(
         &self,
         envelopes: &[EventEnvelope],
@@ -1375,45 +1475,21 @@ impl LocalEventRepository {
         let mut marker_budget =
             DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
         for envelope in envelopes {
-            let EventKind::GraphVersionPublished(payload) = &envelope.kind else {
+            let Some(Some(plan)) =
+                self.plan_active_marker(envelope, &mut marker_indexes, &mut marker_budget, true)?
+            else {
                 continue;
             };
-            let stream_name = object_key(&envelope.scope, envelope.stream_id.as_str())?;
-            let directory = self.root.join("active").join(&stream_name);
-            let directory_handle = ensure_child_directory(
-                &self.active_handle,
-                &self.root.join("active"),
-                &stream_name,
-            )?;
-            let marker = StoredActiveMarker {
-                format_version: FORMAT_VERSION.into(),
-                scope: envelope.scope.clone(),
-                stream_id: envelope.stream_id.to_string(),
-                number: payload.version.number(),
-                semantic_hash: payload.version.semantic_hash().to_string(),
-                sequence: envelope.sequence,
-                event_hash: envelope.event_hash.to_string(),
-            };
-            let bytes = canonical_bytes(&marker)?;
-            let marker_name = format!("{}.json", envelope.sequence);
-            if !marker_indexes.contains_key(&stream_name) {
-                marker_indexes.insert(
-                    stream_name.clone(),
-                    derived_marker_index(&directory_handle, &directory, &mut marker_budget)?,
-                );
-            }
-            let marker_digest = sha256_hex(&bytes);
-            let indexed_match = marker_indexes
-                .get(&stream_name)
-                .and_then(|index| index.get(&marker_digest))
-                .is_some_and(|name| {
-                    derived_marker_matches(&directory_handle, &directory, name, &bytes)
-                });
-            if derived_marker_matches(&directory_handle, &directory, &marker_name, &bytes)
-                || indexed_match
-            {
-                continue;
-            }
+            let ActiveMarkerPlan {
+                stream_name,
+                directory,
+                directory_handle,
+                marker_name,
+                bytes,
+                marker_digest,
+            } = plan;
+            // The writer asked the planner to ensure the directory, so the handle is present.
+            let directory_handle = directory_handle.ok_or(EventRepositoryError::Integrity)?;
             let (temp_name, mut file) = self.create_unique_temp("active")?;
             file.write_all(&bytes)?;
             file.sync_all()?;
@@ -1491,46 +1567,21 @@ impl LocalEventRepository {
         Ok(())
     }
 
-    /// Read-only mirror (#143) of `publish_active_marker`'s match check: true when every
-    /// published version's marker already exists with the exact canonical bytes (directly
-    /// or under a repair name). A miss answers false; the exclusive path republishes.
+    /// Read-only half of `plan_active_marker` (#143, #147): true when every published version's
+    /// marker is already on disk with the canonical bytes, by the same check the writer uses. A
+    /// miss -- or a stream directory the reader cannot open -- answers false and the exclusive
+    /// path republishes.
     fn active_markers_clean(
         &self,
         envelopes: &[EventEnvelope],
     ) -> Result<bool, EventRepositoryError> {
+        let mut marker_indexes = BTreeMap::<String, BTreeMap<String, String>>::new();
         let mut budget =
             DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
         for envelope in envelopes {
-            let EventKind::GraphVersionPublished(payload) = &envelope.kind else {
-                continue;
-            };
-            let stream_name = object_key(&envelope.scope, envelope.stream_id.as_str())?;
-            let directory = self.root.join("active").join(&stream_name);
-            let Ok(directory_handle) =
-                open_child_directory(&self.active_handle, &self.root.join("active"), &stream_name)
-            else {
-                return Ok(false);
-            };
-            let marker = StoredActiveMarker {
-                format_version: FORMAT_VERSION.into(),
-                scope: envelope.scope.clone(),
-                stream_id: envelope.stream_id.to_string(),
-                number: payload.version.number(),
-                semantic_hash: payload.version.semantic_hash().to_string(),
-                sequence: envelope.sequence,
-                event_hash: envelope.event_hash.to_string(),
-            };
-            let bytes = canonical_bytes(&marker)?;
-            let marker_name = format!("{}.json", envelope.sequence);
-            if derived_marker_matches(&directory_handle, &directory, &marker_name, &bytes) {
-                continue;
-            }
-            let digest = sha256_hex(&bytes);
-            let index = derived_marker_index(&directory_handle, &directory, &mut budget)?;
-            let indexed = index.get(&digest).is_some_and(|name| {
-                derived_marker_matches(&directory_handle, &directory, name, &bytes)
-            });
-            if !indexed {
+            if let Some(Some(_missing)) =
+                self.plan_active_marker(envelope, &mut marker_indexes, &mut budget, false)?
+            {
                 return Ok(false);
             }
         }
@@ -7857,6 +7908,88 @@ mod limit_tests {
         assert_eq!(
             reopened.next_sequence(&wake_scope(), "stream-1").unwrap(),
             2
+        );
+    }
+
+    /// #147: `active_markers_clean` is the read-only mirror of `publish_active_marker`'s
+    /// match-check, and two enumerations of one rule eventually disagree. This cell measures the
+    /// AGREEMENT on the population where the two mechanisms differ -- a marker that exists only
+    /// under a repair name (found by digest through the derived index, not by its sequence name) --
+    /// and on the population where both must say "missing" (corrupt bytes). A disagreement is the
+    /// defect: the fast path would open shared over a store the exclusive path would rewrite, or
+    /// upgrade to exclusive over a store it would then leave untouched.
+    #[test]
+    fn active_markers_clean_agrees_with_publish_on_an_indexed_and_on_a_corrupt_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let scope = wake_scope();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let published = repository
+            .load_state("test")
+            .unwrap()
+            .batches
+            .iter()
+            .flat_map(|batch| batch.events.clone())
+            .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(published.len(), 1, "one publication to check");
+        let stream_name = object_key(&scope, "stream-1").unwrap();
+        let active = directory.path().join("active").join(&stream_name);
+        let canonical = active.join("1.json");
+        assert!(
+            canonical.exists(),
+            "the publish left a marker under its sequence name"
+        );
+        let listing = |dir: &std::path::Path| {
+            let mut names = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+
+        // Population 1: present under its own name -- both say "published".
+        assert!(repository.active_markers_clean(&published).unwrap());
+        let before = listing(&active);
+        repository.publish_active_marker(&published, false).unwrap();
+        assert_eq!(
+            listing(&active),
+            before,
+            "publish must not rewrite a present marker"
+        );
+
+        // Population 2: present ONLY under a repair name -- found by digest, not by name. This is
+        // the branch the two functions implement separately today.
+        let repair = active
+            .join("repair-0000000000000000000000000000000000000000000000000000000000000147.json");
+        std::fs::rename(&canonical, &repair).unwrap();
+        assert!(
+            repository.active_markers_clean(&published).unwrap(),
+            "clean must find the marker through the index, as publish does"
+        );
+        let before = listing(&active);
+        repository.publish_active_marker(&published, false).unwrap();
+        assert_eq!(
+            listing(&active),
+            before,
+            "publish must find the marker through the index and write nothing"
+        );
+
+        // Population 3: corrupt bytes under the repair name -- both must say "missing".
+        std::fs::write(&repair, b"{\"not\":\"a marker\"}").unwrap();
+        assert!(
+            !repository.active_markers_clean(&published).unwrap(),
+            "clean must not accept a marker whose bytes differ"
+        );
+        repository.publish_active_marker(&published, false).unwrap();
+        assert!(
+            canonical.exists(),
+            "publish must republish the marker under its sequence name when only corrupt bytes exist"
+        );
+        assert!(
+            repository.active_markers_clean(&published).unwrap(),
+            "and after the republish the store reads clean again"
         );
     }
 

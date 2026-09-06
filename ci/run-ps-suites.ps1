@@ -24,6 +24,7 @@ $ErrorActionPreference = 'Continue'
 # from the pin says 'add it', a pinned name with no file says 'a suite was removed'.
 $PinnedSuites = @(
     'classify-run.tests.ps1',
+    'find-culture-comparisons.tests.ps1',
     'closing-keywords.tests.ps1',
     'crate-input-hash.tests.ps1',
     'exit-code-shape.tests.ps1',

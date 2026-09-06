@@ -15,7 +15,7 @@
 # holds some commit this one descends from, which is true of every unpushed commit on a tracked
 # branch -- precisely the state the field exists to detect.
 
-$ExpectedAssertionCount = 172
+$ExpectedAssertionCount = 173
 # 'Continue', not 'Stop': these cells run git against fixtures that deliberately have no upstream
 # and no pull request, and under Windows PowerShell 5.1 a native command's redirected stderr
 # becomes a NativeCommandError that 'Stop' promotes to a terminating error. Judge by exit code and
@@ -145,7 +145,21 @@ function Invoke-Publisher {
     $copiesArg = if ($Copies -and $Copies.Count -gt 0) {
         " -Copies @(" + (($Copies | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',') + ")"
     } else { '' }
-    $script = $publisher + "`nPublish-RunManifest -ManifestPath '$ManifestPath' -HeadSha '$HeadSha' -PullRequest $pr -BranchRef '$branch'$contentArg$copiesArg" +
+    # #938: the publisher now CALLS `Sync-ManifestCopies`, so the extracted copy needs the same
+    # library the real gate dot-sources at `ci/gate.ps1:672`. Without this the subject runs with the
+    # function undefined and every reconciliation cell fails for a reason that is about the harness.
+    # AND THE LIBRARY'S STRICTNESS IS NOT THE HARNESS'S. `ci/manifest-name.ps1:18` sets
+    # `Set-StrictMode -Version Latest`, and a dot-source runs in the CALLER's scope -- so importing
+    # it for one function silently imposed Latest on a runner that had never had StrictMode at all.
+    # Measured: two head-provenance cells that pass without the library fail with it, and they have
+    # nothing to do with reconciliation.
+    #
+    # `-Off` restores what this harness has always run under, rather than half of production's
+    # preamble: `ci/gate.ps1:88-89` sets 2.0 AND `$ErrorActionPreference = 'Stop'`, and importing
+    # the strictness without the error preference is a combination that exists nowhere. Making the
+    # runner reproduce the gate's whole preamble is worth doing and is not this change.
+    $library = ". '" + (Join-Path $PSScriptRoot 'manifest-name.ps1') + "'`nSet-StrictMode -Off`n"
+    $script = $library + $publisher + "`nPublish-RunManifest -ManifestPath '$ManifestPath' -HeadSha '$HeadSha' -PullRequest $pr -BranchRef '$branch'$contentArg$copiesArg" +
         "`nWrite-Output ('HEADMOVEDFLAG=' + [bool]`$script:headMovedDuringRun)`n"
     [System.IO.File]::WriteAllText($runner, $script, $utf8NoBom)
     Push-Location $Repo
@@ -1699,7 +1713,11 @@ try {
     # Matches the ASSIGNMENT, not the sentence: the message is built by concatenation across two
     # source lines, so a pattern spanning its words was asserting how the string is typeset. The
     # verdict wiring below is what carries the meaning.
-    $reconcileWired = '\$script:manifestReconcileFailed = \('
+    # #938: the pattern pins the ASSIGNMENT, not what follows it. It used to require `= (` because
+    # the message was built by concatenation across two lines; the message now comes from
+    # `Sync-ManifestCopies`, so requiring the parenthesis was asserting typesetting after all --
+    # which is the thing the comment above says it is not doing.
+    $reconcileWired = '\$script:manifestReconcileFailed\s*='
     Assert-True -Condition ($gateText -cmatch $reconcileWired) `
         -Message 'a failed reconciliation is recorded in a flag rather than printed and forgotten'
     $reconcileVerdict = '(?s)if \(\$script:manifestReconcileFailed\) \{.{0,400}?\$failed \+= ''run manifest reconciliation'''
@@ -1784,9 +1802,25 @@ try {
     Assert-True -Condition ($directManifestWrites.Count -eq 0) `
         -Message ("no manifest is overwritten in place" +
             $(if ($directManifestWrites.Count -gt 0) { ': ' + (($directManifestWrites | ForEach-Object { $_.Trim() }) -join ' | ') } else { '' }))
-    $replaceUsed = '(?s)\$reconcileTmp[\s\S]{0,600}?\[System\.IO\.File\]::Replace'
-    Assert-True -Condition ($gateText -cmatch $replaceUsed) `
-        -Message 'and the reconciliation stages a sibling and replaces it, like the correction does'
+    # #938: THE THIRD COPY IS GONE. This used to pin `$reconcileTmp ... File::Replace` -- the
+    # reconciliation's own hand-rolled staging, which was the third implementation of a discipline
+    # #742 gave a single one. It now goes through `Sync-ManifestCopies`, so the assertion moves from
+    # "does this re-implement it correctly" to "does it call the one implementation", and the
+    # behaviour is covered where it lives: ci/manifest-name.tests.ps1 arms a partial reconciliation
+    # and asserts both copies keep their original bytes.
+    $reconcileWired = '(?s)Sync-ManifestCopies -Paths[\s\S]{0,200}?-Content \$Content'
+    Assert-True -Condition ($gateText -cmatch $reconcileWired) `
+        -Message 'the reconciliation writes through the shared pair writer, on the copies the gate holds'
+    # THE NEGATIVE HALF, and it is what keeps the invariant single. A hand-rolled staging sibling
+    # reappearing here later would satisfy the assertion above and re-open #938 in silence.
+    # BOUNDED TO CODE, NOT PROSE. The comment above this call site NAMES the leaked `.reconciling`
+    # sibling in order to explain why it is gone, so a whole-file match would fail on its own
+    # vocabulary -- the searcher matching the searcher, which is the trap #150's guard records and
+    # which I flagged on #942 an hour before writing it here myself.
+    $reconcilingCode = @(($gateText -split "`n") | Where-Object { $_ -cmatch '\.reconciling' -and $_ -cnotmatch '^\s*#' })
+    Assert-True -Condition ($reconcilingCode.Count -eq 0) `
+        -Message ('and carries no staging loop of its own, so the discipline has one implementation' +
+            $(if ($reconcilingCode.Count -gt 0) { ': ' + (($reconcilingCode | ForEach-Object { $_.Trim() }) -join ' | ') } else { '' }))
 
     # Not vacuous: the sweep has to find a direct write when one is put in front of it.
     $writeCanary = '                    [System.IO.File]::WriteAllText($ManifestPath, $Content, $enc)'
@@ -1812,7 +1846,7 @@ try {
         -Message 'the captured branch is checked against the captured head, and a mismatch refuses the run'
 
     # ---- The reconciliation failure is recorded before anything is serialized.
-    $flagBeforeSerialize = $gateText.IndexOf('$script:manifestReconcileFailed = (')
+    $flagBeforeSerialize = $gateText.IndexOf('$script:manifestReconcileFailed =')
     Assert-True -Condition ($flagBeforeSerialize -gt 0 -and $flagBeforeSerialize -lt $correctionAt) `
         -Message 'and a failed reconciliation is flagged before the record that carries it is built'
 

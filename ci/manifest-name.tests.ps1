@@ -24,7 +24,7 @@
 # not calls, and Assert-Equal's delegation to Assert-True fires once per call rather than as an
 # assertion of its own. A miscount here has twice caught a cell that stopped running while its
 # neighbours stayed green -- which is the mechanism working, not a nuisance.
-$ExpectedAssertionCount = 50
+$ExpectedAssertionCount = 60
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -393,6 +393,55 @@ try {
     $corrected = Write-ManifestPairContent -FinalPaths @($pathA, $pathB) -Json '{"status":"RED"}' -Commit 'Replace'
     Assert-Equal 2 @($corrected).Count 'CONTROL: an unobstructed correction commits BOTH stores'
     Assert-Equal '{"status":"RED"}' ([System.IO.File]::ReadAllText($pathA)) 'CONTROL: and the first store really is corrected, so the commit path was reached'
+
+    # ---- #938: RECONCILIATION is both stores or neither, and absent is not "different" ----------
+    # The third hand-copy of this discipline. It looped per path and rewrote each copy as it walked,
+    # so a failure on the second left the first rewritten -- half a pair, in the code whose own
+    # comment says half a pair must not survive. And uniquely among the three, its `catch` leaked
+    # the staging file: every transient failure left a `.reconciling` sibling behind, permanently.
+    $ra = Join-Path $root 'rec-a'; New-Item -ItemType Directory -Path $ra | Out-Null
+    $rb = Join-Path $root 'rec-b'; New-Item -ItemType Directory -Path $rb | Out-Null
+    $recName = 'bbbbbbbbbbbb-20260906T000000.000Z-rec.json'
+    $rpA = Join-Path $ra $recName
+    $rpB = Join-Path $rb $recName
+    [System.IO.File]::WriteAllText($rpA, '{"status":"STALE"}')
+    [System.IO.File]::WriteAllText($rpB, '{"status":"STALE"}')
+
+    Assert-Equal '{"status":"STALE"}' ([System.IO.File]::ReadAllText($rpA)) 'ARRANGEMENT: both copies disagree with what was published'
+
+    $partial = Sync-ManifestCopies -Paths @($rpA, $rpB) -Content '{"status":"PUBLISHED"}' -BeforeCommit {
+        param($staged)
+        # Remove the SECOND commit's source, in the window where the first can land and the second
+        # cannot -- the state a per-path loop could not undo.
+        [System.IO.File]::Delete($staged[1])
+    }
+
+    Assert-True -Condition ($null -ne $partial.Failure) -Label 'a reconciliation that cannot finish reports a failure'
+    Assert-Equal '{"status":"STALE"}' ([System.IO.File]::ReadAllText($rpA)) 'the FIRST copy is rolled back, not left agreeing while the second still disagrees'
+    Assert-Equal '{"status":"STALE"}' ([System.IO.File]::ReadAllText($rpB)) 'and the second is untouched'
+    Assert-Equal 0 @(Get-ChildItem -LiteralPath $ra -File | Where-Object { $_.Name -like '*.reconciling' -or $_.Name -like '*.correcting' -or $_.Name -like '*.backup' }).Count 'and NO staging file is left behind -- the leak that put a .reconciling sibling on disk for every transient failure'
+
+    # CONTROL: the same call without the obstruction reconciles both. Without it, the three
+    # assertions above are equally satisfied by a function that reconciles nothing at all.
+    $ok = Sync-ManifestCopies -Paths @($rpA, $rpB) -Content '{"status":"PUBLISHED"}'
+    Assert-Equal 2 @($ok.Reconciled).Count 'CONTROL: an unobstructed reconciliation rewrites BOTH copies'
+    Assert-Equal '{"status":"PUBLISHED"}' ([System.IO.File]::ReadAllText($rpA)) 'CONTROL: and the first copy really does agree afterwards, so the commit path was reached'
+
+    # A copy that already AGREES is not rewritten. Without this the function could be reconciling
+    # everything it is handed, which would make the count above true for the wrong reason.
+    $again = Sync-ManifestCopies -Paths @($rpA, $rpB) -Content '{"status":"PUBLISHED"}'
+    Assert-Equal 0 @($again.Reconciled).Count 'copies that already agree are left alone'
+
+    # ABSENT IS NOT "DIFFERENT". `File.Replace` cannot create a destination, so a vanished twin used
+    # to be swept into the disagreeing set and reported as `could not be rewritten: FileNotFound` --
+    # a true sentence about the wrong thing.
+    $rc = Join-Path $root 'rec-c'; New-Item -ItemType Directory -Path $rc | Out-Null
+    $gone = Join-Path $rc $recName
+    $vanished = Sync-ManifestCopies -Paths @($rpA, $gone) -Content '{"status":"PUBLISHED"}'
+    Assert-Equal 1 @($vanished.Missing).Count 'a copy that is not on disk is reported as MISSING'
+    Assert-True -Condition ($vanished.Failure -clike '*is not on disk*') `
+        -Label "and the failure says so in its own words, not 'could not be rewritten' (got: $($vanished.Failure))"
+
 
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

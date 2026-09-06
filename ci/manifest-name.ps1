@@ -350,6 +350,94 @@ function Write-ManifestPairContent {
     return $committed
 }
 
+function Sync-ManifestCopies {
+    <#
+      Make every mutable copy of a manifest agree with the bytes that were PUBLISHED, or leave
+      them all as they were (#938).
+
+      This is the THIRD writer of the half-pair discipline. #742 named two -- `Write-GateManifestPair`
+      and the correction path -- and moved both onto `Write-ManifestPairContent`. Reconciliation was
+      the one nobody had counted, and it carried the same hand-copied shape with the same three
+      weaknesses plus one of its own:
+
+        `WriteAllText`          an existing `.reconciling` is clobbered rather than recognised as a
+                                concurrent reservation, and a delayed flush fault reported only at
+                                Dispose is invisible.
+        null backup             `File.Replace` was passed a real null, so a partial rewrite had
+                                nothing to restore from.
+        per-path loop           it rewrote each copy as it went, so a failure on the second left the
+                                first rewritten -- half a pair, the exact state the pair writer
+                                exists to refuse, in the code whose own comment says so.
+        the temp LEAKED         and this one was unique to here: the `catch` set a message and
+                                returned, and nothing deleted the staging file. Every transient
+                                failure left a `<manifest>.json.reconciling` beside the manifest,
+                                permanently. Measured on this machine 2026-09-06, under five
+                                concurrent gates: `File.Replace` -> "Unable to remove the file to be
+                                replaced".
+
+      DECIDE FIRST, WRITE ONCE. The subset that disagrees is computed before anything is written,
+      then handed to `Write-ManifestPairContent` as ONE unit, which is what makes both-or-neither
+      reachable at all: a loop that writes as it walks cannot roll back what it already committed.
+
+      AND ABSENT IS NOT THE SAME AS DIFFERENT. `ReadAllText` failing used to land a MISSING copy in
+      the same bucket as one whose bytes differ, and `File.Replace` cannot create a destination --
+      so a vanished twin reported `could not be rewritten: FileNotFound`, a message about the wrong
+      thing. Missing copies are partitioned out and reported in their own words.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Paths,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Content,
+        # Passed through to the writer so a cell can arm a partial commit. Production never sets it.
+        [scriptblock] $BeforeCommit
+    )
+
+    # Deduplicated by RESOLVED path, for the reason `Write-GateManifestPair` records: two spellings
+    # can be one file, and reconciling it twice would read the second pass's own staging file.
+    $unique = @()
+    foreach ($candidate in $Paths) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $full = [System.IO.Path]::GetFullPath($candidate)
+        if (-not ($unique | Where-Object { $_ -eq $full })) { $unique += $full }
+    }
+
+    $missing = @()
+    $disagreeing = @()
+    foreach ($path in $unique) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $missing += $path; continue }
+        $onDisk = $null
+        try { $onDisk = [System.IO.File]::ReadAllText($path) } catch { $onDisk = $null }
+        # Ordinal, like every other equality in this file: a manifest is bytes, and a
+        # culture-sensitive comparison can call two different records equal (#753).
+        if (-not [string]::Equals([string]$onDisk, [string]$Content, [System.StringComparison]::Ordinal)) {
+            $disagreeing += $path
+        }
+    }
+
+    $problems = @()
+    $reconciled = @()
+    if ($disagreeing.Count -gt 0) {
+        try {
+            Write-ManifestPairContent -FinalPaths $disagreeing -Json $Content -Commit 'Replace' `
+                -BeforeCommit $BeforeCommit | Out-Null
+            $reconciled = $disagreeing
+        } catch {
+            $problems += "a manifest copy does not match what was published and could not be rewritten: $($_.Exception.Message)"
+        }
+    }
+    # REPORTED EVEN WHEN THE REWRITE SUCCEEDED. A run whose twin has vanished has half a record on
+    # disk however well the other half was repaired, and a caller that only heard about the rewrite
+    # would call that success.
+    if ($missing.Count -gt 0) {
+        $problems += "a manifest copy that should exist is not on disk, so it cannot be reconciled: $($missing -join ', ')"
+    }
+
+    return [pscustomobject]@{
+        Reconciled = @($reconciled)
+        Missing    = @($missing)
+        Failure    = $(if ($problems.Count -gt 0) { $problems -join ' -- and ' } else { $null })
+    }
+}
+
 function Write-GateManifestPair {
     <#
       Writes ONE run to BOTH stores under ONE name, or writes neither.

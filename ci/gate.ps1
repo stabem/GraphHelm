@@ -1765,25 +1765,26 @@ function Publish-RunManifest {
             # committable copy and the durable twin under one name precisely so they are one record;
             # reconciling a single path meant the twin could stay corrupted while the run declared
             # success, and the whole reason that helper exists is that half a pair must not survive.
-            $toReconcile = @($ManifestPath) + @($Copies | Where-Object { $_ })
-            $toReconcile = @($toReconcile | ForEach-Object { [System.IO.Path]::GetFullPath($_) } | Select-Object -Unique)
-            foreach ($copyPath in $toReconcile) {
-                $onDisk = $null
-                try { $onDisk = [System.IO.File]::ReadAllText($copyPath) } catch { $onDisk = $null }
-                if (-not [string]::Equals([string]$onDisk, [string]$Content, [System.StringComparison]::Ordinal)) {
-                    try {
-                        $reconcileTmp = "$copyPath.reconciling"
-                        [System.IO.File]::WriteAllText($reconcileTmp, $Content, (New-Object System.Text.UTF8Encoding($false)))
-                        [System.IO.File]::Replace($reconcileTmp, $copyPath, [NullString]::Value)
-                        Write-Host ("[gate] a manifest copy did not match what was published, and was rewritten from " +
-                            'the published bytes.') -ForegroundColor Yellow
-                    } catch {
-                        $script:manifestReconcileFailed = ("a manifest copy does not match what was published and could " +
-                            "not be rewritten: $($_.Exception.Message)")
-                        Write-Host ("[gate] $script:manifestReconcileFailed. The COMMITTED record is the authoritative " +
-                            'one, and this run is RED.') -ForegroundColor Red
-                    }
-                }
+            # THROUGH THE ONE WRITER (#938). This used to be a per-path loop that rewrote each copy
+            # as it walked, with `WriteAllText` staging and a null-backup `File.Replace` -- the third
+            # hand-copy of the discipline #742 gave a single implementation, and the only one that
+            # also LEAKED its staging file: its `catch` set a message and nothing deleted the
+            # `.reconciling` sibling. Measured on this machine under five concurrent gates, that
+            # failure is reachable: `File.Replace` -> "Unable to remove the file to be replaced".
+            #
+            # A loop that writes as it walks cannot roll back what it already committed, so the
+            # subset is decided first and written as ONE unit. Missing copies are partitioned out:
+            # `File.Replace` cannot create a destination, and a vanished twin used to report
+            # `could not be rewritten: FileNotFound`, a message about the wrong thing.
+            $reconcile = Sync-ManifestCopies -Paths (@($ManifestPath) + @($Copies)) -Content $Content
+            if ($reconcile.Reconciled.Count -gt 0) {
+                Write-Host ("[gate] $($reconcile.Reconciled.Count) manifest copy/copies did not match what was " +
+                    'published, and were rewritten from the published bytes.') -ForegroundColor Yellow
+            }
+            if ($reconcile.Failure) {
+                $script:manifestReconcileFailed = $reconcile.Failure
+                Write-Host ("[gate] $script:manifestReconcileFailed. The COMMITTED record is the authoritative " +
+                    'one, and this run is RED.') -ForegroundColor Red
             }
         }
 

@@ -11,8 +11,8 @@ use graphhelm_protocols::{Diagnostic, ExecutionId, ProjectId, RepositoryScope, W
 
 use crate::output::Outcome;
 
-pub(super) const ARGUMENT_CODE: &str = "GHCLI001_ARGUMENT_INVALID";
-pub(super) const CONFIG_CODE: &str = "GHCLI002_CONFIG_INVALID";
+pub(super) const ARGUMENT_CODE: &str = crate::error_codes::GHCLI001_ARGUMENT_INVALID;
+pub(super) const CONFIG_CODE: &str = crate::error_codes::GHCLI002_CONFIG_INVALID;
 const SOURCE: &str = "events-cli";
 
 /// A redaction-safe operator failure.

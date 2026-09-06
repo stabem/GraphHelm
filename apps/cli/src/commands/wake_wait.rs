@@ -20,7 +20,7 @@ use crate::args::WakeWaitArgs;
 use crate::output::{CommandOutput, Outcome};
 
 const COMMAND: &str = "wake.wait";
-const MCP_WAKE_INVALID: &str = "GHCLI017_WAKE_INVALID";
+const MCP_WAKE_INVALID: &str = crate::error_codes::GHCLI017_WAKE_INVALID;
 const TEST_CAUSAL_TRANSCRIPT: &str = "GRAPHHELM_TEST_WAKE_CAUSAL_TRANSCRIPT";
 const TEST_CAUSAL_TRANSCRIPT_MAX_BYTES: u64 = 4 * 1024;
 

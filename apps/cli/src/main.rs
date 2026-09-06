@@ -1,5 +1,6 @@
 mod args;
 mod commands;
+mod error_codes;
 mod output;
 
 use std::ffi::{OsStr, OsString};
@@ -22,7 +23,7 @@ fn main() {
             let outcome = output::Outcome::domain(
                 command,
                 vec![Diagnostic::error(
-                    "GHCLI001_ARGUMENT_INVALID",
+                    crate::error_codes::GHCLI001_ARGUMENT_INVALID,
                     format!("{command} command arguments are invalid"),
                     "/arguments",
                     format!("{command}-cli"),

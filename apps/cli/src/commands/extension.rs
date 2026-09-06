@@ -23,7 +23,7 @@ pub fn run(package: &Path) -> Outcome {
 // GHEX0NN validator codes -- 001-020 already taken there for package-content diagnostics; this
 // command's refusals are about CLI arguments/files, matching GHCLI015_MCP_INVALID's sibling
 // mcp.rs command exactly).
-const MCP_TOKEN_INVALID: &str = "GHCLI020_MCP_TOKEN_INVALID";
+const MCP_TOKEN_INVALID: &str = crate::error_codes::GHCLI020_MCP_TOKEN_INVALID;
 const SOURCE: &str = "extension-mcp-token";
 
 /// One code for the lifecycle's refusals (#212), because the consumer is a script's if-statement:
@@ -36,7 +36,7 @@ const SOURCE: &str = "extension-mcp-token";
 /// asymmetry of reversibility: promoting later is cheap ONLY as a machine-readable FIELD added
 /// beside this code with the code intact -- splitting the code itself later breaks the first
 /// script that leaned on it. Whoever needs per-variant dispatch: add the field, keep the code.
-const LIFECYCLE_REFUSED: &str = "GHCLI024_EXTENSION_LIFECYCLE_REFUSED";
+const LIFECYCLE_REFUSED: &str = crate::error_codes::GHCLI024_EXTENSION_LIFECYCLE_REFUSED;
 const LIFECYCLE_SOURCE: &str = "extension-lifecycle";
 
 fn lifecycle_refusal(command: &'static str, message: &str, pointer: &str) -> Outcome {

@@ -167,7 +167,7 @@ fn registry_refusal() -> String {
         registered_ids().join(", ")
     )
 }
-const GATE_INVALID: &str = "GHCLI018_GATE_INVALID";
+const GATE_INVALID: &str = crate::error_codes::GHCLI018_GATE_INVALID;
 
 fn refuse(message: &str, pointer: &str) -> Outcome {
     Outcome::domain(

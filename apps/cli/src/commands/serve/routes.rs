@@ -354,7 +354,7 @@ fn bad_request(command: &'static str, message: &str, pointer: &str) -> Response 
         Outcome::domain(
             command,
             vec![Diagnostic::error(
-                "GHCLI001_ARGUMENT_INVALID",
+                crate::error_codes::GHCLI001_ARGUMENT_INVALID,
                 message,
                 pointer,
                 SOURCE,
@@ -1353,7 +1353,7 @@ fn drive_is_viable_for(state: &ServeState, spec: &graphhelm_protocols::GraphSpec
 /// work then failed**. The operator's hold is GONE and the execution is attended; re-pausing
 /// blindly is wrong. A setup refusal, where nothing committed, answers [`SETUP_FAILURE_CODE`]
 /// instead.
-const DRIVER_FAILURE_CODE: &str = "GHCLI016_DRIVER_FAILURE";
+const DRIVER_FAILURE_CODE: &str = crate::error_codes::GHCLI016_DRIVER_FAILURE;
 
 /// #96. A refusal from [`prepare_drive`] — raised BEFORE the start/resume decision commits, so
 /// **nothing was written and the operator's hold is exactly where they left it.** Fix the
@@ -1364,7 +1364,7 @@ const DRIVER_FAILURE_CODE: &str = "GHCLI016_DRIVER_FAILURE";
 /// [`DRIVER_FAILURE_CODE`] on this path runs after it. Until now both answered the same value, so
 /// the response destroyed a distinction the code already had — "the call failed" and "your hold
 /// still holds" are one fact to an operator, and one code for both made them two.
-const SETUP_FAILURE_CODE: &str = "GHCLI019_DRIVER_SETUP";
+const SETUP_FAILURE_CODE: &str = crate::error_codes::GHCLI019_DRIVER_SETUP;
 
 fn driver_failure(message: &str) -> execution::Failure {
     execution::Failure {
@@ -2192,7 +2192,7 @@ fn evidence_refusal(message: &str) -> Response {
         Outcome::domain(
             EVIDENCE_COMMAND,
             vec![Diagnostic::error(
-                "GHCLI023_EVIDENCE_UNREADABLE",
+                crate::error_codes::GHCLI023_EVIDENCE_UNREADABLE,
                 message,
                 "/evidence",
                 SOURCE,

@@ -172,7 +172,7 @@ mod tests {
     fn empty_repository_selection_is_an_argument_failure_without_a_path_leak() {
         let failure = verify_local(Path::new(""), None).unwrap_err();
 
-        assert_eq!(failure.code, "GHCLI001_ARGUMENT_INVALID");
+        assert_eq!(failure.code, crate::error_codes::GHCLI001_ARGUMENT_INVALID);
         assert_eq!(failure.pointer, "/repository");
         assert!(!failure.message.contains(':'));
         assert!(

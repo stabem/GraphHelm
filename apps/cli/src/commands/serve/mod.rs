@@ -58,22 +58,22 @@ impl Failure {
 
 const SOURCE: &str = "serve-cli";
 /// Reused from `events`/`execution`'s identical vocabulary for malformed CLI arguments.
-const ARGUMENT_CODE: &str = "GHCLI001_ARGUMENT_INVALID";
+const ARGUMENT_CODE: &str = crate::error_codes::GHCLI001_ARGUMENT_INVALID;
 /// A `--bind` that parses but is not loopback, or whose listener/token setup cannot proceed —
 /// the plan's own name for this new code (Milestone 05a Task 1).
-const SERVE_INVALID_CODE: &str = "GHCLI006_SERVE_INVALID";
+const SERVE_INVALID_CODE: &str = crate::error_codes::GHCLI006_SERVE_INVALID;
 /// A request to anything but `/health` without a valid `Authorization: Bearer <token>`.
-const UNAUTHORIZED_CODE: &str = "GHCLI007_SERVE_UNAUTHORIZED";
+const UNAUTHORIZED_CODE: &str = crate::error_codes::GHCLI007_SERVE_UNAUTHORIZED;
 /// No route matches the request (method+path), reported once auth has already passed.
-const NOT_FOUND_CODE: &str = "GHCLI008_SERVE_NOT_FOUND";
+const NOT_FOUND_CODE: &str = crate::error_codes::GHCLI008_SERVE_NOT_FOUND;
 /// The read audit was asked for and could not be written. Reported rather than swallowed: an
 /// audit that silently stops recording reads as "the caller asked nothing", which is the exact
 /// lie the audit exists to prevent.
-const AUDIT_CODE: &str = "GHCLI009_SERVE_AUDIT_FAILED";
+const AUDIT_CODE: &str = crate::error_codes::GHCLI009_SERVE_AUDIT_FAILED;
 /// A recognized retry could not be annotated because the status command violated its object
 /// response contract. Fail closed: without the marker, HTTP 200 would make an already-applied
 /// request indistinguishable from a fresh mutation whose attributable event is missing.
-const IDEMPOTENCY_REPLY_CODE: &str = "GHCLI023_IDEMPOTENCY_REPLY_INVALID";
+const IDEMPOTENCY_REPLY_CODE: &str = crate::error_codes::GHCLI023_IDEMPOTENCY_REPLY_INVALID;
 const AUDIT_COMMAND: &str = "serve.read_audit";
 
 /// The command name `serve`'s own pre-bind failures report under — there is no verb, unlike
@@ -556,12 +556,12 @@ fn respond(status: StatusCode, output: CommandOutput) -> Response {
 /// `Failure::into_outcome`).
 fn respond_failure(command: &'static str, failure: execution::Failure) -> Response {
     let status = match failure.code {
-        "GHCLI001_ARGUMENT_INVALID"
-        | "GHCLI003_SIGNAL_INVALID"
-        | "GHCLI004_SIGNAL_UNRECORDABLE" => StatusCode::BAD_REQUEST,
-        "GHCLI005_EXECUTION_STATE" | "GHE001_SEQUENCE_CONFLICT" | "GHE003_IDEMPOTENCY_CONFLICT" => {
-            StatusCode::CONFLICT
-        }
+        crate::error_codes::GHCLI001_ARGUMENT_INVALID
+        | crate::error_codes::GHCLI003_SIGNAL_INVALID
+        | crate::error_codes::GHCLI004_SIGNAL_UNRECORDABLE => StatusCode::BAD_REQUEST,
+        crate::error_codes::GHCLI005_EXECUTION_STATE
+        | "GHE001_SEQUENCE_CONFLICT"
+        | "GHE003_IDEMPOTENCY_CONFLICT" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     respond(status, failure.into_outcome(command).output)
@@ -1695,7 +1695,7 @@ enum WaitingInputCheck {
 fn fixture_only_diagnostic(check: WaitingInputCheck) -> Option<Diagnostic> {
     match check {
         WaitingInputCheck::Present => Some(Diagnostic::warning(
-            "GHCLI021_FIXTURE_ONLY_WAITING_INPUT",
+            crate::error_codes::GHCLI021_FIXTURE_ONLY_WAITING_INPUT,
             "this deployment has no real-executor wiring (fixture-only mode); a node with no \
              fixture answer parks in waiting_input and will never proceed on its own -- this is a \
              configuration state, not a workflow wait",
@@ -1703,7 +1703,7 @@ fn fixture_only_diagnostic(check: WaitingInputCheck) -> Option<Diagnostic> {
             SOURCE,
         )),
         WaitingInputCheck::Undetermined => Some(Diagnostic::warning(
-            "GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED",
+            crate::error_codes::GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED,
             "this deployment has no real-executor wiring (fixture-only mode), and whether any \
              node is parked in waiting_input could not be determined -- the store could not be \
              re-read after this mutation",
@@ -2431,7 +2431,10 @@ mod tests {
         );
         let diagnostic = fixture_only_diagnostic(check)
             .expect("an undetermined fixture-only state must produce GHCLI022");
-        assert_eq!(diagnostic.code, "GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED");
+        assert_eq!(
+            diagnostic.code,
+            crate::error_codes::GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED
+        );
         assert_eq!(diagnostic.path, "/");
         assert_eq!(diagnostic.source, SOURCE);
     }

@@ -15,6 +15,6 @@
 
 pub(super) mod invoke;
 
-pub(super) const INVALID_CODE: &str = "GHCLI012_TOOL_INVALID";
-pub(super) const DENIED_CODE: &str = "GHCLI013_TOOL_DENIED";
-pub(super) const HOST_CODE: &str = "GHCLI014_TOOL_HOST";
+pub(super) const INVALID_CODE: &str = crate::error_codes::GHCLI012_TOOL_INVALID;
+pub(super) const DENIED_CODE: &str = crate::error_codes::GHCLI013_TOOL_DENIED;
+pub(super) const HOST_CODE: &str = crate::error_codes::GHCLI014_TOOL_HOST;

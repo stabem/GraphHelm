@@ -32,18 +32,18 @@ use crate::output::Outcome;
 
 /// A command refused by a precondition or guard the fold or the pure execution crate enforces —
 /// the CLI states the refusal before the fold would call the history corrupt.
-pub(super) const EXECUTION_STATE_CODE: &str = "GHCLI005_EXECUTION_STATE";
+pub(super) const EXECUTION_STATE_CODE: &str = crate::error_codes::GHCLI005_EXECUTION_STATE;
 /// Reused from `events`'s vocabulary for malformed CLI arguments, per the plan.
-pub(super) const ARGUMENT_CODE: &str = "GHCLI001_ARGUMENT_INVALID";
+pub(super) const ARGUMENT_CODE: &str = crate::error_codes::GHCLI001_ARGUMENT_INVALID;
 /// A signal envelope that fails validation — either it is not valid JSON at all, or
 /// `graphhelm_governor::admit_signal` rejects it as schema-invalid. Declared here, alongside
 /// `GHCLI004_SIGNAL_UNRECORDABLE`, now that `signal.rs` is their first consumer (Task 3 deferred
 /// both to avoid a genuine `dead_code` finding under this workspace's `-D warnings` clippy gate).
-pub(super) const SIGNAL_INVALID_CODE: &str = "GHCLI003_SIGNAL_INVALID";
+pub(super) const SIGNAL_INVALID_CODE: &str = crate::error_codes::GHCLI003_SIGNAL_INVALID;
 /// A schema-valid signal whose `id` or `source.id` cannot be represented as an `OpaqueId` — the
 /// event contract that carries it on the wire is stricter than the signal schema. The envelope is
 /// still externalized as evidence; only the record is refused.
-pub(super) const SIGNAL_UNRECORDABLE_CODE: &str = "GHCLI004_SIGNAL_UNRECORDABLE";
+pub(super) const SIGNAL_UNRECORDABLE_CODE: &str = crate::error_codes::GHCLI004_SIGNAL_UNRECORDABLE;
 const SOURCE: &str = "execution-cli";
 
 /// The scope constants every `execution` command shares with `graph simulate`: a single

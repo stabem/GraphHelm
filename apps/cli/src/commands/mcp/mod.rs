@@ -20,7 +20,7 @@ const COMMAND: &str = "mcp";
 /// CLI-level argument/config failures of `graphhelm mcp` only — protocol-level errors are
 /// JSON-RPC error objects, never GHCLI envelopes (the plan's registry note; 015 confirmed
 /// free at Task 0, 05d took 016).
-const MCP_INVALID: &str = "GHCLI015_MCP_INVALID";
+const MCP_INVALID: &str = crate::error_codes::GHCLI015_MCP_INVALID;
 
 fn refuse(message: &str, pointer: &str) -> Outcome {
     Outcome::domain(

@@ -38,9 +38,9 @@ use graphhelm_protocols::Diagnostic;
 
 use crate::output::Outcome;
 
-pub(super) const INVALID_CODE: &str = "GHCLI009_GATEWAY_INVALID";
-pub(super) const CREDENTIAL_CODE: &str = "GHCLI010_GATEWAY_CREDENTIAL";
-pub(super) const PROBE_CODE: &str = "GHCLI011_GATEWAY_PROBE";
+pub(super) const INVALID_CODE: &str = crate::error_codes::GHCLI009_GATEWAY_INVALID;
+pub(super) const CREDENTIAL_CODE: &str = crate::error_codes::GHCLI010_GATEWAY_CREDENTIAL;
+pub(super) const PROBE_CODE: &str = crate::error_codes::GHCLI011_GATEWAY_PROBE;
 const SOURCE: &str = "gateway-cli";
 
 /// Mirrors `commands::events::config`'s `GRAPHHELM_EVENTS_KEY` precedent exactly

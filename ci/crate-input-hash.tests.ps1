@@ -16,7 +16,7 @@
 # The declared total is Assert-* CALLS reached at runtime; Assert-Equal delegating to Assert-True
 # fires once per call, not twice. A cell that stops running while its neighbours stay green shows
 # up here as a miscount rather than as quiet success.
-$ExpectedAssertionCount = 54
+$ExpectedAssertionCount = 64
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -116,6 +116,68 @@ try {
         -Actual (Get-BaselineHash @{ Crate = 'graphhelm-governor' }) `
         -Label 'two crates sharing every other component do not share a key'
 
+    # THE ARMING SITE. Two cells, because the property has two halves and one of them cannot be
+    # asserted the obvious way.
+    #
+    # `$WorkspaceManifest` shipped as `= ''` -- the only optional input in a function where every
+    # other one is Mandatory, and the UNSAFE one. A caller who forgets it gets the empty-manifest
+    # key, byte-identical for every possible root manifest: the collision this field exists to
+    # close, re-entering through a parameter default.
+    #
+    # `[Parameter(Mandatory)]` is NOT the remedy, and that is measured rather than argued. Under the
+    # gate's own invocation -- `powershell -NoProfile -ExecutionPolicy Bypass -File`, with no
+    # `-NonInteractive` -- a missing Mandatory parameter PROMPTS: rc=124 after 40s, output cut off
+    # at the first line. It would hang the gate rather than fail it. Nor does adding a throw BESIDE
+    # Mandatory help: the binder raises ParameterBindingException before the body runs, so the
+    # throw is unreachable and a cell asserting its message would be vacuous. So the guard is the
+    # throw ALONE, and this cell can therefore reach it.
+    foreach ($fn in @('New-HashPreimage', 'Get-CrateInputHash')) {
+        $threw = $false
+        $message = ''
+        try {
+            & $fn -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' | Out-Null
+        } catch {
+            $threw = $true
+            $message = "$($_.Exception.Message)"
+        }
+        Assert-True -Condition $threw -Label "$fn refuses to run when the workspace manifest is not supplied"
+        Assert-True -Condition ($message -like '*WorkspaceManifest*') -Label "  and the failure names the input it wanted ($fn)"
+    }
+
+    # The other half, on the FORM: a DEFAULT is what silently stands in for a missing argument, so
+    # no scalar input may carry one. Read from the AST, so a sixth field added later with `= ''`
+    # is caught without anyone remembering to extend a list -- which is exactly how this defect
+    # arrived. The arrangement guard first: a parse that found no parameters would pass vacuously.
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'crate-input-hash.ps1'), [ref]$null, [ref]$null)
+    foreach ($fn in @('New-HashPreimage', 'Get-CrateInputHash')) {
+        $target = $ast.FindAll({
+            param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn
+        }, $true)
+        Assert-Equal -Expected 1 -Actual @($target).Count -Label "ARRANGEMENT: exactly one $fn is defined"
+        # The type comes from the TypeConstraintAst among the parameter's attributes, not from
+        # `.StaticType` -- with several attributes on one parameter that property came back empty
+        # here and the filter selected NOTHING. The arrangement guard below is what caught it: the
+        # "no default" assertion had passed over an empty set, which is vacuously true and proves
+        # nothing at all.
+        $scalars = @(
+            $target[0].Body.ParamBlock.Parameters | Where-Object {
+                @($_.Attributes | Where-Object {
+                    $_ -is [System.Management.Automation.Language.TypeConstraintAst] -and
+                    "$($_.TypeName.FullName)" -eq 'string'
+                }).Count -gt 0
+            }
+        )
+        Assert-True -Condition ($scalars.Count -ge 5) `
+            -Label "ARRANGEMENT: $fn's scalar inputs are visible in the AST (found $($scalars.Count))"
+        $withDefaults = @(
+            $scalars | Where-Object { $null -ne $_.DefaultValue } |
+                ForEach-Object { $_.Name.VariablePath.UserPath }
+        )
+        Assert-Equal -Expected '' -Actual (@($withDefaults) -join ',') `
+            -Label "no scalar input of $fn carries a default: a default silently stands in for a missing argument"
+    }
+
     # The workspace ROOT manifest: an input in NO crate's tree (ISSUES 4's finding on #915).
     Assert-NotEqual -Unexpected (Get-BaselineHash) `
         -Actual (Get-BaselineHash @{ WorkspaceManifest = '0000000000000000000000000000000000000000' }) `
@@ -141,12 +203,12 @@ try {
     # prefix that a sabotage does redden is the one inside the sets, four cells below.
     # The third assertion is the control for the first two: it shows the naive concatenation of
     # these two tuples really is one string, so they are not passing for an unrelated reason.
-    $left = Get-CrateInputHash -Crate 'ab' -TreeObject 'c' -LockSlice 'x' -ToolchainId 't'
-    $right = Get-CrateInputHash -Crate 'a' -TreeObject 'bc' -LockSlice 'x' -ToolchainId 't'
+    $left = Get-CrateInputHash -Crate 'ab' -TreeObject 'c' -LockSlice 'x' -WorkspaceManifest '' -ToolchainId 't'
+    $right = Get-CrateInputHash -Crate 'a' -TreeObject 'bc' -LockSlice 'x' -WorkspaceManifest '' -ToolchainId 't'
     Assert-NotEqual -Unexpected $left -Actual $right `
         -Label 'a field-split that a naive concatenation would merge does NOT collide'
-    $leftPre = New-HashPreimage -Crate 'ab' -TreeObject 'c' -LockSlice 'x' -ToolchainId 't'
-    $rightPre = New-HashPreimage -Crate 'a' -TreeObject 'bc' -LockSlice 'x' -ToolchainId 't'
+    $leftPre = New-HashPreimage -Crate 'ab' -TreeObject 'c' -LockSlice 'x' -WorkspaceManifest '' -ToolchainId 't'
+    $rightPre = New-HashPreimage -Crate 'a' -TreeObject 'bc' -LockSlice 'x' -WorkspaceManifest '' -ToolchainId 't'
     Assert-NotEqual -Unexpected $leftPre -Actual $rightPre -Label 'and their preimages differ too'
     Assert-Equal -Expected ('ab' + 'c') -Actual ('a' + 'bc') `
         -Label 'CONTROL: the unprefixed concatenation of those two tuples IS one string'
@@ -158,21 +220,21 @@ try {
     # elements. A build-script input `proto/a,b.proto` and the pair `proto/a` + `b.proto` are
     # different inputs and were one key -- measured on this file before this cell existed.
     Assert-NotEqual `
-        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -BuildScriptInputs @('a,b')) `
-        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -BuildScriptInputs @('a', 'b')) `
+        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -BuildScriptInputs @('a,b')) `
+        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -BuildScriptInputs @('a', 'b')) `
         -Label 'one build-script input containing a comma is not two inputs'
     Assert-NotEqual `
-        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -DependencyHashes @('x,y')) `
-        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -DependencyHashes @('x', 'y')) `
+        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -DependencyHashes @('x,y')) `
+        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -DependencyHashes @('x', 'y')) `
         -Label 'one dependency key containing a comma is not two dependencies'
     Assert-NotEqual `
-        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -Features @('p,q')) `
-        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -Features @('p', 'q')) `
+        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -Features @('p,q')) `
+        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -Features @('p', 'q')) `
         -Label 'one feature containing a comma is not two features'
     # And the empty set is not the set holding one empty string: `deps=` would spell both.
     Assert-NotEqual `
-        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -DependencyHashes @()) `
-        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -ToolchainId 'tc' -DependencyHashes @('')) `
+        -Unexpected (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -DependencyHashes @()) `
+        -Actual (Get-CrateInputHash -Crate 'c' -TreeObject 't' -LockSlice 'l' -WorkspaceManifest '' -ToolchainId 'tc' -DependencyHashes @('')) `
         -Label 'no dependencies is not one empty dependency'
 
     # The preimage names its fields, so a reader can see what went in without inverting a digest.
@@ -310,8 +372,8 @@ try {
     $keysB = @()
     foreach ($crate in @('core/leaf', 'core/other')) {
         $tree = Get-CrateTreeObject -RepositoryRoot $repo -Revision $afterBuildEdit -CratePath $crate
-        $keysA += Get-CrateInputHash -Crate $crate -TreeObject $tree -LockSlice '' -ToolchainId $toolchainA
-        $keysB += Get-CrateInputHash -Crate $crate -TreeObject $tree -LockSlice '' -ToolchainId $toolchainB
+        $keysA += Get-CrateInputHash -Crate $crate -TreeObject $tree -LockSlice '' -WorkspaceManifest '' -ToolchainId $toolchainA
+        $keysB += Get-CrateInputHash -Crate $crate -TreeObject $tree -LockSlice '' -WorkspaceManifest '' -ToolchainId $toolchainB
     }
     Assert-Equal -Expected 2 -Actual @($keysA).Count -Label 'HARNESS: two crates were keyed'
     $sharedGeneration = @($keysA | ForEach-Object { ($_ -split '-')[0] } | Select-Object -Unique)

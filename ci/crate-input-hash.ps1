@@ -132,12 +132,26 @@ function New-HashPreimage {
         [Parameter(Mandatory)][string] $Crate,
         [Parameter(Mandatory)][string] $TreeObject,
         [Parameter(Mandatory)][AllowEmptyString()][string] $LockSlice,
-        [AllowEmptyString()][string] $WorkspaceManifest = '',
+        [AllowEmptyString()][string] $WorkspaceManifest,
         [Parameter(Mandatory)][string] $ToolchainId,
         [AllowEmptyCollection()][string[]] $Features = @(),
         [AllowEmptyCollection()][string[]] $DependencyHashes = @(),
         [AllowEmptyCollection()][string[]] $BuildScriptInputs = @()
     )
+
+    # NOT `[Parameter(Mandatory)]`, and the difference is measured rather than stylistic.
+    # Under the gate's own invocation (`powershell -NoProfile -ExecutionPolicy Bypass -File`,
+    # with no `-NonInteractive`) a missing Mandatory parameter PROMPTS: measured rc=124 after
+    # 40s, output cut off at the first line. A caller that forgets this argument would hang the
+    # gate rather than fail it, and a hang has no colour. Adding this throw BESIDE Mandatory
+    # does not help either: the binder raises ParameterBindingException before the body runs,
+    # so the message below would be unreachable and a cell asserting it would be vacuous
+    # (measured: 'Cannot process command because of one or more missing mandatory parameters').
+    # So it is this, alone: it fires in EVERY host, it carries a message that names the input,
+    # and a cell can reach it. (K's line on #923, X's risk on #924.)
+    if (-not $PSBoundParameters.ContainsKey('WorkspaceManifest')) {
+        throw 'WorkspaceManifest was not supplied. It is an input to the key, not an option: omitting it would hash every root manifest as empty and give two different workspaces one key. Pass the blob id, or pass '''' to say on the record that there is none.'
+    }
 
     $features = Sort-Ordinal -Values $Features
     $dependencies = Sort-Ordinal -Values $DependencyHashes
@@ -186,12 +200,26 @@ function Get-CrateInputHash {
         [Parameter(Mandatory)][string] $Crate,
         [Parameter(Mandatory)][string] $TreeObject,
         [Parameter(Mandatory)][AllowEmptyString()][string] $LockSlice,
-        [AllowEmptyString()][string] $WorkspaceManifest = '',
+        [AllowEmptyString()][string] $WorkspaceManifest,
         [Parameter(Mandatory)][string] $ToolchainId,
         [AllowEmptyCollection()][string[]] $Features = @(),
         [AllowEmptyCollection()][string[]] $DependencyHashes = @(),
         [AllowEmptyCollection()][string[]] $BuildScriptInputs = @()
     )
+
+    # NOT `[Parameter(Mandatory)]`, and the difference is measured rather than stylistic.
+    # Under the gate's own invocation (`powershell -NoProfile -ExecutionPolicy Bypass -File`,
+    # with no `-NonInteractive`) a missing Mandatory parameter PROMPTS: measured rc=124 after
+    # 40s, output cut off at the first line. A caller that forgets this argument would hang the
+    # gate rather than fail it, and a hang has no colour. Adding this throw BESIDE Mandatory
+    # does not help either: the binder raises ParameterBindingException before the body runs,
+    # so the message below would be unreachable and a cell asserting it would be vacuous
+    # (measured: 'Cannot process command because of one or more missing mandatory parameters').
+    # So it is this, alone: it fires in EVERY host, it carries a message that names the input,
+    # and a cell can reach it. (K's line on #923, X's risk on #924.)
+    if (-not $PSBoundParameters.ContainsKey('WorkspaceManifest')) {
+        throw 'WorkspaceManifest was not supplied. It is an input to the key, not an option: omitting it would hash every root manifest as empty and give two different workspaces one key. Pass the blob id, or pass '''' to say on the record that there is none.'
+    }
 
     $preimage = New-HashPreimage -Crate $Crate -TreeObject $TreeObject -LockSlice $LockSlice `
         -WorkspaceManifest $WorkspaceManifest -ToolchainId $ToolchainId -Features $Features `
@@ -266,6 +294,20 @@ function Get-WorkspaceManifestBlob {
         The blob id is the cheapest correct handle: it moves whenever ANY byte of that file moves, so
         it covers the profiles without this code having to know what a profile is — the same reason
         the crate hash is a tree object rather than a file list.
+
+        MANDATORY, and it is the only decision in this function where the ATTRIBUTE is the guard
+        (D and ISSUES 4, reviewing #921). Every other input is `[Parameter(Mandatory)]`; this one
+        shipped as `= ''` and was the only optional one -- the UNSAFE input, optional. A caller who
+        simply forgets it gets the empty-manifest key, byte-identical for every possible root
+        manifest, which is exactly the collision this field exists to close, re-entering through a
+        parameter default. Measured before the fix: omitting it and passing `''` produced the same
+        key, while two different manifests produced different ones -- so the field worked and the
+        default silently disarmed it.
+
+        `[AllowEmptyString()]` stays beside `Mandatory`, which is the idiom already one line above
+        on `$LockSlice`: *it may legitimately be empty, but you have to say so.* A caller with no
+        workspace manifest passes `''` and that is a decision on the record; a caller who forgets
+        gets an error instead of a wrong key.
 
         WHAT THE KEY STILL DOES NOT SEE, stated because a list of covered inputs invites the reader to
         assume the rest is covered too:

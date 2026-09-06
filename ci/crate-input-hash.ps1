@@ -132,6 +132,7 @@ function New-HashPreimage {
         [Parameter(Mandatory)][string] $Crate,
         [Parameter(Mandatory)][string] $TreeObject,
         [Parameter(Mandatory)][AllowEmptyString()][string] $LockSlice,
+        [AllowEmptyString()][string] $WorkspaceManifest = '',
         [Parameter(Mandatory)][string] $ToolchainId,
         [AllowEmptyCollection()][string[]] $Features = @(),
         [AllowEmptyCollection()][string[]] $DependencyHashes = @(),
@@ -146,6 +147,7 @@ function New-HashPreimage {
         "crate=$Crate",
         "tree=$TreeObject",
         "lock=$LockSlice",
+        "manifest=$WorkspaceManifest",
         "toolchain=$ToolchainId",
         "features=$(Join-Elements -Values $features)",
         "deps=$(Join-Elements -Values $dependencies)",
@@ -184,6 +186,7 @@ function Get-CrateInputHash {
         [Parameter(Mandatory)][string] $Crate,
         [Parameter(Mandatory)][string] $TreeObject,
         [Parameter(Mandatory)][AllowEmptyString()][string] $LockSlice,
+        [AllowEmptyString()][string] $WorkspaceManifest = '',
         [Parameter(Mandatory)][string] $ToolchainId,
         [AllowEmptyCollection()][string[]] $Features = @(),
         [AllowEmptyCollection()][string[]] $DependencyHashes = @(),
@@ -191,8 +194,8 @@ function Get-CrateInputHash {
     )
 
     $preimage = New-HashPreimage -Crate $Crate -TreeObject $TreeObject -LockSlice $LockSlice `
-        -ToolchainId $ToolchainId -Features $Features -DependencyHashes $DependencyHashes `
-        -BuildScriptInputs $BuildScriptInputs
+        -WorkspaceManifest $WorkspaceManifest -ToolchainId $ToolchainId -Features $Features `
+        -DependencyHashes $DependencyHashes -BuildScriptInputs $BuildScriptInputs
     $generation = (Get-Sha256Hex -Text $ToolchainId).Substring(0, 12)
     return "$generation-$(Get-Sha256Hex -Text $preimage)"
 }
@@ -236,6 +239,59 @@ function Get-CrateTreeObject {
         throw "cannot read the tree object for '$normalised' at '$Revision' in '$RepositoryRoot': $object"
     }
     return ([string]$object).Trim()
+}
+
+function Get-WorkspaceManifestBlob {
+    <#
+      .SYNOPSIS
+        The blob id of the workspace ROOT manifest at a revision — an input that is in no crate's tree.
+
+      .DESCRIPTION
+        Found by ISSUES 4 reviewing this file, and it is the unsafe direction, so it is worth stating
+        in full rather than as a parameter name.
+
+        `Get-CrateTreeObject` covers everything under a crate's directory, which is what makes "a file
+        nobody listed" not a category. The build PROFILES are not under any crate:
+
+            Cargo.toml:74   [profile.release]  lto = "thin"  codegen-units = 1
+            Cargo.toml:78   [profile.test]     debug = 1
+
+        Measured: `[profile]` blocks in core/schema, core/events, adapters/tool-host, apps/cli = 0, 0,
+        0, 0. Cargo forbids them in members; they live in the root and nowhere else. Change `lto` to
+        `"fat"` and EVERY crate compiles to something different while every crate's key stays
+        byte-identical — the tree object cannot see it (different directory) and the lock slice cannot
+        carry it (`Cargo.lock` records resolved versions, not profiles). Two trees that build
+        differently, one key.
+
+        The blob id is the cheapest correct handle: it moves whenever ANY byte of that file moves, so
+        it covers the profiles without this code having to know what a profile is — the same reason
+        the crate hash is a tree object rather than a file list.
+
+        WHAT THE KEY STILL DOES NOT SEE, stated because a list of covered inputs invites the reader to
+        assume the rest is covered too:
+          - `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` in the environment;
+          - an explicit `--target` (`rustc -Vv` reports the HOST triple, which does not move when you
+            cross-compile);
+          - `CARGO_PROFILE_*` overrides in the environment;
+          - a file a `build.rs` reads without declaring it — that is acceptance 6's hermeticity linter,
+            and until it lands `BuildScriptInputs` is only as good as its caller.
+        ISSUES 4 measured that the gate sets none of the first three today (`grep RUSTFLAGS|--release|
+        --target|CARGO_PROFILE|CARGO_BUILD` over `ci/gate.ps1` and `ci/postgres.ps1` returns nothing),
+        so they are omissions the current caller cannot reach; the profile in `Cargo.toml` was
+        different because it is checked in and an ordinary commit can change it.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)][string] $Revision,
+        [string] $ManifestPath = 'Cargo.toml'
+    )
+
+    $global:LASTEXITCODE = 0
+    $blob = & git -C $RepositoryRoot rev-parse "$($Revision):$ManifestPath" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "cannot read the workspace manifest blob for '$ManifestPath' at '$Revision' in '$RepositoryRoot': $blob"
+    }
+    return ([string]$blob).Trim()
 }
 
 function Get-ToolchainId {

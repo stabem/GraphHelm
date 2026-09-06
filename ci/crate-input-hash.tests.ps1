@@ -16,7 +16,7 @@
 # The declared total is Assert-* CALLS reached at runtime; Assert-Equal delegating to Assert-True
 # fires once per call, not twice. A cell that stops running while its neighbours stay green shows
 # up here as a miscount rather than as quiet success.
-$ExpectedAssertionCount = 48
+$ExpectedAssertionCount = 54
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -53,6 +53,7 @@ function New-Baseline {
         Crate             = 'graphhelm-events'
         TreeObject        = '4f2d1c9a6b3e8d70f1a2b3c4d5e6f708192a3b4c'
         LockSlice         = 'serde 1.0.0; thiserror 2.0.0'
+        WorkspaceManifest = '4e208752960763478eefe306a1bb05aeffa9725f'
         ToolchainId       = 'rustc 1.97.1 (abcdef012 2026-01-01)'
         Features          = @('std', 'postgres')
         DependencyHashes  = @('aaaaaaaaaaaa-1111', 'bbbbbbbbbbbb-2222')
@@ -114,6 +115,14 @@ try {
     Assert-NotEqual -Unexpected (Get-BaselineHash) `
         -Actual (Get-BaselineHash @{ Crate = 'graphhelm-governor' }) `
         -Label 'two crates sharing every other component do not share a key'
+
+    # The workspace ROOT manifest: an input in NO crate's tree (ISSUES 4's finding on #915).
+    Assert-NotEqual -Unexpected (Get-BaselineHash) `
+        -Actual (Get-BaselineHash @{ WorkspaceManifest = '0000000000000000000000000000000000000000' }) `
+        -Label 'a changed workspace root manifest changes the key (profiles live there, in no crate)'
+    Assert-Equal -Expected (Get-BaselineHash) `
+        -Actual (Get-BaselineHash @{ WorkspaceManifest = (New-Baseline).WorkspaceManifest }) `
+        -Label 'the same workspace manifest hashes the same'
 
     # The generation, and what it is FOR: a toolchain bump must not reuse across compilers.
     $bumped = Get-BaselineHash @{ ToolchainId = 'rustc 1.98.0 (999888777 2026-06-01)' }
@@ -183,6 +192,12 @@ try {
     Set-Content -LiteralPath (Join-Path $repo 'core/leaf/src/lib.rs') -Value 'pub fn one() -> u8 { 1 }' -Encoding utf8
     Set-Content -LiteralPath (Join-Path $repo 'core/leaf/Cargo.toml') -Value '[package]' -Encoding utf8
     Set-Content -LiteralPath (Join-Path $repo 'core/other/src/lib.rs') -Value 'pub fn two() -> u8 { 2 }' -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $repo 'Cargo.toml') -Encoding utf8 -Value @(
+        '[workspace]'
+        'members = ["core/leaf", "core/other"]'
+        '[profile.test]'
+        'debug = 1'
+    )
 
     $git = {
         param([string[]] $Arguments)
@@ -308,6 +323,47 @@ try {
 
     Assert-NotEqual -Unexpected $keysA[0] -Actual $keysA[1] `
         -Label 'two crates under one toolchain still get distinct keys'
+
+    # ISSUES 4's scenario, end to end. The PAIR is the point: the crate's tree object does NOT move
+    # when a build profile changes, so a key built from the tree object alone would have said
+    # "nothing changed" about a workspace that now compiles differently. That is the unsafe
+    # direction, and this is the cell that catches it.
+    # The working tree is deliberately dirty at this point -- an earlier cell left an uncommitted
+    # edit in core/leaf/src/lib.rs to prove the read comes from the object database. Restore it
+    # FIRST: this cell's whole claim is that the manifest is the ONLY thing that changed, and a
+    # stray file in the commit would move the tree object and make the cell prove the opposite.
+    # (It did, on the first run: the trap cell failed because `git add -A` swept that edit in.)
+    & $git @('checkout', '--', 'core/leaf/src/lib.rs') | Out-Null
+    $manifestBefore = Get-WorkspaceManifestBlob -RepositoryRoot $repo -Revision $afterBuildEdit
+    $leafTreeBefore = Get-CrateTreeObject -RepositoryRoot $repo -Revision $afterBuildEdit -CratePath 'core/leaf'
+    Set-Content -LiteralPath (Join-Path $repo 'Cargo.toml') -Encoding utf8 -Value @(
+        '[workspace]'
+        'members = ["core/leaf", "core/other"]'
+        '[profile.test]'
+        'debug = 0'
+    )
+    & $git @('add', '-A') | Out-Null
+    & $git @('commit', '--quiet', '-m', 'flip [profile.test] debug 1 -> 0') | Out-Null
+    $afterProfile = ([string](& $git @('rev-parse', 'HEAD'))).Trim()
+    $manifestAfter = Get-WorkspaceManifestBlob -RepositoryRoot $repo -Revision $afterProfile
+    $leafTreeAfter = Get-CrateTreeObject -RepositoryRoot $repo -Revision $afterProfile -CratePath 'core/leaf'
+
+    Assert-Equal -Expected $leafTreeBefore -Actual $leafTreeAfter `
+        -Label 'THE TRAP: a build-profile change leaves the crate tree object untouched'
+    Assert-NotEqual -Unexpected $manifestBefore -Actual $manifestAfter `
+        -Label 'but the workspace manifest blob moves'
+    $keyBefore = Get-CrateInputHash -Crate 'core/leaf' -TreeObject $leafTreeBefore -LockSlice '' `
+        -WorkspaceManifest $manifestBefore -ToolchainId $toolchainA
+    $keyAfter = Get-CrateInputHash -Crate 'core/leaf' -TreeObject $leafTreeAfter -LockSlice '' `
+        -WorkspaceManifest $manifestAfter -ToolchainId $toolchainA
+    Assert-NotEqual -Unexpected $keyBefore -Actual $keyAfter `
+        -Label 'so the KEY moves: a profile change cannot replay a stale proof (ISSUES 4, #915)'
+
+    # A missing root manifest must throw, not answer an empty string that hashes stably.
+    $threwManifest = $false
+    try { Get-WorkspaceManifestBlob -RepositoryRoot $repo -Revision $afterProfile -ManifestPath 'no-such.toml' | Out-Null }
+    catch { $threwManifest = $true }
+    Assert-True -Condition $threwManifest -Label 'a workspace manifest that is not there throws rather than answering'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -174,6 +174,23 @@ pub fn load_graph(path: &Path) -> Result<LoadedGraph, Vec<Diagnostic>> {
         )]);
     }
 
+    // STAT BEFORE OPEN (#559). The size bound below only ever protected against a big
+    // regular file: a FIFO reports length 0 and then blocks at OPEN on Unix until a writer
+    // appears, so nothing after the open could reject what the open never returned from -- and
+    // `serve` ran this on its single-thread reactor. `metadata` does not block on a FIFO. The
+    // post-open check further down repeats the question on the handle actually opened, which
+    // closes the swap window between the two calls for everything but the blocking case this
+    // one exists for.
+    let kind = std::fs::metadata(path).map_err(|error| {
+        vec![parse_diagnostic(
+            &source,
+            format!("cannot inspect graph: {error}"),
+        )]
+    })?;
+    if !kind.is_file() {
+        return Err(vec![parse_diagnostic(&source, NOT_A_REGULAR_FILE)]);
+    }
+
     let file = File::open(path).map_err(|error| {
         vec![parse_diagnostic(
             &source,
@@ -186,6 +203,9 @@ pub fn load_graph(path: &Path) -> Result<LoadedGraph, Vec<Diagnostic>> {
             format!("cannot inspect graph: {error}"),
         )]
     })?;
+    if !metadata.is_file() {
+        return Err(vec![parse_diagnostic(&source, NOT_A_REGULAR_FILE)]);
+    }
     if metadata.len() > MAX_DOCUMENT_BYTES {
         return Err(vec![parse_diagnostic(
             &source,
@@ -303,9 +323,73 @@ fn parse_diagnostic(source: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error("GHS001_PARSE", message, "/", source)
 }
 
+/// The diagnostic a graph path that is not a regular file earns (#559): a directory, a FIFO, a
+/// device. One string, so the two checks in `load_graph` and the cells cannot drift apart.
+pub const NOT_A_REGULAR_FILE: &str = "graph is not a regular file";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fresh directory under the OS temp root, removed on drop. This crate carries no
+    /// `tempfile`; the name is unique per process and per call.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("graphhelm-schema-{}-{unique}", std::process::id()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A directory is not a graph, and the answer is the regular-file diagnostic rather than
+    /// whatever the platform's `read` says about directories (#559).
+    #[test]
+    fn a_directory_is_refused_as_not_a_regular_file_before_any_read() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("graph.yaml");
+        std::fs::create_dir(&path).unwrap();
+        let diagnostics = load_graph(&path).expect_err("a directory must not load");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].code, "GHS001_PARSE");
+        assert_eq!(diagnostics[0].message, NOT_A_REGULAR_FILE);
+    }
+
+    /// THE HANG THIS EXISTS TO REMOVE. A FIFO with no writer blocks `File::open` forever on
+    /// Unix, and before #559 `load_graph` opened before it looked. The load runs on its own
+    /// thread and the test waits with a ceiling, so a regression is a red rather than a hung
+    /// gate -- a hang has no colour.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_without_opening_it() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("graph.yaml");
+        let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(load_graph(&path).map(|_| ()));
+        });
+        let outcome = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("load_graph blocked on the FIFO: it opened before it inspected");
+        let diagnostics = outcome.expect_err("a FIFO must not load");
+        assert_eq!(
+            diagnostics[0].message, NOT_A_REGULAR_FILE,
+            "{diagnostics:?}"
+        );
+    }
 
     #[test]
     fn one_leading_utf8_bom_is_normalized_before_yaml_parsing() {

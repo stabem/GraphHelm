@@ -276,8 +276,19 @@ fn build_wiring(
             .manifest
             .as_ref()
             .expect("executor_all guarantees Some");
-        let bytes = std::fs::read(manifest_path)
-            .map_err(|_| serve_invalid("--manifest does not name a readable file", "/manifest"))?;
+        // The same bounded, regular-file-only read the per-request re-read uses (#559), so the
+        // manifest `serve` starts on cannot be one it would later refuse.
+        let bytes =
+            crate::commands::gateway::read_bounded_manifest(manifest_path).map_err(|error| {
+                match error {
+                    crate::commands::gateway::ManifestReadError::Unreadable => {
+                        serve_invalid("--manifest does not name a readable file", "/manifest")
+                    }
+                    crate::commands::gateway::ManifestReadError::TooLarge => {
+                        serve_invalid("--manifest exceeds the maximum supported size", "/manifest")
+                    }
+                }
+            })?;
         let text = String::from_utf8(bytes)
             .map_err(|_| serve_invalid("--manifest is not valid UTF-8", "/manifest"))?;
         let manifest = RouteManifest::from_json(&text)

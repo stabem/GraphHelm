@@ -66,6 +66,47 @@ const MAX_EVENTS_LIMIT: usize = 1000;
 /// It grants no reach `start` and `resume` did not already have: both take a `file` and load it,
 /// so the ability to ask this Runtime to read a graph file by path already existed. This is the
 /// same load with a read-only result.
+/// Runs synchronous filesystem or replay work OFF the reactor (#559).
+///
+/// `serve` runs on a current-thread runtime: one task doing a blocking read stalls every other
+/// request -- health, status, the mutations -- for as long as the read takes. Three handlers did
+/// exactly that (the execution index replaying up to twenty streams, the topology read, the
+/// per-request manifest re-read) while the evidence and sweep paths had already moved to
+/// `spawn_blocking`. Every such site now goes through this one function, and the tests below
+/// hold each of them to it by a witness that records the thread the work ran on.
+///
+/// `None` means the blocking task itself failed (panicked or was cancelled); each caller says
+/// what that means for its own reply.
+async fn off_reactor<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    #[cfg(test)]
+    let work = off_reactor_witness::observed(work);
+    tokio::task::spawn_blocking(work).await.ok()
+}
+
+/// TEST-ONLY SEAM, in the style of `LocalEventRepository::shared_fast_open_count`: records, for
+/// every piece of work `off_reactor` runs, which thread ran it. A cell that drives a handler on a
+/// current-thread runtime can then ask two questions no timing can answer -- did this handler's
+/// work go through `off_reactor` at all, and did it run somewhere other than the reactor thread.
+#[cfg(test)]
+mod off_reactor_witness {
+    use std::sync::Mutex;
+    use std::thread::ThreadId;
+
+    static RUNS: Mutex<Vec<ThreadId>> = Mutex::new(Vec::new());
+
+    pub(super) fn observed<T>(work: impl FnOnce() -> T) -> impl FnOnce() -> T {
+        move || {
+            RUNS.lock().unwrap().push(std::thread::current().id());
+            work()
+        }
+    }
+
+    /// The threads every run so far happened on, in order.
+    pub(super) fn runs() -> Vec<ThreadId> {
+        RUNS.lock().unwrap().clone()
+    }
+}
+
 pub(super) async fn graph_topology(body: Bytes) -> Response {
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -81,7 +122,15 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
         );
     };
 
-    match topology::execute(Path::new(file)) {
+    // Open, read (bounded), parse, validate, hash: file work, off the reactor (#559).
+    let file = file.to_owned();
+    let Some(outcome) = off_reactor(move || topology::execute(Path::new(&file))).await else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(TOPOLOGY_COMMAND, "the topology task failed").output,
+        );
+    };
+    match outcome {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(TOPOLOGY_COMMAND, value).output,
@@ -120,13 +169,25 @@ pub(super) async fn list_executions(
     State(state): State<ServeState>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let (after, limit) = match parse_list_query(query.as_deref().unwrap_or("")) {
+    list_executions_over(state.events.clone(), query.as_deref().unwrap_or("")).await
+}
+
+/// The index over `events`, split from the extractor so a cell can drive it without a server.
+async fn list_executions_over(events: Arc<Path>, query: &str) -> Response {
+    let (after, limit) = match parse_list_query(query) {
         Ok(parsed) => parsed,
         Err((message, pointer)) => return bad_request(LIST_COMMAND, message, pointer),
     };
-    match execution::list::execute(&state.events, after.as_deref(), limit) {
-        Ok(value) => respond(StatusCode::OK, Outcome::success(LIST_COMMAND, value).output),
-        Err(failure) => respond_failure(LIST_COMMAND, failure),
+    // Up to `limit` streams replayed, each up to the store's event ceiling: replay work, off the
+    // reactor (#559).
+    let listed = off_reactor(move || execution::list::execute(&events, after.as_deref(), limit));
+    match listed.await {
+        Some(Ok(value)) => respond(StatusCode::OK, Outcome::success(LIST_COMMAND, value).output),
+        Some(Err(failure)) => respond_failure(LIST_COMMAND, failure),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(LIST_COMMAND, "the listing task failed").output,
+        ),
     }
 }
 
@@ -1378,7 +1439,7 @@ struct PreparedPorts {
 /// specific model; spending a different one and reporting success is the one outcome this cannot
 /// produce.
 #[allow(clippy::result_large_err)] // `MutationError::Prepared` carries a built response
-fn resolve_requested_route(
+async fn resolve_requested_route(
     wiring: &RuntimeWiring,
     command: &'static str,
     payload: &serde_json::Value,
@@ -1400,11 +1461,26 @@ fn resolve_requested_route(
         }
     };
 
-    let bytes = std::fs::read(&wiring.manifest_path).map_err(|_| {
-        // The path is NOT in the message. `manifest_path` is a filesystem location on the
-        // deployer's machine and this text reaches an HTTP caller; the caller cannot act on it
-        // and the operator already knows what they passed to `--manifest`.
-        MutationError::from(setup_failure("the configured manifest could not be read"))
+    // The re-read is BOUNDED and regular-file-only -- the same reader `serve` started on and
+    // `gateway routes` uses -- and it runs off the reactor (#559): before this it was an
+    // unbounded `std::fs::read` on the request's own task.
+    //
+    // The path is NOT in any message. `manifest_path` is a filesystem location on the server,
+    // which a caller with a bearer token is not owed; the reply is a diagnostic and the operator
+    // already knows what they passed to `--manifest`.
+    let manifest_path = wiring.manifest_path.clone();
+    let read = off_reactor(move || crate::commands::gateway::read_bounded_manifest(&manifest_path))
+        .await
+        .ok_or_else(|| MutationError::from(setup_failure("the manifest read task failed")))?;
+    let bytes = read.map_err(|error| {
+        MutationError::from(setup_failure(match error {
+            crate::commands::gateway::ManifestReadError::Unreadable => {
+                "the configured manifest could not be read"
+            }
+            crate::commands::gateway::ManifestReadError::TooLarge => {
+                "the configured manifest exceeds the maximum supported size"
+            }
+        }))
     })?;
     let text = String::from_utf8(bytes).map_err(|_| {
         MutationError::from(setup_failure("the configured manifest is not valid UTF-8"))
@@ -1443,7 +1519,7 @@ async fn prepare_drive(
         .map_err(|message| MutationError::from(setup_failure(&message)))?;
     let ports = match &state.runtime {
         Some(wiring) => {
-            let route = resolve_requested_route(wiring, command, payload)?;
+            let route = resolve_requested_route(wiring, command, payload).await?;
             let model = ServeModelPort::build(wiring, &route)
                 .await
                 .map_err(|message| MutationError::from(setup_failure(&message)))?;
@@ -2148,5 +2224,267 @@ mod pause_digest_body_tests {
     #[test]
     fn immediate_digest_body_differs_from_graceful() {
         assert_ne!(pause_digest_body(true), pause_digest_body(false));
+    }
+}
+
+/// #559: the three handlers that did synchronous file or replay work on the reactor, each held
+/// to `off_reactor` by the witness -- not by timing. A current-thread runtime is built per cell,
+/// the runs recorded before and after are compared, and the thread the new run happened on must
+/// not be the runtime's own. Serialised through one lock because the witness is process-wide.
+#[cfg(test)]
+mod off_reactor_tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::Bytes;
+    use axum::http::StatusCode;
+
+    use super::{
+        MutationError, RuntimeWiring, graph_topology, list_executions_over, off_reactor,
+        off_reactor_witness, resolve_requested_route,
+    };
+
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// Runs `future` on a fresh current-thread runtime and returns its output together with the
+    /// witness's new runs -- the threads work went through `off_reactor` on during the call.
+    fn measured<T>(
+        future: impl std::future::Future<Output = T>,
+    ) -> (T, Vec<std::thread::ThreadId>) {
+        let before = off_reactor_witness::runs().len();
+        let output = runtime().block_on(future);
+        let runs = off_reactor_witness::runs();
+        (output, runs[before..].to_vec())
+    }
+
+    fn example_graph() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/graphs/manual-override-deploy.yaml")
+    }
+
+    async fn body_text(response: axum::response::Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// The helper's own contract, with a closure that can observe its thread: the work runs
+    /// somewhere that is not the reactor thread, and its value comes back.
+    #[test]
+    fn off_reactor_runs_the_work_on_another_thread_and_returns_its_value() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let (value, runs) = measured(off_reactor(move || (std::thread::current().id(), 41 + 1)));
+        let (worker, answer) = value.expect("the blocking task completes");
+        assert_eq!(answer, 42);
+        assert_ne!(worker, reactor, "the work ran ON the reactor thread");
+        assert_eq!(
+            runs,
+            vec![worker],
+            "the witness saw exactly this run, on the worker"
+        );
+    }
+
+    #[test]
+    fn the_topology_read_goes_through_off_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let body = serde_json::json!({ "file": example_graph().to_str().unwrap() }).to_string();
+        let (response, runs) = measured(graph_topology(Bytes::from(body)));
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            runs.len(),
+            1,
+            "the topology read did not go through off_reactor"
+        );
+        assert_ne!(
+            runs[0], reactor,
+            "the topology read ran on the reactor thread"
+        );
+    }
+
+    /// The regular-file refusal arrives as the same 400 any other graph diagnostic does, and
+    /// names the rule; a directory is the platform-neutral non-regular path.
+    #[test]
+    fn a_topology_read_of_a_directory_is_a_graph_diagnostic_not_a_hang_or_a_500() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("graph.yaml");
+        std::fs::create_dir(&path).unwrap();
+        let body = serde_json::json!({ "file": path.to_str().unwrap() }).to_string();
+        let (text, _) = measured(async {
+            let response = graph_topology(Bytes::from(body)).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            body_text(response).await
+        });
+        assert!(
+            text.contains(graphhelm_schema::NOT_A_REGULAR_FILE),
+            "the reply must name the regular-file rule: {text}"
+        );
+    }
+
+    #[test]
+    fn the_execution_index_goes_through_off_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let directory = tempfile::tempdir().unwrap();
+        let events: Arc<Path> = Arc::from(directory.path().join("events"));
+        drop(crate::commands::event_store(&events).unwrap());
+        let (text, runs) = measured(async {
+            let response = list_executions_over(events, "").await;
+            assert_eq!(response.status(), StatusCode::OK);
+            body_text(response).await
+        });
+        assert!(text.contains("\"executions\":[]"), "{text}");
+        assert_eq!(
+            runs.len(),
+            1,
+            "the execution index did not go through off_reactor"
+        );
+        assert_ne!(
+            runs[0], reactor,
+            "the execution index replayed on the reactor thread"
+        );
+    }
+
+    fn wiring_for(manifest_path: PathBuf) -> RuntimeWiring {
+        let manifest =
+            graphhelm_gateway::manifest::RouteManifest::from_json(&manifest_json()).unwrap();
+        let route = super::find_route(&manifest, "anthropic_byok").unwrap();
+        RuntimeWiring {
+            manifest_path,
+            route,
+            broker_dir: PathBuf::from("unused"),
+            keyring_dir: PathBuf::from("unused"),
+            key_id: "unused".to_owned(),
+            staging: PathBuf::from("unused"),
+            project: None,
+            tests_runner: "unused".to_owned(),
+            allow_programs: Vec::new(),
+            path_prepend: Vec::new(),
+        }
+    }
+
+    fn manifest_json() -> String {
+        serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": "anthropic_byok",
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": "https://api.anthropic.com",
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_anthropic",
+                "profiles": ["critical_reasoning"],
+                "enabled": true
+            }]
+        })
+        .to_string()
+    }
+
+    fn setup_message(error: MutationError) -> String {
+        match error {
+            MutationError::Command(failure) => failure.message,
+            MutationError::Prepared(_) => panic!("expected a setup failure, got a prepared reply"),
+        }
+    }
+
+    #[test]
+    fn the_manifest_re_read_goes_through_off_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let directory = tempfile::tempdir().unwrap();
+        let manifest_path = directory.path().join("manifest.json");
+        std::fs::write(&manifest_path, manifest_json()).unwrap();
+        let wiring = wiring_for(manifest_path);
+        let payload = serde_json::json!({ "route": "anthropic_byok" });
+        let (route, runs) = measured(resolve_requested_route(
+            &wiring,
+            "execution.start",
+            &payload,
+        ));
+        let Ok(route) = route else {
+            panic!("the route resolves");
+        };
+        assert_eq!(route.id(), "anthropic_byok");
+        assert_eq!(
+            runs.len(),
+            1,
+            "the manifest re-read did not go through off_reactor"
+        );
+        assert_ne!(
+            runs[0], reactor,
+            "the manifest was re-read on the reactor thread"
+        );
+    }
+
+    /// The re-read is bounded the way the startup read is: a manifest grown past
+    /// `MAX_MANIFEST_BYTES` after `serve` started is refused, not read whole.
+    #[test]
+    fn an_oversize_manifest_is_refused_by_the_re_read_without_being_read() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let manifest_path = directory.path().join("manifest.json");
+        let file = std::fs::File::create(&manifest_path).unwrap();
+        file.set_len(graphhelm_gateway::manifest::MAX_MANIFEST_BYTES as u64 + 1)
+            .unwrap();
+        drop(file);
+        let wiring = wiring_for(manifest_path);
+        let payload = serde_json::json!({});
+        let (outcome, _) = measured(resolve_requested_route(
+            &wiring,
+            "execution.start",
+            &payload,
+        ));
+        let Err(error) = outcome else {
+            panic!("an oversize manifest is refused");
+        };
+        let message = setup_message(error);
+        assert_eq!(
+            message,
+            "the configured manifest exceeds the maximum supported size"
+        );
+    }
+
+    #[test]
+    fn a_manifest_path_that_is_a_directory_is_not_readable_to_the_re_read() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let wiring = wiring_for(directory.path().to_path_buf());
+        let payload = serde_json::json!({});
+        let (outcome, _) = measured(resolve_requested_route(
+            &wiring,
+            "execution.start",
+            &payload,
+        ));
+        let Err(error) = outcome else {
+            panic!("a directory is refused");
+        };
+        let message = setup_message(error);
+        assert_eq!(message, "the configured manifest could not be read");
     }
 }

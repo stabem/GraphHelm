@@ -111,7 +111,14 @@ pub(super) fn finish<T>(
 /// failure reports only that the file could not be read, and a validation failure reports only
 /// `ManifestError`'s own route-id-and-rule `Display` text.
 pub(super) fn load_manifest(path: &Path) -> Result<RouteManifest, Failure> {
-    let bytes = read_bounded_manifest(path)?;
+    let bytes = read_bounded_manifest(path).map_err(|error| match error {
+        ManifestReadError::Unreadable => {
+            invalid("--manifest does not name a readable file", "/manifest")
+        }
+        ManifestReadError::TooLarge => {
+            invalid("--manifest exceeds the maximum supported size", "/manifest")
+        }
+    })?;
     let text = String::from_utf8(bytes)
         .map_err(|_| invalid("--manifest is not valid UTF-8", "/manifest"))?;
     RouteManifest::from_json(&text).map_err(|error| invalid(&error.to_string(), "/manifest"))
@@ -125,24 +132,38 @@ pub(super) fn load_manifest(path: &Path) -> Result<RouteManifest, Failure> {
 /// hostile file that is merely large must never be read into memory at all just to be refused.
 /// The metadata check is the actual guard; `Read::take(MAX_MANIFEST_BYTES + 1)` is defense in
 /// depth against a file that grows between the metadata call and the read.
-fn read_bounded_manifest(path: &Path) -> Result<Vec<u8>, Failure> {
-    let unreadable = || invalid("--manifest does not name a readable file", "/manifest");
-    let too_large = || invalid("--manifest exceeds the maximum supported size", "/manifest");
-
-    let metadata = std::fs::metadata(path).map_err(|_| unreadable())?;
+///
+/// REGULAR FILES ONLY, decided before the open (#559): a FIFO reports length 0 and then blocks
+/// at `File::open` on Unix until a writer appears, so the size bound alone never protected the
+/// caller from it. Typed rather than a `Failure` so `serve`, which reads this same file at
+/// startup and again per request, can say each refusal in its own words.
+pub(super) fn read_bounded_manifest(path: &Path) -> Result<Vec<u8>, ManifestReadError> {
+    let metadata = std::fs::metadata(path).map_err(|_| ManifestReadError::Unreadable)?;
+    if !metadata.is_file() {
+        return Err(ManifestReadError::Unreadable);
+    }
     if metadata.len() > MAX_MANIFEST_BYTES as u64 {
-        return Err(too_large());
+        return Err(ManifestReadError::TooLarge);
     }
 
-    let file = std::fs::File::open(path).map_err(|_| unreadable())?;
+    let file = std::fs::File::open(path).map_err(|_| ManifestReadError::Unreadable)?;
     let mut bytes = Vec::new();
     file.take(MAX_MANIFEST_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| unreadable())?;
+        .map_err(|_| ManifestReadError::Unreadable)?;
     if bytes.len() > MAX_MANIFEST_BYTES {
-        return Err(too_large());
+        return Err(ManifestReadError::TooLarge);
     }
     Ok(bytes)
+}
+
+/// Why a manifest could not be read as bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ManifestReadError {
+    /// Not there, not a regular file, or not openable.
+    Unreadable,
+    /// A regular file past `MAX_MANIFEST_BYTES`.
+    TooLarge,
 }
 
 /// Confirms the keyring directory already exists. `SealedKeyProvider::create`/`open`

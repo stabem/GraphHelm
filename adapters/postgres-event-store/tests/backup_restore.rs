@@ -2574,8 +2574,14 @@ fn constructor_bounds_reconciliation_catalog_locks() {
             .execute(&mut *lock)
             .await
             .unwrap();
+        // The OBSERVER budget, and it is not a behavioural bound (#19). Its only job is
+        // to stop a hang; its elapse is a FAILURE, not the assertion. It was 2 s -
+        // twenty times the constructor's own 100 ms deadline, which reads generous and
+        // is not, because the wall time needed to OBSERVE a 100 ms deadline is not
+        // bounded by 100 ms under full-gate load. `source_invariants.rs` holds the
+        // floor and the subject/observer split that this number belongs to.
         let result = tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(60),
             PostgresBackupOperator::new(
                 database.admin_pool().clone(),
                 Arc::new(MemoryKeyProvider),

@@ -229,3 +229,153 @@ fn database_json_is_byte_guarded_before_client_materialization() {
     assert!(!INTEGRITY.contains("cumulative_bytes"));
     assert!(!JOURNAL.contains("SELECT envelope"));
 }
+
+/// The floor an OBSERVER timeout must clear, and why this is a floor and not a ratio.
+///
+/// A `tokio::time::timeout` in these tests is one of two things, and #19 is the record of them
+/// being confused:
+///
+/// - a **SUBJECT**, where the elapse IS the assertion (`assert!(result.is_err())`). Its budget
+///   must be TIGHT: `concurrency.rs` waits 500 ms for a read that must not arrive, `isolation.rs`
+///   gives 20 ms to a `pg_sleep(0.2)`. Raising either would weaken the test, so they are declared
+///   below rather than measured against this floor.
+/// - an **OBSERVER**, where the elapse is a FAILURE. The test wants the subject's own answer and
+///   the wrapper is there only to stop a hang. Its budget must be far larger than anything the
+///   subject can legitimately take.
+///
+/// **A ratio against the subject's own deadline would be the wrong shape**, and that is the part
+/// that kept this flake alive. `constructor_bounds_reconciliation_catalog_locks` wrapped a call
+/// whose deadline is 100 ms in a 2 s observer — twenty times the subject's budget, which reads
+/// generous. It is not: under full-gate load the wall time needed to *observe* a 100 ms deadline
+/// is not bounded by 100 ms at all (34 concurrent `cargo`/`rustc` measured on this machine on
+/// 2026-09-05). The two quantities are not comparable, so the floor is stated in absolute
+/// seconds: long enough that only a true hang reaches it.
+const OBSERVER_TIMEOUT_FLOOR: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The timeouts whose elapse is the assertion, named by a string from the call they wrap.
+///
+/// Declared rather than detected: "does this test assert `is_err()` on the result" is a question
+/// about code the guard would have to interpret, and a guard that interprets is a guard that can
+/// be argued with. A list can only be wrong in a way the coverage test below catches.
+const SUBJECT_TIMEOUTS: &[(&str, &str)] = &[
+    ("concurrency.rs", "wait_for_head_reads_for_testing(2)"),
+    ("isolation.rs", "SELECT pg_sleep(0.2)"),
+];
+
+/// Every `.rs` under `tests/`, except this file.
+///
+/// **This file is excluded because it would match itself**: the subject markers above are string
+/// literals containing the very text the scan looks for, so including it would count the guard's
+/// own vocabulary as findings. That is the same self-reference that made a fleet process counter
+/// report its own reader.
+fn integration_test_sources() -> Vec<(String, String)> {
+    let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut found: Vec<std::path::PathBuf> = std::fs::read_dir(&tests)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", tests.display()))
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|found| found == "rs"))
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name != "source_invariants.rs")
+        })
+        .collect();
+    found.sort();
+    found
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            (name, text)
+        })
+        .collect()
+}
+
+/// Each `tokio::time::timeout` call site: the file it is in, the text it wraps, and its budget.
+fn timeout_sites() -> Vec<(String, String, std::time::Duration)> {
+    fn budget(region: &str) -> Option<std::time::Duration> {
+        for (marker, scale) in [("from_secs(", 1_000u64), ("from_millis(", 1)] {
+            if let Some(start) = region.find(marker) {
+                let rest = &region[start + marker.len()..];
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                if let Ok(value) = digits.parse::<u64>() {
+                    return Some(std::time::Duration::from_millis(value * scale));
+                }
+            }
+        }
+        None
+    }
+    let mut sites = Vec::new();
+    for (name, text) in integration_test_sources() {
+        let mut from = 0;
+        while let Some(at) = text[from..].find("tokio::time::timeout") {
+            let start = from + at;
+            let region = &text[start..text.len().min(start + 400)];
+            let found = budget(region).unwrap_or_else(|| {
+                panic!(
+                    "HARNESS-BROKE: a tokio::time::timeout in {name} carries no \
+                     Duration::from_secs/from_millis within 400 characters, so this guard cannot \
+                     read its budget. The region was:\n{region}"
+                )
+            });
+            sites.push((name.clone(), region.to_owned(), found));
+            from = start + "tokio::time::timeout".len();
+        }
+    }
+    sites
+}
+
+/// An observer's budget must not race the thing it observes.
+///
+/// Red at `193674dc`: `backup_restore.rs` observes a 100 ms constructor deadline with a 2 s
+/// wrapper, and reports its own instrument firing (`observer.outer_timeout`) as the test result.
+/// #19 has that failure recorded once per milestone since M04e, re-diagnosed from scratch each
+/// time because the message names a timeout and not which of the two kinds it was.
+#[test]
+fn an_observer_timeout_never_races_the_subject_it_observes() {
+    for (name, region, found) in timeout_sites() {
+        let is_subject = SUBJECT_TIMEOUTS
+            .iter()
+            .any(|(file, marker)| *file == name && region.contains(marker));
+        if is_subject {
+            continue;
+        }
+        assert!(
+            found >= OBSERVER_TIMEOUT_FLOOR,
+            "{name}: an OBSERVER timeout of {found:?} is below the {OBSERVER_TIMEOUT_FLOOR:?} \
+             floor. Its elapse is a failure, not an assertion, so it must be long enough that \
+             only a hang reaches it. If this one's elapse IS the assertion, declare it in \
+             SUBJECT_TIMEOUTS instead of lowering the floor (#19)"
+        );
+    }
+}
+
+/// Every timeout is classified, and every declared subject still exists.
+///
+/// Without this, a new tight observer added tomorrow would pass by being unclassified, and a
+/// subject renamed out of existence would leave a declaration that silences nothing while looking
+/// like it silences something.
+#[test]
+fn every_timeout_in_the_integration_tests_is_classified() {
+    let sites = timeout_sites();
+    assert!(
+        sites.len() >= 3,
+        "HARNESS-BROKE: the walk found {} timeout sites; this adapter has 3 (backup_restore, \
+         concurrency, isolation). If one was deleted, lower this floor in the same change that \
+         removes it and name the file here",
+        sites.len()
+    );
+    for (file, marker) in SUBJECT_TIMEOUTS {
+        assert!(
+            sites
+                .iter()
+                .any(|(name, region, _)| name == file && region.contains(marker)),
+            "HARNESS-BROKE: SUBJECT_TIMEOUTS declares {file} / {marker}, and no timeout site \
+             matches it. A declaration that matches nothing exempts nothing"
+        );
+    }
+}

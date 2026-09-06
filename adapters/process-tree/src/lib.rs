@@ -242,6 +242,18 @@ pub enum TerminationOutcome {
     Complete,
     /// The sweep hit its pass limit while descendants were still appearing. `remaining` is what
     /// the last pass saw; there may be more.
+    ///
+    /// **`passes` is PER-PLATFORM and not comparable across them.** On Unix a pass is a full subtree
+    /// walk and the bound is a count (`MAX_PASSES`); on Windows a pass is one liveness poll of the
+    /// enumerated members with a 1 ms sleep, and the bound is time (`JOB_DRAIN_CEILING`), so the number
+    /// can reach the thousands. Compare it to its own platform's bound, never to the other's.
+    ///
+    /// **`passes: 0` means NO PASS WAS MADE**, not a bound hit: on Windows the job's membership could
+    /// not be read, so nothing was enumerated and nothing was waited on, and `remaining` there is
+    /// UNKNOWN rather than zero -- the `0` it carries is the absence of a reading, not a count of
+    /// survivors. A real ceiling always reports at least one pass. Said on the variant because a
+    /// consumer reads the enum, not the producer that documents the signature. (Raised in review of
+    /// #826 by two lanes.)
     BoundReached { passes: u32, remaining: usize },
     /// The group signal was sent and the SUBTREE sweep did not run, so a descendant that left the
     /// group survives. This is what the crate says on a Unix without `/proc` or without
@@ -698,10 +710,19 @@ pub fn close(group: &mut ProcessGroup) {
 /// false GREEN. Said here as well as there because neither body appears in the other's rendered
 /// documentation.
 ///
-/// Always [`TerminationOutcome::Complete`], and the signature exists so the two platforms answer
-/// the same QUESTION rather than so this one has something to say. A job object holds every
-/// process its members create, so there is no subtree left over to sweep and no bound to hit --
-/// the outcome the Unix arm has to work for is what this one gets from the kernel.
+/// **`TerminateJobObject` REQUESTS termination and returns without waiting for it**, so this used to
+/// answer [`TerminationOutcome::Complete`] unconditionally -- a value documented as *"signalled
+/// everything reachable, and a final pass found nothing new"* on a path where no pass was ever made.
+/// The kernel guarantees CONTAINMENT, not that containment has finished by the time the call
+/// returns. Measured on main before this changed (#824): the parent, which `Drop` explicitly waits
+/// for, was gone in 20 of 20 runs; the descendant, which nothing waited for, was still alive in 6 of
+/// 20 and died 1.03-1.30 ms later -- never escaping, merely not yet drained.
+///
+/// So this OBSERVES the drain before saying `Complete`, and answers
+/// [`TerminationOutcome::BoundReached`] when the ceiling arrives first. That variant's existing
+/// meaning -- still appearing, there may be more -- is right here, and reusing it is deliberate so
+/// that [`TerminationOutcome::SweepUnavailable`], which already carries two meanings (#815), does not
+/// acquire a third.
 #[cfg(windows)]
 pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
     use windows_sys::Win32::{
@@ -712,8 +733,32 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
         },
     };
     if group.0 != 0 {
+        // THE IDS ARE READ BEFORE THE KILL, and that order is the whole of it. Measured (#824):
+        // `JobObjectBasicAccountingInformation.ActiveProcesses` reads ZERO on the very first query
+        // after `TerminateJobObject` -- pass 1, every run -- while the descendant is still answering
+        // "running" to the caller. Job accounting stops counting a process before its handle
+        // signals, so it cannot be the completion predicate. Enumerate first, then wait on what was
+        // enumerated.
+        //
+        // AND THE LIST IS OLDER THAN THE KILL, which is a window this code does not close (#846). A
+        // process a listed member spawns between the enumeration and `TerminateJobObject` is in the
+        // job -- the kernel kills it -- but is not in `members`, so the drain below never waits for it.
+        // Microseconds wide, and strictly better than waiting for nothing; declared here so that
+        // `Complete` on this arm is read as "every member enumerated before the kill was observed
+        // to go", not as "a final pass found nothing new". (Found in review of #826 by the GraphHelm
+        // ISSUES lane; the mechanical closure -- re-read membership after the wait -- is #846.)
+        let members = job_member_ids(group);
         unsafe { TerminateJobObject(group.0 as _, 1) };
-        return TerminationOutcome::Complete;
+        // `passes: 0` IS THE SIGNATURE of "membership could not be read", and it is distinguishable
+        // from a real ceiling, which always reports at least one pass. Both are `BoundReached`
+        // because both mean the same thing to a caller: this did not observe the tree go.
+        let Some(members) = members else {
+            return TerminationOutcome::BoundReached {
+                passes: 0,
+                remaining: 0,
+            };
+        };
+        return drain_terminated_job(&members);
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
     if !handle.is_null() {
@@ -723,6 +768,124 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
         }
     }
     TerminationOutcome::Complete
+}
+
+/// How long [`terminate`] waits for a terminated job to empty before answering
+/// [`TerminationOutcome::BoundReached`].
+///
+/// **A CEILING, NOT AN EXPECTED COST.** Measured drain on an idle host is 1.03-1.30 ms (#824), so the
+/// loop below normally exits on its second pass and this is some four thousand times the observed
+/// figure. It is set that far above because the gate runs the workspace in parallel and the same
+/// ficha measured a cell taking 20.60 s under gate load against 0.43 s isolated -- a 48x stretch. A
+/// bound chosen from idle numbers would turn a slow machine into a `BoundReached`, which reads as
+/// "descendants are still appearing": a false alarm about the product caused by the host.
+///
+/// The loop needs a ceiling more than a clever condition. Without one, a job that never empties makes
+/// `terminate` HANG, and a hang has no colour -- the gate has no per-test timeout, so it would stop
+/// rather than redden.
+#[cfg(windows)]
+const JOB_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The most job members this will enumerate before it stops claiming to have seen them all.
+///
+/// A job holding more than this is not a case this crate can answer `Complete` for honestly, so the
+/// overflow is reported as `BoundReached` with the unlisted count in `remaining` rather than silently
+/// waiting on a prefix and calling it the whole.
+#[cfg(windows)]
+const JOB_MEMBER_LIST_CAP: usize = 1024;
+
+/// The process ids currently assigned to the job.
+///
+/// **Must be called BEFORE `TerminateJobObject`.** Afterwards the list empties as fast as the
+/// accounting does, and an empty list would read as "nothing to wait for" -- the exact false green
+/// this whole path exists to remove.
+///
+/// Returns the ids seen and how many were assigned but did not fit, or `None` when the membership
+/// could not be READ at all.
+///
+/// **`None` is not an empty job**, and collapsing the two is the failure this signature exists to
+/// prevent: an unreadable job would yield no ids, the wait would have nothing to wait for, and the
+/// answer would be `Complete` -- a confident "the tree is gone" derived from having failed to look.
+/// The caller turns `None` into `BoundReached` instead, so the unobservable case fails toward the
+/// same colour as the observed-incomplete one.
+#[cfg(windows)]
+fn job_member_ids(group: ProcessGroup) -> Option<(Vec<u32>, usize)> {
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList, QueryInformationJobObject,
+    };
+
+    let header = std::mem::size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+    let slot = std::mem::size_of::<usize>();
+    let bytes = header + slot * JOB_MEMBER_LIST_CAP;
+    let mut buffer = vec![0u8; bytes];
+    // SAFETY: `group.0` is a live job handle this process created and owns; the buffer is at least
+    // the size of the structure and is written only up to the length passed. The return value is
+    // checked before anything is read out of it.
+    let queried = unsafe {
+        QueryInformationJobObject(
+            group.0 as _,
+            JobObjectBasicProcessIdList,
+            buffer.as_mut_ptr().cast(),
+            u32::try_from(bytes).unwrap_or(u32::MAX),
+            std::ptr::null_mut(),
+        )
+    };
+    if queried == 0 {
+        return None;
+    }
+    // SAFETY: a successful query wrote a valid header followed by `NumberOfProcessIdsInList` slots,
+    // and the buffer was allocated with room for the header plus `JOB_MEMBER_LIST_CAP` of them.
+    let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+    let listed = (list.NumberOfProcessIdsInList as usize).min(JOB_MEMBER_LIST_CAP);
+    let assigned = list.NumberOfAssignedProcesses as usize;
+    let mut ids = Vec::with_capacity(listed);
+    for index in 0..listed {
+        // SAFETY: `ProcessIdList` is a flexible array of `listed` valid entries inside the buffer.
+        let id = unsafe { *list.ProcessIdList.as_ptr().add(index) };
+        if let Ok(id) = u32::try_from(id) {
+            ids.push(id);
+        }
+    }
+    Some((ids, assigned.saturating_sub(listed)))
+}
+
+/// Wait for the processes that were in a job when it was terminated to actually be gone.
+///
+/// **The predicate is the one the CALLER uses**, and that is the correction this function exists to
+/// carry.
+///
+/// **WHAT `Complete` MEANS HERE, exactly:** every member enumerated BEFORE the kill has been observed
+/// gone. A member spawned after that enumeration is killed by the job and not waited for (#846), so
+/// this arm's `Complete` is narrower than the variant's doc -- "a final pass found nothing new" -- and
+/// says so rather than letting a reader infer the wider claim. The first version polled the job's `ActiveProcesses` and returned `Complete` on pass 1,
+/// every run, while `process_is_running` still answered true for the descendant -- so the flake was
+/// unchanged and the fix looked applied. Two instruments disagreeing about the same instant; the one
+/// that decides is the one a caller can observe.
+#[cfg(windows)]
+fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
+    let (ids, unlisted) = members;
+    let started = std::time::Instant::now();
+    let mut passes: u32 = 0;
+    loop {
+        passes = passes.saturating_add(1);
+        let remaining = ids.iter().filter(|id| process_is_running(**id)).count();
+        if remaining == 0 {
+            if *unlisted == 0 {
+                return TerminationOutcome::Complete;
+            }
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: *unlisted,
+            };
+        }
+        if started.elapsed() >= JOB_DRAIN_CEILING {
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: remaining + unlisted,
+            };
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 /// `SYNCHRONIZE` (`0x0010_0000`): the access right that permits WAITING on a handle.
@@ -1509,6 +1672,49 @@ mod tests {
                 .is_running()
                 .expect("the identity keeps answering after the kill"),
             "the identity still reports the sleeper as running after it was reaped"
+        );
+    }
+}
+
+/// The Windows drain's REFUSAL path, which the flake cell cannot reach.
+///
+/// `cancelled_watchdog_kills_the_owned_process_tree` over in `graphhelm-postgres-event-store` is the
+/// guard for the ordinary path: it failed 8 times in 20 on main and passes 40 of 40 with the wait in
+/// place. What it never exercises is a job whose membership cannot be READ, because a real job
+/// always can be -- and that is exactly the branch where a wrong default would be invisible, since
+/// answering `Complete` there looks identical to answering it correctly.
+#[cfg(all(test, windows))]
+mod job_drain_refusal {
+    use super::{ProcessGroup, TerminationOutcome, terminate};
+
+    #[test]
+    fn a_job_whose_membership_cannot_be_read_is_not_reported_as_drained() {
+        // A non-zero handle that is not a job. It takes the job branch -- the arm under test -- and
+        // every call made there fails, which is the state a real failure would produce. Zero would
+        // take the OTHER branch and measure nothing about this one.
+        let not_a_job = ProcessGroup(usize::MAX);
+
+        let outcome = terminate(std::process::id(), not_a_job);
+
+        // ASSERTED AS THE WHOLE VALUE, not `matches!(.., BoundReached { .. })`: `passes: 0` is the
+        // documented signature of "membership could not be read", and a coarser assertion would
+        // accept a real ceiling being hit -- which would mean this ran the 5-second wait against the
+        // CURRENT PROCESS and still called it a bound, a very different bug reading as this pass.
+        assert_eq!(
+            outcome,
+            TerminationOutcome::BoundReached {
+                passes: 0,
+                remaining: 0
+            },
+            "an unreadable job must fail toward BoundReached, never toward Complete"
+        );
+
+        // And the control that makes the assertion above mean what it says: this process is STILL
+        // RUNNING. Without it, `BoundReached` would be consistent with `terminate` having killed the
+        // test runner's own tree, and the cell would pass by not existing any more.
+        assert!(
+            super::process_is_running(std::process::id()),
+            "HARNESS-BROKE: terminate() acted on this process; the outcome above is not about a refusal"
         );
     }
 }

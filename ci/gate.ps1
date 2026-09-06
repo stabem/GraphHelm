@@ -109,6 +109,11 @@ $toolchain = '+1.97.1'
 # already runs merge-proof behind; here it is what `Invoke-Stage` poisons `$LASTEXITCODE` with.
 $MuteStageExitCode = 99
 $failed = @()
+# #909: what each PostgreSQL stage actually EXECUTED. Kept apart from $failed for the same reason
+# $staleBinaryCount is (#822/#856): "this stage ran nothing" is not a finding about the code, it is a
+# statement that the stage did not measure it. Populated from the count file postgres.ps1 writes;
+# empty means no PostgreSQL stage ran at all, which is a legal run (-SkipPostgres) and not a zero.
+$script:postgresExecution = [ordered]@{}
 # #822: how many test binaries predated this run's start. Kept apart from $failed because it is
 # not a failure of the code under test: it says whether the other stages measured this tree at all.
 $staleBinaryCount = 0
@@ -237,6 +242,58 @@ function Protect-GateEvidenceLine {
 # to a file the parent blocks forever on a stream that never closes. Giving the child explicit
 # temporary files of its own closes both, and `WaitForExit` waits for that process alone rather than
 # for its descendants - the server is stopped by postgres.ps1's own teardown before it returns.
+# #909: one PostgreSQL stage, plus the answer to "did it measure anything".
+#
+# THE STAGE'S EXIT CODE CANNOT ANSWER THAT. `cargo test` that selects zero tests exits 0, so a stage
+# that ran nothing is indistinguishable from one that ran everything and passed -- and the 80-line
+# tail Invoke-Postgres publishes destroys the evidence either way. postgres.ps1 now writes a count to
+# the file named here; this reads it back and reddens the stage when the run reports groups but
+# executed nothing.
+#
+# 'unknown' does NOT redden. A missing or unreadable count file means the READER failed, not that the
+# stage ran nothing, and turning "I could not see" into "it ran nothing" is exactly the inference that
+# produced a false report on 2026-09-05. It is surfaced loudly and left to a human.
+function Invoke-PostgresStage {
+    param([Parameter(Mandatory)] [string] $Name)
+
+    $countFile = [System.IO.Path]::GetTempFileName()
+    $previousCountFile = $env:GRAPHHELM_PG_COUNT_FILE
+    $env:GRAPHHELM_PG_COUNT_FILE = $countFile
+    try {
+        Invoke-Stage $Name { Invoke-Postgres } | Out-Null
+    } finally {
+        $env:GRAPHHELM_PG_COUNT_FILE = $previousCountFile
+    }
+
+    $record = [ordered]@{ verdict = 'unknown'; executed = 0; groups = 0; stdoutLines = 0 }
+    if (Test-Path -LiteralPath $countFile) {
+        foreach ($line in (Get-Content -LiteralPath $countFile -ErrorAction SilentlyContinue)) {
+            $pair = [regex]::Match($line, '^([A-Za-z]+)=(.*)$')
+            if (-not $pair.Success) { continue }
+            $key = $pair.Groups[1].Value
+            $value = $pair.Groups[2].Value
+            if ($record.Contains($key)) {
+                $record[$key] = if ($key -eq 'verdict') {
+                    $value
+                } else {
+                    $parsed = 0
+                    if ([int]::TryParse($value, [ref] $parsed)) { $parsed } else { 0 }
+                }
+            }
+        }
+        Remove-Item -LiteralPath $countFile -Force -ErrorAction SilentlyContinue
+    }
+    $script:postgresExecution[$Name] = $record
+
+    if ($record.verdict -eq 'none') {
+        Write-Host "[gate] NOT A MEASUREMENT: '$Name' reported $($record.groups) binary summary(ies) and executed 0 tests." -ForegroundColor Magenta
+        Write-Host '[gate] The stage exited 0 because a run that selects nothing succeeds. It measured nothing about this head.' -ForegroundColor Magenta
+        if ($failed -notcontains $Name) { $script:failed = @($failed) + $Name }
+    } elseif ($record.verdict -eq 'unknown') {
+        Write-Host "[gate] '$Name' published no executed-test count; this run cannot say whether it measured anything." -ForegroundColor Yellow
+    }
+}
+
 function Invoke-Postgres {
     param(
         # Focused harness tests inject a deterministic child without starting PostgreSQL or the
@@ -1941,6 +1998,10 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         artifactBuildExit  = $ArtifactManifest.buildExitCode
         testArtifacts      = [object[]]$ArtifactManifest.artifacts
         staleArtifactCount = $staleArtifacts.Count
+        # #909: per-stage executed-test counts. A count survives the 80-line tail that the stage's
+        # transcript does not, so this is the only place a later reader can learn whether the
+        # PostgreSQL axis was measured at all. Empty when no PostgreSQL stage ran.
+        postgresExecution  = $script:postgresExecution
         staleArtifacts     = $staleArtifacts
         slotLockAtStart    = $SlotLockAtStart
         slotLockAtEnd      = $SlotLockAtEnd
@@ -2421,7 +2482,7 @@ try {
         if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
         # postgres.ps1 ends in `exit`, which terminates the *calling* script in PowerShell, so it
         # must run as a child process or the gate dies here and never reports.
-        Invoke-Stage 'PostgreSQL ignored matrix' { Invoke-Postgres } | Out-Null
+        Invoke-PostgresStage -Name 'PostgreSQL ignored matrix'
         # The C locale makes text ordering identical to COLLATE "C", which is exactly the condition
         # under which collation-dependent ordering defects stay invisible. This second pass is the
         # regression guard for that class and is not optional.
@@ -2434,7 +2495,7 @@ try {
             } else {
                 'en_US.UTF-8'
             }
-            Invoke-Stage 'PostgreSQL matrix under a non-C collation' { Invoke-Postgres } | Out-Null
+            Invoke-PostgresStage -Name 'PostgreSQL matrix under a non-C collation'
         } finally {
             $env:GRAPHHELM_PG_LOCALE = $previousLocale
         }

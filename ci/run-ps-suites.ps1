@@ -30,6 +30,7 @@ $PinnedSuites = @(
     'gate-canary-outcome.tests.ps1',
     'gate-evidence.tests.ps1',
     'gate-manifest-provenance.tests.ps1',
+    'gate-postgres-count.tests.ps1',
     'gate-postgres-evidence.tests.ps1',
     'gate-run-abort.tests.ps1',
     'gate-run-overlap.tests.ps1',
@@ -45,7 +46,8 @@ $PinnedSuites = @(
     'merge-proof-from-main.tests.ps1',
     'merge-proof.tests.ps1',
     'normalize-script-eol.tests.ps1',
-    'slot-lock.tests.ps1'
+    'slot-lock.tests.ps1',
+    'test-count.tests.ps1'
 )
 
 $discovered = @(

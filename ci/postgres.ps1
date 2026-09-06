@@ -60,6 +60,10 @@ function Write-Step {
     Write-Host "[ci/postgres] $Message"
 }
 
+# #909: the executed-test count. Dot-sourced, not reimplemented -- ci/test-count.ps1 defines two pure
+# functions and does nothing else, and its own suite is what proves the parse.
+. (Join-Path $PSScriptRoot 'test-count.ps1')
+
 function Invoke-Tool {
     param(
         [string] $Path,
@@ -334,8 +338,26 @@ try {
         # process is judged by its exit code, which stays authoritative here.
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
+        # #909, found by the unnumbered ISSUES lane at f99b269c: DECLARE IT BEFORE THE PIPE.
+        # `Tee-Object -Variable` only assigns when the pipeline produces at least one object, and this
+        # file runs under `Set-StrictMode -Version 2.0` (:46), where reading an unset variable THROWS.
+        # cargo writes diagnostics to stderr, so a compile error produces a non-zero exit and EMPTY
+        # stdout -- the throw then happens at the read below, before `exit $exitCode` on the last line
+        # of the file, and 101 is reported as 1 with no count file written. A PR whose thesis is that
+        # a run which measured nothing must not look like one that measured cannot afford to turn a
+        # failing run into `unknown`. Tee overwrites this whenever there IS output, so nothing else
+        # changes; the empty case now reads as groups = 0, which is exactly `unknown`.
+        $capturedStdout = @()
         try {
-            & $TestCommand @TestArgs
+            # #909: TEE, not redirect. The lines still reach the console exactly as before (Tee-Object
+            # passes them down the success stream), and a copy is kept so the run can say how many
+            # tests it EXECUTED. Only stdout is piped: libtest's summaries are on stdout, cargo's
+            # progress is on stderr, and merging the two with 2>&1 would wrap every stderr line in a
+            # NativeCommandError -- the exact hazard the comment above this block is about.
+            #
+            # $LASTEXITCODE is set by the native command and a downstream cmdlet does not overwrite it
+            # ($? would be the cmdlet's; that is a different variable and is not read here).
+            & $TestCommand @TestArgs | Tee-Object -Variable capturedStdout
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousPreference
@@ -344,6 +366,42 @@ try {
         Pop-Location
     }
     Write-Step "Test command exited with code $exitCode."
+
+    # #909: HOW MANY TESTS THIS STAGE ACTUALLY RAN.
+    #
+    # Invoke-Postgres publishes Get-Content -Tail 80 of each stream and then deletes the temp files,
+    # so the head of this output does not survive to any reader. A stage that ran every ignored test
+    # and one that ran none produced the same artefact, and on 2026-09-05 a lane read one as the other
+    # and published it (retracted on #752/#909). A COUNT survives a tail; a transcript does not.
+    #
+    # The line below is printed LAST on purpose, so it is inside the 80 that survive. The file is the
+    # authoritative copy -- a caller that sets GRAPHHELM_PG_COUNT_FILE never has to parse a tail.
+    $capturedLines = @($capturedStdout | ForEach-Object { [string] $_ })
+    $executionTotals = Get-ExecutedTestCount -Lines $capturedLines
+    $executionVerdict = Get-TestExecutionVerdict -Totals $executionTotals
+    Write-Step ("executed {0} test(s) across {1} binary summary(ies); verdict {2}." -f `
+        $executionTotals.executed, $executionTotals.groups, $executionVerdict)
+    # #909, and the reason this line is not decoration: Invoke-Postgres publishes the last 80 lines of
+    # this stream. Printing how many there WERE makes the cut visible at the place a reader looks.
+    # An unmarked truncation reads as a complete record -- that is how a 160-line tail was reported as
+    # a whole stage on 2026-09-05. A reader who sees "1847 stdout line(s)" beside 80 published ones
+    # cannot make that mistake.
+    Write-Step ("stdout produced {0} line(s); the stage publishes the last 80 of each stream." -f $capturedLines.Count)
+    if ($env:GRAPHHELM_PG_COUNT_FILE) {
+        # Flat literal, ASCII, LF: the same shape the slot ledger uses, so a bash reader and a
+        # PowerShell reader see identical bytes.
+        $payload = @(
+            "verdict=$executionVerdict",
+            "executed=$($executionTotals.executed)",
+            "groups=$($executionTotals.groups)",
+            "passed=$($executionTotals.passed)",
+            "failed=$($executionTotals.failed)",
+            "ignored=$($executionTotals.ignored)",
+            "filteredOut=$($executionTotals.filteredOut)",
+            "stdoutLines=$($capturedLines.Count)"
+        ) -join "`n"
+        [System.IO.File]::WriteAllText($env:GRAPHHELM_PG_COUNT_FILE, $payload + "`n", [System.Text.UTF8Encoding]::new($false))
+    }
 } finally {
     $env:GRAPHHELM_TEST_ADMIN_URL = $previousAdminUrl
     $env:GRAPHHELM_TEST_PG_DUMP = $previousPgDump

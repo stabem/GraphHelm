@@ -37,8 +37,24 @@ Assert-True -Condition ($gateText.IndexOf('Get-SlotLockPath -SlotDir (Get-SlotDi
 # The outer finally: the block that ends with Pop-Location. Both the abort line and the release live there.
 $finallyAt = $gateText.IndexOf("} finally {`n    Pop-Location", $ord)
 if ($finallyAt -lt 0) { $finallyAt = $gateText.IndexOf("} finally {`r`n    Pop-Location", $ord) }
-$finallyBlock = if ($finallyAt -ge 0) { $gateText.Substring($finallyAt, [Math]::Min(1600, $gateText.Length - $finallyAt)) } else { '' }
-Assert-True -Condition ($finallyBlock.IndexOf("'RUN-ABORT'", $ord) -ge 0 -and $finallyBlock.IndexOf('Remove-SlotClaim', $ord) -ge 0) `
+# #755: BOUNDED BY THE BLOCK, AND BLIND TO COMMENTS. A fixed 1600-character window overshot the
+# finally's real end by 383 characters and reached the next block; and a plain text search matched
+# the function's name where it appears in a COMMENT inside the block. Measured: deleting the
+# block's only real call left this cell green on both counts. Cut to the closing brace, then drop
+# comment and blank lines before searching -- a mention is not a call (the hazard K wrote up on #833).
+$finallyEndAt = if ($finallyAt -ge 0) { $gateText.IndexOf("`n}`n", $finallyAt) } else { -1 }
+if ($finallyEndAt -lt 0) { $finallyEndAt = if ($finallyAt -ge 0) { $gateText.IndexOf("`r`n}`r`n", $finallyAt) } else { -1 } }
+$finallyBlock = if ($finallyAt -ge 0 -and $finallyEndAt -gt $finallyAt) {
+    (($gateText.Substring($finallyAt, $finallyEndAt - $finallyAt) -split "`r?`n") |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_.TrimStart() -notmatch '^#' }) -join "`n"
+} else { '' }
+# #755: THE PROPERTY IS "THIS BLOCK REACHES RUN-ABORT", not "this block contains the literal".
+# The event is written through `Write-RunAbort` now -- one writer for both exits, so the stage
+# block and the manifest catch cannot drift apart -- and the literal moved with it. Accepting
+# either spelling keeps this cell about the finally; that `Write-RunAbort` actually emits
+# RUN-ABORT is pinned separately, in ci/gate-run-abort.tests.ps1, against the real function.
+$reachesAbort = ($finallyBlock.IndexOf("'RUN-ABORT'", $ord) -ge 0) -or ($finallyBlock.IndexOf('Write-RunAbort', $ord) -ge 0)
+Assert-True -Condition ($reachesAbort -and $finallyBlock.IndexOf('Remove-SlotClaim', $ord) -ge 0) `
     -Message '#700 the outer finally writes RUN-ABORT when RUN-END was not reached, and releases the run''s own claim'
 
 $afterClaim = if ($claimAt -ge 0) { $gateText.Substring($claimAt, [Math]::Min(2400, $gateText.Length - $claimAt)) } else { '' }

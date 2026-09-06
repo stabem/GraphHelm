@@ -176,6 +176,30 @@ $script:slotOutcome = $null
 $script:stagesCompleted = $false
 $script:slotRunEnded = $false
 
+# #755: ONE WRITER FOR THE TERMINAL LINE, used by both exits. #905 gave the stage block its own
+# inline RUN-ABORT; this keeps that behaviour and adds the two things it left open.
+#
+# 1. THE REASON CANNOT BREAK THE LINE. A ledger line is `<utc> | gate | <event> | <detail>`, and an
+#    exception message carrying a newline or a pipe would split one event into two, or invent a
+#    field. The reason is base64 here, the same encoding RUN-START already uses for the target dir,
+#    so a message from a `catch` is safe to record verbatim.
+# 2. THE MANIFEST WRITE IS THE OTHER WAY A RUN ENDS WITHOUT RUN-END, and it was silent: the catch
+#    printed MANIFEST WRITE FAILED and left the ledger with a START and nothing else.
+#
+# The guard is #905's own `slotRunEnded`, not a second flag: RUN-END sets it, so a run that ended
+# properly writes no ABORT, and two callers cannot produce two terminal lines.
+# What it still cannot cover, stated: a process killed from outside runs no `finally`, so a
+# RUN-START with neither END nor ABORT remains "killed or still running" -- #700's liveness reader
+# is the instrument for that, not this line.
+function Write-RunAbort {
+    param([Parameter(Mandatory)] [string] $Reason)
+    if ($script:slotRunEnded) { return }
+    $head = if ($gatedHeadAtStart) { $gatedHeadAtStart.Substring(0, [Math]::Min(12, $gatedHeadAtStart.Length)) } else { 'unknown' }
+    Write-SlotEvent -Event 'RUN-ABORT' -Detail "head=$head reasonBase64=$(ConvertTo-SlotEventField -Value $Reason)"
+    $script:slotRunEnded = $true
+}
+# (end #755)
+
 # Evidence can contain connection strings printed by a failing test. Redact before the line reaches
 # either Write-Host (the human gate log) or $capturedLines (the machine-readable manifest). Keep
 # this pure so PowerShell 5.1 and PowerShell Core apply exactly the same substitutions.
@@ -2423,9 +2447,11 @@ try {
     # abort writes RUN-END before it exits, so it is not double-counted. A hard kill skips every
     # finally and leaves the lock: that is the case the pair-liveness reader recovers on the NEXT
     # gate, by design, not a gap.
-    if (-not $script:stagesCompleted -and -not $script:slotRunEnded) {
-        $abortHead = if ($gatedHeadAtStart) { $gatedHeadAtStart.Substring(0, [Math]::Min(12, $gatedHeadAtStart.Length)) } else { 'unknown' }
-        Write-SlotEvent -Event 'RUN-ABORT' -Detail "head=$abortHead reason=left-the-stage-block-before-RUN-END"
+    if (-not $script:stagesCompleted) {
+        # #755: through the one writer, so this exit and the manifest catch cannot drift apart and
+        # the guard lives in one place. `slotRunEnded` is still what stops a double line; it is
+        # checked inside Write-RunAbort rather than repeated here.
+        Write-RunAbort -Reason 'the stage block was left before it finished'
     }
     # Released HERE, before the manifest write: the slot serialises cargo, not git, and the next
     # gate can start compiling while this one records itself. Only a claim this process made is
@@ -2462,6 +2488,10 @@ try {
     # write is a gate failure in its own right, never a silent gap a clean stage run papers over.
     $manifestFailed = $true
     Write-Host "[gate] MANIFEST WRITE FAILED: $($_.Exception.Message)" -ForegroundColor Red
+    # #755: the OTHER way a run ends without RUN-END. The stage block completed, so its finally
+    # wrote nothing; without this the ledger holds a START and no terminal line at all, which is
+    # indistinguishable from a run still going.
+    Write-RunAbort -Reason "the run manifest could not be written: $($_.Exception.Message)"
 }
 
 Write-Host ''

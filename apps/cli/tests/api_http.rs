@@ -415,10 +415,18 @@ const SABOTAGE_CONFIRM_ENV: &str = "SERVER_GUARD_SABOTAGE_CONFIRM";
 /// ignored test workspace-wide, twice), so an unconditional panic here reds both PostgreSQL gate
 /// stages on any tree containing it — the env-var check below is load-bearing, not decoration.
 /// Absent the marker, this returns immediately: a normal, silent pass, indistinguishable from any
-/// other ignored test a blanket sweep happens to run. With it, spawns a real child (`cmd`, not
-/// `graphhelm serve` — isolates the `ServerGuard` MECHANISM from this specific server's own
-/// behavior, the same choice the original PR's scratch proof made) that writes distinct stdout
+/// other ignored test a blanket sweep happens to run. With it, spawns a real child — not
+/// `graphhelm serve`, to isolate the `ServerGuard` MECHANISM from this specific server's own
+/// behavior, the same choice the original PR's scratch proof made — that writes distinct stdout
 /// and stderr markers, then panics — proving the drain-and-print-on-panic path end to end.
+///
+/// The child is a THIRD INSTANCE of this same test binary (`server_guard_marker_echo_ignored`
+/// below), spawned the same `current_exe()` way `server_guard_surfaces_a_panicking_childs_stderr_
+/// in_the_failure_report` spawns THIS test one process up. It used to be `cmd /C echo ...`
+/// (#150 — L's finding during #149's review: `cmd` exists only on Windows, so the panic-path
+/// guard was Windows-only and reddened for the wrong reason — a spawn failure, not a drain
+/// failure — everywhere else). `server_guard_sabotage_is_platform_portable` below is the
+/// regression guard for that landmine.
 #[test]
 #[ignore = "invoked only as a subprocess by \
             server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report"]
@@ -426,10 +434,14 @@ fn server_guard_sabotage_ignored() {
     if std::env::var(SABOTAGE_CONFIRM_ENV).is_err() {
         return;
     }
-    let mut child = Command::new("cmd")
+    let this_binary = std::env::current_exe().unwrap();
+    let mut child = Command::new(this_binary)
+        .env(MARKER_ECHO_CONFIRM_ENV, "1")
         .args([
-            "/C",
-            "echo SERVER-GUARD-140-STDOUT-MARKER && echo SERVER-GUARD-140-STDERR-MARKER 1>&2",
+            "server_guard_marker_echo_ignored",
+            "--exact",
+            "--ignored",
+            "--nocapture",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -442,23 +454,25 @@ fn server_guard_sabotage_ignored() {
     // Wait for the EVENT the assertions depend on, not for a number. The markers are this child's
     // entire job, so its exit is when they exist or never will. A 300ms sleep here was a
     // synchronisation primitive against a process START: measured under four concurrent suites it
-    // was sometimes not enough, the guard's kill then cut the child off before `cmd` echoed, and
-    // the assertions failed on markers that were never produced (#641 -- 3 of 3 failing runs, and
-    // 40 of 40 with the sleep set to zero).
+    // was sometimes not enough, the guard's kill then cut the child off before the marker child
+    // wrote anything, and the assertions failed on markers that were never produced (#641 -- 3 of
+    // 3 failing runs, and 40 of 40 with the sleep set to zero).
     // BOUNDED, with the deadline named and its expiry coloured. An unbounded `wait()` here would
     // contradict the doctrine this fix is built on -- a red that hangs is not a red -- and it would
     // do it in the sabotage cell, where a stuck child would take the suite with it instead of
-    // failing. Two seconds is ~7x the 300ms this replaces and orders of magnitude over `cmd /C echo`
-    // on a loaded machine; the point is that it EXPIRES rather than that the number is exactly right.
+    // failing. Two seconds is generous for a second test-binary invocation running one filtered,
+    // ignored test with no compilation involved; the point is that it EXPIRES rather than that
+    // the number is exactly right.
     let child_exit_budget = Duration::from_secs(2);
     let child_deadline = Instant::now() + child_exit_budget;
     loop {
         match child.try_wait() {
-            // "Exited" is not "ran". A `cmd` that fails before writing -- a bad command, quoting
-            // that stopped parsing -- exits too, and breaking on any exit would hand the guard a
-            // child that never spoke and let the empty capture be reported as its real output.
-            // That is the same collapse this whole fix is about, one state further out: the
-            // question is not whether it finished, it is whether it finished HAVING DONE ITS JOB.
+            // "Exited" is not "ran". A marker-echo child that fails before writing -- killed
+            // between spawn and its first println!, an environment that cannot start the binary
+            // a second time -- exits too, and breaking on any exit would hand the guard a child
+            // that never spoke and let the empty capture be reported as its real output. That is
+            // the same collapse this whole fix is about, one state further out: the question is
+            // not whether it finished, it is whether it finished HAVING DONE ITS JOB.
             Ok(Some(status)) if status.success() => break,
             Ok(Some(status)) => panic!(
                 "HARNESS-BROKE: the sabotage child exited {status:?} without succeeding, so it failed before it could write its markers. That is the harness or the environment, not the drain/print path this cell exists to prove (#641)"
@@ -480,6 +494,65 @@ fn server_guard_sabotage_ignored() {
         stderr_thread: Some(stderr_thread),
     };
     panic!("{CHILD_REACHED_ITS_OWN_SABOTAGE} in the failure report");
+}
+
+/// Mirrors [`SABOTAGE_CONFIRM_ENV`] one process further in: the only signal
+/// `server_guard_marker_echo_ignored` checks before printing anything, so a blanket `--ignored`
+/// sweep that happens to collect it still returns immediately, silent.
+const MARKER_ECHO_CONFIRM_ENV: &str = "SERVER_GUARD_MARKER_ECHO_CONFIRM";
+
+/// Prints the sabotage cell's two markers to stdout/stderr and exits cleanly — nothing else.
+/// This is the whole reason `server_guard_sabotage_ignored` no longer spawns `cmd`: the markers
+/// come from a THIRD INSTANCE of this same test binary instead of a Windows-only shell (#150).
+///
+/// `--nocapture` on the spawn in `server_guard_sabotage_ignored` is load-bearing, not decoration:
+/// libtest captures a PASSING test's stdout/stderr by default and never writes it to the real
+/// process streams, so without it this function's markers would reach nobody — the sabotage cell
+/// would see empty output and fail for a reason that has nothing to do with the drain/print path
+/// either of them exists to prove.
+#[test]
+#[ignore = "invoked only as a subprocess by server_guard_sabotage_ignored"]
+fn server_guard_marker_echo_ignored() {
+    if std::env::var(MARKER_ECHO_CONFIRM_ENV).is_err() {
+        return;
+    }
+    println!("SERVER-GUARD-140-STDOUT-MARKER");
+    eprintln!("SERVER-GUARD-140-STDERR-MARKER");
+}
+
+/// #150's regression guard: the sabotage mechanism spawns another instance of itself, never a
+/// platform-specific shell. Textual rather than behavioural on purpose — the defect this guards
+/// against is Windows-only vs. portable, and this suite cannot observe its own absence on a
+/// platform it is not running on; what it CAN observe, on any platform, is whether the source
+/// still says `cmd`, `sh`, `/bin/`, or any other shell name in the sabotage/marker-echo pair.
+#[test]
+fn server_guard_sabotage_is_platform_portable() {
+    let source = include_str!("api_http.rs");
+    let start = source
+        .find("fn server_guard_sabotage_ignored")
+        .expect("HARNESS-BROKE: server_guard_sabotage_ignored not found in this file");
+    // Bounded at this test's OWN doc comment, not at its `fn` line: the doc comment below names
+    // the very strings this loop searches for (to explain what it checks), and a region that
+    // included it would fail by matching its own vocabulary — the identical mistake this guard
+    // exists to catch one function over.
+    let end = source[start..]
+        .find("/// #150's regression guard")
+        .map(|offset| start + offset)
+        .expect("HARNESS-BROKE: could not bound the sabotage/marker-echo region");
+    let region = &source[start..end];
+    for shell in ["Command::new(\"cmd\")", "Command::new(\"sh\")", "/bin/"] {
+        assert!(
+            !region.contains(shell),
+            "the sabotage/marker-echo region names a platform-specific shell ({shell:?}) again — \
+             #150 is the record of why that reddens for the wrong reason on any platform that \
+             does not have it"
+        );
+    }
+    assert!(
+        region.contains("current_exe()"),
+        "the sabotage cell no longer spawns another instance of this binary — if the fix for \
+         #150 changed shape, update this guard to match rather than deleting it"
+    );
 }
 
 /// The token file is written by the server before it prints the startup line, so by the time

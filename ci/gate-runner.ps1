@@ -58,6 +58,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('SSD', 'HDD')] [string] $Slot = 'SSD',
+    [string] $SlotRoot,
     [string] $QueueDirectory,
     [string] $BenchRoot,
     [string] $TargetRoot,
@@ -87,7 +88,11 @@ if (-not $TargetRoot) { $TargetRoot = if ($Slot -eq 'SSD') { 'E:\runner-targets\
 # fact: `ci/gate.ps1:387` reads `GRAPHHELM_SLOT_DIR`, and `.factory/tools/slot-claim.sh:50` reads
 # `SLOT_LOCK`. Exporting only one was measured on #871: a run on the SSD claimed the HDD's lock as
 # well, and the HDD queue stood still for 27 minutes.
-$slotRoot = if ($Slot -eq 'SSD') { 'E:/graphhelm-slot' } else { 'D:/graphhelm-slot' }
+# `-SlotRoot` exists so a TEST can point this at a throwaway directory. It is not an operational
+# knob: every real invocation leaves it unset and gets the per-spindle path below, because two
+# runners on one spindle with different roots do not exclude each other -- the same defect the
+# comment above records from #871, one level up.
+$slotRoot = if ($SlotRoot) { $SlotRoot } else { if ($Slot -eq 'SSD') { 'E:/graphhelm-slot' } else { 'D:/graphhelm-slot' } }
 $slotLock = "$slotRoot/SLOT.lock"
 $repoRoot = $null
 
@@ -112,6 +117,37 @@ function Invoke-External {
         $ErrorActionPreference = $previous
     }
     return [pscustomobject]@{ Code = $code; Output = @($out) }
+}
+
+# THE `--jq` ARGUMENT CANNOT CARRY A QUOTED SPACE THROUGH WINDOWS POWERSHELL 5.1, AND THAT IS WHY
+# THIS ASKS FOR JSON AND PARSES IT HERE. The first version of this function passed
+# `--jq '.headRefName + " " + .headRefOid'`. PowerShell re-parses a native command's arguments and
+# strips the inner double quotes, so `gh` received `.headRefName`, `+`, ` `, `+`, `.headRefOid` as
+# five arguments and answered `accepts at most 1 arg(s), received 2` with exit 1. Measured on this
+# machine, in the array-splat form this file uses, not only in a hand-typed line.
+#
+# The consequence was total and silent: EVERY entry read back "gh could not resolve pull request N;
+# leaving it queued", so the queue never drained a single gate from the day it merged. The refusal
+# text described the world -- a pull request that cannot be resolved is a real state -- which is
+# exactly the shape #889 names, a path failure wearing a domain failure's words.
+#
+# `--json` alone carries no spaces and survives. The parse moves into PowerShell, where the quoting
+# is ours rather than the argument passer's.
+function Resolve-PullRequestBranch {
+    param(
+        [Parameter(Mandatory)] [string] $PullRequest,
+        [scriptblock] $Invoker
+    )
+    if (-not $Invoker) { $Invoker = { param($file, $arguments) Invoke-External $file $arguments } }
+    $view = & $Invoker 'gh' @('pr', 'view', "$PullRequest", '--json', 'headRefName,headRefOid')
+    if (-not $view -or $view.Code -ne 0 -or $view.Output.Count -eq 0) { return $null }
+    $parsed = $null
+    try { $parsed = (($view.Output -join "`n")) | ConvertFrom-Json } catch { return $null }
+    if (-not $parsed) { return $null }
+    $branch = [string] $parsed.headRefName
+    $resolved = [string] $parsed.headRefOid
+    if ([string]::IsNullOrWhiteSpace($branch) -or [string]::IsNullOrWhiteSpace($resolved)) { return $null }
+    return [pscustomobject]@{ Branch = $branch; Head = $resolved }
 }
 
 function Test-HeadSha {
@@ -182,19 +218,14 @@ function Invoke-OneEntry {
     # the lane enqueued. This is the check that makes the queue safe to leave world-writable: the
     # worst a poisoned entry can do is name a pull request whose real head disagrees, and that is
     # dropped rather than built.
-    $view = Invoke-External 'gh' @('pr', 'view', "$pr", '--json', 'headRefName,headRefOid', '--jq', '.headRefName + " " + .headRefOid')
-    if ($view.Code -ne 0 -or $view.Output.Count -eq 0) {
+    $resolvedPr = Resolve-PullRequestBranch -PullRequest "$pr"
+    if (-not $resolvedPr) {
         Write-Note "entry $($Candidate.File.Name): gh could not resolve pull request $pr; leaving it queued"
         Set-EntryStatus -EntryPath $entryPath -State 'waiting: pull request not resolvable'
         return
     }
-    $parts = (([string]$view.Output[0]).Trim() -split '\s+')
-    if ($parts.Count -lt 2) {
-        Set-EntryStatus -EntryPath $entryPath -State 'waiting: pull request answer not understood'
-        return
-    }
-    $branch = $parts[0]
-    $serverHead = $parts[1]
+    $branch = $resolvedPr.Branch
+    $serverHead = $resolvedPr.Head
     if ($serverHead -ne $head) {
         Write-Note "entry $($Candidate.File.Name): head moved on the server ($($serverHead.Substring(0,8)) != $($head.Substring(0,8))); dropping"
         Set-EntryStatus -EntryPath $entryPath -State "dropped: head moved to $($serverHead.Substring(0,8))"

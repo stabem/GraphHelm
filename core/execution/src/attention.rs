@@ -456,8 +456,16 @@ pub enum AttentionReason {
 const fn advances_without_the_operator(state: NodeState) -> bool {
     matches!(
         state,
-        // A dispatcher may pick this state up — subject to the edge gate, for `Queued`.
-        NodeState::Ready | NodeState::Queued | NodeState::Running
+        // #92: `Ready` is NOT here. The name of this predicate is the argument: in this system no
+        // dispatcher runs on its own -- `drive_to_quiescence` is reached from `start` and `resume`
+        // and from nowhere else -- so a node left `Ready` when the report is written does not
+        // advance without the operator; it waits for one to run `resume`. Counting it as advancing
+        // is what let `approve` report `can_sleep` over a node nothing would ever pick up.
+        //
+        // `Queued` and `Running` stay: attention is computed AFTER the drive, so a node still
+        // `Running` there is genuinely in flight, and `Queued` with attempts is already judged as
+        // silence by `has_judgeable_silence`.
+        NodeState::Queued | NodeState::Running
             // Resumes itself when quota returns (§12 park-and-wait).
             | NodeState::WaitingCapacity
             // Pre-dispatch states the driver approves on its own next pass.

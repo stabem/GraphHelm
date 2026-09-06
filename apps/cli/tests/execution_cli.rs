@@ -852,6 +852,106 @@ fn approve_readies_a_blocked_node() {
     assert_eq!(projection["nodeStates"]["deploy"], "ready");
 }
 
+/// #92: approve makes an execution QUIETER WITHOUT MAKING IT MOVE, and the approve response is
+/// where that is visible.
+///
+/// `drive_to_quiescence` is reached from `start` and `resume` only, so after `approve` nothing
+/// will dispatch the node it just readied. Attention then goes quiet for reasons that are each
+/// correct alone: `BlockedNode` left with the `Blocked` state; `Ready` raises no silence of its
+/// own (never dispatched, so there is no turn to be late for); and `Ready` counts as advancing,
+/// which suppresses the wedge that would otherwise have spoken. The composition is an execution
+/// that reads calm with a node nothing will ever pick up.
+///
+/// Every existing approve cell resumes immediately and supplies the drive by hand, which is why
+/// the suite has never seen this. This one stops where a human stops -- at the command the
+/// `BlockedNode` message invited them to run.
+///
+/// CONTROL BELOW, and it is load-bearing: a negative assertion is worthless if the value can
+/// never appear, so the same suite proves `can_sleep` IS what a genuinely settled execution
+/// reports. Without it, `assert_ne!(..., "can_sleep")` would pass on a typo.
+#[test]
+fn approve_without_resume_does_not_report_the_execution_as_calm() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure"}),
+    );
+    let start_data = start(&events, &fixtures, "supervised", "exec_92_calm_but_stalled");
+    assert_eq!(
+        start_data["nodeStateCounts"]["blocked"], 1,
+        "ARRANGEMENT: the node must be Blocked, or there is nothing to approve: {start_data}"
+    );
+    assert_eq!(
+        start_data["attention"], "needs_you",
+        "ARRANGEMENT: a blocked node must be speaking before approve, or this cell measures \
+         nothing about approve silencing it: {start_data}"
+    );
+
+    let output = command()
+        .args([
+            "execution",
+            "approve",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_92_calm_but_stalled",
+            "--node",
+            "implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value = json(&output.stdout);
+
+    // The state half: approve did its job.
+    let projection = replay_projection(&events);
+    assert_eq!(projection["nodeStates"]["implementation"], "ready");
+
+    // The verdict lives under `data`: the raw envelope is {ok, command, data, diagnostics}
+    // and `render`'s view is the `data` member. Reading `value["attention"]` compares Null to
+    // a string and passes whatever the execution is doing -- which is how the first draft of
+    // this cell reported the defect ABSENT. Pinned, so a shape change fails loudly instead of
+    // quietly making the assertion below vacuous again.
+    assert!(
+        value["data"]["attention"].is_string(),
+        "ARRANGEMENT: the verdict must be readable at data.attention, or the assertion below measures nothing: {value}"
+    );
+    // The half that is the defect. Nothing will dispatch that Ready node -- no driver runs after
+    // approve -- so an execution reporting `can_sleep` here is telling the operator their remedy
+    // worked when it only removed the voice.
+    assert_ne!(
+        value["data"]["attention"], "can_sleep",
+        "#92: approve readied a node that nothing will dispatch, and reported the execution as \
+         calm. The operator's remedy removed the only voice and changed nothing material: \
+         {value}"
+    );
+}
+
+/// The positive control for the cell above: `can_sleep` is a value this surface really produces,
+/// so `assert_ne!` there is a claim about THIS execution and not about a string that never
+/// appears. An all-success graph driven to completion by `start` has nothing left to say.
+#[test]
+fn a_settled_execution_does_report_can_sleep() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = all_success_fixtures(directory.path());
+    let start_data = start(&events, &fixtures, "supervised", "exec_92_control_settled");
+    assert_eq!(
+        start_data["nodeStateCounts"]["blocked"], 0,
+        "ARRANGEMENT: nothing blocked in the control: {start_data}"
+    );
+    assert_eq!(
+        start_data["attention"], "can_sleep",
+        "CONTROL: a settled execution reports can_sleep, so the negative assertion above is \
+         about this execution rather than about an unreachable value: {start_data}"
+    );
+}
+
 /// Approval must not be a dead end. The final review of this milestone found the driver
 /// fabricating a `RetryableFailure` the executor never produced whenever `classify_progress`
 /// predicted a bound - which made an approved node re-block forever without the executor ever

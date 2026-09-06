@@ -52,6 +52,7 @@ $PinnedSuites = @(
     'gate-scope-selection.tests.ps1',
     'select-scope.tests.ps1',
     'slot-lock.tests.ps1',
+    'target-inventory.tests.ps1',
     'test-count.tests.ps1'
 )
 

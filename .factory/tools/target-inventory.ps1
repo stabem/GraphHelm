@@ -49,18 +49,52 @@ function Get-TargetAttribution {
     $lane = $null
     $ticket = $null
 
+    # THE ISSUES LANES FIRST, and they have to be first (#936). `issues1-119-targets` and
+    # `i3-909-targets` are what the four ISSUES sessions name their targets, and BOTH single-letter
+    # arms below miss them: the first wants a letter then a digit, and `issues1` is `i` then `s`;
+    # the second wants a letter then a hyphen. Measured on this machine when this was written: ten
+    # `issues*` directories on D:, and not one reported its owner -- six gave the ticket and dropped
+    # the lane, four gave nothing -- while every name says the lane plainly.
+    #
+    # WORSE THAN BLANK, and this is why the order matters: `i3-909-targets` reached the
+    # single-letter arm and was reported as `lane I`, a lane that appears NOWHERE in this repository
+    # (the only `lane I` on main is English prose in a review document). A confident wrong owner
+    # sends whoever decides removal to ask a lane that does not exist, about a directory a live
+    # session owns -- and `by-name` warns a reader that a name may be STALE, never that the parse
+    # may be WRONG.
+    #
+    # Nothing is taken from a real lane: `i-...` with a hyphen still reaches the arm below, so a
+    # lane I would be read as one if it ever existed. Only `i` followed immediately by a digit is
+    # claimed here, which is the ISSUES convention and not any lane's.
+    if ($Name -cmatch '^issues?(?<n>\d+)') { $lane = "ISSUES $($Matches['n'])" }
+    elseif ($Name -cmatch '^i(?<n>\d+)(?=[-_]|$)') { $lane = "ISSUES $($Matches['n'])" }
     # `c-753-target`, `g-220b-targets`, `m827-target`: a single letter, then a separator or digits.
-    if ($Name -cmatch '^(?<lane>[a-z])[-]?(?=\d)') { $lane = $Matches['lane'].ToUpperInvariant() }
-    elseif ($Name -cmatch '^(?<lane>[a-z])-') { $lane = $Matches['lane'].ToUpperInvariant() }
+    elseif ($Name -cmatch '^(?<lane>[a-z])[-]?(?=\d)') { $lane = "lane $($Matches['lane'].ToUpperInvariant())" }
+    elseif ($Name -cmatch '^(?<lane>[a-z])-') { $lane = "lane $($Matches['lane'].ToUpperInvariant())" }
 
     # `issue438`, `pr467`, `gh-review-441-target`, `m827-target`: the first 3-4 digit run.
     if ($Name -cmatch '(?<n>\d{3,4})') { $ticket = $Matches['n'] }
+    # A FALLBACK, NEVER A REPLACEMENT (#936). `issues1-92-targets` is issue #92, and two digits fell
+    # below the floor above, so that row went fully blank. Reached only when no 3-4 digit run
+    # exists, so no answer this tool already gives can change -- it only fills blanks. Not lowered
+    # to one digit: a single digit appears in half the names on the disk and would be a guess.
+    elseif ($Name -cmatch '(?<n>\d{2})') { $ticket = $Matches['n'] }
 
     if ($null -eq $lane -and $null -eq $ticket) { return 'unattributed' }
     if ($null -eq $lane) { return "#$ticket" }
-    if ($null -eq $ticket) { return "lane $lane" }
-    return "lane $lane / #$ticket"
+    if ($null -eq $ticket) { return $lane }
+    return "$lane / #$ticket"
 }
+
+# DOT-SOURCE SAFE, so `Get-TargetAttribution` can be exercised without inventorying a disk
+# (#936). Run with `-File` the body below executes as before; dot-sourced, the file defines its
+# functions and returns. Measured both directions on this runtime rather than assumed, because a
+# guard that silently skipped the body under `-File` would make the tool print nothing and exit 0,
+# which reads exactly like an empty disk.
+#
+# The alternative -- a test that re-creates the function from the file's AST -- tests a copy of the
+# subject, which is the shape this repository has already been bitten by.
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 # ENUMERATE ONCE, AND KEEP THE ERRORS. `-ErrorAction SilentlyContinue` is the only way an entry
 # can go missing here, and it is invisible by construction: what it drops never reaches a count, so
@@ -94,7 +128,6 @@ if ($allDirectories.Count -eq 0) {
     exit 2
 }
 
-$now = Get-Date
 $now = Get-Date
 $rows = foreach ($dir in $found) {
     $age = [int]([math]::Floor(($now - $dir.LastWriteTime).TotalDays))

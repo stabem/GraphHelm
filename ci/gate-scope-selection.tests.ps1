@@ -8,7 +8,7 @@
 # The subject is `Read-ScopeSelection`, cut out of ci/gate.ps1 by anchor text and never retyped --
 # running gate.ps1 would run the gate.
 
-$ExpectedAssertionCount = 28
+$ExpectedAssertionCount = 32
 $ErrorActionPreference = 'Stop'
 # THE SUITE RUNS UNDER THE GATE'S OWN RULES. ci/gate.ps1:88 sets `Set-StrictMode -Version 2.0`,
 # and this file did not: the cells exercised the extracted functions under LAXER rules than
@@ -226,6 +226,30 @@ try {
     try { [void](Get-ScopeRecord -Selection $withoutKey) } catch { $survived = $false }
     Assert-True $survived `
         'and the record reader survives a selection with no matrixReason at all -- under StrictMode a dotted read THROWS, which killed the manifest write on every run'
+
+
+    # ---- THE MATRIX DECISION IS ACTED ON, AND A SKIP IS NOT A GREEN -----------------------------
+    # Measured over 169 manifests: the two PostgreSQL matrices are 10.3 min of a 26.2 min run, 35%
+    # of all gate time, and four of one day's seven PRs touched neither Rust nor SQL and paid it (X).
+    # Recording the decision without acting on it is the whole saving not happening, and it looks
+    # exactly like the saving happening -- the manifest says `matrix: false` either way.
+    Assert-True ($gateText.IndexOf('$script:matrixSkipped', [System.StringComparison]::Ordinal) -ge 0) `
+        'the gate computes a single matrix decision from the scope, rather than recording one and ignoring it'
+
+    # The stage block must branch on it, not on -SkipPostgres alone.
+    $branch = $gateText.IndexOf('if ($script:matrixSkipped) {', [System.StringComparison]::Ordinal)
+    Assert-True ($branch -ge 0) 'and the PostgreSQL stage block branches on that decision'
+
+    # A SKIPPED MATRIX IS NOT A GREEN MATRIX. `Get-RunCoverage` must be fed the EFFECTIVE skip, or a
+    # scoped run records `coverage.complete = true` while never having touched persistence -- a
+    # completeness claim nobody measured, in the field a later reader trusts most.
+    Assert-True ($gateText.IndexOf('Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped)', [System.StringComparison]::Ordinal) -ge 0) `
+        'coverage is computed from the EFFECTIVE skip, so a scope-skipped run reports complete=false'
+
+    # And the console says WHICH reason: a reader who cannot tell a scoped skip from a broken one
+    # cannot act on either, and both leave the same hole in the record.
+    Assert-True ($gateText.IndexOf('SKIPPED by scope', [System.StringComparison]::Ordinal) -ge 0) `
+        'and a scope-skipped matrix names its reason rather than printing a bare SKIPPED'
 
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

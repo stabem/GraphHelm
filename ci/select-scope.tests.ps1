@@ -15,7 +15,7 @@
 # EVERY CELL BELOW FAILS BEFORE ci/select-scope.ps1 EXISTS. That is the point of writing them
 # first: a selector that was tested after it was written is tested against what it does.
 
-$ExpectedAssertionCount = 14
+$ExpectedAssertionCount = 18
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -156,6 +156,35 @@ try {
         "metadata that does not parse refuses or escalates -- it never yields a narrow selection (exit $($bad.exitCode))"
     Assert-True ($bad.text -notmatch 'core-leaf' -or ($null -ne $bad.result -and $bad.result.escalated -eq $true)) `
         'and does not emit a crate list derived from a graph it could not read'
+
+    # ---- DOTFILES AND THE GATE'S OWN RECEIPT ---------------------------------------------------
+    # Both of these were found by running the selector on REAL history, not by a cell: no fixture
+    # in this file had a path beginning with a dot, so no cell could have caught either.
+    #
+    # 1. `TrimStart('./')` takes a char array and stripped the leading dot, turning
+    #    `.factory/gate-runs/x.json` into `factory/...` -- a path matching no crate and no rule.
+    # 2. Even spelled correctly it maps to no crate, so the unmapped rule escalated EVERY run:
+    #    #674(a) puts a manifest in every branch's diff from its second run on. A selector that
+    #    escalates on its own gate's receipt can never narrow anything.
+    $manifestPath = '.factory/gate-runs/a50e7d0a24ee-20260906T045907.929Z-9d2df338.json'
+
+    $withReceipt = Invoke-Select -ChangedFiles @($manifestPath, 'core/leaf/src/lib.rs')
+    Assert-True ($null -ne $withReceipt.result -and $withReceipt.result.escalated -eq $false) `
+        "a run manifest beside a crate change does NOT escalate: the receipt is not build input (rule: '$(if ($null -eq $withReceipt.result) { 'unparseable' } else { $withReceipt.result.escalationRule })')"
+    Assert-True (@(if ($null -ne $withReceipt.result) { $withReceipt.result.crates }) -contains 'core-leaf') `
+        'and the crate beside it is still selected'
+
+    # The exemption is the STORE, not the whole `.factory/` tree.
+    $otherFactory = Invoke-Select -ChangedFiles @('.factory/orchestrator-board.md', 'core/leaf/src/lib.rs')
+    Assert-True ($null -ne $otherFactory.result -and $otherFactory.result.escalated -eq $true) `
+        'a NON-manifest file under .factory/ still escalates -- the exemption is the store, not the tree'
+
+    # A diff that is only receipts has nothing to derive a scope from, and says so.
+    $onlyReceipt = Invoke-Select -ChangedFiles @($manifestPath)
+    Assert-True ($null -ne $onlyReceipt.result -and $onlyReceipt.result.escalated -eq $true -and `
+            $onlyReceipt.result.escalationRule -eq 'manifest-only') `
+        "a diff of run manifests alone is FULL, by its own named rule (got '$(if ($null -eq $onlyReceipt.result) { '' } else { $onlyReceipt.result.escalationRule })')"
+
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host ''

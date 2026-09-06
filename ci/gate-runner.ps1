@@ -285,10 +285,46 @@ function Invoke-OneEntry {
     # against"). `Get-SlotLockPath` returns it when set (`:345`), and `ci/gate.ps1:2230` defaults it
     # from `Get-SlotDir` only when unset. So the LOCK becomes per-spindle and the LEDGER stays where
     # the verifier sweeps: one export, both findings.
+    # #903: DERIVE THE SCOPE, AND FALL TO FULL ON ANY DOUBT. The machinery landed with #928 and
+    # nothing called it: every manifest since says `FULL: no scope selection was given`, which is
+    # the correct default and also the whole feature not running. This is the caller.
+    #
+    # The selection is written next to the run's other artefacts, OUTSIDE the bench: a file inside
+    # it would dirty the tree, `dirtyDiffHash` would go non-null and the gate would refuse to
+    # publish its manifest -- a green run ending `status: RED, manifest not published`.
+    #
+    # EVERY failure here is silence, not a refusal: if the selector cannot be run, or exits
+    # non-zero, or writes nothing, the gate is launched with NO `-ScopeSelection` and runs FULL.
+    # That is the same direction `Read-ScopeSelection` already takes for a selection it cannot
+    # read, and it is the only safe direction: a scoped run that narrowed on a bad derivation
+    # would run fewer stages and report the same green.
+    $scopeArgument = ''
+    $scopeFile = Join-Path $StateDirectory ("$pr-$runId.scope.json")
+    try {
+        $mergeBase = Invoke-External 'git' @('-C', $bench, 'merge-base', 'origin/main', $resolvedPr.Head)
+        if ($mergeBase.Code -eq 0 -and $mergeBase.Output.Count -gt 0) {
+            $selection = Invoke-External 'powershell' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                '-File', (Join-Path $bench 'ci/select-scope.ps1'),
+                '-MergeBase', ([string]$mergeBase.Output[0]).Trim(),
+                '-Head', $resolvedPr.Head, '-RepoRoot', $bench)
+            if ($selection.Code -eq 0 -and $selection.Output.Count -gt 0) {
+                [System.IO.File]::WriteAllText($scopeFile, (($selection.Output | ForEach-Object { [string]$_ }) -join "`n"))
+                $scopeArgument = " -ScopeSelection '$scopeFile'"
+                Write-Note "entry $($Candidate.File.Name): scope derived -> $scopeFile"
+            } else {
+                Write-Note "entry $($Candidate.File.Name): scope derivation exited $($selection.Code); running FULL"
+            }
+        } else {
+            Write-Note "entry $($Candidate.File.Name): no merge-base for $($resolvedPr.Head); running FULL"
+        }
+    } catch {
+        Write-Note "entry $($Candidate.File.Name): scope derivation failed ($($_.Exception.Message)); running FULL"
+    }
+
     $inner = "Set-Location '$bench'; " +
         "`$env:CARGO_TARGET_DIR='$target'; " +
         "`$env:GRAPHHELM_SLOT_LOCK_PATH='$slotLock'; " +
-        "& ./ci/gate.ps1 *> '$logFile'; " +
+        "& ./ci/gate.ps1$scopeArgument *> '$logFile'; " +
         "`$LASTEXITCODE | Set-Content '$rcFile'"
     $proc = Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $inner -PassThru -WindowStyle Hidden
     "$($proc.Id)" | Set-Content -LiteralPath $pidFile

@@ -54,7 +54,13 @@ $EscalationRules = @(
 
 function ConvertTo-RepoPath {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Path)
-    return ($Path -replace '\\', '/').TrimStart('./')
+    # `TrimStart('./')` takes a CHAR ARRAY, not a prefix: it strips every leading '.' AND '/',
+    # so `.factory/gate-runs/x.json` came back as `factory/...` -- a path matching no crate and
+    # no escalation rule, which then escalated every run as 'unmapped'. Measured on the real
+    # repository; no fixture had a dotfile, so no cell could have caught it.
+    $normalised = $Path -replace '\\', '/'
+    while ($normalised.StartsWith('./')) { $normalised = $normalised.Substring(2) }
+    return $normalised
 }
 
 function Write-Selection {
@@ -152,6 +158,26 @@ foreach ($package in $metadata.packages) {
         # exercise the change -- silently, and with every remaining stage green.
         deps      = @(if ($package.dependencies) { $package.dependencies | ForEach-Object { [string]$_.name } } else { @() })
     }
+}
+
+# THE GATE'S OWN RECEIPT IS NOT BUILD INPUT -- the same reasoning #899 used for the freeze rule.
+# #674(a) makes every authoritative run commit its manifest under this prefix onto the branch it
+# judged, so from a branch's SECOND run on the store is always in the diff. Left to the unmapped
+# rule below it maps to no crate and escalates the run to FULL, every time, for ever.
+#
+# Measured on #919's real range, where the only other changed file was one `apps/cli` test:
+#   escalationRule "unmapped-path", unmapped [".factory/gate-runs/a50e7d0a24ee-....json"]
+#
+# A scope selector that escalates on its own gate's receipt can never narrow anything -- this
+# deliverable failing completely, with every existing cell still green, because no fixture
+# contained a manifest path. The exemption is this prefix and nothing wider: any other file under
+# `.factory/` still reaches the unmapped rule and still escalates.
+$RunManifestStore = '.factory/gate-runs/'
+$changed = @($changed | Where-Object { -not $_.StartsWith($RunManifestStore, [System.StringComparison]::Ordinal) })
+if ($changed.Count -eq 0) {
+    Write-Selection -Escalated $true -Rule 'manifest-only' -Changed @() `
+        -MatrixReason 'FULL run: the only changes are run manifests, which are not build input, so there is nothing to derive a scope from'
+    exit 0
 }
 
 # ---- map changed paths to crates, by LONGEST directory prefix -------------------------------

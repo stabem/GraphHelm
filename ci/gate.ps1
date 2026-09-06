@@ -226,6 +226,22 @@ function Read-ScopeSelection {
 # with scope. `Test-Path variable:` asks whether it exists instead of assuming it does.
 $scopeArgument = if (Test-Path variable:ScopeSelection) { [string]$ScopeSelection } else { '' }
 $script:gateScope = Read-ScopeSelection -Path $scopeArgument
+# #903: THE MATRIX DECISION, DECIDED ONCE. Measured over 169 manifests, the two PostgreSQL
+# matrices are 10.3 minutes of a 26.2-minute run -- 35% of all gate time on this board -- and
+# four of one day's seven pull requests touched neither Rust nor SQL and paid it anyway (X).
+# This is the cheap half of the epic and the big one: a path predicate, not a crate graph.
+#
+# A SKIPPED MATRIX IS NOT A GREEN MATRIX, so this feeds `Get-RunCoverage` exactly as
+# `-SkipPostgres` does: `coverage.postgres` reads `skipped` and `coverage.complete` reads
+# false. A run that did not exercise persistence must not record that it did -- the same rule
+# the checklist already carries for an ABSENT `scope` field.
+# `Test-Path variable:` for the same reason the scope argument uses it two lines above: several
+# ci/*.tests.ps1 cut REGIONS out of this file and run them WITHOUT the param() block, and under
+# `Set-StrictMode -Version 2.0` a bare `$SkipPostgres` there throws. Measured: writing it plainly
+# reddened gate-run-abort and gate-target-dir, two suites with nothing to do with PostgreSQL --
+# the SECOND time this file has taught me that lesson today.
+$skipPostgresFlag = if (Test-Path variable:SkipPostgres) { [bool]$SkipPostgres } else { $false }
+$script:matrixSkipped = $skipPostgresFlag -or (-not $script:gateScope.matrix)
 Write-Host "[gate] scope: $($script:gateScope.reason)" -ForegroundColor Cyan
 
 $toolchain = '+1.97.1'
@@ -1992,7 +2008,7 @@ function Write-RunManifest {
     $porcelain = @(& git status --porcelain --untracked-files=all 2>$null | ForEach-Object { [string]$_ })
     $dirt = Get-WorktreeDirt -Diff $diff -PorcelainLines $porcelain
     $dirtyDiffHash = $dirt.hash
-    $coverage = Get-RunCoverage -SkipPostgres ([bool]$SkipPostgres)
+    $coverage = Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped)
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
 
@@ -2584,9 +2600,16 @@ try {
         & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
     } | Out-Null
 
-    if ($SkipPostgres) {
+    if ($script:matrixSkipped) {
         Write-Host ''
-        Write-Host '[gate] PostgreSQL matrix SKIPPED - this is not a full gate.' -ForegroundColor Yellow
+        if ($SkipPostgres) {
+            Write-Host '[gate] PostgreSQL matrix SKIPPED (-SkipPostgres) - this is not a full gate.' -ForegroundColor Yellow
+        } else {
+            # NAMED, never a bare "skipped": a reader who cannot tell WHY a matrix did not run cannot
+            # tell a scoped run from a broken one, and both leave the same hole in the record.
+            Write-Host "[gate] PostgreSQL matrix SKIPPED by scope - $([string]$script:gateScope.matrixReason)" -ForegroundColor Yellow
+            Write-Host '[gate] this run does NOT cover persistence: coverage.complete is false.' -ForegroundColor Yellow
+        }
     } else {
         if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
         # postgres.ps1 ends in `exit`, which terminates the *calling* script in PowerShell, so it

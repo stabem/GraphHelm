@@ -10,7 +10,7 @@
 # The population is DERIVED from the file, never a hand list: a hand list is born correct and rots
 # on the next site somebody adds, which is the same defect one generation later.
 
-$ExpectedAssertionCount = 4
+$ExpectedAssertionCount = 6
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -72,6 +72,19 @@ $missing = @($sites | Where-Object {
     })
 Assert-True -Condition ($missing.Count -eq 0) `
     -Message "every -File path in ci/gate.ps1 resolves to a file (missing: $($missing -join ', '))"
+
+
+# ---------------------------------------------------------------------------------------------
+# #903: THE RUNNER MUST ACTUALLY CALL THE SELECTOR. The scope machinery landed with #928 and for a
+# day nothing invoked it: every manifest said `FULL: no scope selection was given`, which is the
+# correct default AND the whole feature not running. A producer nobody calls is indistinguishable
+# from no producer, and it is invisible because the safe default is also the silent one.
+$runnerText = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'gate-runner.ps1'))
+Assert-True -Condition ($runnerText.IndexOf('ci/select-scope.ps1', [System.StringComparison]::Ordinal) -ge 0) `
+    -Message 'the runner invokes ci/select-scope.ps1, so a derived scope reaches a real gate rather than sitting unused'
+Assert-True -Condition ($runnerText.IndexOf('-ScopeSelection', [System.StringComparison]::Ordinal) -ge 0) `
+    -Message 'and passes -ScopeSelection to the gate it launches'
+
 
 Write-Host ''
 if ($script:total -ne $ExpectedAssertionCount) {

@@ -1345,6 +1345,14 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                 let root_pool = root_pool.clone();
                 let corrupt_name = corrupt_name.clone();
                 Some(tokio::spawn(async move {
+                    // #880: TRUE only if `pg_terminate_backend` returned true in some iteration --
+                    // that is, if THIS run killed the restore. `Satisfied` is also reached when the
+                    // marker-owned backend is simply absent, which is correct for "stop polling"
+                    // and says nothing about who ended it: a kill that landed, or a restore that
+                    // finished first. Both used to return `()`, so the assertion below asserted the
+                    // consequence of a kill in runs where none happened. Six occurrences across
+                    // three lanes, always at that assertion and never at this task's own panic.
+                    let mut killed = false;
                     for _ in 0..3_000 {
                         let restore_pid: Option<i32> = sqlx::query_scalar(
                             "SELECT a.pid FROM pg_stat_activity a JOIN pg_database d ON d.oid=a.datid \
@@ -1364,6 +1372,9 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                                     .fetch_one(&root_pool)
                                     .await
                                     .unwrap();
+                            if terminated {
+                                killed = true;
+                            }
                             let observed_pid_owned: Option<bool> = if terminated {
                                 None
                             } else {
@@ -1403,7 +1414,7 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                             )
                             .unwrap()
                             {
-                                TerminationObservation::Satisfied => return,
+                                TerminationObservation::Satisfied => return killed,
                                 TerminationObservation::Retry => {}
                             }
                         }
@@ -1415,10 +1426,26 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                 None
             };
             let restore_result = corrupt_operator.restore_from_path(failing_archive).await;
-            if let Some(restore_terminator) = restore_terminator {
-                restore_terminator.await.unwrap();
+            let terminator_killed = match restore_terminator {
+                Some(restore_terminator) => Some(restore_terminator.await.unwrap()),
+                None => None,
+            };
+            // #880: assert the consequence of a termination only where a termination happened.
+            //
+            // NOT a widening of the assertion. A restore that IS killed and still reports success
+            // fails exactly as before -- that path has `terminated == true`, so `killed` is true and
+            // the assertion runs. What no longer fails is the run where the restore finished before
+            // the terminator could reach it: the cell did not establish a termination there, so it
+            // is not entitled to a verdict about one. The alternative on the table -- accepting both
+            // outcomes unconditionally -- would have accepted a killed restore reporting success,
+            // which is the one thing this cell exists to catch.
+            match terminator_killed {
+                Some(false) => eprintln!(
+                    "#880: the restore finished before the terminator could kill it, so this run \
+                     asserts nothing about its verdict ({failure}); result was {restore_result:?}"
+                ),
+                _ => assert_eq!(restore_result, Err(BackupError::InvalidRestore), "{failure}"),
             }
-            assert_eq!(restore_result, Err(BackupError::InvalidRestore), "{failure}");
             let preserved: (bool, Option<String>) = sqlx::query_as(
                 "SELECT NOT datallowconn,shobj_description(oid,'pg_database') \
                  FROM pg_database WHERE datname=$1",
@@ -1446,16 +1473,42 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             );
             // Failure may win before acquisition for any archive, not only the deliberately
             // terminated one. Judge the exact persisted state instead of the scenario label.
-            let replacement_owner = match classify_failed_restore_state(
-                preserved.0,
-                preserved.1.as_deref(),
-                &restore_roles,
-                target_objects,
-            )
-            .unwrap_or_else(|reason| panic!("{failure}: {reason}; {state}"))
-            {
-                FailedRestoreState::CleanRelease => None,
-                FailedRestoreState::Preserved { replacement_owner } => Some(replacement_owner),
+            //
+            // #880, second consequence of the same precondition. `classify_failed_restore_state`'s
+            // NAME is its premise: it classifies the state left by a restore that FAILED. Where the
+            // restore ran to completion the premise does not hold -- the target is open with its
+            // objects committed, so the classifier correctly returns `target was not closed` and the
+            // cell panics HERE instead of at the assertion above. Skipping the assertion without
+            // skipping this left the race fatal forty lines lower down; ISSUES 3 reproduced it twice
+            // at `30d01b25`, the skip line printed first and then `closed=false, marker=None,
+            // restore_roles=[], target_objects=39`. Conditioning an assertion on its precondition
+            // has to cover every consequence drawn from that precondition, not the first one.
+            //
+            // `None` rather than a role guessed from `restore_roles`: that query is GLOBAL
+            // (`pg_roles LIKE 'graphhelm_restore_o_%'`), so a role seen here cannot be attributed to
+            // this iteration, and dropping one another run owns is worse than leaving it. Nothing is
+            // taken on trust -- the leak assertion a few lines below re-reads the same global set
+            // after cleanup and fails loudly if anything survives, so a completed restore that DOES
+            // leave a replacement owner is reported rather than silently tolerated.
+            let replacement_owner = match terminator_killed {
+                Some(false) => {
+                    eprintln!(
+                        "#880: not classifying failed-restore state for {failure}: the restore \
+                         completed, so there is no failed restore to classify; {state}"
+                    );
+                    None
+                }
+                _ => match classify_failed_restore_state(
+                    preserved.0,
+                    preserved.1.as_deref(),
+                    &restore_roles,
+                    target_objects,
+                )
+                .unwrap_or_else(|reason| panic!("{failure}: {reason}; {state}"))
+                {
+                    FailedRestoreState::CleanRelease => None,
+                    FailedRestoreState::Preserved { replacement_owner } => Some(replacement_owner),
+                },
             };
             drop(corrupt_operator);
             corrupt_pool.close().await;

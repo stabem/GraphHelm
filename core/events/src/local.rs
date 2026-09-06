@@ -2203,46 +2203,31 @@ impl LocalEventRepository {
                     // backup agent, an editor) turned that into contention on the read path.
                     //
                     // **THE IDENTITY IS TAKEN AND THE VALIDATING HANDLE IS THEN RELEASED, in that
-                    // order, and the order is the whole correctness of this block.** The first
-                    // version of this change held the read-only handle open across the re-open so
-                    // the two `File`s could be compared directly. That handle was opened WITHOUT
-                    // `FILE_SHARE_DELETE`, which makes it one of the "ANY existing handle" that
-                    // this function's own doc says refuses a `DELETE` open -- so the re-open took
-                    // `ERROR_SHARING_VIOLATION`, was mapped to `Ok(None)`, read as "held by
-                    // someone else", and the orphan was silently never removed while the open
-                    // still reported success. The change blocked itself, and the fact that
-                    // explains it is the same one measured to argue the window was closed.
-                    // `FileIdentity` is a plain `{device, file}` value, so it outlives the handle
-                    // it came from and nothing needs to be held.
+                    // order, and the order is the whole correctness of this block.** Holding the
+                    // read-only handle across the re-open is what the first version of this
+                    // change did, and it blocked itself: that handle is opened WITHOUT
+                    // `FILE_SHARE_DELETE`, so it is one of the "ANY existing handle" that refuses
+                    // a `DELETE` open -- the re-open took `ERROR_SHARING_VIOLATION`, mapped to
+                    // `Ok(None)`, read as held-by-someone-else, and the orphan was silently never
+                    // removed while the open still reported success.
+                    //
+                    // Releasing the handle is therefore mandatory, and releasing it is what opens
+                    // the window between VALIDATED and TO-DELETE. `reopen_validated_for_delete`
+                    // is that window, named so a test can stand inside it; read its doc for why
+                    // the comparison there is load-bearing on both platforms.
                     let validated = file_identity(&file)?;
                     drop(file);
-                    let Some(deletable) = open_child_file_for_reconcile(
+                    let Some(deletable) = reopen_validated_for_delete(
                         &self.blobs_handle,
                         &self.root.join("blobs"),
                         name,
-                        true,
+                        validated,
                     )?
                     else {
-                        // Held by someone else. Exactly what the scan already does with
-                        // contention: skip this cycle rather than call it a verdict.
+                        // Contention, or a name that no longer resolves to the validated file.
+                        // Neither is a verdict about the store: skip this cycle.
                         return Ok(());
                     };
-                    // AND THE TWO HANDLES MUST BE THE SAME FILE. `remove_planned_file` already
-                    // compares the name as it stands now against the handle it is about to
-                    // delete; this is a THIRD object -- the handle that validated the bytes -- and
-                    // the window between VALIDATED and TO-DELETE is new with this change.
-                    //
-                    // THE WINDOW IS REAL ON BOTH PLATFORMS AND THIS COMPARISON IS WHAT CLOSES IT.
-                    // An earlier draft claimed the window could not open on Windows, because the
-                    // validating handle's share mode refuses any rename or delete of that name
-                    // while it lives. That is true of the handle -- and it is exactly why the
-                    // handle cannot still be alive here. Releasing it to let the `DELETE` open
-                    // succeed also releases that protection, so what was argued as belt-and-braces
-                    // is load-bearing on Windows for the same reason it always was on Unix, where
-                    // renaming over an open file is legal.
-                    if file_identity(&deletable)? != validated {
-                        return Ok(());
-                    }
                     delete_blobs.push(PlannedDelete {
                         name: name.to_owned(),
                         file: deletable,
@@ -4616,6 +4601,43 @@ fn open_child_file_for_reconcile(
     Ok(Some(file))
 }
 
+/// Re-open a child that has already been validated, for deletion, and hand back the handle ONLY
+/// if the name still resolves to the same file (#328).
+///
+/// **This is the whole of the window `plan_reconcile`'s blobs branch opens, and it is a named
+/// function so that a test can stand inside it.** The scan validates a blob's bytes through a
+/// read-only handle and must then release that handle before asking for `DELETE` -- on Windows a
+/// live handle opened without `FILE_SHARE_DELETE` refuses the `DELETE` open outright. Between the
+/// release and the re-open the name is unowned, so what comes back can be a different file:
+/// legal on Unix, where renaming over an open file is ordinary, and reachable on Windows too
+/// once the protecting handle is gone.
+///
+/// `remove_planned_file` already compares the name as it stands at removal against the handle it
+/// is about to delete. That is a different pair. The third object is the handle that VALIDATED
+/// the bytes, and `validated` is its `FileIdentity` -- a plain `{device, file}` value, so it
+/// outlives the handle it came from and nothing has to be held to carry it here.
+///
+/// `Ok(None)` covers both refusals, and the caller treats them alike because they mean the same
+/// thing to it: nothing about this name is plannable in this cycle. They are distinct events
+/// underneath -- contention, and a swap -- and a caller that ever needs to tell them apart should
+/// take a richer return here rather than re-deriving the difference at the call site.
+fn reopen_validated_for_delete(
+    directory: &File,
+    path: &Path,
+    name: &str,
+    validated: FileIdentity,
+) -> Result<Option<File>, EventRepositoryError> {
+    // Held by someone else. Exactly what the scan already does with contention: skip this cycle
+    // rather than call it a verdict.
+    let Some(deletable) = open_child_file_for_reconcile(directory, path, name, true)? else {
+        return Ok(None);
+    };
+    if file_identity(&deletable)? != validated {
+        return Ok(None);
+    }
+    Ok(Some(deletable))
+}
+
 #[cfg(unix)]
 fn open_child_directory(
     directory: &File,
@@ -5948,6 +5970,101 @@ mod limit_tests {
         assert_eq!(
             std::fs::read(path.join("orphan.json")).unwrap(),
             b"validated"
+        );
+    }
+
+    /// THE WINDOW #328 OPENS, STOOD INSIDE (#328, acceptance guard 1).
+    ///
+    /// The blobs scan validates a blob's bytes through a read-only handle, releases that handle
+    /// because a live one without `FILE_SHARE_DELETE` would refuse the `DELETE` open, and then
+    /// re-opens the same NAME for deletion. Between those two events the name is unowned. What
+    /// comes back can be a different file, and `apply_reconcile` deletes BY HANDLE -- so without
+    /// the identity comparison the store removes a file whose bytes it never validated.
+    ///
+    /// **Measured before this cell existed: delete the comparison and the whole crate stays
+    /// green.** Removing just the `if` leaves an `unused variable: validated` warning, which is
+    /// the only signal and is not about the check; removing the `let` with it leaves 268 passing
+    /// tests, no failures, no warnings and no errors. The defence this change had to add in order
+    /// to be safe was itself unobserved.
+    ///
+    /// The swap is done with a file that ALREADY EXISTS while the validated one does, rather than
+    /// by deleting and re-creating the name: two live files have distinct identities by
+    /// construction, where a re-created name can be handed back a recycled id and turn this cell
+    /// into a flake that passes for the wrong reason.
+    #[test]
+    fn a_name_swapped_after_validation_is_refused_the_delete_handle() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("blobs");
+        std::fs::create_dir(&path).unwrap();
+        let directory_handle = open_directory(&path).unwrap();
+        std::fs::write(path.join("object.json"), b"validated").unwrap();
+        std::fs::write(path.join("impostor.json"), b"never validated").unwrap();
+
+        // The scan's half: read-only open, identity taken, handle released.
+        let validated = {
+            let file =
+                open_child_file_for_reconcile(&directory_handle, &path, "object.json", false)
+                    .unwrap()
+                    .expect("nothing holds the fixture, so the scan gets its read-only handle");
+            file_identity(&file).unwrap()
+        };
+
+        // THE WINDOW: the name now resolves to the other file.
+        std::fs::remove_file(path.join("object.json")).unwrap();
+        std::fs::rename(path.join("impostor.json"), path.join("object.json")).unwrap();
+        let impostor = file_identity(
+            &open_child_file_for_reconcile(&directory_handle, &path, "object.json", false)
+                .unwrap()
+                .expect("the impostor is unheld"),
+        )
+        .unwrap();
+        assert_ne!(
+            impostor, validated,
+            "ARRANGEMENT: the swap must produce a DIFFERENT file, or this cell asserts nothing"
+        );
+
+        let planned =
+            reopen_validated_for_delete(&directory_handle, &path, "object.json", validated)
+                .unwrap();
+        assert!(
+            planned.is_none(),
+            "the name was swapped between validation and the delete open, and a handle came back \
+             anyway. `apply_reconcile` deletes BY HANDLE, so this handle is the removal of a \
+             file whose bytes were never validated"
+        );
+    }
+
+    /// The control for the cell above: the refusal is about the SWAP, not about re-opening.
+    ///
+    /// Without this, an implementation that refused every re-open -- never planning any deletion
+    /// at all -- would satisfy the guard while removing the feature.
+    #[test]
+    fn an_unswapped_name_is_given_the_delete_handle() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("blobs");
+        std::fs::create_dir(&path).unwrap();
+        let directory_handle = open_directory(&path).unwrap();
+        std::fs::write(path.join("object.json"), b"validated").unwrap();
+
+        let validated = {
+            let file =
+                open_child_file_for_reconcile(&directory_handle, &path, "object.json", false)
+                    .unwrap()
+                    .expect("nothing holds the fixture, so the scan gets its read-only handle");
+            file_identity(&file).unwrap()
+        };
+
+        let planned =
+            reopen_validated_for_delete(&directory_handle, &path, "object.json", validated)
+                .unwrap();
+        assert!(
+            planned.is_some(),
+            "nothing touched the name, so the validated file must be handed back for deletion"
+        );
+        assert_eq!(
+            file_identity(&planned.unwrap()).unwrap(),
+            validated,
+            "and it must be the same file, not merely some file"
         );
     }
 
@@ -7908,6 +8025,126 @@ mod limit_tests {
         assert_eq!(
             reopened.next_sequence(&wake_scope(), "stream-1").unwrap(),
             2
+        );
+    }
+
+    /// A HELD ORPHAN LEAVES THE OPEN ON THE SHARED FAST PATH (#328, acceptance guard 2).
+    /// Characterization, Windows only, and the doc below says exactly how much it proves.
+    ///
+    /// #328's amendment names an unwritten function of the `DELETE` open: it is also the
+    /// CONTENTION PROBE. A foreign handle that permits reading and forbids deletion makes the
+    /// `DELETE` re-open be refused; `plan_reconcile` maps that refusal to "not plannable this
+    /// cycle", the plan stays a no-op, and the store opens on the SHARED fast path. The amendment
+    /// asks for a guard because the alternative -- counting the refusal as dirty -- is #340's
+    /// precipice, measured there at opens falling from 3000-in-8.6s to 1066-in-540s, and the
+    /// behaviour lived only in prose in the comment at the scan.
+    ///
+    /// **THREE OPENS, AND THE THIRD IS WHY THE SECOND MEANS ANYTHING.** A crashed store is dirty
+    /// for reasons that have nothing to do with the orphan, so its FIRST open is exclusive no
+    /// matter what this scan decides -- measured, and it is why the obvious one-open arrangement
+    /// asserts nothing. The holder is taken before any of them and kept across all three:
+    ///
+    /// 1. exclusive, and it repairs the crash residue while skipping the held orphan;
+    /// 2. **shared** -- the held orphan is now the only thing that could force an upgrade, and it
+    ///    does not;
+    /// 3. after the handle is released: exclusive again, and the orphan is finally removed.
+    ///
+    /// Step 3 is the population control. Without it, step 2's shared open is equally explained by
+    /// an orphan that was never there, and the cell would pass on a store with nothing in it.
+    ///
+    /// **WHAT THIS CELL DOES NOT DO, MEASURED RATHER THAN ASSUMED.** It is not the unique witness
+    /// for any mutation I could construct. Two were tried, each alone:
+    ///
+    /// - the re-open takes no `DELETE` (the naive reading of "the read path should not request
+    ///   DELETE access"): red, but at `apply_reconcile`, because a read-only handle cannot serve
+    ///   the by-handle removal;
+    /// - the refusal is planned anyway with whatever handle can be obtained: red, and the store
+    ///   fails to OPEN with `Storage`.
+    ///
+    /// Both are louder than the precipice rather than quieter, and neither reaches this cell's
+    /// own assertion. That is a fact about the platform, and worth writing down: while removal is
+    /// BY HANDLE, a held orphan on Windows cannot be planned at all, so the scan cannot reach the
+    /// precipice through this path however it is edited. The clean check and the by-handle delete
+    /// are one mechanism, not two.
+    ///
+    /// So what this cell holds is the COUPLING. A future change that decouples them -- removal by
+    /// name, a plan that records candidates without handles, a refusal counted as dirt -- would
+    /// pass every cell that exists today and arrive as a throughput cliff on a customer machine.
+    /// This one would go red at its own assertion, and that population is why it is here.
+    #[cfg(windows)]
+    #[test]
+    fn an_orphan_blob_a_foreign_reader_holds_keeps_the_open_on_the_shared_fast_path() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Foundation::GENERIC_READ;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let crashed = LocalEventRepository::open_with_failpoint(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+                LocalFailpoint::BlobPublish,
+            )
+            .unwrap();
+            assert!(
+                crashed.append_atomic(&valid_graph_request()).is_err(),
+                "ARRANGEMENT: the failpoint must fail the publish"
+            );
+        }
+        let orphan = std::fs::read_dir(directory.path().join("blobs"))
+            .unwrap()
+            .next()
+            .expect("ARRANGEMENT: the failed publish must leave an orphan blob behind")
+            .unwrap()
+            .path();
+
+        // The foreign handle: permits reading and writing, FORBIDS deletion. An antivirus, a
+        // backup agent, a sync client -- ordinary on a customer machine, and the population the
+        // read-only scan was asked to stop colliding with.
+        let holder = std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&orphan)
+            .expect("ARRANGEMENT: the foreign reader must get its handle");
+
+        let repairing = cache_repository(directory.path());
+        assert_eq!(
+            repairing.shared_fast_open_count.load(Ordering::SeqCst),
+            0,
+            "ARRANGEMENT: the first open after a crashed publish repairs, and repair is exclusive"
+        );
+        drop(repairing);
+
+        let reopened = cache_repository(directory.path());
+        assert_eq!(
+            reopened.shared_fast_open_count.load(Ordering::SeqCst),
+            1,
+            "an orphan someone holds must leave the open on the SHARED fast path. Reading zero \
+             here means the plan came back non-empty and the open upgraded to exclusive -- \
+             which is #340's precipice, paid by every reader for as long as the handle lives"
+        );
+        assert!(
+            orphan.exists(),
+            "and the held orphan must survive the cycle: skipped, not deleted"
+        );
+        drop(reopened);
+
+        // THE POPULATION CONTROL. Release the handle: the same orphan is now plannable, the open
+        // upgrades, and the file goes. If this did not happen, the shared open above would be
+        // explained by there being nothing to plan rather than by the probe.
+        drop(holder);
+        let unheld = cache_repository(directory.path());
+        assert_eq!(
+            unheld.shared_fast_open_count.load(Ordering::SeqCst),
+            0,
+            "CONTROL: with the handle gone the orphan is plannable again, so this open upgrades"
+        );
+        assert!(
+            !orphan.exists(),
+            "CONTROL: and it is removed -- so it was really there while the shared open above \
+             read the store as clean"
         );
     }
 

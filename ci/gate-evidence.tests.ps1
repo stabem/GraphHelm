@@ -11,7 +11,7 @@
 # delegates to Assert-True, so it fires ONCE at runtime, not twice; a naive grep over this file
 # also counts the two function DEFINITION lines and the delegation inside Assert-Equal's body,
 # which are source text rather than runtime assertions.
-$ExpectedAssertionCount = 34
+$ExpectedAssertionCount = 43
 
 $ErrorActionPreference = 'Stop'
 # 2.0, not Latest: this is what ci/gate.ps1 sets before it dot-sources gate-evidence.ps1, so
@@ -348,6 +348,126 @@ Assert-True -Condition (($nearSelected -join "`n").Contains('suite_b::the_second
     -Message 'a second failure the excerpt KEEPS is not also reported as one it dropped'
 
 Write-Host ''
+
+Write-Host ''
+Write-Host 'the notice counts what the reader is asking about (#238)' -ForegroundColor Cyan
+
+# A transcript whose omitted region holds TWO distinct failing tests, each spending a full cargo
+# block of marker lines. This is the shape #920's gate produced, where the old notice reported the
+# MARKER count and a lane read it as that many problems.
+function New-TwoFailureTranscript {
+    param([int] $OkSummaryCount = 60, [switch] $RepeatTheSecondName)
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($i in 1..8) { $lines.Add("test some::passing::case_$i ... ok") }
+    $lines.Add("test $FailingTestName ... FAILED")
+    $lines.Add('failures:')
+    $lines.Add('thread ''one'' panicked at core/events/src/local.rs:412:9:')
+    $lines.Add('test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out')
+    foreach ($i in 1..$OkSummaryCount) { $lines.Add($OkSummary) }
+    # The second failure, in the region the window drops.
+    $lines.Add('test other::suite::second_cell ... FAILED')
+    if ($RepeatTheSecondName) { $lines.Add('test other::suite::second_cell ... FAILED') }
+    $lines.Add('failures:')
+    $lines.Add('thread ''two'' panicked at core/protocols/src/lib.rs:9:1:')
+    $lines.Add('test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out')
+    $lines.Add('error: test failed, to rerun pass `-p graphhelm-protocols`')
+    foreach ($i in 1..$OkSummaryCount) { $lines.Add($OkSummary) }
+    return $lines.ToArray()
+}
+
+$twoFailures = @(Select-GateEvidenceLines -Lines (New-TwoFailureTranscript) -Budget 40)
+$twoNotice = @($twoFailures | Where-Object { $_ -clike '*lines omitted*' })[0]
+
+Assert-True -Condition ($twoNotice -cmatch 'INCLUDING 1 further failing test\(s\)') `
+    -Message "the notice counts the failing TEST in the gap, not its marker lines (got: $twoNotice)"
+Assert-True -Condition ($twoNotice -clike '*other::suite::second_cell*') `
+    -Message 'and NAMES it, so the reader knows what they have not seen'
+# THE POINT OF #238. That one failure spends six marker lines; the old wording reported six and a
+# lane read it as six problems, ordering a 7100-line decode to find them.
+Assert-True -Condition (-not ($twoNotice -clike '*further line(s) naming a failure*')) `
+    -Message 'the old wording, which reported markers in words that read as failures, is gone'
+
+# DISTINCT, because libtest names one failing test on more than one line and a count that grew
+# with the repetition would be the same over-statement wearing a different number.
+$repeated = @(Select-GateEvidenceLines -Lines (New-TwoFailureTranscript -RepeatTheSecondName) -Budget 40)
+$repeatedNotice = @($repeated | Where-Object { $_ -clike '*lines omitted*' })[0]
+Assert-True -Condition ($repeatedNotice -cmatch 'INCLUDING 1 further failing test\(s\)') `
+    -Message "a test named twice in the gap is ONE further failing test (got: $repeatedNotice)"
+
+# THE FALLBACK, and the control that proves it is the branch being exercised: a stage that fails
+# without libtest (a PowerShell suite, a compiler wall) has marker lines and no test names, and the
+# notice must then say it is counting markers rather than inventing a failure count.
+function New-MarkersWithoutTestNames {
+    param([int] $OkSummaryCount = 60)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('  FAIL: the first suite refused')
+    foreach ($i in 1..$OkSummaryCount) { $lines.Add($OkSummary) }
+    $lines.Add('  FAIL: a second suite refused, in the gap')
+    $lines.Add('error: the run stopped here')
+    foreach ($i in 1..$OkSummaryCount) { $lines.Add($OkSummary) }
+    return $lines.ToArray()
+}
+
+$markersOnly = @(Select-GateEvidenceLines -Lines (New-MarkersWithoutTestNames) -Budget 40)
+$markersNotice = @($markersOnly | Where-Object { $_ -clike '*lines omitted*' })[0]
+Assert-True -Condition ($markersNotice -clike '*MATCHING THE FAILURE MARKER*') `
+    -Message "with no libtest names to count, the notice says it is counting markers (got: $markersNotice)"
+Assert-True -Condition (-not ($markersNotice -cmatch 'further failing test')) `
+    -Message 'CONTROL: and does NOT claim a failing-test count the transcript cannot back'
+
+Write-Host ''
+Write-Host 'a MIXED region reports both kinds, because dropping one under-states (#238)' -ForegroundColor Cyan
+
+# THE SECOND PASS'S FINDING. The first version of this change made the two clauses an if/elseif, so
+# a region holding BOTH libtest failures and marker lines libtest did not name reported the test
+# names and dropped the marker count in SILENCE.
+#
+# The direction is what makes it worth a cell. The defect this file exists to fix OVER-stated: a
+# reader chased six problems that were one. Dropping the marker clause UNDER-states: the reader is
+# told "1 further failing test" and concludes the excerpt is nearly the whole story while the region
+# also held failures of another kind. An instrument that errs high wastes an hour; one that errs low
+# loses a failure.
+function New-MixedRegionTranscript {
+    param([int] $OkSummaryCount = 60, [switch] $LibtestOnly)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("test $FailingTestName ... FAILED")
+    $lines.Add('failures:')
+    $lines.Add('test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out')
+    foreach ($i in 1..$OkSummaryCount) { $lines.Add($OkSummary) }
+    # In the gap: a libtest failure ...
+    $lines.Add('test other::suite::second_cell ... FAILED')
+    # ... and, unless the control suppresses them, failures from a harness that names no test.
+    if (-not $LibtestOnly) {
+        $lines.Add('  FAIL: a PowerShell suite refused, and libtest never saw it')
+        $lines.Add('error: the ci powershell suites stage stopped here')
+    }
+    foreach ($i in 1..$OkSummaryCount) { $lines.Add($OkSummary) }
+    return $lines.ToArray()
+}
+
+$mixed = @(Select-GateEvidenceLines -Lines (New-MixedRegionTranscript) -Budget 40)
+$mixedNotice = @($mixed | Where-Object { $_ -clike '*lines omitted*' })[0]
+
+Assert-True -Condition ($mixedNotice -cmatch 'further failing test\(s\): other::suite::second_cell') `
+    -Message "the named libtest failure is still reported (got: $mixedNotice)"
+Assert-True -Condition ($mixedNotice -clike '*MATCHING THE FAILURE MARKER*') `
+    -Message 'AND the marker lines are reported beside it, rather than dropped in silence'
+
+# CONTROL, and it took a correction to write honestly. My first version asserted that the same gap
+# WITHOUT the unnamed markers still names the test, and called that a control against the marker
+# clause becoming unconditional. It is not one: the clause IS present in both cases, because the
+# named test's own `... FAILED` line is itself a marker line. An assertion that passes in both arms
+# of the thing it claims to distinguish controls nothing.
+#
+# What actually distinguishes them is the NUMBER. The marker count must RESPOND to the unnamed
+# failures in the gap -- otherwise it is a constant wearing a count's clothes, which is the exact
+# family of defect this whole file is about.
+$libtestOnly = @(Select-GateEvidenceLines -Lines (New-MixedRegionTranscript -LibtestOnly) -Budget 40)
+$libtestOnlyNotice = @($libtestOnly | Where-Object { $_ -clike '*lines omitted*' })[0]
+$mixedMarkers = if ($mixedNotice -cmatch 'INCLUDING [^,]+, and (\d+) further line') { [int]$Matches[1] } else { -1 }
+$onlyMarkers = if ($libtestOnlyNotice -cmatch 'INCLUDING [^,]+, and (\d+) further line') { [int]$Matches[1] } else { -1 }
+Assert-True -Condition ($mixedMarkers -gt $onlyMarkers -and $onlyMarkers -ge 0) `
+    -Message "CONTROL: the marker count RESPONDS to the unnamed failures in the gap (mixed $mixedMarkers vs libtest-only $onlyMarkers)"
 
 if ($script:total -ne $ExpectedAssertionCount) {
     Write-Host "HARNESS-BROKE: ran $script:total assertions, expected $ExpectedAssertionCount." -ForegroundColor Magenta

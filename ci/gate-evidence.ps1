@@ -204,13 +204,57 @@ function Select-GateEvidenceLines {
     # A record that reads as complete while being partial is worse than one that admits its
     # shape. The count does not make the excerpt bigger -- widening it would trade this for the
     # compiler wall the budget excludes -- it makes the excerpt honest about what it is not.
+    # #238: COUNT WHAT THE READER IS ASKING ABOUT. The previous wording -- "N further line(s)
+    # naming a failure" -- is literally true and reads as N further FAILURES. Measured on #920's
+    # gate: the notice said 6, and the omitted region held ONE additional failing test. Cargo
+    # spends about six marker lines per failing target (`failures:` twice, `panicked at`,
+    # `test result: FAILED`, `error: test failed`, and the `test <name> ... FAILED` line), so the
+    # number over-states by roughly that factor. A lane read it as six problems and ordered a
+    # 7100-line log decode to find them; the run had two failures in total, one root cause.
+    #
+    # So: where libtest named the failing tests, report THOSE -- distinct, because one test can
+    # be named on several lines. Where it did not (a PowerShell suite, a compiler wall, a stage
+    # that fails without libtest), fall back to the marker count and SAY it is markers. Both
+    # branches answer the question the reader actually has, and neither invents a number the
+    # transcript cannot back.
     $furtherNamed = 0
+    $furtherTests = New-Object System.Collections.Generic.List[string]
     for ($k = $windowEnd + 1; $k -lt $tailStart; $k++) {
-        if ($Lines[$k] -cmatch $script:GateEvidenceFailureMarkers) { $furtherNamed++ }
+        $line = $Lines[$k]
+        if ($line -cmatch $script:GateEvidenceFailureMarkers) { $furtherNamed++ }
+        # ORDINAL and case-sensitive, like every other match in this file: libtest writes
+        # `test <name> ... FAILED` and nothing else in a transcript legitimately looks like it.
+        $named = [regex]::Match([string]$line, '^test\s+(\S+)\s+\.\.\.\s+FAILED')
+        if ($named.Success -and -not $furtherTests.Contains($named.Groups[1].Value)) {
+            $furtherTests.Add($named.Groups[1].Value)
+        }
     }
     $notice = "[gate] ... $omitted lines omitted between the first named failure above and the end of the stage"
+    # BOTH CLAUSES, NEVER ONE INSTEAD OF THE OTHER (second pass on this PR, focused-nightingale).
+    # The first version made these an if/elseif, so a region holding BOTH libtest failures and
+    # marker lines libtest did not name -- a PowerShell suite's `FAIL:` lines, a compiler wall, any
+    # stage that fails without libtest -- reported the test names and dropped the marker count in
+    # silence.
+    #
+    # AND THE DIRECTION WAS THE WORSE ONE. The defect this function fixes OVER-stated: a reader
+    # chased six problems that were one, which costs time and reaches no wrong conclusion. Dropping
+    # the marker clause UNDER-states: the reader is told "1 further failing test" and concludes the
+    # excerpt is nearly the whole story while the region also held failures of another kind. An
+    # instrument that errs high wastes an hour; one that errs low loses a failure. Shipping the
+    # second inside the fix for the first would have been incoherent.
+    #
+    # The marker count is NOT presented as additional to the named tests -- the named tests spend
+    # marker lines of their own, and a second number claiming to be extra would be the original
+    # over-statement wearing a different label. It says what it counted, and what that is.
+    $clauses = @()
+    if ($furtherTests.Count -gt 0) {
+        $clauses += "$($furtherTests.Count) further failing test(s): $($furtherTests -join ', ')"
+    }
     if ($furtherNamed -gt 0) {
-        $notice += ", INCLUDING $furtherNamed further line(s) naming a failure -- this excerpt is NOT the whole story"
+        $clauses += "$furtherNamed further line(s) MATCHING THE FAILURE MARKER (marker lines, not distinct failures)"
+    }
+    if ($clauses.Count -gt 0) {
+        $notice += ", INCLUDING " + ($clauses -join ', and ') + " -- this excerpt is NOT the whole story"
     }
     $notice += ' ...'
 

@@ -1067,11 +1067,7 @@ pub(super) async fn pause(
                             // would bundle two contracts in one diff. Named here so the next reader
                             // finds a decision instead of an oversight. Reached through the wrapper
                             // now (#681) rather than inline, but the reasoning is unmoved.
-                            return Err(driver_failure(
-                                "the execution did not record execution_paused within the \
-                                 immediate-stop budget",
-                            )
-                            .into());
+                            return Err(pause_outcome_unknown().into());
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
@@ -1365,6 +1361,46 @@ const DRIVER_FAILURE_CODE: &str = crate::error_codes::GHCLI016_DRIVER_FAILURE;
 /// the response destroyed a distinction the code already had — "the call failed" and "your hold
 /// still holds" are one fact to an operator, and one code for both made them two.
 const SETUP_FAILURE_CODE: &str = crate::error_codes::GHCLI019_DRIVER_SETUP;
+
+/// #130. The immediate-`pause` budget elapsed without `execution_paused` appearing. This is the
+/// THIRD operator question on this surface, and its remedy is neither of the two #96 split:
+///
+/// | path | the operator question | what they should do |
+/// |---|---|---|
+/// | setup refusal | did anything commit? (no) | fix the environment and retry |
+/// | mid-drive failure | did anything commit? (yes) | the execution is attended; do not re-pause |
+/// | **this** | **did my pause take effect?** | **go and look** |
+///
+/// **UNKNOWN, not FAILURE, and the distinction is the whole point.** The pause may still record
+/// after the budget elapses: the cancel was sent, the drive is folding, and `execution_paused`
+/// lands once every in-flight node is recorded `Interrupted`. Answering `GHCLI016` here tells the
+/// operator a drive failed, which is a claim about something that did not happen -- nothing about
+/// a drive is being reported. A failure says ACT; an unknown says LOOK.
+///
+/// This is not a correction of #96. That change scopes `GHCLI016` narrowed meaning to the
+/// start/resume path explicitly, so this site use was a pre-existing approximation rather than a
+/// false statement -- a distinction #130 own opening got wrong and corrected in the issue after a
+/// reviewer read the constant doc instead of the summary of it. What is fixed here is the
+/// flattening: one code for a question whose remedy differs.
+///
+/// It is also the shape the poll above already asks for. The comment at the deadline says that if
+/// this loop ever needs a real wall-time ceiling, "the honest shape is a budget that reports WHICH
+/// of the two happened, not a smaller number here." This is that shape for the case that exists.
+const PAUSE_OUTCOME_UNKNOWN_CODE: &str = crate::error_codes::GHCLI025_PAUSE_OUTCOME_UNKNOWN;
+
+/// The immediate-pause budget answer, message included, so the sentence has ONE producer.
+///
+/// No `message` parameter, deliberately: the wording is the contract here, and a caller free to
+/// pass its own could reintroduce "did not record" phrasing that reads as a failure under a code
+/// that says unknown. One producer also makes the arming site testable -- a cell asserts the
+/// sentence occurs exactly once in this file, so re-inlining it beside `driver_failure` reddens.
+fn pause_outcome_unknown() -> execution::Failure {
+    execution::Failure {
+        code: PAUSE_OUTCOME_UNKNOWN_CODE,
+        message: "the immediate-stop budget elapsed before execution_paused was observed; the pause may still record -- read the execution to see whether it did".to_owned(),
+        pointer: "/execution".to_owned(),
+    }
+}
 
 fn driver_failure(message: &str) -> execution::Failure {
     execution::Failure {
@@ -2486,5 +2522,100 @@ mod off_reactor_tests {
         };
         let message = setup_message(error);
         assert_eq!(message, "the configured manifest could not be read");
+    }
+}
+
+/// #130: the immediate-pause budget answers UNKNOWN, and the site actually asks it.
+#[cfg(test)]
+mod pause_outcome_tests {
+    use super::{
+        DRIVER_FAILURE_CODE, PAUSE_OUTCOME_UNKNOWN_CODE, driver_failure, pause_outcome_unknown,
+    };
+
+    /// The failure this budget produces carries its own code, and the WORDS match it. A code that
+    /// says unknown under a message that says "did not record" would put the flattening back one
+    /// layer down, where a reader takes the sentence and not the code.
+    #[test]
+    fn the_pause_budget_answers_unknown_rather_than_driver_failure() {
+        let failure = pause_outcome_unknown();
+        // Against the CONSTANT, not a literal, and that is not a tautology here: the registry
+        // owns the other half. `error_codes::tests::every_code_string_is_registered_once`
+        // asserts each constant name EQUALS its own string, and
+        // `the_registry_is_the_only_source_of_code_literals` refuses a `"GHCLI###_` literal
+        // anywhere else under src/ -- it caught the first draft of this cell, which spelled
+        // three of them. So the wire value is pinned there and the PATH is pinned here.
+        assert_eq!(failure.code, PAUSE_OUTCOME_UNKNOWN_CODE);
+        assert_eq!(failure.pointer, "/execution");
+        assert!(
+            failure.message.contains("may still record"),
+            "the code says unknown while the sentence says failed: {}",
+            failure.message
+        );
+        assert!(
+            !failure.message.contains("did not record"),
+            "the old wording asserts a negative the budget cannot establish: {}",
+            failure.message
+        );
+    }
+
+    /// CONTROL, and it is what makes the assertion above a claim about THIS path rather than about
+    /// the file: the sibling wrapper did not move. Without it, renaming `GHCLI016` everywhere would
+    /// leave the cell above green while destroying the distinction it exists to protect.
+    #[test]
+    fn the_mid_drive_failure_still_answers_ghcli016() {
+        assert_eq!(driver_failure("x").code, DRIVER_FAILURE_CODE);
+        assert_ne!(PAUSE_OUTCOME_UNKNOWN_CODE, DRIVER_FAILURE_CODE);
+    }
+
+    /// THE ARMING SITE. A correct wrapper nobody calls is the failure mode a slice test cannot see,
+    /// and this file is where the call has to be. Read from source because the budget itself has no
+    /// seam: the deadline is a hard-coded ten seconds and reaching it end to end would need a live
+    /// drive that never appends `execution_paused`. That limit is declared rather than papered over.
+    ///
+    /// The sentence has ONE producer by construction (`pause_outcome_unknown` takes no message), so
+    /// re-inlining it beside `driver_failure` makes the count two and reddens here.
+    #[test]
+    fn the_immediate_pause_site_asks_the_unknown_wrapper() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/serve/routes.rs");
+        let text = std::fs::read_to_string(&path).expect("this source file is readable");
+        assert!(
+            text.len() > 10_000,
+            "ARRANGEMENT: read {} bytes of {} -- the scan, not the code, is wrong",
+            text.len(),
+            path.display()
+        );
+        // THE NEEDLE IS SPLIT, and it has to be: the first run of this cell failed with
+        // `left: 2, right: 1` because the search string was itself a literal in this file --
+        // the instrument counted itself. A source-scanning cell must not contain the string it
+        // scans for. `concat!` joins at compile time, so the joined sentence exists only in
+        // `pause_outcome_unknown` while this file holds the two halves separately.
+        let sentence = concat!("the immediate-stop budget ", "elapsed before");
+        assert_eq!(
+            text.matches(sentence).count(),
+            1,
+            "the budget sentence must have exactly one producer"
+        );
+        // THE CALL AT THE SITE, not an occurrence count. The first version of this asserted
+        // `text.matches("pause_outcome_unknown()").count() >= 2`, and X measured that the
+        // substring appears FOUR times -- the site, the `fn` definition, this cell's own call and
+        // the needle itself -- so swapping the site for `driver_failure("x")` left 3 and every
+        // cell green. The sabotage that reddened was the one that put the RETIRED WORDING back,
+        // which is a different property: "the old sentence is gone" is not "the new wrapper is
+        // called". A guard that passes for the wrong reason is worse than a missing one, because
+        // its green is read as coverage.
+        //
+        // Split, as above, so the joined form exists only at the site.
+        let armed = concat!("Err(pause_outcome_unknown", "().into())");
+        assert_eq!(
+            text.matches(armed).count(),
+            1,
+            "the immediate-pause budget must return the unknown wrapper, once"
+        );
+        let retired = concat!("did not record ", "execution_paused");
+        assert!(
+            !text.contains(retired),
+            "the old driver-failure wording is still in this file"
+        );
     }
 }

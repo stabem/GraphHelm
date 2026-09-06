@@ -256,6 +256,90 @@ function Invoke-Postgres {
 # ordering should not depend on where an unrelated block happens to sit.
 . (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 
+# #751: A BUILD LOCK IS NOT A FINDING, AND NO EXIT CODE SEPARATES THE TWO. `cargo` cannot take the
+# build directory's lock while another run holds it, and what it does then has two shapes. Measured
+# on this machine, holding `<target>/debug/.cargo-build-lock`:
+#
+#   error: failed to open: <target>/debug/.cargo-build-lock
+#   Caused by: The process cannot access the file because it is being used by another process. (os error 32)
+#
+# with exit 101 -- THE SAME CODE A FAILING TEST RETURNS. So widening the set of "bad" codes cannot
+# work: there is no code that means contaminated and not locked. The signal has to be POSITIVE and
+# textual. A non-zero exit says something failed, never what.
+#
+# THE TWO SHAPES ARE NOT THE SAME CLAIM, and conflating them re-creates this issue pointing the
+# other way. The HARD shape means cargo never opened the lock, so nothing ran. The COOPERATIVE shape
+# -- `Blocking waiting for file lock on build directory` -- means cargo WAITED AND THEN PROCEEDED:
+# after it, the canary runs. A canary that waited, got the lock, ran, and found real contamination
+# carries BOTH the wait line and its own failure, and reading the wait alone would file a genuine
+# finding as "never ran" -- which tells the operator to re-run on a stable host when the honest
+# instruction is that this environment is dirty. (Found in review of #833.)
+function Test-GateHardCargoLock {
+    # cargo could not open a lock at all: it never got to run anything, whatever else is printed.
+    #
+    # NAMED BY SHAPE, NOT BY FILE. The first version required the literal `.cargo-build-lock`, which
+    # is only the target directory's lock -- and the target directory is the one lock an isolated
+    # CARGO_TARGET_DIR actually removes. cargo also locks `~/.cargo/.package-cache`,
+    # `.package-cache-mutate` and `.global-cache`, which are GLOBAL TO THE MACHINE and are therefore
+    # the contended ones when several isolated gates run at once. A matcher listing lock filenames is
+    # a deny-list that grows by one per review; cargo's own error shape does not.
+    #
+    #   error: failed to open: <any lock path>
+    #   Caused by:
+    #     The process cannot access the file because it is being used by another process. (os error 32)
+    #
+    # `failed to open` plus `os error 32` is that shape and says nothing about which lock. The pair is
+    # required: `failed to open` alone is a plain I/O failure, and `os error 32` alone can appear in a
+    # test's own output. (Raised on #833 by the orchestrator after G's gate hung on the package cache
+    # with an isolated target -- the case the first matcher read as contamination.)
+    param([AllowNull()] [AllowEmptyCollection()] [string[]] $Lines)
+
+    if ($null -eq $Lines) { return $false }
+    $sawFailedToOpen = $false
+    $sawInUse = $false
+    foreach ($line in $Lines) {
+        if ($null -eq $line) { continue }
+        $text = [string]$line
+        # Ordinal: cargo's own words, one case, one producer.
+        if ($text.IndexOf('failed to open', [System.StringComparison]::Ordinal) -ge 0) { $sawFailedToOpen = $true }
+        if (($text.IndexOf('os error 32', [System.StringComparison]::Ordinal) -ge 0) -or
+            ($text.IndexOf('being used by another process', [System.StringComparison]::Ordinal) -ge 0)) { $sawInUse = $true }
+    }
+    return ($sawFailedToOpen -and $sawInUse)
+}
+
+function Test-GateWaitedForCargoLock {
+    # cargo queued behind another run. On its own this says NOTHING about whether the canary ran --
+    # only that it started late.
+    #
+    # The prefix is deliberately cut before the lock's name: cargo prints `... on build directory`
+    # and `... on package cache`, and this must match both. Matching the longer form would have
+    # covered only the lock an isolated target already removes.
+    param([AllowNull()] [AllowEmptyCollection()] [string[]] $Lines)
+
+    if ($null -eq $Lines) { return $false }
+    foreach ($line in $Lines) {
+        if ($null -eq $line) { continue }
+        if (([string]$line).IndexOf('Blocking waiting for file lock', [System.StringComparison]::Ordinal) -ge 0) { return $true }
+    }
+    return $false
+}
+function Test-GateCanaryProducedResult {
+    # Did the test harness reach the point of reporting? `cargo test` prints one `test result:` line
+    # per binary, including for binaries with no tests, so its presence is evidence the run got past
+    # building and locking. This is what turns a wait into a wait rather than a non-run.
+    param([AllowNull()] [AllowEmptyCollection()] [string[]] $Lines)
+
+    if ($null -eq $Lines) { return $false }
+    foreach ($line in $Lines) {
+        if ($null -eq $line) { continue }
+        $text = [string]$line
+        if ($text.IndexOf('test result:', [System.StringComparison]::Ordinal) -ge 0) { return $true }
+        if (($text.IndexOf('running ', [System.StringComparison]::Ordinal) -ge 0) -and
+            ($text.IndexOf(' test', [System.StringComparison]::Ordinal) -ge 0)) { return $true }
+    }
+    return $false
+}
 function Invoke-Stage {
     param([string] $Name, [scriptblock] $Body)
 
@@ -312,6 +396,11 @@ function Invoke-Stage {
             Write-Host $line
         }
         $code = $LASTEXITCODE
+        # #751: the FULL capture, not the aimed tail. `Select-GateEvidenceLines` anchors its budget
+        # on the first line that names a failure, and `Blocking waiting for file lock` is printed
+        # BEFORE any of that -- so the one line that identifies a lock is exactly the line the tail
+        # is entitled to drop.
+        $script:lastStageLines = $capturedLines.ToArray()
     } finally {
         $ErrorActionPreference = $previous
         $stopwatch.Stop()
@@ -353,6 +442,74 @@ function Invoke-Stage {
     return $code
 }
 
+# #751: WHICH OF THE TWO THINGS HAPPENED. "The canary caught contamination" and "the canary never
+# ran" are opposite claims about the same run, and the durable manifest is what #674(b) reads to
+# decide a merge. Recording a lock as ABORTED-BY-CANARY tells every later reader that this head's
+# build environment is untrustworthy, when what actually happened was a queue.
+#
+# EXTRACTED so the decision can be exercised without a real cargo and a real lock. Extracting a
+# predicate MOVES a defect unless the arm is shown to use it, so the suite also asserts that the
+# canary arm calls this function rather than repeating the comparison.
+function Get-CanaryOutcome {
+    param(
+        [Parameter(Mandatory)] [int] $ExitCode,
+        [AllowNull()] [AllowEmptyCollection()] [string[]] $Lines
+    )
+
+    if ($ExitCode -eq 0) {
+        return [ordered]@{
+            passed            = $true
+            status            = 'GREEN'
+            cargoLockObserved = $false
+            reason            = $null
+        }
+    }
+    # DID IT REPORT? THAT IS THE WHOLE QUESTION, AND IT IS ASKED FIRST. A transcript carrying
+    # `test result:` (or the `running N tests` the harness prints before executing) is a canary that
+    # RAN -- whatever else its output happens to contain -- and a canary that ran and exited non-zero
+    # made a finding.
+    #
+    # Asked first because the lock signatures are matched over the WHOLE transcript, so a genuine
+    # contamination whose output happens to carry `failed to open` on one line and `being used by
+    # another process` on another would otherwise be read as a lock. (Found by C on #833.) That is
+    # this issue's defect re-entering through the hard shape after `5e1c1d71` removed it from the
+    # waiting one: the accumulating matcher cannot tell a lock's own two lines from two unrelated
+    # ones, and it does not have to -- the result line already answers the question it is guessing at.
+    if (Test-GateCanaryProducedResult -Lines $Lines) {
+        return [ordered]@{
+            passed            = $false
+            status            = 'ABORTED-BY-CANARY'
+            cargoLockObserved = $false
+            reason            = 'the canary ran and reported a contaminated build environment'
+        }
+    }
+    # From here the canary did NOT report, so nothing below is a finding -- only a description of
+    # which way it failed to run. NO LOCK IS NAMED: the matcher does not key on a filename and the
+    # reason must not claim one either. Saying "the build directory lock" was wrong in the very
+    # commit whose point is that the contended lock is usually the machine-global package cache.
+    if (Test-GateHardCargoLock -Lines $Lines) {
+        return [ordered]@{
+            passed            = $false
+            status            = 'HARNESS-BROKE'
+            cargoLockObserved = $true
+            reason            = 'the canary never ran: cargo could not open a lock it needed'
+        }
+    }
+    if (Test-GateWaitedForCargoLock -Lines $Lines) {
+        return [ordered]@{
+            passed            = $false
+            status            = 'HARNESS-BROKE'
+            cargoLockObserved = $true
+            reason            = 'the canary never ran: it waited for a cargo lock and never reported a result'
+        }
+    }
+    return [ordered]@{
+        passed            = $false
+        status            = 'HARNESS-BROKE'
+        cargoLockObserved = $false
+        reason            = 'the canary never reported a result, so nothing here is a finding about this environment'
+    }
+}
 # #152: rewrites the canary's nonce so its build.rs reruns and re-hashes THIS run's src/ tree,
 # even when nothing else under tools/ci-canary/src changed. Without this, a legitimately-unchanged
 # canary crate would never rebuild at all under cargo's own caching, and the canary would only ever
@@ -1484,7 +1641,7 @@ function Write-RunManifest {
     # from "the gate refused to trust its own environment and stopped before measuring anything" -
     # collapsing both into a bare RED would read as the same finding when they are not.
     param(
-        [ValidateSet('GREEN', 'RED', 'ABORTED-BY-CANARY')]
+        [ValidateSet('GREEN', 'RED', 'ABORTED-BY-CANARY', 'HARNESS-BROKE')]
         [string] $Status,
         [bool] $CanaryPassed,
         [object] $ArtifactManifest,
@@ -1981,14 +2138,25 @@ try {
     $canaryCode = Invoke-Stage 'contamination canary (ci-canary)' {
         cargo $toolchain test -p ci-canary --locked
     }
-    $canaryPassed = ($canaryCode -eq 0)
+    # #751: the exit code alone cannot say WHICH of two opposite things happened, so the decision
+    # reads cargo's own words as well. `$script:lastStageLines` is the stage's FULL capture.
+    $canaryOutcome = Get-CanaryOutcome -ExitCode $canaryCode -Lines $script:lastStageLines
+    $canaryPassed = $canaryOutcome.passed
     if (-not $canaryPassed) {
         Write-Host ''
+        if ($canaryOutcome.cargoLockObserved) {
+            Write-Host '[gate] HARNESS-BROKE: the contamination canary never ran. Another run holds the build' -ForegroundColor Magenta
+            Write-Host '[gate] directory lock and cargo said so in its own words above. That is a QUEUE, not a' -ForegroundColor Magenta
+            Write-Host '[gate] finding about this head: nothing here says this build environment is contaminated.' -ForegroundColor Magenta
+            Write-Host '[gate] Re-run when the other run releases the lock. See #751.' -ForegroundColor Magenta
+            Write-Host '[gate] SKIPPED: the contamination canary did not run' -ForegroundColor Magenta
+        } else {
         Write-Host '[gate] ABORTING: the contamination canary failed. Every other stage below would' -ForegroundColor Red
         Write-Host '[gate] run against a build environment this run cannot trust - nothing past this' -ForegroundColor Red
         Write-Host '[gate] point is evidence of anything. See #152.' -ForegroundColor Red
+        }
         $emptyArtifacts = [ordered]@{ buildExitCode = $null; artifacts = @() }
-        $manifestPath = Write-RunManifest -Status 'ABORTED-BY-CANARY' -CanaryPassed $false `
+        $manifestPath = Write-RunManifest -Status $canaryOutcome.status -CanaryPassed $false `
             -ArtifactManifest $emptyArtifacts -SlotLockAtStart $slotLockAtStart `
             -SlotLockAtEnd (Read-SlotLockSnapshot)
         Write-Host "[gate] manifest: $manifestPath" -ForegroundColor Cyan

@@ -26,6 +26,7 @@ $PinnedSuites = @(
     'classify-run.tests.ps1',
     'closing-keywords.tests.ps1',
     'exit-code-shape.tests.ps1',
+    'gate-canary-outcome.tests.ps1',
     'gate-evidence.tests.ps1',
     'gate-manifest-provenance.tests.ps1',
     'gate-postgres-evidence.tests.ps1',

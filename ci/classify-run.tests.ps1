@@ -28,7 +28,7 @@
 # 45 = 45 runtime assertions: 43 direct Assert-True calls plus the one inside the two-item
 # consumer loop, which the naive grep counts once and which fires twice. Assert-Equal is not used here; every case asserts a boolean outcome or
 # a string equality expressed through Assert-True, so the naive grep and the runtime count agree.
-$ExpectedAssertionCount = 59
+$ExpectedAssertionCount = 63
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -254,6 +254,41 @@ try {
         $node.Left.VariablePath.UserPath -eq 'runClass'
     }, $true)
     Assert-True ($runClassAssignments.Count -eq 1) "gate.ps1 assigns runClass exactly once (found $($runClassAssignments.Count)); the origin derivation is unsound the moment there are two"
+    # #751: THE COUPLING WAS A COMMENT. classify-run.ps1 carries `$GateStatuses` and gate.ps1
+    # carries the [ValidateSet] that defines it, and the only thing tying them together was a
+    # sentence saying so. A status added on one side alone makes this file refuse every manifest
+    # that carries it, with the message "not a status the gate writes" -- which would be false, and
+    # would refuse exactly the runs the new status was added to describe. Fail-closed, so not
+    # dangerous; wrong, and silent until someone reads a refusal they cannot explain.
+    #
+    # Both sides are read from the AST, neither is run: this file must not execute gate.ps1, and a
+    # regex over either would match the vocabulary quoted in a comment.
+    $validateSets = $gateAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.AttributeAst] -and
+            $node.TypeName.Name -eq 'ValidateSet'
+        }, $true)
+    Assert-True ($validateSets.Count -eq 1) "gate.ps1 holds exactly one ValidateSet (found $($validateSets.Count)); with two, the one read below is a sample rather than the vocabulary"
+    $gateStatusValues = @($validateSets[0].PositionalArguments | ForEach-Object { $_.Value })
+    $classifyAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $scriptDir 'classify-run.ps1'), [ref]$null, [ref]$null)
+    $gateStatusesAssign = @($classifyAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $node.Left.VariablePath.UserPath -eq 'GateStatuses'
+            }, $true))
+    Assert-True ($gateStatusesAssign.Count -eq 1) "classify-run.ps1 assigns GateStatuses exactly once (found $($gateStatusesAssign.Count))"
+    $classifyStatusValues = @($gateStatusesAssign[0].Right.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.StringConstantExpressionAst]
+            }, $true) | ForEach-Object { $_.Value })
+    $missingHere = @($gateStatusValues | Where-Object { $classifyStatusValues -cnotcontains $_ })
+    $extraHere = @($classifyStatusValues | Where-Object { $gateStatusValues -cnotcontains $_ })
+    Assert-True ($gateStatusValues.Count -gt 0) "ARRANGEMENT: the ValidateSet yielded values (found $($gateStatusValues.Count)), so an empty comparison below is not a silent pass"
+    Assert-True (($missingHere.Count -eq 0) -and ($extraHere.Count -eq 0)) `
+        ("this file's GateStatuses IS gate.ps1's ValidateSet, derived rather than copied" +
+            $(if ($missingHere.Count) { " -- missing here: $($missingHere -join ', ')" } else { '' }) +
+            $(if ($extraHere.Count) { " -- not in the gate: $($extraHere -join ', ')" } else { '' }))
 
     # #644: the gate's class rule now lives in ONE place, and these cells are what that buys.
     # Before extraction, `classify-run.ps1` recomputed the rule to catch a manifest lying about it --

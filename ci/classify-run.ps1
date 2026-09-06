@@ -237,9 +237,14 @@ function Read-ScalarField {
 $slotDir = if ($env:GRAPHHELM_SLOT_DIR) { $env:GRAPHHELM_SLOT_DIR } else { 'D:/graphhelm-slot' }
 $fileName = Split-Path -Leaf $Manifest
 $existingClass = Read-ScalarField -Run $run -Name 'runClass'
-# gate.ps1:391 -- [ValidateSet('GREEN', 'RED', 'ABORTED-BY-CANARY')], and the AST confirms it is the
-# only ValidateSet in that file, so this is the whole vocabulary rather than a sample of it.
-$GateStatuses = @('GREEN', 'RED', 'ABORTED-BY-CANARY')
+# gate.ps1's [ValidateSet] on Write-RunManifest -Status, and the AST confirms it is the only
+# ValidateSet in that file, so this is the whole vocabulary rather than a sample of it.
+# THE COUPLING WAS A COMMENT AND IS NOW A CELL (#751): this list and that ValidateSet are two
+# spellings of one closed set, and nothing re-derived one from the other. A status added on
+# one side only makes this file refuse every manifest carrying it, with the message 'not a
+# status the gate writes' -- which would be false. classify-run.tests.ps1 now reads the set
+# out of gate.ps1's AST and compares, so the two cannot drift again.
+$GateStatuses = @('GREEN', 'RED', 'ABORTED-BY-CANARY', 'HARNESS-BROKE')
 $statusField = Read-ScalarField -Run $run -Name 'status' -Vocabulary $GateStatuses
 $passedField = Read-ScalarField -Run $run -Name 'overallPassed'
 

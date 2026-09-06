@@ -40,6 +40,27 @@
 $script:GateEvidenceFailureMarkers =
     '^failures:|^error(\[|:)|panicked at|FAILED|^Diff in |assertion .*failed|^\s*FAIL:'
 
+# #917: the markers above are two different KINDS of line, and which one the window opens on
+# decides whether the excerpt can be diagnosed.
+#
+# libtest announces a failure the moment it happens (`test x ... FAILED`) and explains it only at
+# the END, in the `failures:` section that carries `panicked at <file>:<line>` and the assertion.
+# Anchoring on the first marker of any kind opens the window on the ANNOUNCEMENT, spends the budget
+# on the `... ok` lines that follow it, and leaves the explanation inside the omitted gap. Measured
+# on two manifests committed to main: PR #871's `workspace tests` kept its panic site because the
+# failure happened to be late in the binary; PR #854's `cli: api_http` lost both the site and the
+# assertion because it happened to be early. Whether a run is diagnosable from its record must not
+# depend on where in the binary the failing cell sits.
+#
+# So: prefer an EXPLANATION marker, and fall back to the full set when a stage announces a failure
+# and never explains it (a binary that exits non-zero printing nothing). `^\s*FAIL:` is here rather
+# than in the announcement set because a PowerShell suite's `  FAIL: <message>` IS the explanation --
+# that stage prints its reason and its `FAILED in:` line separately, and #810 anchored it correctly.
+#
+# The announcement is not lost: `^failures:` and the stage's own summary sit inside $TailReserve.
+$script:GateEvidenceExplanationMarkers =
+    '^failures:|^error(\[|:)|panicked at|^Diff in |assertion .*failed|^\s*FAIL:'
+
 <#
 .SYNOPSIS
 Pick the lines of a failed stage's output that the manifest should keep.
@@ -93,7 +114,21 @@ function Select-GateEvidenceLines {
 
         # How many lines at the very end are kept regardless of where the failure is, so the
         # stage's own final summary and exit are always in the record.
-        [int] $TailReserve = 5
+        [int] $TailReserve = 5,
+
+        # #917: how many lines the ANNOUNCEMENT region keeps when the tail is grown backwards to
+        # reach an explanation.
+        #
+        # This replaces a fixed `$ExplanationReserve = 14` cap, which ISSUES 3 measured as the wrong
+        # instrument: an explanation further from the end than 14 lines was not reached at all, so on
+        # a transcript with two failing cells and ordinary multi-line panic output (82 lines) the fix
+        # kept NEITHER explanation -- the exact case `--no-fail-fast` makes routine.
+        #
+        # The tail's real bound is what the budget leaves, not a constant. Whatever the window and
+        # the notice do not need belongs to the explanation region, and the window needs very
+        # little: in the #854 manifest 33 of its 40 lines were `... ok` from cells that PASSED.
+        # Three lines carry the announcement; the rest is evidence.
+        [int] $AnnouncementKeep = 3
     )
 
     if ($null -eq $Lines) { return @() }
@@ -111,11 +146,45 @@ function Select-GateEvidenceLines {
         return $Lines[($count - $Budget)..($count - 1)]
     }
 
+    # #917: WHERE THE RESERVED TAIL STARTS, not where the window opens.
+    #
+    # The anchor stays on the first marker of any kind, because for libtest that is
+    # `test x ... FAILED` and it is the ONLY line carrying the failing cell's name -- moving the
+    # anchor to the explanation loses it (measured: it reddens
+    # `gate-postgres-evidence.tests.ps1`'s "outputTail carries test name"). But the explanation --
+    # `panicked at <file>:<line>` and the assertion -- is printed at the END, past a window sized
+    # for the announcement, so a fixed five-line tail lands after it and keeps only the summary.
+    #
+    # So the tail is grown BACKWARDS to begin at the explanation when one exists beyond the window,
+    # bounded by $ExplanationReserve so a stage that explains itself early cannot swallow the
+    # budget. The window still opens on the name; the gap and its notice still sit between them.
+    $explain = -1
+    for ($i = $first + 1; $i -lt $count; $i++) {
+        if ($Lines[$i] -cmatch $script:GateEvidenceExplanationMarkers) { $explain = $i; break }
+    }
+
+    $tailStart = $count - $TailReserve
+
+    # GROW ONLY WHEN GROWING REACHES THE EXPLANATION. The first spelling of this said
+    # `Max($explain, $count - $allowance)`, which silently picked the floor whenever the explanation
+    # was further from the end than the allowance -- landing the tail in a region of passing
+    # summaries that explains nothing, AND shrinking the window that had been reaching the
+    # explanation on its own. It reddened four cells on the original fixture, where the panic sits
+    # three lines after the anchor and the window already covered it.
+    #
+    # A rule that fires when it cannot achieve its purpose is worse than one that does not fire: the
+    # `Max` made the excerpt worse than `main` for the shape `main` already handled.
+    $allowance = $Budget - $AnnouncementKeep - 1
+    if ($allowance -lt $TailReserve) { $allowance = $TailReserve }
+    if ($explain -ge 0 -and $explain -lt $tailStart -and ($count - $explain) -le $allowance) {
+        $tailStart = $explain
+    }
+
     # One line of the budget pays for the notice that says lines were dropped, so a reader never
     # has to wonder whether the excerpt is contiguous.
-    $windowBudget = $Budget - $TailReserve - 1
+    $windowBudget = $Budget - ($count - $tailStart) - 1
+    if ($windowBudget -lt 1) { $windowBudget = 1 }
     $windowEnd = [Math]::Min($first + $windowBudget - 1, $count - 1)
-    $tailStart = $count - $TailReserve
 
     # The window already runs into the reserved tail: no gap to announce, so emit one run of lines.
     # This branch yields at most $Budget - 1 lines (it is only reached when $first is late enough).

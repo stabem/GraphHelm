@@ -7,11 +7,11 @@
 # repository carries no Pester dependency and one issue's worth of pure functions is not the
 # occasion to add one.
 #
-# 21 runtime assertions: 16 direct Assert-True calls + 5 Assert-Equal calls. Assert-Equal
+# 34 runtime assertions: 29 direct Assert-True calls + 5 Assert-Equal calls. Assert-Equal
 # delegates to Assert-True, so it fires ONCE at runtime, not twice; a naive grep over this file
 # also counts the two function DEFINITION lines and the delegation inside Assert-Equal's body,
 # which are source text rather than runtime assertions.
-$ExpectedAssertionCount = 21
+$ExpectedAssertionCount = 34
 
 $ErrorActionPreference = 'Stop'
 # 2.0, not Latest: this is what ci/gate.ps1 sets before it dot-sources gate-evidence.ps1, so
@@ -100,7 +100,16 @@ $multi = New-Object System.Collections.Generic.List[string]
 $multi.Add('failures:'); $multi.Add('    suite_a::the_first_one')
 foreach ($i in 1..200) { $multi.Add($OkSummary) }
 $multi.Add('failures:'); $multi.Add('    suite_b::the_second_one')
-foreach ($i in 1..30) { $multi.Add($OkSummary) }
+# 60, not 30 (#917). This cell is about the NOTICE reporting failures it dropped, so the fixture has
+# to put the second failure in the OMITTED GAP. With 30 trailing summaries the second `failures:`
+# now lands 33 lines from the end, inside the reach of the explanation-seeking tail, so the excerpt
+# KEEPS it -- and a notice truthfully reporting nothing further would fail a cell whose whole
+# subject is the notice reporting something further.
+#
+# The expectation is not being lowered to match new behaviour: the count below is still 1. The
+# fixture is being restored to producing the situation the cell exists to measure, and the case
+# where the tail now reaches the second failure is a NEW cell below rather than an edit to this one.
+foreach ($i in 1..60) { $multi.Add($OkSummary) }
 $multi.Add('error: test failed, to rerun pass `-p graphhelm-b`')
 $multiSelected = @(Select-GateEvidenceLines -Lines $multi.ToArray())
 $multiNotice = @($multiSelected | Where-Object { $_ -clike '*lines omitted*' })[0]
@@ -197,6 +206,146 @@ $late = @(Select-GateEvidenceLines -Lines $lateFailure.ToArray())
 Assert-True -Condition (@($late | Where-Object { $_ -clike '*lines omitted*' }).Count -eq 0) -Message 'a failure at the very end yields a contiguous excerpt'
 
 Assert-True -Condition ($late.Count -le 40 -and ($late -join "`n").Contains('FAILED')) -Message 'and that excerpt is within budget and still names the failure'
+
+Write-Host ''
+Write-Host 'the shape real cargo prints: ANNOUNCED first, EXPLAINED last (#917)' -ForegroundColor Cyan
+
+# The fixture above starts at `failures:` and so anchors on an EXPLANATION by accident of its own
+# construction. Real libtest output does not: it says `test x ... FAILED` the moment the cell fails,
+# keeps running every remaining cell, and prints `panicked at <file>:<line>` only in the trailing
+# `failures:` section. That gap is where the diagnosis lives, and it is what PR #854's committed
+# manifest lost while PR #871's kept -- the same function, the same budget, decided by where in the
+# binary the failing cell happened to sit.
+$AnnouncedSite = 'panicked at apps/cli/tests/schema_cli.rs:99:5'
+$AnnouncedWhy = 'the catalog disagreed'
+$announced = New-Object System.Collections.Generic.List[string]
+$announced.Add('test suite::cell_a ... FAILED')
+foreach ($i in 1..60) { $announced.Add("test suite::passing_$i ... ok") }
+$announced.Add('failures:')
+$announced.Add('')
+$announced.Add('---- suite::cell_a stdout ----')
+$announced.Add("thread 'suite::cell_a' panicked at apps/cli/tests/schema_cli.rs:99:5:")
+$announced.Add("assertion ``left == right`` failed: $AnnouncedWhy")
+$announced.Add('')
+$announced.Add('failures:')
+$announced.Add('    suite::cell_a')
+$announced.Add('test result: FAILED. 60 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out')
+
+# ARRANGEMENT, both halves: this fixture reproduces the defect only if its first line anchors the
+# window (matches the full set) while explaining nothing (does not match the explanation set). If it
+# ever matched both, the tail would have nothing to be grown backwards to and the cells below would
+# pass on a fixture that had quietly stopped being the real shape.
+Assert-True -Condition ($announced[0] -cmatch $script:GateEvidenceFailureMarkers) `
+    -Message 'ARRANGEMENT: the announcement line anchors the window, so the failing cell name is kept'
+Assert-True -Condition (-not ($announced[0] -cmatch $script:GateEvidenceExplanationMarkers)) `
+    -Message 'ARRANGEMENT: and it explains nothing, so the explanation is only reachable by growing the tail'
+
+$announcedExcerpt = @(Select-GateEvidenceLines -Lines $announced.ToArray())
+
+# RED before #917: the window opened on line 0, spent the budget on the 60 `... ok` lines, and the
+# five-line tail landed AFTER the panic site, so the site fell into the omitted gap. The assertion
+# text happened to survive on $TailReserve alone, which is why the loss was easy to miss -- the
+# excerpt read as though it explained itself while withholding the file and line.
+#
+# The name below is NOT redundant with that: an earlier attempt at this fix moved the anchor to the
+# explanation instead of growing the tail, which bought the site by losing the announcement -- the
+# only line carrying the cell's name. `gate-postgres-evidence.tests.ps1` caught it. Both are
+# asserted here so the next person cannot buy one with the other.
+Assert-True -Condition ($announcedExcerpt -join "`n").Contains($AnnouncedSite) `
+    -Message 'the panic SITE survives when the failure is announced early and explained late'
+
+Assert-True -Condition ($announcedExcerpt[0] -clike '*suite::cell_a*FAILED*') `
+    -Message 'and the excerpt still OPENS on the announcement, so the failing cell is named at the top'
+
+Assert-True -Condition ($announcedExcerpt -join "`n").Contains($AnnouncedWhy) `
+    -Message 'and so does the assertion that failed'
+
+Assert-True -Condition ($announcedExcerpt -join "`n").Contains('suite::cell_a') `
+    -Message 'and the excerpt still names WHICH cell failed, from the trailing failures list'
+
+# A stage can announce a failure and never explain it: a binary that exits non-zero having printed
+# nothing else. The explanation pass finds nothing, and the fallback must be the pre-#917 excerpt
+# rather than an empty one -- a fix that only works when it has something to anchor on is not a fix.
+$announcedOnly = New-Object System.Collections.Generic.List[string]
+foreach ($i in 1..60) { $announcedOnly.Add("test suite::passing_$i ... ok") }
+$announcedOnly.Add('test suite::cell_b ... FAILED')
+foreach ($i in 1..8) { $announcedOnly.Add("test suite::passing_late_$i ... ok") }
+$announcedOnlyExcerpt = @(Select-GateEvidenceLines -Lines $announcedOnly.ToArray())
+
+Assert-True -Condition ($announcedOnlyExcerpt -join "`n").Contains('suite::cell_b') `
+    -Message 'a stage that announces a failure and never explains it still anchors on the announcement'
+
+Write-Host ''
+Write-Host 'TWO failing cells, which --no-fail-fast makes routine (#917, found by ISSUES 3)' -ForegroundColor Cyan
+
+# The shape the first version of this fix could not handle, and it is the common one: two cells fail,
+# each printing a `---- stdout ----` block with a panic site, an assertion and a couple of context
+# lines. ISSUES 3 ran the shipped function against it rather than reading the diff and found the
+# first explanation still lost; measured here, BOTH were lost, because the tail's bound was a fixed
+# 14 lines rather than whatever the budget left over.
+$twoFailures = New-Object System.Collections.Generic.List[string]
+$twoFailures.Add('test suite::cell_a ... FAILED')
+foreach ($i in 1..60) { $twoFailures.Add("test suite::passing_$i ... ok") }
+$twoFailures.Add('test suite::cell_b ... FAILED')
+$twoFailures.Add('failures:')
+$twoFailures.Add('')
+$twoFailures.Add('---- suite::cell_a stdout ----')
+$twoFailures.Add("thread 'a' panicked at apps/cli/tests/api_http.rs:99:5:")
+$twoFailures.Add('assertion `left == right` failed: FIRST')
+$twoFailures.Add('  left:  something long')
+$twoFailures.Add('  right: something else')
+$twoFailures.Add('note: run with RUST_BACKTRACE=1')
+$twoFailures.Add('')
+$twoFailures.Add('---- suite::cell_b stdout ----')
+$twoFailures.Add("thread 'b' panicked at apps/cli/tests/api_http.rs:222:5:")
+$twoFailures.Add('assertion `left == right` failed: SECOND')
+$twoFailures.Add('  left:  another')
+$twoFailures.Add('  right: other')
+$twoFailures.Add('note: run with RUST_BACKTRACE=1')
+$twoFailures.Add('')
+$twoFailures.Add('failures:')
+$twoFailures.Add('    suite::cell_a')
+$twoFailures.Add('    suite::cell_b')
+$twoFailures.Add('test result: FAILED. 60 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out')
+
+# ARRANGEMENT: the first explanation must sit further from the end than the plain $TailReserve, or
+# the cells below would pass on a transcript the unmodified tail already reached, and would be
+# measuring nothing about the growth.
+$firstExplanationIndex = 0
+for ($i = 0; $i -lt $twoFailures.Count; $i++) {
+    if ($twoFailures[$i] -clike '*panicked at apps/cli/tests/api_http.rs:99:5*') { $firstExplanationIndex = $i; break }
+}
+Assert-True -Condition (($twoFailures.Count - $firstExplanationIndex) -gt 5) `
+    -Message "ARRANGEMENT: the first explanation is beyond the 5-line tail reserve ($($twoFailures.Count - $firstExplanationIndex) lines from the end)"
+
+$twoSelected = @(Select-GateEvidenceLines -Lines $twoFailures.ToArray())
+
+Assert-True -Condition ($twoSelected -join "`n").Contains('api_http.rs:99:5') `
+    -Message 'the FIRST failing cell keeps its panic site when a second cell also fails'
+
+Assert-True -Condition ($twoSelected -join "`n").Contains('api_http.rs:222:5') `
+    -Message 'and so does the second'
+
+Assert-True -Condition ($twoSelected[0] -clike '*suite::cell_a*FAILED*') `
+    -Message 'while the excerpt still opens on the announcement, which is the only line naming the first cell'
+
+Assert-True -Condition ($twoSelected[$twoSelected.Count - 1] -clike '*test result: FAILED*') `
+    -Message "and still ends on the stage's own summary"
+
+# The other side of the same change: when the tail reaches far enough to KEEP a second failure, the
+# notice must not claim further failures were dropped. The `$multi` fixture above has the opposite
+# shape on purpose -- there the second failure really is in the gap and the notice really does say so.
+$nearTail = New-Object System.Collections.Generic.List[string]
+$nearTail.Add('failures:'); $nearTail.Add('    suite_a::the_first_one')
+foreach ($i in 1..200) { $nearTail.Add($OkSummary) }
+$nearTail.Add('failures:'); $nearTail.Add('    suite_b::the_second_one')
+foreach ($i in 1..30) { $nearTail.Add($OkSummary) }
+$nearTail.Add('error: test failed, to rerun pass `-p graphhelm-b`')
+$nearSelected = @(Select-GateEvidenceLines -Lines $nearTail.ToArray())
+$nearNotice = @($nearSelected | Where-Object { $_ -clike '*lines omitted*' })[0]
+
+Assert-True -Condition (($nearSelected -join "`n").Contains('suite_b::the_second_one') -and -not ($nearNotice -clike '*INCLUDING*')) `
+    -Message 'a second failure the excerpt KEEPS is not also reported as one it dropped'
 
 Write-Host ''
 

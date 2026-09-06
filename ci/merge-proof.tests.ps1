@@ -11,7 +11,7 @@
 # Exit codes are the consumer's scheme, agreed with the desk that calls this: 0 SATISFIED,
 # 1 THE TOOL BROKE, 2 NOT, 3 ABSENT. 1 is reserved for a broken tool so a caller treating
 # "non-zero" as "refused" can never refuse a merge because this script failed to run.
-$ExpectedAssertionCount = 149
+$ExpectedAssertionCount = 159
 # 'Continue', not 'Stop': these cells run git and the subject against fixtures that are meant to
 # fail, and under Windows PowerShell 5.1 a native command's redirected stderr becomes a
 # NativeCommandError that 'Stop' promotes to a terminating error.
@@ -1528,6 +1528,96 @@ try {
     $mainB = (& git -C $b rev-parse origin/main).Trim()
     Assert-True -Condition ($mainB -cne $tipA) `
         -Message "a push in one copy does not move another copy's origin/main"
+
+    # ---- #911: EVERY SLOT HAS A STORE, and scanning one of them is absence at the wrong path.
+    Write-Host ''
+    Write-Host '-- a manifest in a slot store other than the first one is still corroboration --' -ForegroundColor Cyan
+    $repo = New-Repo -Name 'slot-store-union' -ProvenanceInGate
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Manifest -Repo $repo -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+
+    # A store shaped like a real slot's: <root>/gate-runs, reached through GRAPHHELM_SLOT_DIR --
+    # the SAME variable ci/gate.ps1 resolves its own lock from, which is the whole point of
+    # deriving rather than listing.
+    $slotRoot = Join-Path $fixtureRoot 'slot-elsewhere'
+    $slotStore = Join-Path $slotRoot 'gate-runs'
+    [System.IO.Directory]::CreateDirectory($slotStore) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $slotStore ($gated.Substring(0, 12) + '-2026-09-06T05-00-00.json')),
+        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null } | ConvertTo-Json),
+        $utf8NoBom)
+
+    $previousSlotDir = $env:GRAPHHELM_SLOT_DIR
+    try {
+        $env:GRAPHHELM_SLOT_DIR = $slotRoot
+        $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
+                -PullRequest 42 -Head $tip -RepositoryRoot $repo 2>&1 | ForEach-Object { [string]$_ })
+        $text = $out -join "`n"
+        Assert-True -Condition ($text -cmatch 'corroboration') `
+            -Message 'a record in the slot the run actually used is read as corroboration'
+        # THE POINT OF THE CHANGE. Before #911 this store was never looked at, so every run taken on
+        # the second slot earned the #709 warning -- measured three times in one night (#916, #921,
+        # #922), each with a positive control on both stores. A warning that fires on runs which DO
+        # have an independent record teaches the reader to skip the warning.
+        Assert-True -Condition (-not ($text -cmatch 'no independent record corroborates it')) `
+            -Message 'and the #709 warning does NOT fire when an independent record exists'
+
+        # THE CONTROL, and without it the assertion above is a claim about a string that may never
+        # appear on this path at all: the same store, the same invocation, a manifest whose name
+        # belongs to a DIFFERENT head. The scan finds nothing to corroborate with, and the warning
+        # must come back.
+        Remove-Item -LiteralPath (Join-Path $slotStore ($gated.Substring(0, 12) + '-2026-09-06T05-00-00.json')) -Force
+        [System.IO.File]::WriteAllText((Join-Path $slotStore ('0123456789ab-2026-09-06T05-00-00.json')),
+            (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = ('0' * 40); dirtyDiffHash = $null } | ConvertTo-Json),
+            $utf8NoBom)
+        $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
+                -PullRequest 42 -Head $tip -RepositoryRoot $repo 2>&1 | ForEach-Object { [string]$_ })
+        Assert-True -Condition (($out -join "`n") -cmatch 'no independent record corroborates it') `
+            -Message 'CONTROL: with nothing matching in that store, the #709 warning fires again'
+    } finally {
+        if ($null -eq $previousSlotDir) { Remove-Item Env:\GRAPHHELM_SLOT_DIR -ErrorAction SilentlyContinue }
+        else { $env:GRAPHHELM_SLOT_DIR = $previousSlotDir }
+    }
+
+    # ---- The DERIVATION, read from the subject's own source.
+    #
+    # The two behavioural cells above prove the env-var store is scanned. They cannot prove the
+    # DEFAULTS are still scanned when no variable is set without depending on this machine having
+    # `D:` and `E:` -- a cell whose answer changes with the box is not a cell. So the union is
+    # asserted where it is written, with an arrangement guard so a failed read cannot pass as a
+    # satisfied one.
+    Write-Host ''
+    Write-Host '-- the store list is DERIVED from the slot source, not a hand-written pair --' -ForegroundColor Cyan
+    # COMMENTS OUT OF THE POPULATION, and this cell earned that the hard way: the first version
+    # read the whole file, and the paragraph I had just written above the derivation NAMES
+    # `E:\graphhelm-slot` and `GRAPHHELM_SLOT_DIR` in its own measurement table. Reverting the code
+    # to the single-store form left every assertion green, because they were matching my prose.
+    # The instrument was inside the population it measured -- the same shape as a source-scanning
+    # cell that contains the string it scans for.
+    $subjectCode = (([System.IO.File]::ReadAllLines($subjectPath) |
+            Where-Object { -not ($_.TrimStart().StartsWith('#')) }) -join "`n")
+    Assert-True -Condition ($subjectCode.Length -gt 10000) `
+        -Message "ARRANGEMENT: read $($subjectCode.Length) bytes of subject CODE -- the read, not the code, is wrong"
+    # THE REGION, not the file. Asserting `Select-Object -Unique` over the whole subject passed with
+    # the de-duplication DELETED, because the prefix loop two hundred lines away uses the same
+    # cmdlet -- a needle that exists elsewhere in the population answers yes about the wrong place.
+    # Measured: sabotage S3 reddened nothing until this was scoped.
+    $derivStart = $subjectCode.IndexOf('$slotStores = if (')
+    $derivEnd = $subjectCode.IndexOf('$presentStores = @(')
+    Assert-True -Condition ($derivStart -ge 0 -and $derivEnd -gt $derivStart) `
+        -Message 'ARRANGEMENT: the derivation block is locatable in the subject, so the asserts below have a subject'
+    $deriv = if ($derivStart -ge 0 -and $derivEnd -gt $derivStart) {
+        $subjectCode.Substring($derivStart, $derivEnd - $derivStart)
+    } else { '' }
+    Assert-True -Condition ($deriv.Length -gt 100 -and $deriv.Length -lt 2000) `
+        -Message "ARRANGEMENT: the derivation block is $($deriv.Length) chars -- a whole-file match would prove nothing"
+    foreach ($root in @('GRAPHHELM_SLOT_DIR', 'D:\graphhelm-slot', 'E:\graphhelm-slot')) {
+        Assert-True -Condition ($deriv -cmatch [regex]::Escape($root)) `
+            -Message "the store list derives from $root"
+    }
+    Assert-True -Condition ($deriv -cmatch 'Select-Object -Unique') `
+        -Message 'and de-duplicates, so a variable pointing at a default is not scanned twice'
+
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

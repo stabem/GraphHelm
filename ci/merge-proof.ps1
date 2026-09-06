@@ -800,11 +800,42 @@ $script:facts.tip = $touched
 # built a path on the repository's own drive, which has no such directory, and reported "0 runs"
 # without ever having looked. Absence at the wrong path reads exactly like absence.
 
-$slotStore = if ($LedgerDirectory) { $LedgerDirectory }
-    elseif ($env:GRAPHHELM_SLOT_DIR) { Join-Path $env:GRAPHHELM_SLOT_DIR 'gate-runs' }
-    else { 'D:\graphhelm-slot\gate-runs' }
-if (-not (Test-Path -LiteralPath $slotStore)) {
-    $script:facts.scanNotes += "no ledger found at $(Format-PathForOutput -Path $slotStore) (which is not the same as a ledger holding no runs)"
+# EVERY SLOT HAS A STORE, and scanning one of them is the same defect one level up (#911).
+#
+# The fleet runs at most one gate per disk, each behind its own lock: the HDD's at
+# `D:/graphhelm-slot/SLOT.lock` and the SSD's at `E:/graphhelm-slot/SLOT.lock`, and a lane picks
+# between them with `SLOT_LOCK` and `GRAPHHELM_SLOT_DIR`. Each writes its manifests beside its own
+# lock. Scanning only `D:` therefore made EVERY run taken on the SSD slot report
+# "no independent record corroborates it" -- measured three times in one night, on #916, #921 and
+# #922, each with a positive control on both stores:
+#
+#     D:\graphhelm-slot\gate-runs   146 files   'e7b9915e3db7' -> 0
+#     E:\graphhelm-slot\gate-runs     8 files   'e7b9915e3db7' -> 1
+#
+# The manifest was in a slot store every time. The scan looked in one of two, and the #709 warning
+# it emitted -- a SATISFIED verdict resting on a manifest written by the author of the code it
+# vouches for -- is exactly the warning a reader is meant to weigh. Emitting it on runs that DO
+# have an independent record teaches the reader to skip it.
+#
+# DERIVED, NOT LISTED. A hand-written pair of paths is the population the author wrote: a third
+# slot added tomorrow reproduces this defect with every cell still green. The stores come from the
+# same source the LOCKS come from -- `GRAPHHELM_SLOT_DIR` when a lane exported it, plus the two
+# defaults `slot-claim.sh` and this script already know -- so "where a lock lives" and "where its
+# manifests are looked for" cannot drift apart. `-LedgerDirectory` still overrides everything,
+# because a caller naming a store means that store and no other.
+$slotStores = if ($LedgerDirectory) { @($LedgerDirectory) }
+    else {
+        @(@($env:GRAPHHELM_SLOT_DIR, 'D:\graphhelm-slot', 'E:\graphhelm-slot') |
+            Where-Object { $_ } |
+            ForEach-Object { Join-Path $_ 'gate-runs' } |
+            ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd([System.IO.Path]::DirectorySeparatorChar) } |
+            Select-Object -Unique)
+    }
+$presentStores = @($slotStores | Where-Object { Test-Path -LiteralPath $_ })
+if ($presentStores.Count -eq 0) {
+    $script:facts.scanNotes += ("no ledger found at any slot store (" +
+        (($slotStores | ForEach-Object { Format-PathForOutput -Path $_ }) -join ', ') +
+        ") -- which is not the same as a ledger holding no runs")
 } else {
     # THE LEDGER IS A STORE LIKE THE OTHER ONE, and it had neither ceiling. It accumulates a file
     # per gate run forever, so "many retries" is its NORMAL state rather than an attack, and one
@@ -825,7 +856,12 @@ if (-not (Test-Path -LiteralPath $slotStore)) {
         # unspecified provider-ordered subset and says nothing: a corroborating GREEN retry or a
         # disagreeing RED attempt can vanish from the evidence, and the answer changes with
         # filesystem enumeration order while claiming no witness was found.
-        $prefixFiles = @(Get-ChildItem -LiteralPath $slotStore -Filter "$prefix-*.json" -File -ErrorAction SilentlyContinue |
+        # ACROSS EVERY PRESENT STORE, and the ceiling is applied to the COMBINED set rather than
+        # per store: a budget is a guard, and looping stores with a per-store cap would have
+        # doubled it silently -- the same "less refusal arrives inside a refactor" shape #922 was
+        # reviewed for.
+        $prefixFiles = @($presentStores |
+                ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter "$prefix-*.json" -File -ErrorAction SilentlyContinue } |
                 Select-Object -First ($MaxManifests + 1))
         if ($prefixFiles.Count -gt $MaxManifests) {
             $script:facts.scanNotes += ("more than $MaxManifests ledger files start with $prefix, so the scan was " +
@@ -843,8 +879,9 @@ if (-not (Test-Path -LiteralPath $slotStore)) {
     # SATISFIED verdict rests on a manifest written by the author of the code it vouches for --
     # disappeared exactly when the ledger directory existed and held nothing matching. Adding a
     # sentence about the search made the search look successful.
-    $script:facts.scanNotes += ("the ledger was scanned by run-name prefix ($(Format-PathForOutput -Path $slotStore)), so a manifest " +
-        'stored under another naming is not looked for here')
+    $script:facts.scanNotes += ("the ledger was scanned by run-name prefix (" +
+        (($presentStores | ForEach-Object { Format-PathForOutput -Path $_ }) -join ', ') +
+        "), so a manifest stored under another naming is not looked for here")
     foreach ($file in $ledgerFiles) {
         # THE SAME BUDGET, NOT A SECOND ONE. `$MaxStoreBytes` bounded the committed store and left
         # the ledger unbounded, which is the per-file-versus-per-run mistake one directory over:

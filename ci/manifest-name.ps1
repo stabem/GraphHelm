@@ -23,6 +23,11 @@ Set-StrictMode -Version Latest
 # message against a private copy of itself.
 $script:FinalisedManifestSurvivedKey = 'GraphHelm.FinalisedManifestSurvived'
 
+# #742: 'take another name', told apart from 'this write failed'. The creation path's outer search
+# reads this and retries under a fresh name; a correction has no other name to take and reports it.
+# A flag, for the same reason as the marker above: a phrase in a message can be spelled by accident.
+$script:ManifestStagingNameTakenKey = 'GraphHelm.ManifestStagingNameTaken'
+
 function Test-IOExceptionIsNameTaken {
     <#
       Was this IOException 'the name is already taken', or something else?
@@ -93,6 +98,24 @@ function Test-ManifestRollbackLeftFinalised {
     return [bool] $Exception.Data[$script:FinalisedManifestSurvivedKey]
 }
 
+function Test-ManifestStagingNameTaken {
+    <#
+      'Take another name', told apart from 'this write failed' (#742).
+
+      A staging file that already exists is a CONCURRENT RESERVATION: another run passed the same
+      precheck and got here first. The creation path answers that by taking a fresh name, which is
+      not a thing a correction can do -- it has exactly one name, the one already on disk. So the
+      two callers need to read the same condition and act differently on it, and the condition is a
+      TYPED flag rather than a phrase: matching text means any message that merely CONTAINS the
+      words arms the retry, which is how the sibling marker above was bitten.
+    #>
+    param([AllowNull()] $Exception)
+
+    if ($null -eq $Exception) { return $false }
+    if ($null -eq $Exception.Data) { return $false }
+    return [bool] $Exception.Data[$script:ManifestStagingNameTakenKey]
+}
+
 function New-GateManifestFileName {
     <#
       `head12-yyyyMMddTHHmmss.fffZ-xxxxxxxx.json` -- sortable and readable as before, plus 8 hex
@@ -122,6 +145,209 @@ function New-GateManifestFileName {
     # fail for a reason that has nothing to do with this code. A name is an identifier; it must not
     # depend on where the machine thinks it is.
     return "$head-$($Now.ToString('yyyyMMddTHHmmss.fffZ', [cultureinfo]::InvariantCulture))-$Suffix.json"
+}
+
+function Write-ManifestPairContent {
+    <#
+      ONE run's content reaches BOTH stores, or neither. The half-pair invariant lives HERE and
+      nowhere else (#742).
+
+      It used to live in two places: this file's `Write-GateManifestPair` and, hand-copied, the
+      manifest CORRECTION path in `gate.ps1`. The correction cannot call `Write-GateManifestPair`
+      -- that reserves a NEW name on every call, so routing a correction through it would write a
+      SECOND pair and leave the stale one exactly where readers look. So the correction borrowed the
+      discipline instead, and two implementations of one invariant drifted, silently, as the issue
+      predicted they would.
+
+      THE SPLIT THAT FIXES IT is between the NAME and the WRITE. Reserving a free name is the
+      creation path's own concern; writing given content to given paths atomically is shared. So
+      this function takes the final PATHS as an input and knows nothing about how they were chosen:
+
+        new run    -> Write-GateManifestPair reserves a fresh name, then calls this with -Commit Create
+        correction -> gate.ps1 passes the names it already holds, then calls this with -Commit Replace
+
+      WHY THE TWO COMMIT PRIMITIVES ARE NOT MERGED. They are not two spellings of one operation:
+      creation requires the destination to be ABSENT (`File.Move` refuses to overwrite), correction
+      requires it to be PRESENT (`File.Replace` is a rename over an existing file). Merging them
+      would mean one of the two callers losing a precondition it depends on. What is shared is
+      everything AROUND the primitive -- staging, the flush fault, both-or-neither, the rollback --
+      and that is what lives here.
+    #>
+    param(
+        [Parameter(Mandatory)][string[]] $FinalPaths,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Json,
+        [ValidateSet('Create', 'Replace')][string] $Commit = 'Create',
+        [scriptblock] $WriteContent,
+        # The seam a cell needs to arm a PARTIAL commit. It runs after every staging file exists and
+        # before the first commit -- the only window in which the first commit can succeed and the
+        # second fail, which is the state the rollback exists for. Production never passes it.
+        [scriptblock] $BeforeCommit
+    )
+
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    # `.tmp` for a creation, `.correcting` for a correction. Both are names no manifest reader
+    # treats as a run, which is the property that matters; they are kept distinct so a leftover
+    # says which path stranded it.
+    $stagingSuffix = if ($Commit -eq 'Create') { '.tmp' } else { '.correcting' }
+
+    $staged = @()
+    $nameLost = $false
+    try {
+        foreach ($final in $FinalPaths) {
+            $temp = "$final$stagingSuffix"
+
+            # An existing staging file is a CONCURRENT RESERVATION, not a fault. Another run passed
+            # the same precheck and got here first; its file is not finished, so the `.json` test
+            # could not see it. Falling into the generic cleanup below would delete THAT run's
+            # reservation on the way out and both runs would lose their manifest -- the
+            # mutual-destruction version of the overwrite this helper exists to stop.
+            try {
+                $stream = [System.IO.File]::Open($temp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+            } catch [System.IO.IOException] {
+                if (Test-IOExceptionIsNameTaken -Exception $_.Exception) { $nameLost = $true; break }
+                throw
+            }
+
+            # Tracked the moment it EXISTS, not once it is written. Recording it after the write
+            # meant a failed write left the file untracked, so the cleanup below deleted nothing.
+            $staged += $temp
+
+            $disposed = $false
+            try {
+                if ($WriteContent) { & $WriteContent $stream } else {
+                    $bytes = $encoding.GetBytes($Json)
+                    $stream.Write($bytes, 0, $bytes.Length)
+                }
+                # Disposed HERE, inside the try, and its failure is a real failure. A filesystem can
+                # report a delayed write or flush fault only at Dispose -- swallowing it would
+                # promote possibly truncated bytes to a final record. `File.WriteAllText`, which the
+                # correction path used before this extraction, cannot make that distinction at all.
+                $stream.Dispose()
+                $disposed = $true
+            } finally {
+                # Only for the unwinding path: the original error has already won, and a second
+                # complaint from Dispose must not replace it.
+                if (-not $disposed) { try { $stream.Dispose() } catch { } }
+            }
+        }
+    } catch {
+        $original = $_
+        # ONLY what this invocation created.
+        $undeleted = @()
+        foreach ($temp in $staged) {
+            try { [System.IO.File]::Delete($temp) } catch { $undeleted += $temp }
+        }
+        if ($undeleted.Count -gt 0) {
+            throw "$($original.Exception.Message) -- and the partial file(s) could not be removed: $($undeleted -join ', '). They carry a staging suffix so no reader will treat them as manifests, but they are litter"
+        }
+        throw $original
+    }
+
+    if ($nameLost) {
+        foreach ($temp in $staged) { try { [System.IO.File]::Delete($temp) } catch { } }
+        # TYPED, so the caller can tell "take another name" from "this write failed". The creation
+        # path's outer search reads this flag and tries a fresh name; a correction has no other name
+        # to take and reports it.
+        $lost = New-Object System.Exception('a concurrent writer holds the staging name for this manifest')
+        $lost.Data[$script:ManifestStagingNameTakenKey] = $true
+        throw $lost
+    }
+
+    if ($BeforeCommit) { & $BeforeCommit $staged }
+
+    # BOTH OR NEITHER. If the first commit lands and the second fails -- the destination appearing
+    # concurrently, a sharing violation, any IO fault -- stopping here would leave HALF A PAIR, and
+    # half a pair is worse than none: it reads as a complete record.
+    $committed = @()
+    $backups = @()
+    try {
+        for ($i = 0; $i -lt $staged.Count; $i++) {
+            if ($Commit -eq 'Create') {
+                [System.IO.File]::Move($staged[$i], $FinalPaths[$i])
+            } else {
+                # REPLACE, NOT COPY. `File.Copy(src, dst, overwrite)` writes THROUGH the destination:
+                # a kill halfway leaves a truncated file where a VALID record was, which is the one
+                # direction worse than not correcting at all. `File.Replace` is a rename over an
+                # existing file on the same volume -- both conditions hold here.
+                #
+                # Measured on this runtime, because the obvious alternative does not exist here:
+                #   File.Replace(3-arg)  : True
+                #   File.Move(overwrite) : False   (.NET Core 3.0+ only)
+                #
+                # THE BACKUP ARGUMENT IS THE ROLLBACK (#742). This call site used to pass a real
+                # null here, and that one argument is why a correction could not be undone: with no
+                # backup the destination's original bytes are GONE the instant the replace lands, so
+                # a later failure in the pair had nothing to restore from and the two stores were
+                # left disagreeing. Measured on this runtime:
+                #
+                #   Replace(src, dest, null)   -> dest='CORRECTED', the directory holds ONLY dest
+                #   Replace(src, dest, backup) -> dest='CORRECTED', backup='ORIGINAL'
+                #
+                # Full paths for the same reason as everywhere else in this file.
+                $backup = "$($FinalPaths[$i]).backup"
+                [System.IO.File]::Replace([System.IO.Path]::GetFullPath($staged[$i]),
+                    [System.IO.Path]::GetFullPath($FinalPaths[$i]), [System.IO.Path]::GetFullPath($backup))
+                $backups += $backup
+            }
+            $committed += $FinalPaths[$i]
+        }
+    } catch {
+        $original = $_
+        $stuck = @()
+        if ($Commit -eq 'Create') {
+            # Roll the finalised ones back out of sight. They are files this invocation created
+            # moments ago, so deleting them destroys nothing anyone else could be holding.
+            foreach ($final in $committed) {
+                try { [System.IO.File]::Delete($final) } catch { $stuck += $final }
+            }
+        } else {
+            # RESTORE FROM THE BACKUP, newest first. A replace commit is undone by replacing the
+            # destination BACK with the bytes the backup holds -- `File.Replace(backup, final, null)`
+            # is a rename over the same volume, so each restore is atomic and consumes its backup.
+            #
+            # A backup that is MISSING is counted as stuck rather than ignored. It means the commit
+            # landed and its backup did not survive, which leaves a corrected copy this function
+            # cannot undo -- the exact state the caller must be told about, and silence here would
+            # report a clean rollback over a half-corrected pair.
+            for ($k = $committed.Count - 1; $k -ge 0; $k--) {
+                $backup = "$($committed[$k]).backup"
+                if (-not (Test-Path -LiteralPath $backup)) { $stuck += $committed[$k]; continue }
+                try {
+                    [System.IO.File]::Replace([System.IO.Path]::GetFullPath($backup),
+                        [System.IO.Path]::GetFullPath($committed[$k]), [NullString]::Value)
+                } catch { $stuck += $committed[$k] }
+            }
+        }
+        # Whatever the outcome, no backup is left as litter: a `.backup` beside a manifest is not a
+        # manifest, but it is a file a later reader has to explain.
+        foreach ($backup in $backups) {
+            if (Test-Path -LiteralPath $backup) { try { [System.IO.File]::Delete($backup) } catch { } }
+        }
+        foreach ($temp in $staged) {
+            if (Test-Path -LiteralPath $temp) {
+                try { [System.IO.File]::Delete($temp) } catch { }
+            }
+        }
+        if ($stuck.Count -gt 0) {
+            # TYPED, not a phrase in a sentence. The caller has to tell this apart from every
+            # ordinary IO failure, and matching text meant any message that merely CONTAINED the
+            # marker -- a slot directory named after it, a path echoed back by the OS -- armed the
+            # refusal and turned an ordinary durable hiccup into a red gate. A flag on the exception
+            # cannot be spelled by accident.
+            $failure = New-Object System.Exception("$($original.Exception.Message) -- a finalised manifest could not be rolled back: $($stuck -join ', '). A reader will treat it as a complete run that never reached RUN-END, and writing another would make two")
+            $failure.Data[$script:FinalisedManifestSurvivedKey] = $true
+            throw $failure
+        }
+        throw $original
+    }
+
+    # The pair is committed, so the backups have served their purpose. Removed here rather than
+    # left for the caller: they exist only for the window this function owns.
+    foreach ($backup in $backups) {
+        if (Test-Path -LiteralPath $backup) { try { [System.IO.File]::Delete($backup) } catch { } }
+    }
+
+    return $committed
 }
 
 function Write-GateManifestPair {
@@ -159,8 +385,6 @@ function Write-GateManifestPair {
         [datetime] $Now
     )
 
-    $encoding = New-Object System.Text.UTF8Encoding($false)
-
     # DEDUPLICATED, and this one is self-inflicted: if both stores resolve to one directory --
     # GRAPHHELM_SLOT_DIR pointing at the repository, a trailing separator, a `.` segment -- the
     # first pass creates `<name>.json.tmp` and the second pass reads THAT SAME FILE as a concurrent
@@ -189,107 +413,23 @@ function Write-GateManifestPair {
         }
         if ($taken) { continue }
 
-        $temps = @()
-        $nameLost = $false
+        $finalPaths = @()
+        foreach ($directory in $directories) { $finalPaths += [System.IO.Path]::Combine($directory, $name) }
+
+        # THE NAME IS THIS FUNCTION'S CONCERN; THE WRITE IS NOT (#742). Everything below the name --
+        # staging, the flush fault, both-or-neither, the rollback -- is Write-ManifestPairContent's,
+        # and the manifest CORRECTION path in gate.ps1 calls the same function with -Commit Replace.
+        # That is the whole point of the split: the half-pair invariant has one implementation, so
+        # the two callers cannot drift apart the way they had.
         try {
-            foreach ($directory in $directories) {
-                $temp = [System.IO.Path]::Combine($directory, "$name.tmp")
-
-                # An existing .tmp is a CONCURRENT RESERVATION, not a fault. Another run passed the
-                # same `.json` precheck and got here first; its file is not finished, so the `.json`
-                # test could not see it. Falling into the generic cleanup below would have deleted
-                # THAT run's reservation on the way out, and both runs would have lost their
-                # manifest -- the mutual-destruction version of the overwrite this helper exists to
-                # stop. So: give up this name, keep only what this invocation created, take a fresh
-                # name.
-                try {
-                    $stream = [System.IO.File]::Open($temp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
-                } catch [System.IO.IOException] {
-                    if (Test-IOExceptionIsNameTaken -Exception $_.Exception) { $nameLost = $true; break }
-                    throw
-                }
-
-                # Tracked the moment it EXISTS, not once it is written. Recording it after the write
-                # meant a failed write left the file untracked, so the cleanup below deleted nothing
-                # and the .tmp survived -- the cleanup owning less than the code had created.
-                $temps += $temp
-
-                $disposed = $false
-                try {
-                    if ($WriteContent) { & $WriteContent $stream } else {
-                        $bytes = $encoding.GetBytes($Json)
-                        $stream.Write($bytes, 0, $bytes.Length)
-                    }
-                    # Disposed HERE, inside the try, and its failure is a real failure. A filesystem
-                    # can report a delayed write or flush fault only at Dispose -- swallowing it and
-                    # moving on would promote possibly truncated bytes to a final `.json`, which is
-                    # precisely the invalid manifest staging exists to prevent.
-                    $stream.Dispose()
-                    $disposed = $true
-                } finally {
-                    # Only for the unwinding path: the original error has already won, and a second
-                    # complaint from Dispose must not replace it.
-                    if (-not $disposed) { try { $stream.Dispose() } catch { } }
-                }
-            }
+            return Write-ManifestPairContent -FinalPaths $finalPaths -Json $Json -Commit 'Create' -WriteContent $WriteContent
         } catch {
-            $original = $_
-            # ONLY what this invocation created. The previous version rescanned every directory,
-            # which is how it could delete a concurrent run's reservation.
-            $undeleted = @()
-            foreach ($temp in $temps) {
-                try { [System.IO.File]::Delete($temp) } catch { $undeleted += $temp }
-            }
-            if ($undeleted.Count -gt 0) {
-                throw "$($original.Exception.Message) -- and the partial file(s) could not be removed: $($undeleted -join ', '). They carry a .tmp suffix so no reader will treat them as manifests, but they are litter"
-            }
-            throw $original
+            # A staging name lost to a concurrent writer is not a failure of this run: it means take
+            # ANOTHER name, which is a thing only this function can do. Read as a typed flag rather
+            # than matched as text, for the reason the marker above records.
+            if (Test-ManifestStagingNameTaken -Exception $_.Exception) { continue }
+            throw
         }
-
-        if ($nameLost) {
-            foreach ($temp in $temps) { try { [System.IO.File]::Delete($temp) } catch { } }
-            continue
-        }
-
-        # BOTH OR NEITHER, and the moves are where that invariant was still a promise. If the
-        # primary move lands and the secondary fails -- the destination appearing concurrently, a
-        # sharing violation, any IO fault -- the old code threw with the primary `.json` already
-        # VISIBLE to every manifest reader, recording a run that never reaches RUN-END. Half a pair
-        # is worse than none: it reads as a complete record.
-        $moved = @()
-        try {
-            foreach ($temp in $temps) {
-                $final = $temp.Substring(0, $temp.Length - 4)
-                [System.IO.File]::Move($temp, $final)
-                $moved += $final
-            }
-        } catch {
-            $original = $_
-            $stuck = @()
-            # Roll the finalised ones back out of sight. They are files this invocation created
-            # moments ago, so deleting them destroys nothing anyone else could be holding.
-            foreach ($final in $moved) {
-                try { [System.IO.File]::Delete($final) } catch { $stuck += $final }
-            }
-            foreach ($temp in $temps) {
-                if (Test-Path -LiteralPath $temp) {
-                    try { [System.IO.File]::Delete($temp) } catch { }
-                }
-            }
-            if ($stuck.Count -gt 0) {
-                # TYPED, not a phrase in a sentence. The caller has to tell this apart from every
-                # ordinary IO failure, and matching text meant any message that merely CONTAINED
-                # the marker -- a slot directory named after it, a path echoed back by the OS --
-                # armed the refusal and turned an ordinary durable hiccup into a red gate. That is
-                # the availability defect returning through the door of the fix for the integrity
-                # one. A flag on the exception cannot be spelled by accident.
-                $failure = New-Object System.Exception("$($original.Exception.Message) -- a finalised manifest could not be rolled back: $($stuck -join ', '). A reader will treat it as a complete run that never reached RUN-END, and writing another would make two")
-                $failure.Data[$script:FinalisedManifestSurvivedKey] = $true
-                throw $failure
-            }
-            throw $original
-        }
-        return $moved
     }
 
     throw "could not find a manifest name free in every store after three attempts (head $HeadSha); the name source is not producing distinct names, and a manifest would have been overwritten"

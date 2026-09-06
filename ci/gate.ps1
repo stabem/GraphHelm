@@ -2287,55 +2287,29 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # verdict this whole block exists to prevent, arriving in silence and reading as coverage
         # because the block is visibly present.
         #
-        # It cannot go through Write-GateManifestPair: that reserves a NEW name on every call, so it
-        # would write a second pair and leave the stale GREEN one in place. What it can borrow is the
-        # DISCIPLINE -- write both to `.tmp` siblings first, and only replace once both are written.
-        # Two file replacements still cannot be made atomic here; what changes is that a failure at
-        # either end is REPORTED and becomes a gate failure instead of a quiet lie.
-        $copies = @($written)
-        $staged = @()
+        # ONE WRITER FOR THE PAIR (#742). This block used to be a hand-copied version of
+        # Write-GateManifestPair's discipline. The copy existed for a real reason -- that helper
+        # reserves a NEW name on every call, so routing a correction through it would write a SECOND
+        # pair and leave the stale GREEN one exactly where readers look -- but two implementations of
+        # one invariant is the setup for them to drift, and they had.
+        #
+        # The split that removes the copy is between the NAME and the WRITE:
+        # `Write-ManifestPairContent` takes the final PATHS, which this path already holds in
+        # `$written`, so reserving a name stays the creation path's concern and the half-pair
+        # invariant lives in exactly one function.
+        #
+        # WHAT THAT BUYS HERE IS A ROLLBACK THIS PATH NEVER HAD. The hand-copied version passed a
+        # real null for `File.Replace`'s backup argument, so the original bytes were gone the instant
+        # the first replace landed: a failure on the second copy could only be REPORTED -- "an
+        # earlier copy WAS corrected, so the two stores now disagree" -- and the pair was left
+        # disagreeing. The shared writer keeps a backup and restores from it, so a correction is now
+        # both stores or neither, the same as a creation has been since #674.
         $correctionFailure = $null
         try {
-            foreach ($copy in $copies) {
-                $tmp = "$copy.correcting"
-                [System.IO.File]::WriteAllText($tmp, $correctedJson, (New-Object System.Text.UTF8Encoding($false)))
-                $staged += $tmp
-            }
+            Write-ManifestPairContent -FinalPaths @($written) -Json $correctedJson -Commit 'Replace' | Out-Null
         } catch {
-            $correctionFailure = "the corrected record could not be prepared: $($_.Exception.Message)"
+            $correctionFailure = "the corrected record could not be written: $($_.Exception.Message)"
         }
-        if (-not $correctionFailure) {
-            for ($i = 0; $i -lt $copies.Count; $i++) {
-                try {
-                    # REPLACE, NOT COPY. `File.Copy(src, dst, overwrite)` writes THROUGH the
-                    # destination: a kill halfway leaves a truncated file where a VALID record was,
-                    # which is the one direction worse than not correcting at all. `File.Replace` is
-                    # a rename over an existing file on the same volume -- both conditions hold here
-                    # -- so each file is replaced atomically.
-                    #
-                    # Measured on this runtime, because the obvious alternative does not exist here:
-                    #   File.Replace(3-arg)  : True
-                    #   File.Move(overwrite) : False   (.NET Core 3.0+ only)
-                    #
-                    # THE PAIR IS STILL NOT ATOMIC, and that declaration stands. What was wrong was
-                    # carrying "the pair cannot be atomic" into "so neither file can be" -- only the
-                    # first half is true.
-                    # Full paths here too, for the reason measured one function above.
-                    # Same two traps as the reconciliation above: full paths, and a REAL null for
-                    # the backup. This site has been throwing since the day it was written -- the
-                    # catch below turned it into a reported failure, so nothing was silently wrong,
-                    # but the correction it exists to perform never happened. Its cell asserted the
-                    # WIRING and not the outcome, which is exactly how it stayed green.
-                    [System.IO.File]::Replace([System.IO.Path]::GetFullPath($staged[$i]),
-                        [System.IO.Path]::GetFullPath($copies[$i]), [NullString]::Value)
-                } catch {
-                    $correctionFailure = ("the corrected record could not replace $($copies[$i]): $($_.Exception.Message)" +
-                        $(if ($i -gt 0) { ' -- an earlier copy WAS corrected, so the two stores now disagree' } else { '' }))
-                    break
-                }
-            }
-        }
-        foreach ($tmp in $staged) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
         if ($correctionFailure) {
             Write-Host "[gate] MANIFEST CORRECTION FAILED: $correctionFailure" -ForegroundColor Red
             $script:manifestCorrectionFailed = $correctionFailure

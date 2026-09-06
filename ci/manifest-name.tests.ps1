@@ -24,7 +24,7 @@
 # not calls, and Assert-Equal's delegation to Assert-True fires once per call rather than as an
 # assertion of its own. A miscount here has twice caught a cell that stopped running while its
 # neighbours stayed green -- which is the mechanism working, not a nuisance.
-$ExpectedAssertionCount = 42
+$ExpectedAssertionCount = 50
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -348,6 +348,51 @@ try {
     Assert-True -Condition $threw -Label 'a name source that cannot avoid an incumbent throws rather than overwriting'
     Assert-Equal 0 @(Get-ChildItem -LiteralPath $primary -Filter '*.json').Count 'the FIRST store is never finalised under a name the second cannot accept'
     Assert-Equal '{"run":"incumbent"}' ([System.IO.File]::ReadAllText((Join-Path $secondary $incumbentName))) 'the incumbent in the second store is untouched'
+
+    # ---- #742: a CORRECTION is both stores or neither, exactly as a creation is --------------
+    # The correction path used to carry its own copy of this discipline in gate.ps1. It could not
+    # roll back, and the reason was one argument: `File.Replace` was passed a real null for
+    # destinationBackupFileName, so the destination's original bytes were gone the instant the first
+    # replace landed. Measured on this runtime: with a null backup the directory afterwards holds
+    # only the replaced file. Its own message admitted the outcome -- "an earlier copy WAS corrected,
+    # so the two stores now disagree" -- which is half a pair, the state the creation path has
+    # refused to leave since #674.
+    $ca = Join-Path $root 'corr-a'; New-Item -ItemType Directory -Path $ca | Out-Null
+    $cb = Join-Path $root 'corr-b'; New-Item -ItemType Directory -Path $cb | Out-Null
+    $corrName = 'aaaaaaaaaaaa-20260906T000000.000Z-corr.json'
+    $pathA = Join-Path $ca $corrName
+    $pathB = Join-Path $cb $corrName
+    [System.IO.File]::WriteAllText($pathA, '{"status":"GREEN"}')
+    [System.IO.File]::WriteAllText($pathB, '{"status":"GREEN"}')
+
+    # ARRANGEMENT, asserted rather than assumed: the accessor below reads what this cell wrote. A
+    # rollback assertion against a path nothing ever wrote passes for free (#920, my own).
+    Assert-Equal '{"status":"GREEN"}' ([System.IO.File]::ReadAllText($pathA)) 'ARRANGEMENT: the first store holds the record the correction rewrites'
+
+    $threw = $false
+    try {
+        Write-ManifestPairContent -FinalPaths @($pathA, $pathB) -Json '{"status":"RED"}' -Commit 'Replace' -BeforeCommit {
+            param($staged)
+            # The SECOND commit's source, removed in the only window where the first can land and
+            # the second cannot: after every staging file exists, before the first replace.
+            # `File.Replace` fails when its source is gone.
+            [System.IO.File]::Delete($staged[1])
+        } | Out-Null
+    } catch { $threw = $true }
+
+    Assert-True -Condition $threw -Label 'a failed second replace fails the call'
+    Assert-Equal '{"status":"GREEN"}' ([System.IO.File]::ReadAllText($pathA)) 'the FIRST store is rolled back, not left corrected while the second still says otherwise'
+    Assert-Equal '{"status":"GREEN"}' ([System.IO.File]::ReadAllText($pathB)) 'and the second store is untouched'
+    Assert-Equal 0 @(Get-ChildItem -LiteralPath $ca -Filter '*.correcting' -File).Count 'no staging file survives the rollback'
+    Assert-Equal 0 @(Get-ChildItem -LiteralPath $ca -Filter '*.backup' -File).Count 'and the backup the rollback needs is not left behind as litter'
+
+    # CONTROL, and it is the half that makes the four assertions above mean something: the same call
+    # WITHOUT the obstruction corrects both stores. A cell that never reached the commit at all
+    # would satisfy every rollback assertion by having corrected nothing, and would keep satisfying
+    # them after the rollback was deleted.
+    $corrected = Write-ManifestPairContent -FinalPaths @($pathA, $pathB) -Json '{"status":"RED"}' -Commit 'Replace'
+    Assert-Equal 2 @($corrected).Count 'CONTROL: an unobstructed correction commits BOTH stores'
+    Assert-Equal '{"status":"RED"}' ([System.IO.File]::ReadAllText($pathA)) 'CONTROL: and the first store really is corrected, so the commit path was reached'
 
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

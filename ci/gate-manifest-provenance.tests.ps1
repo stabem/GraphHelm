@@ -15,7 +15,7 @@
 # holds some commit this one descends from, which is true of every unpushed commit on a tracked
 # branch -- precisely the state the field exists to detect.
 
-$ExpectedAssertionCount = 171
+$ExpectedAssertionCount = 172
 # 'Continue', not 'Stop': these cells run git against fixtures that deliberately have no upstream
 # and no pull request, and under Windows PowerShell 5.1 a native command's redirected stderr
 # becomes a NativeCommandError that 'Stop' promotes to a terminating error. Judge by exit code and
@@ -1498,15 +1498,26 @@ try {
     $reportWired = '(?s)\$script:manifestCorrectionFailed.{0,600}?\$failed \+= ''run manifest correction'''
     Assert-True -Condition ($gateText -cmatch $reportWired) `
         -Message 'and a correction that could not be persisted is a gate failure of its own'
-    # Both copies are prepared before either is replaced -- the discipline the pair writer uses,
-    # borrowed rather than called: it reserves a NEW name per call, so calling it would write a
-    # second pair and leave the stale GREEN one in place.
-    # `Replace`, not `Copy`: copying writes THROUGH the destination and a kill halfway truncates a
-    # valid record. The window is generous for the same reason as the one above -- this asserts the
-    # order of two operations, not how much explanation sits between them.
-    $stagedWired = '(?s)\$tmp = "\$copy\.correcting"[\s\S]{0,2500}?\[System\.IO\.File\]::Replace'
-    Assert-True -Condition ($gateText -cmatch $stagedWired) `
-        -Message 'and both copies are written to siblings before either is replaced'
+    # #742: THE DISCIPLINE IS NO LONGER BORROWED, IT IS CALLED. This used to grep for a hand-rolled
+    # `$copy.correcting` staging loop, and the comment beside it explained why one existed: the pair
+    # writer reserved a NEW name on every call, and a correction must reuse the name already on disk.
+    # Splitting the NAME from the WRITE removed that reason -- `Write-ManifestPairContent` takes the
+    # final paths -- so both callers now share one implementation of the half-pair invariant instead
+    # of each carrying a copy that drifts. They had already drifted: only one of them could roll back.
+    #
+    # So the assertion moves from "does this block re-implement the discipline correctly" to "does it
+    # implement it at all". Staging-before-commit is now covered where it lives, and BEHAVIOURALLY
+    # rather than by pattern: ci/manifest-name.tests.ps1 arms a partial commit and asserts both
+    # stores are restored. A pattern here could only have asserted the wiring, which is the failure
+    # mode gate.ps1's own comment records about this very call site.
+    $sharedWriterWired = '(?s)Write-ManifestPairContent -FinalPaths @\(\$written\)[\s\S]{0,300}?-Commit ''Replace'''
+    Assert-True -Condition ($gateText -cmatch $sharedWriterWired) `
+        -Message 'the correction writes through the shared pair writer, on the names it already holds'
+    # THE NEGATIVE HALF, and it is the one that keeps the invariant single. A second hand-rolled
+    # staging loop appearing here later would satisfy the assertion above and re-open #742 in
+    # silence -- two writers again, with the call to the shared one still visibly present.
+    Assert-True -Condition (-not ($gateText -cmatch '\.correcting')) `
+        -Message 'and carries no staging loop of its own, so the half-pair invariant has one implementation'
 
 
     # ---- The class is derived, so a corrected status carries a corrected class.

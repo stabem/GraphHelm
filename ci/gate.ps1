@@ -598,6 +598,106 @@ function Write-SlotEvent {
 # binaries this pass already fingerprinted, not a second, potentially-different build. cargo's own
 # build caching makes the later stages' own compilation a no-op reuse of exactly what got hashed
 # here, so the fingerprint stays true to what actually ran.
+
+# BEGIN Get-RustfmtPlan
+# #895: `cargo fmt --all` puts every workspace target on ONE command line. Windows refuses a
+# command line over 32767 characters (`os error 206`) before rustfmt reads a byte, so on a long
+# bench path the stage went red with no formatting cause. The plan is decided from LENGTHS: one
+# `--all` invocation when it fits, one per package when it does not, chunks of explicit files when
+# a single package does not fit either. $Packages: ordered map package-name -> absolute target paths.
+# The length model is the joined paths plus 80 characters for the fixed part of the line; a
+# pessimistic model errs towards splitting, which costs a few process launches, never a red.
+function Get-RustfmtPlan {
+    param(
+        [Parameter(Mandatory)] [System.Collections.IDictionary] $Packages,
+        [int] $Limit = 32767
+    )
+    $fixed = 80
+    $plan = New-Object System.Collections.Generic.List[object]
+    $all = @($Packages.Values | ForEach-Object { $_ })
+    $allLength = $fixed + (@($all | ForEach-Object { $_.Length + 1 } | Measure-Object -Sum).Sum)
+    if ($allLength -le $Limit) {
+        $plan.Add([pscustomobject]@{ mode = 'all'; package = $null; files = $all })
+        # No leading comma: a one-element array unrolls to a scalar and every caller wraps the
+        # call in @(); a leading comma would hand a wrapped caller ONE element holding the array.
+        return $plan.ToArray()
+    }
+    foreach ($name in $Packages.Keys) {
+        $files = @($Packages[$name])
+        $pkgLength = $fixed + (@($files | ForEach-Object { $_.Length + 1 } | Measure-Object -Sum).Sum)
+        if ($pkgLength -le $Limit) {
+            $plan.Add([pscustomobject]@{ mode = 'package'; package = $name; files = $files })
+            continue
+        }
+        # One package alone does not fit: run rustfmt on explicit files, greedily under the limit.
+        $chunk = New-Object System.Collections.Generic.List[string]
+        $chunkLength = $fixed
+        foreach ($f in $files) {
+            if ($chunk.Count -gt 0 -and ($chunkLength + $f.Length + 1) -gt $Limit) {
+                $plan.Add([pscustomobject]@{ mode = 'files'; package = $name; files = $chunk.ToArray() })
+                $chunk = New-Object System.Collections.Generic.List[string]
+                $chunkLength = $fixed
+            }
+            $chunk.Add($f)
+            $chunkLength += $f.Length + 1
+        }
+        if ($chunk.Count -gt 0) { $plan.Add([pscustomobject]@{ mode = 'files'; package = $name; files = $chunk.ToArray() }) }
+    }
+    return $plan.ToArray()
+}
+# END Get-RustfmtPlan
+
+# BEGIN Get-RustfmtHarnessNote
+# A rustfmt red whose tail carries `os error 206` is the harness (the command line), not the code:
+# the note names it so the manifest reader does not go looking for a formatting diff that never
+# existed. Any other red is a verdict and gets no note.
+function Get-RustfmtHarnessNote {
+    param([string[]] $Tail, [int] $BenchPathLength)
+    foreach ($line in @($Tail)) {
+        if ($line -match 'os error 206') {
+            return "[gate] rustfmt: command line too long (os error 206) - bench path is $BenchPathLength characters; this red is a harness condition, not a formatting verdict (#895)"
+        }
+    }
+    return $null
+}
+# END Get-RustfmtHarnessNote
+
+# BEGIN Get-RustfmtStageExit
+# The stage's verdict over its invocations: any invocation that did not succeed reddens the stage.
+# NOT a maximum -- `-gt` is an ordering, and exit codes are not ordered by gravity: a process that dies
+# on Windows with the high bit set reports a NEGATIVE $LASTEXITCODE (0xC0000005 -> -1073741819), which
+# is never greater than 0, and a body that never spoke reports $MuteStageExitCode. Both must redden
+# (M, #913). The real codes are written as lines into the tail by the stage; the verdict is 0 or 1.
+function Get-RustfmtStageExit {
+    param([int[]] $Codes)
+    foreach ($code in @($Codes)) {
+        if ($code -ne 0) { return 1 }
+    }
+    return 0
+}
+# END Get-RustfmtStageExit
+
+function Get-WorkspaceFmtTargets {
+    # Package name -> absolute src_path of every target, from cargo metadata (manifests only, no
+    # compilation). The same input cargo-fmt itself hands to rustfmt.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $json = cargo $toolchain metadata --format-version 1 --no-deps --locked 2>$null | Out-String
+        $metaExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    $packages = [ordered]@{}
+    if ($metaExit -ne 0 -or -not $json) { return $packages }
+    $meta = $json | ConvertFrom-Json
+    foreach ($pkg in $meta.packages) {
+        $files = @($pkg.targets | ForEach-Object { $_.src_path } | Where-Object { $_ })
+        if ($files.Count -gt 0) { $packages[$pkg.name] = $files }
+    }
+    return $packages
+}
+
 function Get-TestArtifactManifest {
     # Same treatment Invoke-Stage gives every OTHER native call, needed here too: this cargo
     # invocation runs outside Invoke-Stage (its output is JSON to parse, not human text to
@@ -2166,7 +2266,32 @@ try {
     # One build pass, enumerated and fingerprinted, ahead of the human-facing stages that reuse it.
     $artifactManifest = Get-TestArtifactManifest
 
-    Invoke-Stage 'rustfmt' { cargo $toolchain fmt --all -- --check } | Out-Null
+    Invoke-Stage 'rustfmt' {
+        $fmtTargets = Get-WorkspaceFmtTargets
+        $fmtPlan = @(Get-RustfmtPlan -Packages $fmtTargets -Limit 32767)
+        $fmtCodes = New-Object System.Collections.Generic.List[int]
+        $fmtLines = New-Object System.Collections.Generic.List[string]
+        foreach ($inv in $fmtPlan) {
+            $out = switch ($inv.mode) {
+                'all'     { cargo $toolchain fmt --all -- --check 2>&1 }
+                'package' { cargo $toolchain fmt -p $inv.package -- --check 2>&1 }
+                'files'   { rustfmt $toolchain --check --edition 2024 @($inv.files) 2>&1 }
+            }
+            $rc = $LASTEXITCODE
+            foreach ($l in @($out)) { $fmtLines.Add([string]$l); Write-Output ([string]$l) }
+            $fmtCodes.Add([int]$rc)
+            if ($rc -ne 0) {
+                $what = if ($inv.mode -eq 'all') { '--all' } elseif ($inv.mode -eq 'package') { "-p $($inv.package)" } else { "$(@($inv.files).Count) files of $($inv.package)" }
+                $why = "[gate] rustfmt: invocation ($what) exited $rc"
+                $fmtLines.Add($why); Write-Output $why
+            }
+        }
+        $fmtNote = Get-RustfmtHarnessNote -Tail $fmtLines.ToArray() -BenchPathLength $repositoryRoot.Length
+        if ($fmtNote) { Write-Output $fmtNote }
+        # The body's verdict: 1 if any invocation did not succeed (a crash's negative code and the mute
+        # sentinel included), set through a native exit so Invoke-Stage reads it like every other stage.
+        & cmd /c "exit $(Get-RustfmtStageExit -Codes $fmtCodes.ToArray())"
+    } | Out-Null
     Invoke-Stage 'clippy (deny warnings)' {
         # `--all-features` is load-bearing and unguarded here too - see the note on the
         # 'workspace tests' stage below. Pointer, not a copy.

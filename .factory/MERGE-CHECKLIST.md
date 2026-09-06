@@ -49,6 +49,16 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    something). One non-Markdown file, or one Markdown file that `ci/` reads, and the exception is void;
    item 3 exists because a "docs-only" PR once carried `core/events/src/local.rs +13/−90`. Precedent
    (#829, #832, #863) is not a rule; this line is.
+   **A SCOPED manifest does not vouch for the workspace (#903).** When the gate runs with a scope
+   selection, the manifest carries a `scope` object and `merge-proof` prints it. `full: true` means
+   the run covered everything, as every manifest before #903 did — **but an ABSENT `scope` field is
+   not `full`**, it is a manifest written before the field existed, and reading it as full would be
+   a reassurance nobody measured. When `full` is false the presser **cites the crate list and the
+   matrix decision in the merge comment**: a GREEN over two crates and a GREEN over the workspace
+   are the same word, and the difference is only in that field. Every way of failing to read a
+   selection — absent, missing, unparseable, no crate list, an EMPTY crate list, or the selector
+   escalating — runs the FULL gate, because a selector that narrows on a bad selection runs fewer
+   stages and reports the same green.
    **The manifest-only exception (#752, #674(b)):** a PR whose only change is `.factory/gate-runs/*.json`
    produced by the gate, and nothing else, RECORDS a run — it does not vouch for a merge. It may merge with
    `merge-proof` NOT or ABSENT under a NAMED exception: the merge comment cites the run's sha, status and

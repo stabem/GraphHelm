@@ -416,6 +416,30 @@ function Test-ManifestVouches {
 # is outside home -- the slot's own drive, the usual case -- the path is still named, because
 # "absence at a path nobody can see" was the defect that made this scan report zero runs it never
 # looked for.
+# #903: what a manifest's `scope` object means to a PRESSER. A GREEN over two crates and a GREEN
+# over the workspace are the same word, and this verifier is the last thing anyone reads before the
+# button. A manifest written before #903 has no `scope` at all -- ABSENT IS NOT "FULL", so it says
+# nothing rather than inventing a reassurance.
+function Format-ScopeNote {
+    param([AllowNull()] [object] $Body)
+
+    if ($null -eq $Body) { return '' }
+    # READ BY PROPERTY LOOKUP, NOT BY DOT. `$Body.scope` returns $null with StrictMode off and
+    # THROWS under `Set-StrictMode -Version 2.0` -- and EVERY manifest written before #903 lacks
+    # the key, so a dot read turns "this record predates the field" into an exception. This file
+    # does not set StrictMode today, but it is dot-sourced into harnesses that do, and a library
+    # function must not depend on its caller's mode to avoid throwing on ordinary input.
+    $scopeProperty = $Body.PSObject.Properties['scope']
+    if ($null -eq $scopeProperty -or $null -eq $scopeProperty.Value) { return '' }
+    $scope = $scopeProperty.Value
+    $read = { param($n) $p = $scope.PSObject.Properties[$n]; if ($p) { $p.Value } else { $null } }
+    if (& $read 'full') { return "scope: FULL ($([string](& $read 'reason')))" }
+    $crates = @(& $read 'crates')
+    $matrix = if (& $read 'matrix') { 'ran' } else { "skipped ($([string](& $read 'matrixReason')))" }
+    return ("scope: SCOPED to $($crates.Count) crate(s) [$($crates -join ', ')]; PostgreSQL matrix $matrix -- " +
+        'this GREEN covers the selection, not the workspace')
+}
+
 function Format-PathForOutput {
     <#
         EVERY path that reaches the output goes through here, not just the ledger's. The first
@@ -1047,6 +1071,12 @@ if ($good.Count -gt 0) {
         $script:facts.disagreement += ('this verdict rests on the committed manifest alone: no independent ' +
             'record corroborates it, and a manifest is written by the same author as the code it vouches for (#709)')
     }
+    # #903: name the coverage in the same breath as the verdict. Looked up by name because the
+    # evaluation carries the verdict fields, not the document.
+    $winnerBody = @($manifests | Where-Object { $_.name -eq $winner.name } | ForEach-Object { $_.body }) |
+        Select-Object -First 1
+    $scopeNote = Format-ScopeNote -Body $winnerBody
+    if (-not [string]::IsNullOrWhiteSpace($scopeNote)) { $script:facts.scanNotes += $scopeNote }
     $reason = "$($winner.name) vouches for $Head" +
         $(if (-not (Test-SameText $winner.matched $Head)) { " (it names the parent $parent, and the tip touches only $StorePrefix)" } else { '' })
     if ($failures.Count -gt 0) {

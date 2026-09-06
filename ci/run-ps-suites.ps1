@@ -49,6 +49,8 @@ $PinnedSuites = @(
     'merge-proof-from-main.tests.ps1',
     'merge-proof.tests.ps1',
     'normalize-script-eol.tests.ps1',
+    'gate-scope-selection.tests.ps1',
+    'select-scope.tests.ps1',
     'slot-lock.tests.ps1',
     'test-count.tests.ps1'
 )

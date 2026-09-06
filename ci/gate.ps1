@@ -77,7 +77,12 @@
 #>
 param(
     [switch] $SkipPostgres,
-    [string] $PostgresBin
+    [string] $PostgresBin,
+    # #903: the path to a selection written by ci/select-scope.ps1. ABSENT MEANS FULL, and so does
+    # every selection this gate cannot read: the default is the whole gate until a runner decides
+    # otherwise, because a scoped run that narrows on a bad selection runs fewer stages and reports
+    # the same green.
+    [string] $ScopeSelection
 )
 
 Set-StrictMode -Version 2.0
@@ -103,6 +108,125 @@ function ConvertTo-SlotEventField {
     if ($null -eq $Value) { return '' }
     return [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Value))
 }
+
+# #903: turn a scope selection into cargo's package arguments. THE FEATURE SET IS NEVER NARROWED --
+# only the package list is. A scoped run that also trimmed features would skip the code a
+# feature-gated change actually alters, and report the same green: the failure this whole
+# deliverable exists to avoid, arriving through the flag nobody was watching.
+#
+# A FULL run yields an EMPTY array, and the caller keeps `--workspace`. It does not yield
+# `-p <every crate>`: an enumeration of the workspace would silently stop covering a crate added
+# after the selection was computed, and `--workspace` cannot.
+function Get-ScopePackageArgs {
+    param([Parameter(Mandatory)] [object] $Scope)
+
+    if ($Scope.full) { return @() }
+    $crates = @($Scope.crates)
+    if ($crates.Count -eq 0) { return @() }
+    return @($crates | ForEach-Object { '-p'; $_ })
+}
+
+# #903: what the MANIFEST records about the scope. Separate from Read-ScopeSelection because the
+# decision and the record are different jobs: the decision picks what runs, this says what ran so a
+# later reader can tell a GREEN that covered the workspace from a GREEN that covered two crates.
+# A scoped run that does not record its scope is unauditable -- `merge-proof` and the presser would
+# both read "GREEN" and neither could tell which one they had.
+function Get-ScopeRecord {
+    param([Parameter(Mandatory)] [object] $Selection)
+
+    return [ordered]@{
+        full         = [bool]$Selection.full
+        reason       = [string]$Selection.reason
+        crates       = @($Selection.crates)
+        matrix       = [bool]$Selection.matrix
+        # INDEX, do not dot. `$Selection.missingKey` returns $null with StrictMode off and THROWS
+        # under `Set-StrictMode -Version 2.0`, which this file sets at :88 -- so "read the member
+        # directly" was a trap, not a remedy, and it killed the manifest write on every run.
+        # `$Selection['key']` answers '' for an absent key under both. The constructor above makes
+        # the key always present; this makes the reader safe even if a future producer forgets.
+        matrixReason = [string]$Selection['matrixReason']
+    }
+}
+
+# #903: ONE SHAPE, ONE PLACE. Every FULL answer is built here, so a consumer can read any key of a
+# selection without asking whether this particular branch happened to set it. The first version
+# spelled the FULL result out at each of the seven refusal sites, none of them carried
+# `matrixReason`, and `Get-ScopeRecord` read that key with `[string]$Selection.matrixReason` --
+# which under `Set-StrictMode -Version 2.0` (:88) THROWS rather than returning $null. Nobody passes
+# -ScopeSelection today, so every run took a FULL branch and every gate died at the manifest write
+# AFTER running all 56 stages: `MANIFEST WRITE FAILED: The property 'matrixReason' cannot be found`
+# (X, measured on this PR's own gate run). A missing key on one branch of seven is a defect a
+# constructor cannot have.
+function New-FullScope {
+    param([Parameter(Mandatory)] [string] $Reason)
+
+    return [ordered]@{
+        full         = $true
+        reason       = $Reason
+        crates       = @()
+        matrix       = $true
+        matrixReason = 'the PostgreSQL matrix runs: this is a FULL run'
+    }
+}
+
+# #903: read a scope selection and decide whether this run is FULL. EVERY FAILURE PATH IS FULL --
+# absent, missing, unparseable, shapeless, or empty -- because the failure mode of a scope selector
+# is not a crash, it is a green run that measured less than it claimed. A narrow selection is
+# accepted only when it says so explicitly AND names at least one crate; an empty crate list would
+# run nothing and pass, which is the widest possible failure wearing the narrowest possible output.
+function Read-ScopeSelection {
+    param([string] $Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return New-FullScope -Reason 'FULL: no scope selection was given'
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return New-FullScope -Reason "FULL: the scope selection was not found at $Path"
+    }
+    $selection = $null
+    try {
+        $selection = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    } catch {
+        return New-FullScope -Reason "FULL: the scope selection is unreadable ($($_.Exception.Message))"
+    }
+    if ($null -eq $selection) {
+        return New-FullScope -Reason 'FULL: the scope selection parsed to nothing'
+    }
+    if ($selection.PSObject.Properties.Name -contains 'escalated' -and $selection.escalated) {
+        $rule = if ($selection.PSObject.Properties.Name -contains 'escalationRule') { [string]$selection.escalationRule } else { 'unnamed rule' }
+        return New-FullScope -Reason "FULL: the selector escalated ($rule)"
+    }
+    if (-not ($selection.PSObject.Properties.Name -contains 'crates')) {
+        return New-FullScope -Reason 'FULL: the scope selection carries no crate list'
+    }
+    $crates = @($selection.crates)
+    if ($crates.Count -eq 0) {
+        return New-FullScope -Reason 'FULL: the scope selection names no crates, which would run nothing and pass'
+    }
+    $matrix = $true
+    if ($selection.PSObject.Properties.Name -contains 'matrix') { $matrix = [bool]$selection.matrix }
+    $matrixReason = ''
+    if ($selection.PSObject.Properties.Name -contains 'matrixReason') { $matrixReason = [string]$selection.matrixReason }
+    return [ordered]@{
+        full = $false
+        reason = "SCOPED: $($crates.Count) crate(s) selected"
+        crates = $crates
+        matrix = $matrix
+        matrixReason = $matrixReason
+    }
+}
+
+# #903: resolved ONCE, here, so every later reader sees the same answer -- and so a manifest
+# written by an early abort carries the scope too. Absent or unreadable means FULL.
+# READ THE PARAMETER DEFENSIVELY, and the reason is structural rather than cautious: several
+# ci/*.tests.ps1 cut REGIONS out of this file by anchor and run them as their own script,
+# WITHOUT the param() block above. Under `Set-StrictMode -Version 2.0` a bare `$ScopeSelection`
+# in such a slice throws "the variable cannot be retrieved because it has not been set" --
+# measured: it reddened gate-target-dir and gate-run-abort, two suites that have nothing to do
+# with scope. `Test-Path variable:` asks whether it exists instead of assuming it does.
+$scopeArgument = if (Test-Path variable:ScopeSelection) { [string]$ScopeSelection } else { '' }
+$script:gateScope = Read-ScopeSelection -Path $scopeArgument
+Write-Host "[gate] scope: $($script:gateScope.reason)" -ForegroundColor Cyan
 
 $toolchain = '+1.97.1'
 # #896: the exit code a stage body reports when it set none. 99 is the sentinel this repository
@@ -2011,6 +2135,9 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # untouched, stale lock reads identical by construction, but so would a real hold nobody
         # touched for the whole run. See Test-SlotLockSnapshotsIdentical in ci/slot-lock.ps1.
         slotLockStartEndIdentical = Test-SlotLockSnapshotsIdentical -Start $SlotLockAtStart -End $SlotLockAtEnd
+        # #903: WHAT THIS RUN COVERED. A GREEN over two crates and a GREEN over the workspace are
+        # the same word; this is the field that tells them apart, and merge-proof prints it.
+        scope              = Get-ScopeRecord -Selection $script:gateScope
         instrumentSuspect  = $instrumentSuspect
         # A run whose head moved did not pass everything, whatever the stages said: they did not all
         # inspect one revision, so there is no revision this record can vouch for.
@@ -2425,7 +2552,15 @@ try {
     # the RECORD only with #238's executed-vs-discovered field. (Caught reviewing #239: a PR body
     # is read once at merge, this line is read by whoever touches it next.)
     Invoke-Stage 'workspace tests' {
-        cargo $toolchain test --workspace --all-features --locked --no-fail-fast
+        # #903: `--workspace` when the run is FULL, `-p <crate>` per selected crate when it is not.
+        # `--all-features` is UNCHANGED in both: the selection narrows WHAT is compiled, never which
+        # cfg the code is compiled under.
+        $scopeArgs = @(Get-ScopePackageArgs -Scope $script:gateScope)
+        if ($scopeArgs.Count -eq 0) {
+            cargo $toolchain test --workspace --all-features --locked --no-fail-fast
+        } else {
+            cargo $toolchain test @scopeArgs --all-features --locked --no-fail-fast
+        }
     } | Out-Null
 
     # DERIVED, not hand-maintained (#98): a hardcoded allowlist under-gates every new suite by

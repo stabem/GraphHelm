@@ -29,6 +29,7 @@ $PinnedSuites = @(
     'closing-keywords.tests.ps1',
     'crate-input-hash.tests.ps1',
     'exit-code-shape.tests.ps1',
+    'gate-abort-rules.tests.ps1',
     'gate-canary-outcome.tests.ps1',
     'gate-evidence.tests.ps1',
     'gate-manifest-provenance.tests.ps1',

@@ -43,10 +43,16 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    the manifest it names and confirm the stage list is green. Exit 3 (ABSENT) means nobody
    ran the gate on this head — a gate run owed, not a merge; exit 2 (NOT) means a run exists and does
    not vouch — that is a finding. The two are different answers (#811 introduced the distinction). (Found by A's review
-   **The docs-only exception, written (D, #865):** a PR whose file list is entirely Markdown that no path
-   under `ci/` reads may record `merge-proof` ABSENT as a NAMED exception — the merge comment cites the
-   file list, the empty `grep -rn <file> ci/`, and its positive control (a grep that does find
-   something). One non-Markdown file, or one Markdown file that `ci/` reads, and the exception is void;
+   **The docs-only exception, written (D, #865; re-worded X, #957):** a PR whose file list is entirely
+   Markdown that NO CODE reads may record `merge-proof` ABSENT as a NAMED exception — the merge comment
+   cites the file list, the empty `git grep -n <basename> origin/main -- ':!docs' ':!*.md'` (the whole
+   tree, not `ci/`; run against `origin/main`, never a cwd, so a relic checkout cannot answer for it),
+   and its positive control in the same command. "No path under `ci/` reads it" was the first wording
+   and it let #957 through on its letter: `docs/DECISION_REGISTER.md` is read by
+   `tools/acceptance-map/tests/grounded.rs:154`, a deletion guard inside `workspace tests`. The press
+   held because the presser READ that consumer and cited why the edit could not fail it — a hit means
+   the gate is owed, or the consumer is read and the line is cited. One non-Markdown file, or one
+   Markdown file that any code reads, and the exception is void;
    item 3 exists because a "docs-only" PR once carried `core/events/src/local.rs +13/−90`. Precedent
    (#829, #832, #863) is not a rule; this line is.
    **A SCOPED manifest does not vouch for the workspace (#903).** When the gate runs with a scope
@@ -295,7 +301,11 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    after, and say which document and which status in the merge comment. Measured on #957/ADR-037,
    whose status was conditional on #595: a conditional state with no named actor is exactly the
    drift an ADR exists to prevent, and no cell can enforce it — a docs status must never redden
-   main, so the only thing standing between the register and a lie is this line.
+   main, so the only thing standing between the register and a lie is this line. **The branch with no
+   button:** a status that flips when #N CLOSES UNMERGED ("withdrawn if #N dies") passes through no
+   press. Whoever closes #N without merging owns that flip, and the ADR names them; if the ADR names
+   nobody, the presser of the PR that introduced it adds the name before pressing (X, first exercise
+   of this item, #957 on #595).
 
 ## After the merge (read the output — do not report what you intended)
 

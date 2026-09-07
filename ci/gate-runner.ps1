@@ -39,7 +39,8 @@
     only a check. And "wedged" is never a thirty-second reading: a healthy gate sits flat for tens of
     seconds between stages with no compiler running (measured: 45 s, `desc=1`).
 
-    EXIT CODES: 0 the loop ended as asked (iteration ceiling reached, or the queue drained with
+    EXIT CODES: 3 a `-Once` run looped past the size of its own queue (the skip list is not
+    excluding a stalled entry, and spinning is worse than saying so), 0 the loop ended as asked (iteration ceiling reached, or the queue drained with
     -Once), 1 the slot could not be claimed, 2 the runner could not read or write its own state.
     Callers act only on 0.
 
@@ -107,16 +108,29 @@ function Write-Note {
 # `$ErrorActionPreference = 'Stop'` that record is terminating -- so a `git` or `gh` that refuses
 # would kill this runner instead of being observed. Every external call goes through here.
 function Invoke-External {
-    param([Parameter(Mandatory)] [string] $File, [string[]] $Arguments = @())
+    param(
+        [Parameter(Mandatory)] [string] $File,
+        [string[]] $Arguments = @(),
+        # Merge stderr into Output. OFF by default and deliberately so: a tool's progress chatter on
+        # stderr would otherwise be parsed as its answer by every caller that reads Output[0].
+        #
+        # It is ON for the one call whose FAILURE TEXT is the answer -- `git worktree add`, where
+        # the reason lives entirely on stderr and discarding it is what made three different causes
+        # read as one sentence (#902). Under Windows PowerShell 5.1 a redirected native stderr line
+        # arrives as an ErrorRecord rather than a string; `$ErrorActionPreference` is already
+        # `Continue` here so it does not terminate, and the records are flattened to text below so
+        # a caller cannot tell the two streams apart by accident.
+        [switch] $CaptureError
+    )
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $out = & $File @Arguments 2>$null
+        $out = if ($CaptureError) { & $File @Arguments 2>&1 } else { & $File @Arguments 2>$null }
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
     }
-    return [pscustomobject]@{ Code = $code; Output = @($out) }
+    return [pscustomobject]@{ Code = $code; Output = @(@($out) | ForEach-Object { [string] $_ }) }
 }
 
 # THE `--jq` ARGUMENT CANNOT CARRY A QUOTED SPACE THROUGH WINDOWS POWERSHELL 5.1, AND THAT IS WHY
@@ -139,7 +153,11 @@ function Resolve-PullRequestBranch {
         [scriptblock] $Invoker
     )
     if (-not $Invoker) { $Invoker = { param($file, $arguments) Invoke-External $file $arguments } }
-    $view = & $Invoker 'gh' @('pr', 'view', "$PullRequest", '--json', 'headRefName,headRefOid')
+    # `state` costs nothing here -- it is the same call -- and it is the difference between a
+    # queue that spends a slot on a merged pull request and one that does not (#902). The head
+    # comparison below cannot catch that case: a merged branch still exists and still points at the
+    # head the lane enqueued, so the entry looks perfectly current.
+    $view = & $Invoker 'gh' @('pr', 'view', "$PullRequest", '--json', 'headRefName,headRefOid,state')
     if (-not $view -or $view.Code -ne 0 -or $view.Output.Count -eq 0) { return $null }
     $parsed = $null
     try { $parsed = (($view.Output -join "`n")) | ConvertFrom-Json } catch { return $null }
@@ -147,7 +165,10 @@ function Resolve-PullRequestBranch {
     $branch = [string] $parsed.headRefName
     $resolved = [string] $parsed.headRefOid
     if ([string]::IsNullOrWhiteSpace($branch) -or [string]::IsNullOrWhiteSpace($resolved)) { return $null }
-    return [pscustomobject]@{ Branch = $branch; Head = $resolved }
+    # ABSENT rather than empty when the server did not say: an unknown state must not read as OPEN,
+    # because the caller's decision on it is "spend a gate".
+    $state = if ($parsed | Get-Member -Name 'state' -MemberType NoteProperty) { [string] $parsed.state } else { '' }
+    return [pscustomobject]@{ Branch = $branch; Head = $resolved; State = $state }
 }
 
 function Test-HeadSha {
@@ -167,8 +188,17 @@ function Set-EntryStatus {
 # READINESS ORDER, NOT ARRIVAL ORDER. A pull request with two passes is the one whose gate result
 # someone is waiting on; one with none may still be edited. Age breaks ties, so nothing starves.
 function Get-NextEntry {
-    param([string] $Directory)
-    $files = @(Get-ChildItem -LiteralPath $Directory -Filter '*.json' -File -ErrorAction SilentlyContinue)
+    param(
+        [string] $Directory,
+        # Entries this iteration has already tried and could not move (#902). Without it the
+        # ordering below hands back the same file every time: a blocked entry keeps its creation
+        # time, so it stays the oldest, and everything behind it waits on a lane that is not
+        # coming. Measured 2026-09-06: the same entry picked on two invocations back to back with
+        # eight others queued behind it.
+        [string[]] $Exclude = @()
+    )
+    $files = @(Get-ChildItem -LiteralPath $Directory -Filter '*.json' -File -ErrorAction SilentlyContinue |
+        Where-Object { $Exclude -notcontains $_.Name })
     if ($files.Count -eq 0) { return $null }
     $scored = foreach ($f in $files) {
         $entry = $null
@@ -211,7 +241,7 @@ function Invoke-OneEntry {
     if (-not (Test-HeadSha $head)) {
         Write-Note "entry $($Candidate.File.Name): head is not 40 lowercase hex; dropping"
         Set-EntryStatus -EntryPath $entryPath -State 'refused: malformed head'
-        return
+        return 'dropped'
     }
 
     # THE BRANCH COMES FROM THE SERVER, NEVER FROM THE FILE, and the resolved head must equal the one
@@ -222,15 +252,33 @@ function Invoke-OneEntry {
     if (-not $resolvedPr) {
         Write-Note "entry $($Candidate.File.Name): gh could not resolve pull request $pr; leaving it queued"
         Set-EntryStatus -EntryPath $entryPath -State 'waiting: pull request not resolvable'
-        return
+        return 'stalled'
     }
     $branch = $resolvedPr.Branch
     $serverHead = $resolvedPr.Head
+
+    # A MERGED PULL REQUEST IS NOT A HEAD THAT MOVED, and the check below cannot see it (#902).
+    # Its branch still exists and still points at the enqueued head, so the entry reads as current:
+    # it is picked, benched, gated, and a manifest is published onto a branch nobody will merge.
+    # Measured on 2026-09-06: #935 and #937 merged at 16:27Z and 16:23Z and their entries sat at the
+    # head of the queue afterwards, ahead of four open pull requests.
+    #
+    # CLOSED is dropped for the same reason and OPEN is the only state that spends a slot. An
+    # UNKNOWN state -- the server did not say, or said something this build has not heard of -- is
+    # deliberately NOT dropped: a queue that discards entries it cannot classify loses work
+    # silently, which is a worse failure than spending one gate on a stale one.
+    if ($resolvedPr.State -eq 'MERGED' -or $resolvedPr.State -eq 'CLOSED') {
+        Write-Note "entry $($Candidate.File.Name): pull request $pr is $($resolvedPr.State); dropping"
+        Set-EntryStatus -EntryPath $entryPath -State "dropped: pull request is $($resolvedPr.State)"
+        Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+        return 'dropped'
+    }
+
     if ($serverHead -ne $head) {
         Write-Note "entry $($Candidate.File.Name): head moved on the server ($($serverHead.Substring(0,8)) != $($head.Substring(0,8))); dropping"
         Set-EntryStatus -EntryPath $entryPath -State "dropped: head moved to $($serverHead.Substring(0,8))"
         Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
-        return
+        return 'dropped'
     }
 
     $bench = Join-Path $BenchRoot ("pr{0}" -f $pr)
@@ -251,11 +299,19 @@ function Invoke-OneEntry {
     if (Test-Path -LiteralPath $bench) {
         $null = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'remove', '--force', $bench)
     }
-    $add = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'add', '-B', $branch, $bench, $head)
+    $add = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'add', '-B', $branch, $bench, $head) -CaptureError
     if ($add.Code -ne 0) {
-        Write-Note "entry $($Candidate.File.Name): the bench could not be prepared; leaving it queued"
-        Set-EntryStatus -EntryPath $entryPath -State 'waiting: bench could not be prepared'
-        return
+        # SAY WHICH OF THE THREE, because only one of them has an action attached (#902). A disk
+        # failure, a head this repository does not have, and a branch another worktree holds all
+        # produced the same sentence, and the third is the ordinary case: a lane's own worktree
+        # holds its branch a second after it opens the pull request, and `git worktree add -B`
+        # refuses while it does. git's own stderr already names the branch and the worktree, so
+        # passing it through turns a dead end into an instruction.
+        $why = (@($add.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
+        if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($add.Code) and said nothing" }
+        Write-Note "entry $($Candidate.File.Name): the bench could not be prepared -- $why"
+        Set-EntryStatus -EntryPath $entryPath -State "waiting: bench could not be prepared -- $why"
+        return 'stalled'
     }
     $symbolic = Invoke-External 'git' @('-C', $bench, 'symbolic-ref', '--quiet', 'HEAD')
     if ($symbolic.Code -ne 0 -or $symbolic.Output.Count -eq 0) {
@@ -263,7 +319,7 @@ function Invoke-OneEntry {
         # not after: the information is here, thirty minutes before the publication step needs it.
         Write-Note 'the bench is detached; refusing to spend a run that cannot publish'
         Set-EntryStatus -EntryPath $entryPath -State 'refused: detached bench'
-        return
+        return 'stalled'
     }
 
     Set-EntryStatus -EntryPath $entryPath -State "building on $branch"
@@ -357,6 +413,7 @@ function Invoke-OneEntry {
     Set-EntryStatus -EntryPath $entryPath -State ("finished rc=$rc pushed=$pushed log=$logFile")
     Write-Note "pr $pr finished rc=$rc pushed=$pushed"
     Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+    return 'built'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -373,6 +430,22 @@ if (-not (Test-Path -LiteralPath $StateDirectory)) { $null = New-Item -ItemType 
 Write-Note "repository $repoRoot; queue $QueueDirectory; slot lock $slotLock (claimed by the gate, not by this)"
 
 $iterations = 0
+# A `-Once` RUN CANNOT LOOP MORE TIMES THAN THE QUEUE HAS ENTRIES, PLUS ONE.
+#
+# Every iteration under `-Once` must either finish the work (build or drop, which break) or skip a
+# stalled entry, and a skipped entry is excluded from the next selection -- so the loop is bounded
+# by the queue. If it is not, the exclusion is not working and the runner spins forever at
+# `$PollSeconds` a turn.
+#
+# THE FAILURE MODE THIS REPLACES WAS A HANG, and it was found by X reviewing #951: they removed
+# `-Exclude $stalled` from the selection -- the correct sabotage -- and the suite did not go red, it
+# stopped returning. Two of those ran for two hours. A hang is the worst outcome a guard can have:
+# a red says the fix is gone, a hang says nothing and looks like work in progress for as long as
+# nobody looks. This turns that into exit 3 with a sentence.
+$onceCeiling = 0
+# Entries this pass has already found unmovable. Cleared whenever the queue is exhausted, because
+# what blocks an entry is somebody else's next action rather than a property of the entry.
+$stalled = @()
 try {
     while ($true) {
         $iterations++
@@ -380,11 +453,38 @@ try {
             Write-Note "iteration ceiling $MaxIterations reached"
             break
         }
+        if ($Once) {
+            if ($onceCeiling -le 0) {
+                $onceCeiling = 1 + @(Get-ChildItem -LiteralPath $QueueDirectory -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
+            }
+            if ($iterations -gt $onceCeiling) {
+                # NOT a break. Breaking would report success for a run that made no progress and
+                # could not say why -- the same silence the exit code exists to replace.
+                Write-Note ("a single-entry run took $iterations turns over a queue of " +
+                    "$($onceCeiling - 1); an entry is being re-picked, so the skip list is not " +
+                    'excluding it. Refusing to spin.')
+                exit 3
+            }
+        }
 
         $candidate = $null
-        if (Test-Path -LiteralPath $QueueDirectory) { $candidate = Get-NextEntry -Directory $QueueDirectory }
+        if (Test-Path -LiteralPath $QueueDirectory) {
+            $candidate = Get-NextEntry -Directory $QueueDirectory -Exclude $stalled
+        }
         if (-not $candidate) {
-            if ($Once) { Write-Note 'queue empty'; break }
+            if ($Once) {
+                if ($stalled.Count -gt 0) {
+                    Write-Note "every remaining entry is stalled ($($stalled -join ', ')); nothing this runner can move"
+                } else {
+                    Write-Note 'queue empty'
+                }
+                break
+            }
+            # A STALL IS NOT PERMANENT, so the skip list is cleared before waiting. The thing that
+            # blocks an entry -- a lane holding its branch, a pull request the server would not
+            # resolve -- is somebody else's next action, and a runner that remembered the stall
+            # forever would need restarting to notice it had ended.
+            $stalled = @()
             Start-Sleep -Seconds $PollSeconds
             continue
         }
@@ -401,7 +501,16 @@ try {
             continue
         }
 
-        Invoke-OneEntry -Candidate $candidate
+        $outcome = Invoke-OneEntry -Candidate $candidate
+
+        # A STALLED ENTRY IS SKIPPED, NOT WAITED ON (#902). `-Once` means one gate, not one
+        # attempt: an entry nobody can bench must not consume the invocation that a buildable one
+        # behind it was waiting for. `built` and `dropped` both count as having done the work --
+        # the second because the entry is gone and the queue moved.
+        if ($outcome -eq 'stalled') {
+            $stalled += $candidate.File.Name
+            continue
+        }
 
         if ($Once) { break }
     }

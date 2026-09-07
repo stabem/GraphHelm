@@ -289,6 +289,14 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
 10. **Content coupling with other OPEN PRs.** If another open PR writes a field/file this one
    reads (or vice versa), there is an ORDER; measure who writes and who reads at each head.
 
+11. **A conditional ADR status is a step, not a note.** Does this PR's body — or any ADR it adds
+   or edits — carry a status that is conditional on THIS merge ("proposed, accepted when #N lands",
+   "superseded once #N ships")? If so, flip it in the same squash or in the commit immediately
+   after, and say which document and which status in the merge comment. Measured on #957/ADR-037,
+   whose status was conditional on #595: a conditional state with no named actor is exactly the
+   drift an ADR exists to prevent, and no cell can enforce it — a docs status must never redden
+   main, so the only thing standing between the register and a lie is this line.
+
 ## After the merge (read the output — do not report what you intended)
 
 - `gh pr view N --json mergedAt,mergeCommit` — cite these, not the branch head.

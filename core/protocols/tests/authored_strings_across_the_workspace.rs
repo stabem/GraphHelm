@@ -223,10 +223,21 @@ fn debit_sweep_budget(relative_path: &str, file_bytes: u64, spent: &mut u64) {
     );
 }
 
-fn offending_lines() -> Vec<String> {
+/// The collapsed-run sweep over a GIVEN list of files.
+///
+/// Split for the same reason as `control_character_offenders_over` below, and X measured it here
+/// first: replacing this body with `Vec::new()` -- the walk untouched, every file still found, the
+/// predicate still correct -- left 9 of 9 GREEN. The population cell proves the walk found 300+
+/// files; the predicate cells prove the predicate tells the defect apart; **nothing proved this
+/// function applies the second to the first.**
+///
+/// That junction matters more here than anywhere else, because #577 turned twelve per-crate guards
+/// into one sweep. An unmeasured collector here is not one vacuous guard, it is twelve at once.
+fn offending_lines_over(files: &[std::path::PathBuf]) -> Vec<String> {
     let mut out = Vec::new();
     let mut spent = 0_u64;
-    for path in authored_files() {
+    for path in files {
+        let path = path.clone();
         let relative_path = relative(&path);
         if exempt(&relative_path).is_some() {
             continue;
@@ -265,6 +276,190 @@ fn offending_lines() -> Vec<String> {
          deleted here"
     );
     out
+}
+
+fn offending_lines() -> Vec<String> {
+    offending_lines_over(&authored_files())
+}
+
+/// What a source file may carry that is not text a reader can see (#522).
+///
+/// Two arms, and they are one subject: **a byte that survives the compiler, the suite and clippy
+/// while changing what a human reads.**
+///
+/// A raw NUL landed in `core/events/tests/execution_projection.rs` where the source should have
+/// read `\0`. `cargo build`, `cargo test`, `cargo clippy --all-targets -- -D warnings` and all
+/// twelve per-crate source guards passed it, and the test it sat in was semantically CORRECT --
+/// `"<NUL>".repeat(8)` produces exactly the bytes `"\0".repeat(8)` produces. Nothing measuring
+/// behaviour could catch it, because no behaviour was wrong. The only signal in the whole
+/// toolchain was `grep` saying `Binary file … matches`, in the incidental output of a command run
+/// for another reason. **That is how it was found, not a detector**: it fires only if somebody
+/// happens to grep that file, it sees NUL and nothing else, and it is not on the delivery path.
+///
+/// The second arm is one this sweep did not have. `offending_lines` above reads with
+/// `read_to_string` and `continue`s on failure, so a file this walk cannot DECODE is skipped in
+/// silence -- the population shrinks and the sweep still reports success. The per-crate guards
+/// surface that case by `map_err`; at the workspace level it was swallowed. A file that cannot be
+/// read as UTF-8 is now named rather than dropped.
+///
+/// C0 controls other than `\t`, `\n` and `\r` are refused, and so is DEL. Everything else is left
+/// alone: this is about bytes with no glyph, not about what characters source may use.
+///
+/// **No exemption list, deliberately.** `EXEMPT` above is about indentation inside a literal,
+/// where the run can legitimately BE the value. There is no counterpart here -- a fixture needing
+/// a control byte writes the escape, which is what the repaired file now does. If a real case ever
+/// appears it earns its own list with its own reason, rather than borrowing one written for a
+/// different defect.
+#[derive(Debug, PartialEq, Eq)]
+enum SourceByteOffence {
+    Undecodable,
+    Control {
+        line: usize,
+        column: usize,
+        byte: u8,
+    },
+}
+
+/// Pure, so the cell below can put both arms to it without writing a bad byte into the tree.
+fn source_byte_offence(bytes: &[u8]) -> Option<SourceByteOffence> {
+    if std::str::from_utf8(bytes).is_err() {
+        return Some(SourceByteOffence::Undecodable);
+    }
+    let mut line = 1_usize;
+    let mut column = 1_usize;
+    for &byte in bytes {
+        if byte == b'\n' {
+            line += 1;
+            column = 1;
+            continue;
+        }
+        if (byte < 0x20 && byte != b'\t' && byte != b'\r') || byte == 0x7f {
+            return Some(SourceByteOffence::Control { line, column, byte });
+        }
+        column += 1;
+    }
+    None
+}
+
+/// The sweep over a GIVEN list of files.
+///
+/// **Separated so a cell can stand between the walk and the predicate** (#939's review). The
+/// no-argument version below is the real one; every assertion about it is an absence, and an
+/// absence cannot tell a working refusal from a collector that returns nothing. Measured: replacing
+/// the whole body with `Vec::new()` left 9 of 9 green -- the `spent > 0` guard inside it went with
+/// the body, and the population control above only proves the WALK found files, not that anything
+/// read them.
+///
+/// With this split, a cell hands it one real file holding one bad byte and asks for the message
+/// back, which joins walk -> read -> predicate -> text. That junction is the thing no absence can
+/// assert about itself.
+fn control_character_offenders_over(files: &[std::path::PathBuf]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut spent = 0_u64;
+    for path in files {
+        let path = path.clone();
+        let relative_path = relative(&path);
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        debit_sweep_budget(&relative_path, metadata.len(), &mut spent);
+        // READ AS BYTES, not as a string. Decoding first would make the undecodable arm
+        // unreachable from here, which is half of what this guard is for.
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        match source_byte_offence(&bytes) {
+            None => {}
+            Some(SourceByteOffence::Undecodable) => {
+                out.push(format!("{relative_path}: cannot be decoded as UTF-8"));
+            }
+            Some(SourceByteOffence::Control { line, column, byte }) => {
+                out.push(format!(
+                    "{relative_path}:{line}:{column}: carries the raw byte 0x{byte:02x}, which has \
+                     no glyph"
+                ));
+            }
+        }
+    }
+    assert!(
+        spent > 0,
+        "HARNESS-BROKE: the control-character sweep read zero bytes of source"
+    );
+    out
+}
+
+fn control_character_offenders() -> Vec<String> {
+    control_character_offenders_over(&authored_files())
+}
+
+#[test]
+fn no_source_file_in_the_workspace_carries_a_control_character() {
+    let files = authored_files();
+    assert!(
+        files.len() > 300,
+        "the walk found only {} authored Rust files across the workspace members, so it is not \
+         covering the tree it claims to cover",
+        files.len()
+    );
+
+    let offenders = control_character_offenders();
+    assert!(
+        offenders.is_empty(),
+        "these source files carry a byte a reader cannot see.\n\nA control byte in source is \
+         almost always a generator that consumed an escape: the file should read `\0`, `\x1b` or \
+         `\\u{{7f}}` and instead holds the byte itself. The compiler, the suite and clippy all \
+         accept it, and the code can be semantically correct while what a human copies out of it \
+         is not what they think.\n\nWrite the escape. If the raw byte is genuinely the point, it \
+         belongs in a fixture built at runtime rather than in the source text.\n\nAn `undecodable` \
+         line means this walk could not read the file as UTF-8 at all -- it used to be skipped in \
+         silence.\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// The guard above cannot demonstrate itself: it is green precisely when the tree is clean, and a
+/// green cell over a clean population is satisfied by a predicate that never fires. So the
+/// predicate is put to both arms and to ordinary Rust here, with no file written.
+#[test]
+fn the_control_character_predicate_catches_the_byte_and_spares_ordinary_rust() {
+    assert_eq!(
+        source_byte_offence(b"let s = \"alpha\\0beta\";\n"),
+        None,
+        "the ESCAPE is how a NUL is meant to be written, and it is two ordinary characters"
+    );
+    assert_eq!(
+        source_byte_offence("let s = \"alpha\0beta\";\n".as_bytes()),
+        Some(SourceByteOffence::Control {
+            line: 1,
+            column: 15,
+            byte: 0
+        }),
+        "and the raw byte in the same position is the defect this exists for"
+    );
+    assert_eq!(
+        source_byte_offence(b"fn main() {\r\n\t// tab, CR and LF are ordinary source\r\n}\n"),
+        None,
+        "tabs and CRLF are how this repository's files legitimately arrive on Windows"
+    );
+    assert_eq!(
+        source_byte_offence(b"let del = \"a\x7fb\";\n"),
+        Some(SourceByteOffence::Control {
+            line: 1,
+            column: 13,
+            byte: 0x7f
+        }),
+        "DEL has no glyph either, and is not a C0 control, so it needs saying separately"
+    );
+    assert_eq!(
+        source_byte_offence(&[b'/', b'/', b' ', 0xff, 0xfe, b'\n']),
+        Some(SourceByteOffence::Undecodable),
+        "and a file this walk cannot decode is an offence rather than a file to skip"
+    );
+    assert_eq!(
+        source_byte_offence("// caf\u{e9} \u{1f600} \u{2014}\nfn f() {}\n".as_bytes()),
+        None,
+        "ordinary non-ASCII source is not the subject: this is about bytes with no glyph"
+    );
 }
 
 #[test]
@@ -685,4 +880,107 @@ fn a_member_root_escaping_via_a_directory_link_is_refused() {
         message.contains("HARNESS-BROKE") && message.contains("outside the workspace"),
         "the refusal must name why, not just panic: {message}"
     );
+}
+
+/// THE JUNCTION: the sweep really does read the files and really does ask the predicate (#939).
+///
+/// Every other assertion about `control_character_offenders` is an ABSENCE — zero offenders over a
+/// clean tree — and an absence is equally satisfied by a collector that returns nothing at all.
+/// Measured before this cell existed: replacing the whole body with `Vec::new()` left the suite
+/// green, because the `spent > 0` guard lives inside the body it would have caught and the
+/// population control above only proves the WALK found files, not that anything read them.
+///
+/// So this hands the sweep one real file on disk holding one bad byte and asks for the message
+/// back. It joins walk → read → predicate → text, which is the chain no absence can assert about
+/// itself, and it fails on a collector that has stopped collecting.
+///
+/// The file is written OUTSIDE the repository. Inside it, this suite would be creating the very
+/// defect it exists to refuse — and the workspace sweep would find it on the next run.
+#[test]
+fn the_sweep_reports_a_bad_byte_in_a_file_it_is_given() {
+    let directory = scratch_directory("gh-cc");
+
+    let clean = directory.join("clean.rs");
+    std::fs::write(&clean, b"fn main() {}\n").expect("the clean fixture is written");
+    let dirty = directory.join("dirty.rs");
+    std::fs::write(&dirty, b"fn main() {\0}\n").expect("the dirty fixture is written");
+
+    let clean_result = control_character_offenders_over(std::slice::from_ref(&clean));
+    let dirty_result = control_character_offenders_over(std::slice::from_ref(&dirty));
+
+    // CONTROL FIRST. Without it, a collector that reported every file would satisfy the assertion
+    // below and this cell would be measuring nothing but its own fixture.
+    assert!(
+        clean_result.is_empty(),
+        "a file with no glyphless byte must produce nothing, or this cell cannot tell a working \
+         sweep from one that reports everything: {clean_result:?}"
+    );
+    assert_eq!(
+        dirty_result.len(),
+        1,
+        "the sweep was handed one file holding one NUL and must report exactly it: {dirty_result:?}"
+    );
+    assert!(
+        dirty_result[0].contains("0x00"),
+        "and the message must name the byte, which is what a reader acts on: {dirty_result:?}"
+    );
+
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+/// THE JUNCTION FOR THE COLLAPSED-RUN SWEEP: it really does apply the predicate to the files
+/// (#939, required by the Orquestrador's 18:42Z decision, measured by X).
+///
+/// Replacing `offending_lines`'s body with `Vec::new()` left 9 of 9 green. The walk was untouched,
+/// every file was still found, the predicate still told the defect apart — and nothing anywhere
+/// asserted that the second was applied to the first.
+///
+/// **This is the cell that matters most in this file.** #577 turned twelve per-crate guards into
+/// one sweep, so an unmeasured collector here is not one vacuous guard, it is twelve going vacuous
+/// at once. The two halves that were already asserted — a population over 300 and a predicate that
+/// discriminates — are exactly the two an empty collector satisfies.
+///
+/// The fixture is written OUTSIDE the repository. Inside it, this suite would be planting the very
+/// defect it exists to refuse, and the workspace sweep would find it on the next run.
+#[test]
+fn the_collapsed_run_sweep_reports_an_offender_in_a_file_it_is_given() {
+    let directory = scratch_directory("gh-run");
+    let clean = directory.join("clean.rs");
+    std::fs::write(&clean, "let s = \"alpha beta\";\n").expect("the clean fixture is written");
+    let dirty = directory.join("dirty.rs");
+    std::fs::write(
+        &dirty,
+        format!("let s = \"alpha{}beta\";\n", " ".repeat(10)),
+    )
+    .expect("the dirty fixture is written");
+
+    let clean_result = offending_lines_over(std::slice::from_ref(&clean));
+    let dirty_result = offending_lines_over(std::slice::from_ref(&dirty));
+
+    // CONTROL FIRST, or this cell cannot tell a working sweep from one that reports every file.
+    assert!(
+        clean_result.is_empty(),
+        "a literal with a single space is ordinary and must produce nothing: {clean_result:?}"
+    );
+    assert_eq!(
+        dirty_result.len(),
+        1,
+        "the sweep was handed one file carrying one collapsed run and must report exactly it: \
+         {dirty_result:?}"
+    );
+
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+/// A directory outside the repository, named so two cells cannot collide.
+fn scratch_directory(prefix: &str) -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!(
+        "{prefix}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&directory).expect("a scratch directory outside the repository");
+    directory
 }

@@ -2628,6 +2628,31 @@ try {
     Invoke-Stage 'whitespace' { git diff --check } | Out-Null
     # #643: every versioned ci/*.tests.ps1, discovered from the tree. See the script for why the
     # inventory is a pinned SET of names and not a count, and why exit 2 is not folded into 1.
+    # #194: A PINNED RELEASE IS HISTORY, AND REWRITING IT HAS TO SAY SO.
+    #
+    # `schemas/releases/*` is a frozen copy of a schema that four readers pin -- `schema migrate`
+    # builds `schemas/releases/{from_version}/catalog.json` to migrate FROM, and
+    # `postgres-event-store/src/backup.rs` pins the catalog twice. A vocabulary change must touch
+    # the LIVE schema and never the frozen one, but the natural gesture for "the schema changed" is
+    # to regenerate the schema set, and a bulk regeneration rewrites the frozen release silently.
+    # The destructive gesture is the maintenance gesture, and until this stage nothing anywhere made
+    # a diff under that directory red.
+    #
+    # It refuses the SILENCE, not the rewrite: a release genuinely being reissued is somebody's
+    # decision to make, and a guard that could not be satisfied would be routed around within a
+    # week. `Rewrites-Release: D-0nn -- …` on the commit that does it is the whole licence.
+    #
+    # The merge base is resolved here rather than passed in. Measured on the runner's own benches:
+    # `git merge-base HEAD origin/main` resolves in a worktree, because a worktree shares the
+    # repository's refs. On `main` itself the range is empty and the stage is trivially clean.
+    Invoke-Stage 'frozen release guard' {
+        & powershell -NoProfile -ExecutionPolicy Bypass `
+            -File (Join-Path $repositoryRoot 'ci/frozen-release-guard.ps1') `
+            -RepoRoot $repositoryRoot `
+            -MergeBase (& git -C $repositoryRoot merge-base HEAD origin/main) `
+            -Head 'HEAD'
+    } | Out-Null
+
     Invoke-Stage 'ci powershell suites' {
         & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
     } | Out-Null

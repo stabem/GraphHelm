@@ -382,7 +382,13 @@ function Invoke-OneEntry {
         "`$env:GRAPHHELM_SLOT_LOCK_PATH='$slotLock'; " +
         "& ./ci/gate.ps1$scopeArgument *> '$logFile'; " +
         "`$LASTEXITCODE | Set-Content '$rcFile'"
-    $proc = Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $inner -PassThru -WindowStyle Hidden
+    # -NonInteractive here is the worst case of #925, not merely another instance of it: this child
+    # runs in a HIDDEN window, so a prompt from a missing `[Parameter(Mandatory)]` in ci/gate.ps1 --
+    # which has seventeen of them -- would be waiting on a console no operator can see or answer. The
+    # watchdog below would then find a flat log and, correctly by its own rule, only record a
+    # suspicion after twenty minutes. The selector call above already carried this flag; the run it
+    # launches did not.
+    $proc = Start-Process powershell -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $inner -PassThru -WindowStyle Hidden
     "$($proc.Id)" | Set-Content -LiteralPath $pidFile
 
     # PROOF OF LIFE IS THE LOG GROWING, and "wedged" is never a short reading. A healthy gate sits

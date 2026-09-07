@@ -97,7 +97,22 @@ $failed = New-Object System.Collections.Generic.List[string]
 foreach ($name in $discovered) {
     Write-Host ''
     Write-Host "[suite] $name" -ForegroundColor Cyan
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SuiteDirectory $name)
+    # -NonInteractive, and it is not decoration (#925). A suite invoked without a value for one of
+    # its `[Parameter(Mandatory)]` inputs does not FAIL -- it PROMPTS, and a prompt in a child this
+    # runner is waiting on has no colour: the stage does not redden, does not go green, it stops.
+    # The gate then hangs with no verdict, which is the worst of the three outcomes.
+    #
+    # The hang is conditional on stdin being open, which is exactly why it hides: redirect stdin and
+    # the same script fails cleanly, so a quick check reports no problem. Measured here, one script
+    # with one Mandatory parameter, spawned the way this line spawns a suite:
+    #
+    #   no -NonInteractive     still running after 8000 ms   <- had to be killed
+    #   with -NonInteractive   exited after 211 ms, rc=1     names the missing parameter
+    #
+    # Nothing under ci/ prompts on purpose -- no Read-Host, no PromptForChoice, no -Confirm -- so the
+    # flag costs nothing and removes a whole class. `ci/gate-script-paths.tests.ps1` keeps every
+    # spawn under ci/ honest about carrying it.
+    & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $SuiteDirectory $name)
     $suiteCode = $LASTEXITCODE
     if ($suiteCode -eq 2) { $broke.Add("$name (exit 2)") }
     elseif ($suiteCode -ne 0) { $failed.Add("$name (exit $suiteCode)") }

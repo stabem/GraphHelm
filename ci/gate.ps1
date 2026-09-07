@@ -507,7 +507,7 @@ function Invoke-Postgres {
     try {
         $process = Start-Process -FilePath $hostExe -PassThru -NoNewWindow `
             -ArgumentList @(
-                '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
                 '-File', $ScriptPath
             ) `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
@@ -2917,7 +2917,7 @@ try {
     # `git merge-base HEAD origin/main` resolves in a worktree, because a worktree shares the
     # repository's refs. On `main` itself the range is empty and the stage is trivially clean.
     Invoke-Stage 'frozen release guard' {
-        & powershell -NoProfile -ExecutionPolicy Bypass `
+        & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
             -File (Join-Path $repositoryRoot 'ci/frozen-release-guard.ps1') `
             -RepoRoot $repositoryRoot `
             -MergeBase (& git -C $repositoryRoot merge-base HEAD origin/main) `
@@ -2993,7 +2993,7 @@ try {
             ("gate-transcript-" + [guid]::NewGuid().ToString('N').Substring(0, 12) + ".txt")
         try {
             [System.IO.File]::WriteAllText($transcriptPath, ($script:allStageLines -join "`n"))
-            & powershell -NoProfile -ExecutionPolicy Bypass `
+            & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
                 -File (Join-Path $repositoryRoot 'ci/required-features.ps1') `
                 -TranscriptPath $transcriptPath
         } finally {

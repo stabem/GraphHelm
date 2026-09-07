@@ -218,7 +218,7 @@ try {
             "against $root") -ForegroundColor Cyan
 
         $arguments = @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $verifier,
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $verifier,
             '-PullRequest', "$PullRequest",
             '-RepositoryRoot', $root
         )

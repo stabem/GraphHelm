@@ -276,6 +276,11 @@ $staleBinaryCount = 0
 #
 # A cell that watches for the drift would have been the other remedy. This one removes the drift.
 $FreshnessStageName = 'binary freshness cross-check'
+# #956: the overlap alarm's own name, a CONSTANT for the same reason #822's is. It is not a stage:
+# nothing ran under it, it has no record and no output tail, so a reader who finds it listed among
+# real stages goes looking for a transcript that does not exist. Like the freshness cross-check it is
+# the FRAME the run is read in, and `Get-GateVerdictLines` prints it as one.
+$OverlapStageName = 'stage overlap regression'
 
 function Get-GateVerdictLines {
     param(
@@ -290,12 +295,20 @@ function Get-GateVerdictLines {
         # A parameter keeps the function extractable (the suite cuts it out by anchor and dot-sources
         # it alone, so a script-scope constant would not travel with it) AND lets the caller be the
         # single place the string is written.
-        [Parameter(Mandatory)] [string] $FreshnessStageName
+        [Parameter(Mandatory)] [string] $FreshnessStageName,
+        # #956: OPTIONAL, and absent means "this run did not measure overlap" -- older callers and
+        # the cells that already drive this function keep working unchanged, and no default here
+        # duplicates the constant that gate.ps1 owns.
+        [string] $OverlapStageName
     )
     $lines = New-Object System.Collections.Generic.List[string]
     # The cross-check's own entry is never printed as a peer; it is the frame the others are read in.
     # ORDINAL, not -cne: PowerShell's case-sensitive operators are still culture comparisons (#753).
-    $others = @($Failed | Where-Object { -not [string]::Equals($_, $FreshnessStageName, [System.StringComparison]::Ordinal) })
+    $frames = @($FreshnessStageName)
+    if (-not [string]::IsNullOrWhiteSpace($OverlapStageName)) { $frames += $OverlapStageName }
+    $others = @($Failed | Where-Object { $name = $_; -not ($frames | Where-Object { [string]::Equals($name, $_, [System.StringComparison]::Ordinal) }) })
+    $overlapFailed = (-not [string]::IsNullOrWhiteSpace($OverlapStageName)) -and
+        (@($Failed | Where-Object { [string]::Equals($_, $OverlapStageName, [System.StringComparison]::Ordinal) }).Count -gt 0)
     if ($StaleBinaryCount -gt 0) {
         $lines.Add("[gate] NOT A MEASUREMENT: $StaleBinaryCount test binary(ies) predate this run's start, so every stage that ran a test binary measured a DIFFERENT PROGRAM than this run's tree. This run's stage results are not readable as results for this head.")
         if ($others.Count -gt 0) {
@@ -304,6 +317,10 @@ function Get-GateVerdictLines {
             $lines.Add('[gate] RED - no stage failed, and none of them measured this head.')
         }
         return $lines.ToArray()
+    }
+    if ($overlapFailed) {
+        $lines.Add('[gate] RED - the PowerShell suites were started early but overlapped no other stage, so this run ' +
+            'spent them in line. Nothing about the code is in question; the gate lost the time #956 bought.')
     }
     if ($others.Count -gt 0) {
         $lines.Add("[gate] RED - failed stages: $($others -join ', ')")
@@ -580,6 +597,14 @@ function Invoke-Stage {
     # publication in the finally would then throw over the top of the original error -- replacing the
     # cause with a complaint about the instrument that was trying to record it.
     $capturedLines = New-Object System.Collections.Generic.List[string]
+    # #956: a stage whose WORK began earlier -- started in the background and only joined here --
+    # says so by setting $script:stageStartedOverrideUtc from inside its own body, because the body
+    # is the only code that knows whether the early start actually happened. Read in the finally,
+    # for #841's reason, and cleared there, so it can never leak into the next stage's record.
+    $stageStartedUtc = [DateTime]::UtcNow.ToString('o')
+    $stageEndedUtc = $null
+    $script:stageStartedOverrideUtc = $null
+    $script:stageEndedOverrideUtc = $null
     try {
         # `& $Body` without capturing its result makes the native command's STDOUT part of THIS
         # FUNCTION'S OWN output stream (ordinary PowerShell function behaviour) - every call site
@@ -655,7 +680,20 @@ function Invoke-Stage {
         # `$script:lastStageLines` would ask the wrong transcript and answer "not run" about a
         # target that ran earlier -- and a stage that threw used to contribute nothing here at all,
         # so whatever it had already printed was lost from the record.
+        # #956: a stage joined from the background emits its child's output through `Write-Output`
+        # inside the body, so those lines are in `$capturedLines` and reach this concatenation like
+        # any other stage's -- the required-features check still sees a target the overlapped stage built.
         $script:allStageLines += $capturedLines.ToArray()
+        # #956: the overrides are read HERE for #841's reason. Inside the try they were skipped by a
+        # throwing body, and a start override left set would then stamp the NEXT stage's record.
+        if (-not [string]::IsNullOrWhiteSpace([string]$script:stageStartedOverrideUtc)) {
+            $stageStartedUtc = [string]$script:stageStartedOverrideUtc
+            $script:stageStartedOverrideUtc = $null
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$script:stageEndedOverrideUtc)) {
+            $stageEndedUtc = [string]$script:stageEndedOverrideUtc
+            $script:stageEndedOverrideUtc = $null
+        }
     }
     if ($code -ne 0) {
         Write-Host "[gate] FAILED: $Name (exit $code)" -ForegroundColor Red
@@ -665,7 +703,20 @@ function Invoke-Stage {
         name         = $Name
         passed       = ($code -eq 0)
         exitCode     = $code
-        wallTimeSecs = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+        # The stopwatch measures THIS call. For a stage joined from the background that is the join,
+        # not the work, so the duration comes from the same pair of instants the record publishes --
+        # one number, derived from the two fields beside it, unable to disagree with them.
+        wallTimeSecs = $(
+            if ($null -ne $stageEndedUtc) {
+                [math]::Round(([DateTime]::Parse($stageEndedUtc).ToUniversalTime() - [DateTime]::Parse($stageStartedUtc).ToUniversalTime()).TotalSeconds, 3)
+            } else {
+                [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+            })
+        # #956: WHEN, not only how long. A sum of durations cannot tell a 32-minute serial run from
+        # a 27-minute overlapped one -- only the intervals can, and `Test-StageOverlapped` reads
+        # exactly these two fields, so the manifest publishes the evidence for its own claim.
+        startedUtc   = $stageStartedUtc
+        endedUtc     = $(if ($null -ne $stageEndedUtc) { $stageEndedUtc } else { [DateTime]::UtcNow.ToString('o') })
     }
     if ($code -ne 0) {
         # A 40-line budget, but AIMED rather than sliced from the end (#810). Taking the last 40
@@ -762,6 +813,154 @@ function Get-CanaryOutcome {
         reason            = 'the canary never reported a result, so nothing here is a finding about this environment'
     }
 }
+# #956: did this stage actually run alongside another one?
+#
+# A CLAIM THE GATE MAKES ABOUT ITSELF HAS TO BE CHECKABLE, or it decays in silence. Overlapping one
+# stage is worth ~5 minutes a run and the failure mode is invisible: put the stage back in line and
+# every run still passes, every stage is still listed, and the only symptom is minutes nobody
+# measures. So the run reads its OWN records at the end and reddens when the overlap it was built
+# for did not happen.
+#
+# The comparison is on the INTERVALS, never on a flag the code sets about itself -- a boolean saying
+# "we started it early" stays true after someone moves the start back down. Touching endpoints do
+# not count: end == start is the serial case measured to the second. And ABSENT IS NOT OVERLAPPED:
+# a record without timestamps (every manifest written before this change) answers false rather than
+# throwing or being read as concurrency.
+function Test-StageOverlapped {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] $Records,
+        [Parameter(Mandatory)] [string] $Name
+    )
+    $toUtc = {
+        param($value)
+        if ([string]::IsNullOrWhiteSpace([string]$value)) { return $null }
+        $parsed = [DateTime]::MinValue
+        if ([DateTime]::TryParse([string]$value, [ref] $parsed)) { return $parsed.ToUniversalTime() }
+        return $null
+    }
+    $subject = $null
+    $others = @()
+    # [object[]], NOT @(). This file already documents the trap 40 lines below, at the manifest's
+    # `stages` field, and I wrote this loop anyway: under this machine's Windows PowerShell 5.1,
+    # `@(<a System.Collections.Generic.List[object] VARIABLE>)` throws "Argument types do not match"
+    # UNCONDITIONALLY. `$script:stageRecords` is exactly such a list, so on any run that COMPLETES
+    # its stages this line throws, between the last stage and the manifest -- a guaranteed silent
+    # loss of the whole run's evidence. The cast handles every shape this can receive: a List, a
+    # plain array, a lone record, and $null (0 iterations).
+    #
+    # THIS IS WHAT KILLED THE TWO FULL RUNS AT THIS HEAD. Evidence, and this comment has now said
+    # both things, so read the evidence rather than the sentence: manifest
+    # `d0b304e9977c-20260907T034614.685Z-85178f23.json` is a complete 57-stage GREEN run WITH the
+    # cast; the two runs before it died with the cast absent. A PASSING STAGE PRINTS NO COMPLETION
+    # LINE -- which is what misled the first reading of those logs -- so the log going quiet after
+    # the last stage's output does not mean that stage was still running. Measured against the
+    # successful log: each dead run's final line is line 5689 of 5693, and the next thing printed
+    # is the manifest commit. They finished all 57 stages and died in the four-line gap where this
+    # predicate is called.
+    #
+    # ONE THING REMAINS UNEXPLAINED and is left stated rather than tidied: under this file's `Stop`
+    # preference the throw should have reached the runner's `*>` redirect, and neither dead log
+    # carries its text. The cause is established; that silence is not.
+    foreach ($record in ([object[]]$Records)) {
+        if ($null -eq $record) { continue }
+        $recordName = [string]$record['name']
+        $from = & $toUtc $record['startedUtc']
+        $to = & $toUtc $record['endedUtc']
+        if ($null -eq $from -or $null -eq $to) { continue }
+        if ($recordName -eq $Name -and $null -eq $subject) {
+            $subject = [pscustomobject]@{ From = $from; To = $to }
+        } elseif ($recordName -ne $Name) {
+            $others += [pscustomobject]@{ From = $from; To = $to }
+        }
+    }
+    if ($null -eq $subject) { return $false }
+    foreach ($other in $others) {
+        if ($subject.From -lt $other.To -and $other.From -lt $subject.To) { return $true }
+    }
+    return $false
+}
+
+# #956: start a stage's work now, account for it later at the place it has always been recorded.
+#
+# The child is a PowerShell process and touches no cargo, so it holds no target-directory lock, no
+# port and no temp cluster -- which is why THIS stage is the one that can move while the Rust stages
+# cannot. Output goes to FILES rather than a pipe: a pipe makes the parent block on the reader and
+# there is no overlap left to have.
+function Start-BackgroundStage {
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [string] $FilePath,
+        [Parameter(Mandatory)] [string[]] $ArgumentList,
+        [Parameter(Mandatory)] [string] $WorkingDirectory
+    )
+    $stem = Join-Path ([System.IO.Path]::GetTempPath()) ("graphhelm-bg-" + [guid]::NewGuid().ToString('N'))
+    $out = "$stem.out"
+    $err = "$stem.err"
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory `
+            -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden -PassThru
+    } catch {
+        # FAIL INTO THE SLOW PATH, never into a skipped stage: the join runs the same command in line
+        # and the run is exactly as long as it used to be, with a line saying why.
+        Write-Host "[gate] $Name could not be started early ($($_.Exception.Message)); it will run in line." -ForegroundColor Yellow
+        return $null
+    }
+    # TOUCH THE HANDLE WHILE THE PROCESS IS STILL ALIVE. Caught by the guard cell, not by reading:
+    # `Start-Process -PassThru` hands back a Process whose `.ExitCode` is $null after WaitForExit
+    # unless .NET has cached the native handle, and reading `.Handle` is what caches it. Without this
+    # line the join returned $null, `$LASTEXITCODE` became $null, and a background stage that failed
+    # with exit 3 was recorded as a PASS -- the exact swallowed failure this change had to not have.
+    $null = $process.Handle
+    Write-Host "[gate] $Name started early (pid $($process.Id)); it runs while the Rust stages do." -ForegroundColor DarkGray
+    return [pscustomobject]@{
+        Name       = $Name
+        Process    = $process
+        Out        = $out
+        Err        = $err
+        StartedUtc = [DateTime]::UtcNow.ToString('o')
+    }
+}
+
+# The join. Emits the child's own output so `Invoke-Stage` captures, redacts and tails it exactly as
+# it would for a stage that ran here, and sets the exit code the verdict reads: `$LASTEXITCODE` is
+# written by native commands, and a function that forgot to set it would hand the stage the AMBIENT
+# code of whatever ran last (#896).
+function Complete-BackgroundStage {
+    param([Parameter(Mandatory)] [AllowNull()] $Started)
+    if ($null -eq $Started) { return $null }
+    $Started.Process.WaitForExit()
+    $code = $Started.Process.ExitCode
+    # #956: THE CHILD'S OWN INTERVAL, from the kernel, not this function's stopwatch. Without this the
+    # joined stage records the duration of the JOIN -- about zero seconds -- and `wallTimeSecs` is
+    # exactly the field #956 sums to measure its own progress. A change that buys five minutes and
+    # makes the meter unreadable has not been measured, it has been believed. `StartTime`/`ExitTime`
+    # need the cached handle for the same reason `ExitCode` does; if the OS refuses them anyway, fall
+    # back to the launch instant this object already recorded rather than inventing one.
+    try {
+        $script:stageStartedOverrideUtc = $Started.Process.StartTime.ToUniversalTime().ToString('o')
+        $script:stageEndedOverrideUtc = $Started.Process.ExitTime.ToUniversalTime().ToString('o')
+    } catch {
+        Write-Host "[gate] $($Started.Name): the OS would not give the child's own start and exit times ($($_.Exception.Message)); using the launch instant." -ForegroundColor DarkGray
+        $script:stageStartedOverrideUtc = $Started.StartedUtc
+        $script:stageEndedOverrideUtc = [DateTime]::UtcNow.ToString('o')
+    }
+    foreach ($path in @($Started.Out, $Started.Err)) {
+        if (Test-Path -LiteralPath $path) {
+            foreach ($line in [System.IO.File]::ReadAllLines($path)) { Write-Output $line }
+            # Named, never silent: a gate that swallows an exception without a word teaches the next
+            # reader that the failure did not happen. Leaving a temp file behind is not fatal, so the
+            # stage carries on -- but it says so.
+            try {
+                Remove-Item -LiteralPath $path -Force
+            } catch {
+                Write-Host "[gate] could not remove $path after joining $($Started.Name): $($_.Exception.Message)" -ForegroundColor DarkGray
+            }
+        }
+    }
+    $global:LASTEXITCODE = $code
+    return $code
+}
+
 # #152: rewrites the canary's nonce so its build.rs reruns and re-hashes THIS run's src/ tree,
 # even when nothing else under tools/ci-canary/src changed. Without this, a legitimately-unchanged
 # canary crate would never rebuild at all under cargo's own caching, and the canary would only ever
@@ -2158,6 +2357,10 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # could touch a shared target dir. Publication touches git, not the target dir.
         runEndUtc          = [DateTime]::UtcNow.ToString('o')
         canaryPassed       = $CanaryPassed
+        # #956: the two states above, published. ABSENT IS NOT FALSE: every manifest written before
+        # this change has neither field, which means NOT MEASURED and never "it ran serial".
+        psSuitesStartedEarly = $script:psSuitesStartedEarly
+        psSuitesOverlapped   = $script:psSuitesOverlapped
         # [object[]] cast, NOT @() - caught live, reproduced in isolation before guessing: under
         # this machine's Windows PowerShell 5.1 (5.1.26100.9168), `@(<a System.Collections.
         # Generic.List[object] VARIABLE>)` throws "Argument types do not match" unconditionally
@@ -2497,6 +2700,15 @@ try {
         exit 1
     }
 
+    # #956: the PowerShell suites start HERE and are joined at their own stage, far below. They are
+    # the only stage that can move: no cargo, so no target-directory lock, no port, no cluster. The
+    # canary has already passed at this point, which matters -- a run whose build environment cannot
+    # be trusted aborts above, and starting a child before that would leak a process into a run that
+    # never happens.
+    $script:psSuitesStarted = Start-BackgroundStage -Name 'ci powershell suites' -FilePath 'powershell' `
+        -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')) `
+        -WorkingDirectory $repositoryRoot
+
     # One build pass, enumerated and fingerprinted, ahead of the human-facing stages that reuse it.
     $artifactManifest = Get-TestArtifactManifest
 
@@ -2653,8 +2865,17 @@ try {
             -Head 'HEAD'
     } | Out-Null
 
+    # #956: the same stage, the same name, the same accounting -- only the WORK started earlier. The
+    # call keeps the shape it always had because ci/gate-stage-reddens.tests.ps1 slices this block
+    # out of this file by anchor: a changed call shape breaks that suite's FIXTURE rather than its
+    # subject, and a harness breaking while wearing an ordinary red is the thing it exists to catch.
     Invoke-Stage 'ci powershell suites' {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
+        $joined = Complete-BackgroundStage -Started $script:psSuitesStarted
+        if ($null -eq $joined) {
+            # The early start failed. Same command, same place, exactly as long as before #956.
+            & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
+        }
+        # No else: `Complete-BackgroundStage` sets both instants itself, from the child's own times.
     } | Out-Null
 
     if ($script:matrixSkipped) {
@@ -2759,6 +2980,33 @@ if ($artifactManifest -and $artifactManifest.artifacts) {
     }
 }
 
+# #956: the run checks its OWN overlap, from its own recorded intervals.
+#
+# The saving here is structural, not a constant: `ci powershell suites` is the only stage that runs
+# no cargo, so it is the only one that holds no target-directory lock, and its ~5 minutes are spent
+# beside the Rust stages instead of after them. That arrangement is exactly the kind that decays in
+# silence -- put the start back where it was and every stage still runs, still passes, still appears
+# in the manifest, and the ONLY symptom is minutes nobody counts. So the claim gets an alarm.
+#
+# TWO STATES, NOT ONE. `psSuitesStartedEarly` records whether the child was launched at all;
+# `psSuitesOverlapped` whether it actually ran beside something. The distinction is the whole point:
+# a run whose early start FAILED (no Start-Process, a busted PowerShell) is correct and merely slow,
+# already said so on the console, and MUST NOT redden -- it is the fallback doing its job. Only the
+# case that started early and still came out serial is the defect, and it is the case the alarm
+# fires on.
+#
+# ABOVE `$status`, NOT INSIDE THE MANIFEST WRITER, and the first draft got this wrong: the check ran
+# where `$passedEverything` is computed, which is AFTER `$status` was decided at this call site. The
+# run still exited 1 -- `$failed` is the same variable -- but the manifest it had already been handed
+# said GREEN while its own `overallPassed` said false. A check has to run before the value it exists
+# to change (#822's cross-check sits here for the same reason).
+$script:psSuitesStartedEarly = ($null -ne $script:psSuitesStarted)
+$script:psSuitesOverlapped = Test-StageOverlapped -Records $stageRecords -Name 'ci powershell suites'
+if ($script:psSuitesStartedEarly -and -not $script:psSuitesOverlapped) {
+    Write-Host "[gate] FAILED: ci powershell suites started early but overlapped no other stage; the run went serial." -ForegroundColor Red
+    if ($failed -notcontains $OverlapStageName) { $failed += $OverlapStageName }
+}
+
 $manifestPath = $null
 $manifestFailed = $false
 try {
@@ -2815,7 +3063,7 @@ if ($script:headMovedDuringRun) {
 if ($failed.Count -gt 0) {
     # #822: the cross-check is printed as the FRAME the other reds are read in, never as their peer.
     foreach ($line in (Get-GateVerdictLines -Failed $failed -StaleBinaryCount $staleBinaryCount `
-                -FreshnessStageName $FreshnessStageName)) {
+                -FreshnessStageName $FreshnessStageName -OverlapStageName $OverlapStageName)) {
         Write-Host $line -ForegroundColor Red
     }
     exit 1

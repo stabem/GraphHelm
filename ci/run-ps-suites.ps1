@@ -44,6 +44,7 @@ $PinnedSuites = @(
     'gate-stage-stderr-evidence.tests.ps1',
     'gate-stage-verdict-source.tests.ps1',
     'gate-target-dir.tests.ps1',
+    'required-features.tests.ps1',
     'gate-verdict.tests.ps1',
     'manifest-name.tests.ps1',
     'merge-proof-from-main.tests.ps1',

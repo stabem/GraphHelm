@@ -319,6 +319,9 @@ $runStartUtc = [DateTime]::UtcNow
 # that finished, and release only a claim that is this process's own.
 $script:slotOutcome = $null
 $script:stagesCompleted = $false
+# #207: every stage's captured output, concatenated, so a check at the end can ask about a
+# transcript rather than about whichever stage happened to run last.
+$script:allStageLines = @()
 $script:slotRunEnded = $false
 
 # #755: ONE WRITER FOR THE TERMINAL LINE, used by both exits. #905 gave the stage block its own
@@ -622,6 +625,10 @@ function Invoke-Stage {
         # BEFORE any of that -- so the one line that identifies a lock is exactly the line the tail
         # is entitled to drop.
         $script:lastStageLines = $capturedLines.ToArray()
+        # #207: and the running concatenation. A target a manifest gates behind a feature prints
+        # its binary in whichever stage builds it, so a check reading only `$script:lastStageLines`
+        # would ask the wrong transcript and answer "not run" about a target that ran earlier.
+        $script:allStageLines += $capturedLines.ToArray()
     } finally {
         $ErrorActionPreference = $previous
         $stopwatch.Stop()
@@ -2633,6 +2640,38 @@ try {
             $env:GRAPHHELM_PG_LOCALE = $previousLocale
         }
     }
+    # #207: THE TARGETS A MANIFEST HIDES BEHIND A FEATURE EITHER BUILT, OR THIS RUN SAYS SO.
+    #
+    # `adapters/postgres-event-store/Cargo.toml` gates `concurrency` and `repository_conformance`
+    # behind `test-support`, which is not in `default`. They run today only because this file passes
+    # `--all-features` -- a flag that is here to COMPILE everything, not to cover
+    # `required-features`. Narrow those flags for speed and the targets are not skipped with a
+    # message: they are never built, print no per-test lines, and the run stays green. "0 tests from
+    # a target that never built" is byte-identical to "a target with nothing to run", and only an
+    # absence distinguishes them.
+    #
+    # The population is DERIVED from `cargo metadata`, never written down: a target added tomorrow
+    # is checked tomorrow, and a hand-maintained list fails in the opposite direction by staying
+    # green about targets nobody added it to. That derivation is #207's condition for building this
+    # at all.
+    #
+    # The transcript goes to a temp file OUTSIDE the repository. Inside it, `dirtyDiffHash` goes
+    # non-null and this gate correctly refuses to commit a manifest into a tree holding changes it
+    # did not make -- a run with every stage green ending RED for "run manifest not published",
+    # measured twice on 2026-09-05 by two lanes.
+    Invoke-Stage 'required-features coverage' {
+        $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) `
+            ("gate-transcript-" + [guid]::NewGuid().ToString('N').Substring(0, 12) + ".txt")
+        try {
+            [System.IO.File]::WriteAllText($transcriptPath, ($script:allStageLines -join "`n"))
+            & powershell -NoProfile -ExecutionPolicy Bypass `
+                -File (Join-Path $repositoryRoot 'ci/required-features.ps1') `
+                -TranscriptPath $transcriptPath
+        } finally {
+            Remove-Item -LiteralPath $transcriptPath -Force -ErrorAction SilentlyContinue
+        }
+    } | Out-Null
+
     $script:stagesCompleted = $true
 } finally {
     Pop-Location

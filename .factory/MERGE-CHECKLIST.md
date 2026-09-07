@@ -30,6 +30,9 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    `...45f43a3e66f9-…json` and hides the directory the rule tells you to see — K, measured on #885) and
    writes that in the merge comment; any other path in that diff voids
    the carry (#674(b) for the proof, #852 for the passes — decided on #826, 2026-09-04).
+   **The sha scopes what a pass VOUCHES for. It never scopes who may press (#970).** Everything above
+   is about the first question; item 8 answers the second, and reading this item as an answer to both
+   is how a lane that reviewed a PR gets routed its own button once the head moves.
 2. **Did the gate run on THIS head? Ask the committed store, not the PR page.** With hosted CI
    disabled by policy, `mergeStateStatus CLEAN` means clean of checks that never ran. The rule is
    #674(b) as the owner decided it — a GREEN manifest in the committed store whose `headSha` is the
@@ -284,6 +287,53 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    writer is asked to add the line. **A pass that names no lane at all does not count** — it cannot be
    told from the author's own comment — and asks for the line. The line is for addressing, the count is
    by content (A, #863; #874).
+   **TWO QUESTIONS, ONE WORD (#970).** *Vouching* is sha-scoped: a pass at an old head does not cover a
+   new one, which is what item 1 is for and why re-pins exist. *Disqualification* is not: **a lane that
+   has reviewed this pull request may never press it, at any later head.** Collapsing the two makes every
+   reviewer look clean the moment the head moves — and an author can then manufacture it, because one
+   manifest-only push (routine here) drops every reviewer's verdict off the current sha and leaves the
+   author as the only lane with a body at the head. Nobody has done that; the two-pass protocol is
+   supposed to be un-gameable by the author, and under the collapsed reading it is not. Measured on #958
+   in one night: eight routings, one of which named two lanes as eligible that had both already approved
+   it, at earlier heads.
+   **AND THE LANE IS THE UNIT, NEVER THE SESSION.** A lane outlives its session — sessions end at a
+   compaction, a restart, a handover — and the identity line carries both
+   (`Lane: ISSUES 2 · Session: graphhelm-… [c1ae3b]`). Disqualification attaches to the LANE.
+   Measured 2026-09-07 while writing this item: a lane checking its own eligibility on #931 filtered
+   the thread by its own SESSION id, found nothing, and was one step from pressing a pull request its
+   own lane had given `APPROVE-WITH-RISK` the previous day under session `[6468fe]`. Read the `Lane:`
+   field and decide; the `Session:` field is an address for a reply, not an identity for a count.
+   **AND A VERDICT DISQUALIFIES, A NOTE DOES NOT.** What bars a lane from the button is having
+   REVIEWED — a body carrying a verdict word, which is the same thing this item already counts a
+   pass by. A body that measures something, routes the work, reports a coupling, reports a dead gate
+   or asks a question is not a review and leaves its lane eligible; the writer marks it, and several
+   already do (`**not a verdict**`, `a note for whoever reviews, not a change`). Without this the
+   rule eats its own board: measured on #952 on 2026-09-07, nine distinct signatures had written on
+   one thread and a strict reading left **no eligible presser at all** for a pull request that was
+   `MERGEABLE` and carried a manifest. A rule that makes correct work unpressable is not stricter,
+   it is broken. When a thread genuinely has no lane left, say so ON it and escalate rather than
+   pressing anyway or letting it sit silently.
+   **LIST the bodies; do not FILTER them.** Read the first line of every comment and decide with your
+   eyes. Both directions of a filter have failed here — a pattern that found nothing on three PRs a lane
+   had reviewed, and one that matched a lane that had not. From #958's own thread, two rows any
+   `startswith("Lane: …")` test drops:
+   ```
+   00:45:45  Session: graphhelm-b8 [1ac805] | Head: 0519817b          <- no `Lane:` at all
+   01:12:54  Session: graphhelm-54 [ce90aa] · Lane: orchestrator · …  <- `Lane:` present, not first
+   ```
+   `AGENTS.md` asks for the line first; it is a request to writers, never a promise to readers.
+   The listing command, and it is **shell-specific on purpose** — the jq form below is unusable in
+   Windows PowerShell 5.1, which strips the inner quotes and hands `gh` three arguments
+   (`accepts at most 1 arg(s), received 3`), the same defect as #902:
+   ```bash
+   gh pr view N --json comments -q '.comments[] | (.createdAt[11:19]) + "  " + (.body | split("\n")[0])'
+   ```
+   ```powershell
+   (gh pr view N --json comments | ConvertFrom-Json).comments |
+       ForEach-Object { "{0}  {1}" -f $_.createdAt.Substring(11,8), ($_.body -split "`n")[0] }
+   ```
+   Ask `gh` for `--json` and shape it in the shell you are in; never put a quoted space inside `-q` on
+   Windows.
 9. **Stacked PR before `--delete-branch`.** `gh pr list --base <head-branch> --state all`.
    Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729). And what is known
    about `--delete-branch` when a worktree holds the branch — only this, measured (L, #862, #889): (i) the

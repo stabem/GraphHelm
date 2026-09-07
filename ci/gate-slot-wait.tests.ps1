@@ -9,7 +9,7 @@
 # INSIDE the claim block (between Enter-GateSlot and the first snapshot after it) and the queued
 # stamp lives OUTSIDE it -- a sabotage that moves the stamp back above the wait reddens both.
 
-$ExpectedAssertionCount = 9
+$ExpectedAssertionCount = 12
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -46,8 +46,8 @@ try {
         "#982's own instants: queued 15:26:23, claimed 15:52:56 -> 1593 s of slot wait, the 26.5 minutes the manifest hid"
     Assert-True ((Get-SlotWaitSecs -QueuedUtc $s -StartUtc $s) -eq 0) `
         'a run that claimed at once waits 0 s -- every #958 datapoint reads this way against the ledger'
-    Assert-True ((Get-SlotWaitSecs -QueuedUtc $s -StartUtc $q) -eq 0) `
-        'a start before its own queue instant is clamped to 0, never negative -- clock skew cannot mint a saving'
+    Assert-True ($null -eq (Get-SlotWaitSecs -QueuedUtc $s -StartUtc $q)) `
+        'a start before its own queue instant is published as ABSENT -- skew is unknown, and 0 would pass for an instant claim'
     Assert-True ((Get-SlotWaitSecs -QueuedUtc $q -StartUtc $s.AddMilliseconds(400)) -eq 1593.4) `
         'the wait keeps milliseconds, the same grain as wallTimeSecs'
 
@@ -61,8 +61,14 @@ try {
         'runStartUtc is stamped INSIDE the claim block -- after the slot is held, so it is the instant the machine starts working'
     Assert-True (-not $beforeClaim.Contains('$runStartUtc = [DateTime]::UtcNow')) `
         'and NOT before it -- the stamp that used to sit at the top of the file, ahead of the wait, is gone'
-    Assert-True ($beforeClaim.Contains('$runQueuedUtc = [DateTime]::UtcNow')) `
-        'the queued instant is stamped before the wait, under its own name, so the wait is a fact the manifest can carry'
+    # ADJACENCY, not precedence. A stamp anywhere before the claim satisfied the first draft, and the
+    # dot-sourcing and git probes between it and Enter-GateSlot put a median 0.274 s (max 1.49 s over
+    # 98 runs) inside every free-slot wait. The last non-comment statement before the call must be it.
+    $linesBeforeClaim = @($beforeClaim -split "`n")
+    $linesBeforeClaim = $linesBeforeClaim[0..($linesBeforeClaim.Count - 2)]   # the last element is the call's own line, cut mid-way
+    $lastBeforeClaim = ($linesBeforeClaim | Where-Object { $_.Trim() -ne '' -and -not $_.Trim().StartsWith('#') } | Select-Object -Last 1).Trim()
+    Assert-True ($lastBeforeClaim -eq '$runQueuedUtc = [DateTime]::UtcNow') `
+        "the queued instant is the LAST statement before Enter-GateSlot, so a free slot reads 0 and nothing but the wait is inside the number (last statement: $lastBeforeClaim)"
 
     $manifest = Get-GateSlice -Start 'function Write-RunManifest {' -End "`n}"
     # THE ASSIGNMENT SHAPE, not the bare name. The first draft asked only whether the manifest text
@@ -73,6 +79,27 @@ try {
         'the manifest derives slotWaitSecs through Get-SlotWaitSecs on the field line itself, not a second arithmetic beside a comment that names it'
     Assert-True ($manifest.Contains('queuedUtc')) `
         'and the queued instant itself, so a reader can re-derive the wait rather than trust the field'
+
+    # THE FRESHNESS BOUNDARY (ISSUES 1 on #985 and #987). Get-TestArtifactManifest judges every
+    # artefact against $runStartUtc, and with the sentinel now $null a call before the claim would
+    # read EVERY artefact as fresh -- silent, total, flattering. Three cells: the comparison is
+    # against the claim instant; the call site sits after the claim restamp (searched from the
+    # claim onwards, so the queued stamp cannot satisfy it); and the guard actually throws on null,
+    # driven at runtime rather than read.
+    $freshness = Get-GateSlice -Start 'function Get-TestArtifactManifest {' -End "`n}" -IncludeEnd
+    Assert-True ($freshness -match '(?m)^\s*\$freshBuild\s*=\s*\(\$mtimeUtc\s+-ge\s+\$runStartUtc\)') `
+        'the freshness cross-check compares against the CLAIM instant'
+    $claimCallAt = $gateText.IndexOf('Enter-GateSlot -Path $slotLockPath', [System.StringComparison]::Ordinal)
+    $claimStampAt = $gateText.IndexOf('$runStartUtc = [DateTime]::UtcNow', $claimCallAt, [System.StringComparison]::Ordinal)
+    Assert-True ($claimStampAt -ge 0 -and $gateText.Substring($claimStampAt).Contains('$artifactManifest = Get-TestArtifactManifest')) `
+        'and the artefact manifest is BUILT after that stamp -- before it, $runStartUtc is $null and every artefact reads fresh'
+    Invoke-Expression $freshness
+    $runStartUtc = $null
+    $toolchain = '+956-no-such-toolchain'   # if the guard is missing, cargo must fail fast, not compile the workspace into this suite
+    $threw = $false
+    try { $null = Get-TestArtifactManifest } catch { $threw = $_.Exception.Message.Contains('before the slot claim') }
+    Assert-True $threw `
+        'called with a null claim instant, Get-TestArtifactManifest THROWS before asking cargo anything -- the silent all-fresh reading is not reachable'
 } finally {
     Write-Host ''
     if ($script:total -ne $ExpectedAssertionCount) {

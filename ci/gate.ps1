@@ -353,12 +353,15 @@ function Get-GateVerdictLines {
 }
 # (end #822)
 $stageRecords = New-Object System.Collections.Generic.List[object]
-# #956: THE INSTANT THIS GATE BEGAN, which is before it holds a slot. It used to be `$runStartUtc`,
-# and a manifest that carried it as the run's start read 64.8 min for a 38.4-minute run (#982): the
-# gate waited 26.5 min for E: and the wait was inside the number. The run's start is stamped where
-# the slot is claimed; this is the queued instant, kept under its own name so the wait is a fact.
-$runQueuedUtc = [DateTime]::UtcNow
-$runStartUtc = $runQueuedUtc   # overwritten at the claim; a reader before it sees the queued instant, never nothing
+# #956: the run's two instants, both stamped at the claim site (search: 'THE WAIT STARTS HERE').
+# `runQueuedUtc` is the instant the gate asks for a slot and `runStartUtc` the instant it holds one;
+# the manifest carries both and their difference as `slotWaitSecs`. A single stamp up here once
+# served as the run's start, and a manifest read 64.8 min for a 38.4-minute run (#982) because a
+# 26.5-minute wait for E: was inside it. Stamping the queued instant up here was not right either:
+# across 98 no-wait runs it put a median 0.274 s (max 1.49 s) of dot-sourcing and git probes inside
+# the wait, so a free slot never read 0. Nothing reads either name before the claim.
+$runQueuedUtc = $null
+$runStartUtc = $null
 # #700: the slot this run holds, and how far it got. `slotOutcome` is Enter-GateSlot's word;
 # `stagesCompleted` is set as the LAST statement inside the stage try; `slotRunEnded` is set where
 # RUN-END is written. The finally reads all three so it can tell a run that left early from one
@@ -1036,12 +1039,15 @@ function Get-SlotDir {
 # Best-effort by construction: a gate run must not fail because a log line could not be written.
 # The failure is REPORTED rather than swallowed, because a silent logging failure would leave the
 # same hole this exists to close.
-# #956: how long a run waited for its slot, from two instants the run itself recorded. Clamped at
-# zero -- a start before its own queue instant is clock skew, and skew must not mint a saving.
+# #956: how long a run waited for its slot, from two instants the run itself recorded. A start
+# before its own queue instant is clock skew; it is published as absent, so skew cannot mint a
+# saving and cannot pass for an instant claim either.
 function Get-SlotWaitSecs {
     param([Parameter(Mandatory)] [DateTime] $QueuedUtc, [Parameter(Mandatory)] [DateTime] $StartUtc)
     $secs = ($StartUtc.ToUniversalTime() - $QueuedUtc.ToUniversalTime()).TotalSeconds
-    if ($secs -lt 0) { return 0 }
+    # Negative is clock skew: an unknown, and the manifest's rule is that unknown is ABSENT, never 0.
+    # A reader summing the field skips $null; it would have counted a 0 as an instant claim.
+    if ($secs -lt 0) { return $null }
     return [math]::Round($secs, 3)
 }
 
@@ -1188,6 +1194,14 @@ function Get-WorkspaceFmtTargets {
 }
 
 function Get-TestArtifactManifest {
+    # #956: THE CLAIM INSTANT MUST EXIST BEFORE ANY ARTEFACT IS JUDGED. Every freshness verdict
+    # below is `$mtimeUtc -ge $runStartUtc`, and `-ge $null` is True for every file: called before
+    # the slot claim, this would report a clean rebuild the run did not do, staleArtifactCount 0,
+    # instrumentSuspect false -- total, and in the flattering direction (ISSUES 1 on #987). The
+    # manifest writer fails loudly on the same null; so does this, before cargo is even asked.
+    if ($null -eq $runStartUtc) {
+        throw '#956: Get-TestArtifactManifest ran before the slot claim; $runStartUtc is null and every artefact would read fresh'
+    }
     # Same treatment Invoke-Stage gives every OTHER native call, needed here too: this cargo
     # invocation runs outside Invoke-Stage (its output is JSON to parse, not human text to
     # forward), so without this it inherits $ErrorActionPreference='Stop' directly and a native
@@ -2380,7 +2394,7 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # #956: the CLAIM instant. `queuedUtc` is when the gate began waiting; `slotWaitSecs` is the
         # difference, derived once by Get-SlotWaitSecs so no reader has to reconstruct it from the
         # ledger. A manifest written before this change has neither and its runStartUtc may include
-        # a wait -- absent means not measured, never "waited 0".
+        # a wait -- absent means not measured, never "waited 0". Negative skew is published as absent.
         queuedUtc          = $runQueuedUtc.ToString('o')
         runStartUtc        = $runStartUtc.ToString('o')
         slotWaitSecs       = Get-SlotWaitSecs -QueuedUtc $runQueuedUtc -StartUtc $runStartUtc
@@ -2688,6 +2702,9 @@ if (-not $env:GRAPHHELM_SLOT_LOCK_PATH) { $env:GRAPHHELM_SLOT_LOCK_PATH = $slotL
 $gateStartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
 $slotWaitMinutes = 180
 if ($env:GRAPHHELM_SLOT_WAIT_MINUTES -and [int]::TryParse($env:GRAPHHELM_SLOT_WAIT_MINUTES, [ref] $slotWaitMinutes)) { } else { $slotWaitMinutes = 180 }
+# #956: THE WAIT STARTS HERE, as the last statement before the slot is asked for, so a free slot
+# reads 0 and a held one reads only the wait. The placement cell asserts adjacency, not precedence.
+$runQueuedUtc = [DateTime]::UtcNow
 $script:slotOutcome = Enter-GateSlot -Path $slotLockPath -HolderPid $PID -HolderStartUtc $gateStartUtc `
     -Detail "gate cwd=$repositoryRoot head=$gatedHeadAtStart" -BudgetSeconds ($slotWaitMinutes * 60) -PollSeconds 30 `
     -WriteEvent { param($Event, $Detail) Write-SlotEvent -Event $Event -Detail $Detail }

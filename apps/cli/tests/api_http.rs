@@ -3245,6 +3245,11 @@ fn run_story_over_cli(events: &Path, directory: &Path) -> (Value, Value) {
         start_data["nodeStateCounts"]["blocked"], 1,
         "the fixture must leave exactly one node blocked for approve to ready: {start_data}"
     );
+    // #133: the counts say one node is blocked; the map says WHICH, on the same reply.
+    assert_eq!(
+        start_data["nodeStates"]["implementation"], "blocked",
+        "the per-node map must name the blocked node beside the count (CLI half): {start_data}"
+    );
     // The BLOCKED moment, captured before the story resolves it. The final view is a
     // COMPLETED execution, where attention is legitimately empty on both surfaces -- so a
     // comparison made only at the end proves parity about attention by comparing two empty
@@ -3373,6 +3378,11 @@ fn run_story_over_api(events: &Path, directory: &Path) -> (Value, Value) {
     assert_eq!(
         reply["data"]["nodeStateCounts"]["blocked"], 1,
         "the fixture must leave exactly one node blocked for approve to ready: {reply}"
+    );
+    // #133: the same map on the HTTP surface, from the same `execution::render`.
+    assert_eq!(
+        reply["data"]["nodeStates"]["implementation"], "blocked",
+        "the per-node map must name the blocked node beside the count (HTTP half): {reply}"
     );
     // The same blocked moment on this surface -- see the note in the CLI half.
     let api_blocked = get_json(

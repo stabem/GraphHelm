@@ -202,6 +202,7 @@ mod tests {
             "attention": attention,
             "attentionReasons": [{"kind": "blocked", "node": "implementation"}],
             "nodeStateCounts": {"blocked": 1},
+            "nodeStates": {"implementation": "blocked"},
             "startedAt": "2026-08-27T00:00:00+00:00",
             "lastEventAt": "2026-08-27T00:01:00+00:00",
         })
@@ -235,6 +236,9 @@ mod tests {
         for absent in [
             "attentionReasons",
             "nodeStateCounts",
+            // #133: the per-node map is heavier than the counts and just as much the status
+            // reply's to own; the fixture above carries it so this cell is not vacuous.
+            "nodeStates",
             "untriagedInterruptions",
         ] {
             assert!(

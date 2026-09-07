@@ -629,6 +629,15 @@ pub(crate) fn at_sequence(events: &[EventEnvelope]) -> Option<u64> {
 }
 
 /// Per-state node counts, keyed by the same wire vocabulary the projection itself uses.
+/// #133: node id -> lifecycle label, the same label vocabulary [`state_counts`] buckets by.
+/// A `BTreeMap` so the wire order is stable and a diff between two replies is readable.
+fn node_states_map(node_states: &BTreeMap<String, NodeState>) -> BTreeMap<&str, &'static str> {
+    node_states
+        .iter()
+        .map(|(node, state)| (node.as_str(), node_state_label(*state)))
+        .collect()
+}
+
 fn state_counts(node_states: &BTreeMap<String, NodeState>) -> BTreeMap<&'static str, u64> {
     // F2: every lifecycle state is a bucket, zero-filled. An omitted key reads as "no such
     // problem" on a dashboard, which is how a missing `failed` bucket let a red story look
@@ -788,6 +797,11 @@ pub(super) fn render(
         // boolean. An unknown now spends its reasons here too, saying which node and why.
         "attentionReasons": wire_reasons(&answer),
         "nodeStateCounts": state_counts(&projection.node_states),
+        // #133: the per-node map beside the counts. The counts answer "how many are blocked";
+        // an operator with one wedged node needs "WHICH one", and the projection has held that
+        // map all along -- only the aggregate was rendered. Same labels as the counts, so the
+        // two never disagree on vocabulary; kept OFF `execution list` rows (see list.rs).
+        "nodeStates": node_states_map(&projection.node_states),
         "signalsRecorded": projection.signals_recorded,
         "acceptedMutations": projection.accepted_mutations,
         "untriagedInterruptions": untriaged_interruptions(&answer),

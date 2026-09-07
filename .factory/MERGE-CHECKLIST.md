@@ -159,10 +159,17 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is
    2–9 cargo processes by design (measured): `Get-CimInstance Win32_Process | ? { $_.Name -eq
    'powershell.exe' -and $_.CommandLine -match '(-File\s+\S*|&\s*\S*)ci[\\/]gate\.ps1' }`, keeping only
-   those with ≥1 live descendant. **The pattern is a hint; the DESCENDANT is the fact**: it over-counts
+   those with ≥1 live descendant. **NEITHER METHOD IS THE FACT. THE UNION IS THE FLOOR, and a lane that
+   quotes one of them has measured half the machine (#893).** Both under-count, and on 2026-09-05 they
+   each read `1` in the same instant and each saw a DIFFERENT gate — pattern found J's 74504 on the HDD,
+   descendant found B's 38728 on the SSD, union 2, both slots full at the 1+1 ceiling. Neither read zero:
+   they read a plausible number, and `1` means "there is room for one more". The pattern over-counts
    (readers) and under-counts (a wrapper script — B launches by `-File gate859_wrapper.ps1`, and the
    command line never says `ci/gate.ps1`: the Orchestrator read ZERO with a gate alive, 2026-09-05). Count
-   `powershell.exe` processes with a live `cargo`/`rustc` descendant — READ THE PATTERN FROM THIS FILE and
+   `powershell.exe` processes with a live `cargo`/`rustc` DESCENDANT — **descendant, not direct child, and
+   the distinction is what cost the reading above**: a gate launched through a wrapper runs `ci/gate.ps1`
+   in an intermediate process, so the compilers hang one level further down and a direct-child test finds
+   none while the gate is compiling (#893) — READ THE PATTERN FROM THIS FILE and
    print its bytes before trusting the number: a pattern retyped from memory (`[\\/]` became `[\/]`) counted
    0 with G's gate alive on the SSD and would have authorised a second gate on the same disk; the atomic
    claim is what decided (H, #891) — and know the count has holes between

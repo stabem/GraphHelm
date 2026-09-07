@@ -1198,3 +1198,30 @@ multi-run cancel; any tool that erases evidence, events or executions.
 **Relationship:** amends STUDIO_MVP.md §6 (Deliberate omissions) along one axis; consistent with
 D-039 (chat-first operation is an adapter over the Public Runtime API, never a second operational
 path) and with STUDIO_MVP §5 (agent actions are recorded as agents).
+
+## 42. ADR-037 — The systemd VPS install and update path is an exception to D-002, recorded before it ships
+
+**Status:** proposed. Conditional on PR #595 landing; not in effect while #595 is open. If #595 closes unmerged, this ADR is withdrawn rather than accepted.
+
+**Context:** `docs/DECISION_REGISTER.md` D-002 is normative for version 0.1 and says *"Existing VPS connected via SSH; installation and updates via Docker."* PR #595 (owner's lane) ships `deploy/upgrade-vps.sh`, `deploy/backup-vps.sh`, `deploy/restore-vps.sh`, `deploy/graphhelm-backup.service`, `deploy/graphhelm-backup.timer` and `docs/operations/VPS_UPGRADE_BACKUP_RESTORE.md`: a **systemd**-managed install, update, backup and restore path with no container in it. #663 measured that nothing in `docs/adr/`, `docs/rfc/` or this file records that divergence, so the day #595 merges the highest-precedence document describes a system the repository does not ship. This ADR is the record #663 asks for, written while the path is still on a branch so the register never contradicts the tree for even one commit.
+
+**Measured at `origin/main` `0576153b`, rather than described:**
+
+```
+git grep -icE '\bsystemd\b|\bsystemctl\b' origin/main -- deploy docs   0 (word-bounded: the unbounded -i form returns 3, all SYSTEMDRIVE/SYSTEMROOT in docs/, not systemd)
+gh pr view 595 --json files                                      the six deploy/ files and the runbook above, OPEN, head a67ab257
+docs/DECISION_REGISTER.md:8                                      D-002 as quoted
+```
+
+So today D-002 is true of the tree; it stops being true at the merge of #595, and only then.
+
+**Decision:** the VPS install and update path MAY be managed by systemd units and shell scripts instead of Docker, as an exception to D-002's "installation and updates via Docker" clause and along that axis only. The SSH connection clause of D-002 stands. Docker remains the packaging for the runtime image (`Dockerfile`, `docker-compose.yml` on main are unchanged by #595); the exception covers the *host-side* lifecycle — install, upgrade, backup timer, restore — which #595 implements as units and scripts because a timer-driven backup and an in-place upgrade need the host's init system, not a container's.
+
+**Affected contracts:** D-002 (amended along one axis by this ADR, annotated in the register); `docs/operations/VPS_UPGRADE_BACKUP_RESTORE.md` (the runbook this ADR authorises; until acceptance it must say the exception is pending, per #663); the install story in #330 and the restore privilege fix in #786, both of which assume the systemd path.
+
+**Alternatives considered:** (a) keep D-002 as written and re-do #595 as a Docker-managed lifecycle — rejected: the backup timer and the in-place upgrade would then run inside a container that has to manage its own host, which is the shape the runbook exists to avoid, and it discards measured, reviewed work for a sentence; (b) patch the D-002 row silently in the deploy PR — rejected by #663's own reasoning: a governance change carried inside a deploy diff has no evidence, alternatives or recommendation of its own and is invisible to the next reader; (c) this ADR, proposed now and accepted when #595 merges — chosen because it is the only option under which the register and the tree never disagree.
+
+**Consequences:** D-002 gains an annotation pointing here. The runbook keeps its "pending" wording until this ADR's status changes to accepted. **Who performs that transition, named, because a conditional status otherwise depends on someone remembering an obligation attached to an event they may not attend:** the presser of #595 flips this ADR to `accepted <date>` and removes the D-002 annotation's "not in effect" clause in the same squash or in the commit immediately after, and says so in #595's merge comment. `.factory/MERGE-CHECKLIST.md` at the time of writing has no step that sends a presser to an ADR (measured by the first pass on PR #957: zero real mentions), so the obligation is written in #595's own thread rather than assumed from the checklist; a generic checklist item ("does this PR's body name an ADR whose status is conditional on this merge?") is requested from the checklist's owner. No cell reddens main on this: a docs status must not be the reason no PR can go green. No code changes. No schema changes.
+
+**Relationship:** amends D-002 along the install/update axis; records the decision behind #595, #330 and #786; closes #663 as the governance record it asked for.
+

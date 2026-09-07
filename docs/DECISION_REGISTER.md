@@ -5,7 +5,7 @@ This document consolidates the product decisions already made. They are normativ
 | ID | Theme | Decision |
 |---|---|---|
 | D-001 | Topology | Local Studio as control plane; runtime and data on the user's VPS. |
-| D-002 | VPS connection | Existing VPS connected via SSH; installation and updates via Docker. |
+| D-002 | VPS connection | Existing VPS connected via SSH; installation and updates via Docker. **Exception proposed in ADR-037 (#663): the host-side install/update/backup/restore lifecycle may be systemd-managed, as PR #595 ships it. Not in effect while #595 is open; the ADR is accepted with #595's merge.** |
 | D-003 | Autonomy | Total autonomy governed by the harness; no mandatory approval between phases. |
 | D-004 | Scope | Generalist agent operating system, not just a coding tool. |
 | D-005 | Harness | Harness synthesized per task from atomic capabilities; no fixed domain-specific pack. |

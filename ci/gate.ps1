@@ -364,7 +364,12 @@ function Get-GateVerdictLines {
 }
 # (end #822)
 $stageRecords = New-Object System.Collections.Generic.List[object]
-$runStartUtc = [DateTime]::UtcNow
+# #956: THE INSTANT THIS GATE BEGAN, which is before it holds a slot. It used to be `$runStartUtc`,
+# and a manifest that carried it as the run's start read 64.8 min for a 38.4-minute run (#982): the
+# gate waited 26.5 min for E: and the wait was inside the number. The run's start is stamped where
+# the slot is claimed; this is the queued instant, kept under its own name so the wait is a fact.
+$runQueuedUtc = [DateTime]::UtcNow
+$runStartUtc = $runQueuedUtc   # overwritten at the claim; a reader before it sees the queued instant, never nothing
 # #700: the slot this run holds, and how far it got. `slotOutcome` is Enter-GateSlot's word;
 # `stagesCompleted` is set as the LAST statement inside the stage try; `slotRunEnded` is set where
 # RUN-END is written. The finally reads all three so it can tell a run that left early from one
@@ -1042,6 +1047,15 @@ function Get-SlotDir {
 # Best-effort by construction: a gate run must not fail because a log line could not be written.
 # The failure is REPORTED rather than swallowed, because a silent logging failure would leave the
 # same hole this exists to close.
+# #956: how long a run waited for its slot, from two instants the run itself recorded. Clamped at
+# zero -- a start before its own queue instant is clock skew, and skew must not mint a saving.
+function Get-SlotWaitSecs {
+    param([Parameter(Mandatory)] [DateTime] $QueuedUtc, [Parameter(Mandatory)] [DateTime] $StartUtc)
+    $secs = ($StartUtc.ToUniversalTime() - $QueuedUtc.ToUniversalTime()).TotalSeconds
+    if ($secs -lt 0) { return 0 }
+    return [math]::Round($secs, 3)
+}
+
 function Write-SlotEvent {
     param([Parameter(Mandatory)] [string] $Event, [string] $Detail = '')
 
@@ -2374,7 +2388,13 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # longer on it -- which is why the publication below refuses to commit.
         headMovedDuringRun = $headMoved
         cargoTargetDir     = $actualTargetDir
+        # #956: the CLAIM instant. `queuedUtc` is when the gate began waiting; `slotWaitSecs` is the
+        # difference, derived once by Get-SlotWaitSecs so no reader has to reconstruct it from the
+        # ledger. A manifest written before this change has neither and its runStartUtc may include
+        # a wait -- absent means not measured, never "waited 0".
+        queuedUtc          = $runQueuedUtc.ToString('o')
         runStartUtc        = $runStartUtc.ToString('o')
+        slotWaitSecs       = Get-SlotWaitSecs -QueuedUtc $runQueuedUtc -StartUtc $runStartUtc
         # THE INSTANT THIS RECORD WAS SERIALIZED, WHICH IS NOT THE INSTANT THE RUN ENDED. Everything
         # that can still turn this run RED happens after this line: the pair is written, the
         # compare-and-swap can refuse, the correction can fail. A reader holding only the manifest
@@ -2692,6 +2712,10 @@ if ($script:slotOutcome -notin @('claimed', 'inherited')) {
     }
     exit 1
 }
+# #956: THE RUN STARTS HERE, with the slot held. Everything above this line is waiting; everything
+# below is the machine working on this head. Stamped after Enter-GateSlot answered claimed/inherited
+# so `runEndUtc - runStartUtc` is a machine number, and the ledger's RUN-START agrees to the second.
+$runStartUtc = [DateTime]::UtcNow
 
 $slotLockAtStart = Read-SlotLockSnapshot
 

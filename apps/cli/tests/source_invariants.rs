@@ -740,6 +740,195 @@ fn the_predicate_ignores_ordinary_rust_and_still_catches_the_defect() {
     );
 }
 
+/// A CALLER OF THE USER-SCOPED CONSTRUCTOR MAY NOT APPEND EVENTS (#775, closing the gap #820 filed).
+///
+/// `execution_cli.rs` says the gap in its own words, and this cell is the assertion it asked for:
+///
+/// > The structural half -- that `start`, `signal`, `amend` and the driver all reach
+/// > `addressable_scope`, and that `events::scope` has only read-path callers -- is an argument in
+/// > the PR body, not an assertion here, and **nothing re-reads it when a site is added.**
+///
+/// **Why that argument is load-bearing.** `list_streams` keys on `(scope, stream_id)`, so two
+/// streams may share an id under different scopes and the store is happy to hold both. Three
+/// readers locate a stream by id alone and take the first match -- `serve/monitor.rs`, and
+/// `serve/wake.rs` twice. They are correct only because that collision cannot exist, and it cannot
+/// exist only because **every production writer's scope is DERIVED from the stream id** through
+/// `addressable_scope`. The sibling guard below keeps a second hand-written spelling of that rule
+/// out. This one keeps the OTHER door shut.
+///
+/// `events::scope` is the one production constructor that takes the workspace and project from the
+/// caller, so it is the only place a scope can be CHOSEN rather than derived. Measured on this
+/// tree, it has exactly two callers and neither writes events:
+///
+/// ```text
+/// src/commands/events/verify.rs    reads a repository
+/// src/commands/events/rebuild.rs   writes a PROJECTION generation, appends no events
+/// ```
+///
+/// `rebuild` is worth naming rather than filing under "read-only": it does write, to PostgreSQL,
+/// and it is safe here for a different reason -- a projection generation is not a stream, so it
+/// cannot bring a `(scope, stream_id)` pair into existence. A guard that said "these commands do
+/// not write" would be false about it and would be deleted by the first person who checked.
+///
+/// **Derived, not listed.** The two files above are not named in the assertion. Anything that calls
+/// the user-scoped constructor and also builds an append is an offender, so a THIRD caller written
+/// tomorrow is judged by the same rule rather than by a list somebody has to widen -- which is the
+/// property #577 and #927 both had to fix after a hand-written population went stale.
+///
+/// **What this does NOT claim.** It does not prove the collision is unreachable; it pins the one
+/// structural fact the reachability argument rests on. A writer that obtained a chosen scope some
+/// other way -- deserialised, cloned from a foreign row, handed in by a future caller of a future
+/// constructor -- is outside it, and #775's decision (ids unique per repository, or every reader
+/// takes a scope) is what would make the readers correct by construction instead.
+#[test]
+fn no_caller_of_the_user_scoped_constructor_appends_events() {
+    let scanned = sources();
+    let production: Vec<(String, String)> = scanned
+        .iter()
+        .filter(|(path, _)| path.starts_with("src/"))
+        .cloned()
+        .collect();
+
+    // ---- THE MATCHER FIRST. Once this lands, `offenders` is empty for as long as the rule holds,
+    // and an empty result proves nothing about whether the matcher can still find anything.
+    let both = vec![(
+        "src/fake.rs".to_owned(),
+        "let scope = super::scope(w, p, e)?;\nstore.append_atomic(&request)?;".to_owned(),
+    )];
+    assert_eq!(
+        user_scoped_writer_offenders(&both).len(),
+        1,
+        "HARNESS-BROKE: a file that both chooses a scope and appends is the whole subject, and the \
+         matcher does not see it"
+    );
+
+    // Each half alone is legitimate and must not be accused: the constructor's existing callers
+    // read, and every event writer in this crate derives its scope instead of choosing one.
+    let scope_only = vec![(
+        "src/fake.rs".to_owned(),
+        "let scope = super::scope(w, p, e)?;\nverify(&scope)".to_owned(),
+    )];
+    assert!(
+        user_scoped_writer_offenders(&scope_only).is_empty(),
+        "choosing a scope is what `events verify` legitimately does; alone it is not the defect"
+    );
+    // THE THIRD SPELLING, added after ISSUES 1 measured that `append_event(` -- eleven
+    // production sites, and the helper this file's own doc names -- was invisible to the
+    // matcher.
+    let via_helper = vec![(
+        "src/fake.rs".to_owned(),
+        "let scope = super::scope(w, p, e)?;\nappend_event(store, &scope, &stream, event)?;"
+            .to_owned(),
+    )];
+    assert_eq!(
+        user_scoped_writer_offenders(&via_helper).len(),
+        1,
+        "a chosen scope appended through `append_event` is the same defect as one appended \\
+         directly, and the matcher missed it until #942's review"
+    );
+
+    let append_only = vec![(
+        "src/fake.rs".to_owned(),
+        "let scope = super::addressable_scope(id)?;\nstore.append_atomic(&request)?;".to_owned(),
+    )];
+    assert!(
+        user_scoped_writer_offenders(&append_only).is_empty(),
+        "appending under a DERIVED scope is what every shipped writer does and is the safe case"
+    );
+
+    // A commented-out call is prose, and prose about this rule is exactly what the file that
+    // defines the constructor is full of.
+    let commented = vec![(
+        "src/fake.rs".to_owned(),
+        "// let scope = super::scope(w, p, e)?;\nstore.append_atomic(&request)?;".to_owned(),
+    )];
+    assert!(
+        user_scoped_writer_offenders(&commented).is_empty(),
+        "a call inside a comment is not a call"
+    );
+
+    // ---- and only now the real tree.
+    assert!(
+        !production.is_empty(),
+        "precondition: the walk must have returned production sources, or the absence asserted \
+         below is the absence of a SCAN"
+    );
+
+    // PRESENCE, not just population. "Zero offenders" is also what a scope pattern that matches
+    // NOTHING produces, and that failure is invisible from the result. This asserts the scan finds
+    // the constructor's real callers, so the emptiness below is about the second half of the rule.
+    let callers: Vec<&String> = production
+        .iter()
+        .filter(|(_, text)| calls_user_scoped_constructor(text))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(
+        !callers.is_empty(),
+        "HARNESS-BROKE: no production file appears to call the user-scoped constructor, so the \
+         first half of this rule matches nothing and the guard is vacuous"
+    );
+
+    let offenders = user_scoped_writer_offenders(&production);
+    assert!(
+        offenders.is_empty(),
+        "these choose a RepositoryScope from caller-supplied workspace/project AND append events \
+         under it. That is the one way two streams can come to share a stream_id under different \
+         scopes, and three readers in `serve` locate a stream by id alone and take the first \
+         match, so they would then answer about a different execution than the /v1 verbs do \
+         (#775). Derive the scope from the stream id through \
+         `super::execution::addressable_scope` instead:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Whether this source CALLS the constructor that takes workspace and project from its caller.
+///
+/// Both spellings, because the existing callers sit inside the `events` module and reach it as
+/// `super::scope`, while anything written outside it would reach it as `events::scope`. Matching
+/// one spelling would make a future caller in a new module invisible, which is the population this
+/// guard exists for rather than the one it already knows about.
+fn calls_user_scoped_constructor(text: &str) -> bool {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .any(|line| line.contains("super::scope(") || line.contains("events::scope("))
+}
+
+/// Whether this source builds an event append.
+///
+/// **`append_event(` is the third spelling and it was missing** (found by ISSUES 1 reviewing #942).
+/// It is the helper `execution/mod.rs` exports, with eleven call sites across `cancel.rs`,
+/// `driver.rs` and `mod.rs` -- and this file's own doc names it, so a guard that could not see it
+/// was stricter in prose than in code. Measured across `apps/cli/src` at the time:
+///
+/// ```text
+/// PreparedAppend::new(   19   matched
+/// .append_atomic(        19   matched
+/// append_event(          11   NOT matched   <- the gap
+/// .append(                3   OpenOptions::append(true) -- file I/O, correctly out
+/// ```
+///
+/// **This is still a list, and the list is the weakness.** Deriving it -- every `fn` whose body
+/// reaches `append_atomic` -- is the version that stops needing maintenance, and it is bigger than
+/// this guard. Named here so the next person widening it knows they are paying interest rather
+/// than fixing something.
+fn appends_events(text: &str) -> bool {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .any(|line| {
+            line.contains("append_atomic(")
+                || line.contains("PreparedAppend::new(")
+                || line.contains("append_event(")
+        })
+}
+
+fn user_scoped_writer_offenders(sources: &[(String, String)]) -> Vec<String> {
+    sources
+        .iter()
+        .filter(|(_, text)| calls_user_scoped_constructor(text) && appends_events(text))
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
 /// The addressing rule has ONE home, and a production `RepositoryScope` must not spell it out
 /// (#820, enforcing the rule #560 recorded).
 ///
@@ -907,4 +1096,81 @@ fn sample(path: &str, offset: usize) -> (String, String) {
     }
     text.push_str("WorkspaceId::parse(\"workspace-local\"),\n);");
     (path.to_owned(), text)
+}
+
+/// THE MATCHER READS TWO SPELLINGS, AND THIS IS WHY THAT IS ENOUGH (#942's review).
+///
+/// `calls_user_scoped_constructor` looks for `super::scope(` and `events::scope(`. Neither sees the
+/// ordinary Rust idiom -- `use crate::commands::events::scope;` and then a bare `scope(...)`.
+///
+/// ISSUES 1 raised it and proposed two answers: widen the matcher to a word-boundary match on
+/// `scope(`, or assert the import does not exist. The first is riskier than the thing it guards --
+/// `scope(` is a common word in this crate, and a matcher that also fired on `addressable_scope(`
+/// or `wake_scope(` would cry wolf until somebody deleted it. The second is smaller and fully
+/// derivable, and it is what this cell does.
+///
+/// So the pair is honest about its shape: the matcher reads the two qualified spellings, and this
+/// asserts the third does not arise. If it ever does, this fails and names the file, and whoever
+/// adds the import decides then whether to qualify the call or widen the matcher -- with the
+/// trade-off already written down rather than re-derived.
+#[test]
+fn no_production_source_imports_the_user_scoped_constructor_by_bare_name() {
+    let scanned = sources();
+    let production: Vec<(String, String)> = scanned
+        .iter()
+        .filter(|(path, _)| path.starts_with("src/"))
+        .cloned()
+        .collect();
+    assert!(
+        !production.is_empty(),
+        "precondition: the walk must have returned production sources"
+    );
+
+    // A matcher control first: this is meant never to fire, so its health cannot be read off a
+    // green run over a clean tree.
+    let planted = vec![(
+        "src/fake.rs".to_owned(),
+        "use crate::commands::events::scope;".to_owned(),
+    )];
+    assert_eq!(
+        bare_scope_imports(&planted).len(),
+        1,
+        "HARNESS-BROKE: a bare import of the constructor is the subject and the matcher missed it"
+    );
+    let qualified = vec![(
+        "src/fake.rs".to_owned(),
+        "use crate::commands::events;".to_owned(),
+    )];
+    assert!(
+        bare_scope_imports(&qualified).is_empty(),
+        "importing the MODULE is the spelling the matcher already reads and must not be accused"
+    );
+
+    let offenders = bare_scope_imports(&production);
+    assert!(
+        offenders.is_empty(),
+        "these import the user-scoped constructor by bare name, which the matcher above cannot see, so a writer in them would go unjudged (#775, #942): {offenders:?}"
+    );
+}
+
+/// Sources importing `scope` itself rather than the module that holds it.
+fn bare_scope_imports(sources: &[(String, String)]) -> Vec<String> {
+    sources
+        .iter()
+        .filter(|(_, text)| {
+            text.lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .any(|line| {
+                    let trimmed = line.trim_start();
+                    trimmed.starts_with("use ")
+                        && trimmed.contains("events::")
+                        && (trimmed.contains("::scope;")
+                            || trimmed.contains("::scope,")
+                            || trimmed.contains("{scope")
+                            || trimmed.contains(" scope,")
+                            || trimmed.contains(" scope}"))
+                })
+        })
+        .map(|(path, _)| path.clone())
+        .collect()
 }

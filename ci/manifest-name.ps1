@@ -147,6 +147,74 @@ function New-GateManifestFileName {
     return "$head-$($Now.ToString('yyyyMMddTHHmmss.fffZ', [cultureinfo]::InvariantCulture))-$Suffix.json"
 }
 
+function Invoke-TransientFileRetry {
+    <#
+      One file operation, retried while the failure is one waiting can fix (#976).
+
+      WHY THIS EXISTS AND WHY IT IS HERE RATHER THAN AROUND THE CALLER. `File.Replace` fails on
+      Windows whenever anything holds the destination for an instant -- a concurrent gate, the
+      indexer, a scanner. This file already records that as measured: "under five concurrent gates,
+      File.Replace -> Unable to remove the file to be replaced". One attempt turned that instant
+      into a RED run, and the reproduction always failed because reproducing it means running ONE
+      gate on an idle machine, which is the one condition under which it cannot happen (seven
+      isolated attempts across two lanes, #947).
+
+      THE LEVEL IS THE POINT. A retry around the WHOLE pair commit was tried first and is wrong:
+      that operation is several files as one unit, its guarantee is both-or-neither, and a second
+      attempt runs against a world the first already touched -- measured, it left one copy rewritten
+      and the other not, which is the half-pair this file exists to prevent (2 of 60 cells red).
+      A SINGLE `Replace` or `Move` is atomic: it happened or it did not, so from the loop's point of
+      view a retried attempt merely took longer, and the caller's rollback is untouched.
+
+      AND ONLY THE TRANSIENT CLASS. `FileNotFoundException` and `DirectoryNotFoundException` derive
+      from `IOException`, and waiting does not make a missing file appear -- retrying those would
+      delay a correct failure by the whole budget and say nothing new. Sharing violations and access
+      denials are the ones a lock clears.
+    #>
+    param(
+        [Parameter(Mandatory)][scriptblock] $Operation,
+        [int] $Attempts = 3,
+        [int] $RetryDelayMilliseconds = 150
+    )
+
+    $total = [Math]::Max(1, $Attempts)
+    for ($attempt = 1; $attempt -le $total; $attempt++) {
+        try {
+            & $Operation
+            return
+        } catch {
+            # UNWRAPPED FIRST, AND THIS IS THE WHOLE THING (#984's review). A static .NET call that
+            # throws inside PowerShell does not surface its own exception: the engine wraps it in a
+            # `MethodInvocationException` and puts the real one in `InnerException`. Measured on a
+            # real failing `File.Move` (destination exists):
+            #
+            #   caught type           System.Management.Automation.MethodInvocationException
+            #   is IOException?       False                   <- the classification the cells relied on
+            #   inner type            System.IO.IOException
+            #
+            # So testing `$_.Exception` alone made `$transient` false for EVERY real file operation,
+            # and the retry rethrew immediately on exactly the momentary lock it exists to absorb.
+            # The first cells missed it because they `throw` raw exception instances from a
+            # scriptblock, which the engine does not wrap -- a fixture that never crossed the
+            # boundary it was written to cover.
+            $transient = $false
+            $exception = $_.Exception
+            while ($exception) {
+                if ((($exception -is [System.IO.IOException]) -and
+                     -not ($exception -is [System.IO.FileNotFoundException]) -and
+                     -not ($exception -is [System.IO.DirectoryNotFoundException])) -or
+                    ($exception -is [System.UnauthorizedAccessException])) {
+                    $transient = $true
+                    break
+                }
+                $exception = $exception.InnerException
+            }
+            if (-not $transient -or $attempt -eq $total) { throw }
+            if ($RetryDelayMilliseconds -gt 0) { Start-Sleep -Milliseconds $RetryDelayMilliseconds }
+        }
+    }
+}
+
 function Write-ManifestPairContent {
     <#
       ONE run's content reaches BOTH stores, or neither. The half-pair invariant lives HERE and
@@ -181,7 +249,12 @@ function Write-ManifestPairContent {
         # The seam a cell needs to arm a PARTIAL commit. It runs after every staging file exists and
         # before the first commit -- the only window in which the first commit can succeed and the
         # second fail, which is the state the rollback exists for. Production never passes it.
-        [scriptblock] $BeforeCommit
+        [scriptblock] $BeforeCommit,
+        # #976: how many times a SINGLE file operation may be attempted, and the pause between.
+        # Cells set the delay to 0 so a suite does not sleep; production keeps a pause long enough
+        # for a scanner or an indexer to let go of the destination.
+        [int] $Attempts = 3,
+        [int] $RetryDelayMilliseconds = 150
     )
 
     $encoding = New-Object System.Text.UTF8Encoding($false)
@@ -263,7 +336,9 @@ function Write-ManifestPairContent {
     try {
         for ($i = 0; $i -lt $staged.Count; $i++) {
             if ($Commit -eq 'Create') {
-                [System.IO.File]::Move($staged[$i], $FinalPaths[$i])
+                $source = $staged[$i]; $destination = $FinalPaths[$i]
+                Invoke-TransientFileRetry -Attempts $Attempts -RetryDelayMilliseconds $RetryDelayMilliseconds `
+                    -Operation { [System.IO.File]::Move($source, $destination) }
             } else {
                 # REPLACE, NOT COPY. `File.Copy(src, dst, overwrite)` writes THROUGH the destination:
                 # a kill halfway leaves a truncated file where a VALID record was, which is the one
@@ -285,8 +360,11 @@ function Write-ManifestPairContent {
                 #
                 # Full paths for the same reason as everywhere else in this file.
                 $backup = "$($FinalPaths[$i]).backup"
-                [System.IO.File]::Replace([System.IO.Path]::GetFullPath($staged[$i]),
-                    [System.IO.Path]::GetFullPath($FinalPaths[$i]), [System.IO.Path]::GetFullPath($backup))
+                $source = [System.IO.Path]::GetFullPath($staged[$i])
+                $destination = [System.IO.Path]::GetFullPath($FinalPaths[$i])
+                $backupFull = [System.IO.Path]::GetFullPath($backup)
+                Invoke-TransientFileRetry -Attempts $Attempts -RetryDelayMilliseconds $RetryDelayMilliseconds `
+                    -Operation { [System.IO.File]::Replace($source, $destination, $backupFull) }
                 $backups += $backup
             }
             $committed += $FinalPaths[$i]
@@ -313,8 +391,13 @@ function Write-ManifestPairContent {
                 $backup = "$($committed[$k]).backup"
                 if (-not (Test-Path -LiteralPath $backup)) { $stuck += $committed[$k]; continue }
                 try {
-                    [System.IO.File]::Replace([System.IO.Path]::GetFullPath($backup),
-                        [System.IO.Path]::GetFullPath($committed[$k]), [NullString]::Value)
+                    # RETRIED FOR THE SAME REASON AND MORE URGENTLY (#976): a rollback defeated by a
+                    # momentary lock leaves exactly the half-corrected pair this function exists to
+                    # prevent, and unlike the commit it has nothing left to fall back to.
+                    $backupFull = [System.IO.Path]::GetFullPath($backup)
+                    $finalFull = [System.IO.Path]::GetFullPath($committed[$k])
+                    Invoke-TransientFileRetry -Attempts $Attempts -RetryDelayMilliseconds $RetryDelayMilliseconds `
+                        -Operation { [System.IO.File]::Replace($backupFull, $finalFull, [NullString]::Value) }
                 } catch { $stuck += $committed[$k] }
             }
         }

@@ -24,7 +24,7 @@
 # not calls, and Assert-Equal's delegation to Assert-True fires once per call rather than as an
 # assertion of its own. A miscount here has twice caught a cell that stopped running while its
 # neighbours stayed green -- which is the mechanism working, not a nuisance.
-$ExpectedAssertionCount = 60
+$ExpectedAssertionCount = 75
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -441,6 +441,135 @@ try {
     Assert-Equal 1 @($vanished.Missing).Count 'a copy that is not on disk is reported as MISSING'
     Assert-True -Condition ($vanished.Failure -clike '*is not on disk*') `
         -Label "and the failure says so in its own words, not 'could not be rewritten' (got: $($vanished.Failure))"
+
+
+    # ---- #976: a MOMENTARY lock is not a verdict, and only a momentary one is retried ------------
+    # `File.Replace` fails whenever anything holds the destination for an instant, and this file
+    # already records that as reachable "under five concurrent gates". The retry is at the SINGLE
+    # operation, never around the pair: a pair commit is both-or-neither, and retrying it runs the
+    # second attempt against a world the first touched. Measured when that was tried: one copy
+    # rewritten and the other not, 2 of these 60 cells red. So the seam is the one-file helper.
+
+    # CAUGHT, not relied on. Without the try the sabotage "no retry at all" kills this suite with an
+    # unhandled IOException at this line instead of naming a cell -- caught by sabotaging it, and a
+    # crash is a worse signal than a FAIL because it stops every cell after it too.
+    $script:calls = 0
+    $retryEscaped = $false
+    try {
+        Invoke-TransientFileRetry -Attempts 3 -RetryDelayMilliseconds 0 -Operation {
+            $script:calls++
+            if ($script:calls -lt 2) { throw (New-Object System.IO.IOException('the file is in use by another process')) }
+        }
+    } catch { $retryEscaped = $true }
+    Assert-True -Condition (-not $retryEscaped) -Label 'a transient failure does not escape: the retry absorbs it'
+    Assert-Equal 2 $script:calls 'a transient failure is retried and the second attempt is the one that counts'
+
+    # THE DISCRIMINATION, and without it the retry only slows correct failures down. FileNotFound
+    # and DirectoryNotFound DERIVE from IOException, so a naive `catch [IOException]` retries them --
+    # and waiting does not make a missing file appear.
+    $script:calls = 0
+    $missingThrew = $false
+    try {
+        Invoke-TransientFileRetry -Attempts 3 -RetryDelayMilliseconds 0 -Operation {
+            $script:calls++
+            throw (New-Object System.IO.FileNotFoundException('no such manifest'))
+        }
+    } catch { $missingThrew = $true }
+    Assert-True -Condition $missingThrew -Label 'a missing file still fails'
+    Assert-Equal 1 $script:calls 'and it is NOT retried: waiting cannot make a file appear, so the budget is not spent on it'
+
+    # An access denial IS the class a lock clears, and it does not derive from IOException.
+    $script:calls = 0
+    try {
+        Invoke-TransientFileRetry -Attempts 2 -RetryDelayMilliseconds 0 -Operation {
+            $script:calls++
+            throw (New-Object System.UnauthorizedAccessException('access to the path is denied'))
+        }
+    } catch { }
+    Assert-Equal 2 $script:calls 'an access denial is retried too -- it is what a scanner holding the file looks like'
+
+    # EXHAUSTION STILL FAILS. A retry that swallowed the last failure would turn a real fault into a
+    # silent no-op, which is worse than the RED it was added to prevent.
+    $script:calls = 0
+    $exhausted = $false
+    try {
+        Invoke-TransientFileRetry -Attempts 3 -RetryDelayMilliseconds 0 -Operation {
+            $script:calls++
+            throw (New-Object System.IO.IOException('still locked'))
+        }
+    } catch { $exhausted = $true }
+    Assert-True -Condition $exhausted -Label 'a failure that never clears is still thrown, so the caller still rolls back'
+    Assert-Equal 3 $script:calls 'and it is attempted exactly the budget, never more'
+
+    # AND THE WRITER TAKES THE BUDGET. Without this the parameters could be ignored and every cell
+    # above would still pass, because they exercise the helper rather than its caller.
+    $rt = Join-Path $root 'retry-a'; New-Item -ItemType Directory -Path $rt | Out-Null
+    $rtName = 'cccccccccccc-20260906T000000.000Z-rt.json'
+    $rtPath = Join-Path $rt $rtName
+    [System.IO.File]::WriteAllText($rtPath, '{"status":"STALE"}')
+    $onceCommitted = Write-ManifestPairContent -FinalPaths @($rtPath) -Json '{"status":"PUBLISHED"}' `
+        -Commit 'Replace' -Attempts 1 -RetryDelayMilliseconds 0
+    Assert-Equal 1 @($onceCommitted).Count 'the writer accepts an explicit attempt budget and still commits'
+    Assert-Equal '{"status":"PUBLISHED"}' ([System.IO.File]::ReadAllText($rtPath)) `
+        'and the bytes on disk are the published ones, so the retried path is the real commit path'
+
+
+    # ---- #984: THE REAL BOUNDARY, because raw `throw` never crosses it ---------------------------
+    # Every cell above hands the retry an exception instance it constructed. PowerShell does not wrap
+    # those. A static .NET call that fails DOES get wrapped -- `MethodInvocationException` with the
+    # real error in `InnerException` -- so a classifier reading `$_.Exception` alone was false for
+    # every real file operation and the retry rethrew on the first attempt. Measured before this fix:
+    #
+    #   [System.IO.File]::Move(src, dst) with dst existing
+    #     caught type      System.Management.Automation.MethodInvocationException
+    #     is IOException?  False
+    #     inner type       System.IO.IOException
+    #
+    # These cells drive the operation itself, so the wrapping is present and the classification is
+    # exercised where it actually runs.
+    $bd = Join-Path $root 'boundary'; New-Item -ItemType Directory -Path $bd | Out-Null
+    $bSrc = Join-Path $bd 'src.txt'; $bDst = Join-Path $bd 'dst.txt'
+    [System.IO.File]::WriteAllText($bSrc, 'source')
+    [System.IO.File]::WriteAllText($bDst, 'destination')
+
+    # A REAL transient-class failure: Move onto a destination that exists is an IOException, wrapped.
+    $script:calls = 0
+    $realThrew = $false
+    try {
+        Invoke-TransientFileRetry -Attempts 3 -RetryDelayMilliseconds 0 -Operation {
+            $script:calls++
+            [System.IO.File]::Move($bSrc, $bDst)
+        }
+    } catch { $realThrew = $true }
+    Assert-True -Condition $realThrew -Label 'a real File.Move failure that never clears is still thrown'
+    Assert-Equal 3 $script:calls `
+        'and it was RETRIED through the wrapper: the classifier reads the inner exception, not the MethodInvocationException'
+
+    # THE DISCRIMINATION, at the same real boundary. A missing SOURCE is FileNotFound wrapped the
+    # same way, and must NOT consume the budget -- otherwise the unwrap would have traded one wrong
+    # classification for another.
+    $script:calls = 0
+    $missingRealThrew = $false
+    try {
+        Invoke-TransientFileRetry -Attempts 3 -RetryDelayMilliseconds 0 -Operation {
+            $script:calls++
+            [System.IO.File]::Move((Join-Path $bd 'no-such-file.txt'), (Join-Path $bd 'out.txt'))
+        }
+    } catch { $missingRealThrew = $true }
+    Assert-True -Condition $missingRealThrew -Label 'a real missing-source failure still fails'
+    Assert-Equal 1 $script:calls `
+        'and is NOT retried even though it arrives wrapped too -- the unwrap classifies, it does not blanket-retry'
+
+    # CONTROL: an operation that SUCCEEDS is attempted once, so the two counts above are about
+    # classification rather than about the helper always looping.
+    $script:calls = 0
+    $bOk = Join-Path $bd 'moved.txt'
+    Invoke-TransientFileRetry -Attempts 3 -RetryDelayMilliseconds 0 -Operation {
+        $script:calls++
+        [System.IO.File]::Move($bSrc, $bOk)
+    }
+    Assert-Equal 1 $script:calls 'CONTROL: a real operation that succeeds is attempted once'
+    Assert-True -Condition ([System.IO.File]::Exists($bOk)) 'CONTROL: and it really moved the file'
 
 
 } finally {

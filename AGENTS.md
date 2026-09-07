@@ -223,8 +223,29 @@ re-asked, or audited; a carry without the head sha covers nothing.
 
 - A PR needs **two passes from two different lanes, neither the author**, each naming the sha it
   measured. Say "no open roots **against `<sha>`**", never "no open roots". **Whoever presses is a
-  third lane** — neither the author nor either reviewer; with only two lanes available, the Observador
-  presses under interim authority and writes that in the merge comment.
+  third lane** — neither the author nor either reviewer. **When no such lane exists** — every live
+  lane other than the author holds a verdict on the PR — **the reviewer whose pass is EARLIEST at
+  the current head, or carried to it by the parent rule (a manifest-only tip over a reviewed
+  parent), presses**, and writes in the merge comment that the third-lane set was empty, naming
+  every lane and the sha of its verdict. The earliest pass is read from the ISSUE-COMMENT surface
+  only: a pull-request review can be edited in place too (the update-review endpoint) and its
+  listing carries no edit instant, so a review body classifies its lane but is never the earliest
+  pass — a lane whose pass is only a review re-posts it as a comment. An exact tie has not occurred
+  (0 in 279 bodies across 14 PRs); if two comment passes tie to the second, both lanes re-affirm
+  in a new comment and the earlier of those presses. Earliest, not most recent: "most recent" is chosen by
+  something a reviewer controls (their own re-pin), so a lane could select itself; the earliest
+  pass at a head is fixed the moment it is written — its `created_at` — and **an edited body is not
+  a pass for this choice**: GitHub records when a comment appeared and when it last changed, never
+  when its verdict was written, so any rule computed from those two fields is moved by an edit in
+  one direction or the other; a lane whose pass was edited re-posts it unedited, and a carried pass
+  keeps the instant it was written with. A PR with two passes and a manifest for its head
+  does not wait on a rule; the rule exists to keep a reviewer from approving their own reading, and
+  a reviewer pressing on a *second* lane's independent pass keeps that property. (Owner order,
+  2026-09-07, recorded verbatim in the original Portuguese on #901 issuecomment-5572591257 — in
+  English: "the orchestrator must decide everything about the project; I only do not want you to
+  waste time waiting for my answer" — and applied in #977: the orchestrator decides the protocol;
+  #952 sat twelve hours with complete evidence because the eligible set was empty, and that wait
+  is the cost this clause removes.)
 - Approval is the reviewer's **word in the text**. GitHub cannot record it — self-approval is
   refused on a shared account — so every review is `COMMENTED`, and a review whose body declines
   to verify ("not a pin", "I will not record this as verified") is **not** a pass. The identity line

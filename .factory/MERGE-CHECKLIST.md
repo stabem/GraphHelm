@@ -224,7 +224,21 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    landed on main in between (this very PR, `acf4c5fc`, carried `core/events/src/local.rs +13/−90`
    against #823; caught by H, invisible to any "deleted files" check because nothing was deleted).
 4. **Mergeable asked twice.** First answer `UNKNOWN` means "not computed yet", never "no problem".
-   Wait for `MERGEABLE` + `mergeStateStatus CLEAN`.
+   Wait for `MERGEABLE` + `mergeStateStatus CLEAN`. **`BLOCKED` with zero checks and no
+   `reviewDecision` means unresolved review threads on THAT PR** — the ruleset `main: no merge with
+   unresolved review threads` (id 22033475, since 2026-09-01). Codex posts inline threads even while
+   its summary says quota exhausted, and the REST `mergeable` field does not show them. Read
+   `reviewThreads` (GraphQL, paginated by `gh` itself — the query must declare `$endCursor` and
+   pass it, or `--paginate` cannot advance: `gh api graphql --paginate -f query='query($endCursor:
+   String) { repository(owner:"stabem", name:"GraphHelm") { pullRequest(number:N) {
+   reviewThreads(first:50, after:$endCursor) { pageInfo { hasNextPage endCursor } nodes { id
+   isResolved path } } } } }'`; a PR with more than 50 threads hides the rest from an unpaginated
+   call. In Windows PowerShell 5.1 that same line loses its inner double quotes on the way to `gh`
+   — `invalid value (stabem)` — so there escape them, `owner:\"stabem\", name:\"GraphHelm\"`, or
+   read the query from a file with `-F query=@path` (`-f` sends the `@` literally, and `--input`
+   refuses `--paginate`); both forms answered `2` on #977 before being written here) BEFORE `mergeable`,
+   resolve each against a fix or a written reason, and only then ask `mergeable` twice (measured on #977: four P1 threads, all right, behind a BLOCKED
+   nobody could explain from REST).
 5. **Closing keywords in FOUR places, union == intent.** GitHub's parser reads no negation, and the
    three readings are NOT redundant: on #746 the PR body was fixed before the merge and
    `closingIssuesReferences` came back clean — and the squash `34cced9c` still shut #717 two seconds
@@ -313,13 +327,16 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    **AND A VERDICT DISQUALIFIES, A NOTE DOES NOT.** What bars a lane from the button is having
    REVIEWED — a body carrying a verdict word, which is the same thing this item already counts a
    pass by. A body that measures something, routes the work, reports a coupling, reports a dead gate
-   or asks a question is not a review and leaves its lane eligible; the writer marks it, and several
+   or asks a question is not a review and leaves its lane eligible — unless it states a condition
+   on the merge, which item 12 classifies as a verdict. **Where this item and item 12 read a body
+   differently, item 12 governs the census (who is eligible, who presses) and this item governs
+   everything else.** The writer marks a non-review, and several
    already do (`**not a verdict**`, `a note for whoever reviews, not a change`). Without this the
    rule eats its own board: measured on #952 on 2026-09-07, nine distinct signatures had written on
    one thread and a strict reading left **no eligible presser at all** for a pull request that was
    `MERGEABLE` and carried a manifest. A rule that makes correct work unpressable is not stricter,
-   it is broken. When a thread genuinely has no lane left, say so ON it and escalate rather than
-   pressing anyway or letting it sit silently.
+   it is broken. When a thread genuinely has no lane left, say so ON it and apply item 12 — the
+   exhaustion clause — rather than pressing outside the rule or letting it sit silently.
    **LIST the bodies; do not FILTER them.** Read the first line of every comment and decide with your
    eyes. Both directions of a filter have failed here — a pattern that found nothing on three PRs a lane
    had reviewed, and one that matched a lane that had not. From #958's own thread, two rows any
@@ -363,6 +380,94 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    press. Whoever closes #N without merging owns that flip, and the ADR names them; if the ADR names
    nobody, the presser of the PR that introduced it adds the name before pressing (X, first exercise
    of this item, #957 on #595).
+12. **An empty third-lane set is a reading, not a wait.** Before saying "no eligible presser", list
+   every live lane (`ListAgents`) and put each in exactly one of FOUR classes — **by LANE, never by
+   session** (disqualification attaches to the lane, #971; a session filtering by its own id misses
+   its own lane's earlier verdict):
+   - **author** — never presses;
+   - **verdict at `<sha>`** — a body carrying `APPROVE`, `APPROVE-WITH-RISK` or `BLOCK` at any
+     head; disqualified from pressing, counted as a pass only if the sha is the current head or
+     carries under item 1's parent rule;
+   - **body without verdict** — measurement, routing, question, `**not a verdict**`; the lane is
+     **ELIGIBLE** (item 8 says so; a census that lacks this class declares the set empty while an
+     independent lane exists). One clause draws the boundary: **a body that states a condition on
+     the merge — "X is owed before the press", "this blocks", "wait for Y" — is a verdict for
+     eligibility whatever word it uses; a body that only measures (a count, a path correction, a
+     routing note) is not.** Measured on #939: a `**not a verdict**` body carrying "what is actually
+     blocking" and "required before the press" is a merge judgement, and its lane may not press;
+   - **no body** — eligible.
+   Read BOTH surfaces, paginated, with a timestamp and enough of each body to see the verdict word —
+   the first line carries the lane but not always the verdict (52 of 186 bodies across 14 PRs did
+   not begin with `Lane:`). Two forms, shell-specific on purpose, **both run verbatim on #958 (45
+   comments, 0 reviews) before they were written here** — a jq expression with a quoted `\n` fails
+   in PowerShell 5.1, and `--slurp` is refused together with `-q` in gh 2.85.0, so neither appears:
+   Each row is `created  edited-or-dash  surface  id  V-or-dash  first-240-chars`. **A verdict's
+   instant is its `created_at`, and an edited body is not a pass for the earliest-pass choice.**
+   An issue comment can be edited in place, and neither field survives that: `created_at` lets an
+   edit BACKDATE a pass (an old note edited into an approval), `updated_at` lets an edit POSTDATE
+   one (a typo fix moves a `t1` approval behind a `t2` one and hands the press to the other lane)
+   — the mirror defect, both measured on this PR. Neither is when the verdict was written and
+   there is no third field, so no arithmetic over them holds. The `edited` column already carries
+   the signal: a `V` row with a timestamp there still classifies its lane (it holds a verdict)
+   but is not the earliest pass; a lane whose pass was edited re-posts it unedited if it is to
+   press. Reviews CAN be edited in place too — the REST update-review endpoint — and the review
+   listing carries no edit instant at all, which is why the `R` row's `edited` column is a hard
+   dash: it means UNKNOWABLE, not unedited. So the review surface CLASSIFIES a lane (it holds a
+   verdict; it may not press as a third lane) but never supplies the earliest pass; a lane whose
+   pass is only a review re-posts it as an issue comment to press. **The `V` column is a locator,
+   not a classification**: it says the verdict words occur somewhere in the WHOLE body, in ANY case
+   (`approve` after character 240 is `V`), so no verdict is lost to the cut or to case. The READER
+   classifies, by item 8's own rule — list, do not filter — and reads in full: every `V` row whose
+   excerpt is a note or quotes another lane (a note citing a verdict is a note), and **every `-`
+   row, without exception** — a `-` means no verdict word anywhere, and the only way to know
+   whether such a body states a condition on the merge ("X is owed before the press", "wait for Y",
+   possibly after character 240 behind an ordinary-looking paragraph) is to read it; the excerpt is
+   a triage aid for `V` rows, never a reason to skip a `-` row. The `id` and `surface` columns are
+   what make "read in full" possible — a comment
+   and a review live on different routes:
+   `gh api repos/stabem/GraphHelm/issues/comments/<id> -q .body` for surface `C`,
+   `gh api repos/stabem/GraphHelm/pulls/N/reviews/<id> -q .body` for surface `R`.
+   No keyword test decides eligibility on its own.
+   ```bash
+   gh api --paginate repos/stabem/GraphHelm/issues/N/comments -q '.[] | .created_at + "  " + (if .updated_at != .created_at then .updated_at else "-" end) + "  C  " + (.id|tostring) + "  " + (if (.body | test("approve|block"; "i")) then "V" else "-" end) + "  " + (.body | gsub("\r?\n"; " ") | .[0:240])'
+   gh api --paginate repos/stabem/GraphHelm/pulls/N/reviews   -q '.[] | .submitted_at + "  -  R  " + (.id|tostring) + "  " + (if (.body | test("approve|block"; "i")) then "V" else "-" end) + "  " + (.body | gsub("\r?\n"; " ") | .[0:240])'
+   ```
+   `--jq` runs per page and the pages concatenate, so this is correct past 100 bodies. The `gsub`
+   is load-bearing: without it a body's own newlines print 45 bodies as 197 lines, and the census
+   reads one row per body.
+   ```powershell
+   $c = @(gh api --paginate --slurp repos/stabem/GraphHelm/issues/N/comments | ConvertFrom-Json) | ForEach-Object { $_ } | ForEach-Object { $_ } |
+       ForEach-Object { $b = ($_.body -replace "`r?`n", ' '); $v = if ($_.body -imatch 'approve|block') { 'V' } else { '-' }
+                        $u = if ($_.updated_at -ne $_.created_at) { $_.updated_at } else { '-' }
+                        "{0}  {1}  C  {2}  {3}  {4}" -f $_.created_at, $u, $_.id, $v, $b.Substring(0, [Math]::Min(240, $b.Length)) }
+   $r = @(gh api --paginate --slurp repos/stabem/GraphHelm/pulls/N/reviews | ConvertFrom-Json) | ForEach-Object { $_ } | ForEach-Object { $_ } |
+       ForEach-Object { $b = ($_.body -replace "`r?`n", ' '); $v = if ($_.body -imatch 'approve|block') { 'V' } else { '-' }
+                        "{0}  -  R  {1}  {2}  {3}" -f $_.submitted_at, $_.id, $v, $b.Substring(0, [Math]::Min(240, $b.Length)) }
+   ```
+   `--slurp` returns an array of PAGES, so the flatten is **two** levels — one level prints
+   `System.Object[]` as a single row for 45 comments (measured). The empty-surface guard is that
+   two-level flatten, not the `@(...)`: an empty pipeline is AutomationNull and counts 0, while a
+   literal `$null` counts 1 — assign from the pipeline, never from a literal. **The cut is taken
+   from the normalised string's length, never the original's:** `-replace` shortens CRLF to one
+   space, and `Substring(0, Min(240, <original length>))` throws `ArgumentOutOfRangeException` on a
+   body under 240 chars with CRLF — non-terminating, so the row simply vanishes and that lane reads
+   as verdict-free, i.e. eligible. Measured with two synthetic rows: cut from the original length,
+   `rows=1`; from the normalised, `rows=2`. A 45-of-45 on #958 could not see it (`any_cr=0,
+   shortest=162` — the axis was never varied), which is why the synthetic CRLF row is the cell.
+   Merge the two lists by timestamp before choosing.
+   If every non-author lane is `author` or `verdict`, the reviewer whose pass at the current head —
+   or carried to it under item 1's parent rule, when the tip is manifest-only over the reviewed
+   parent — has the EARLIEST issue-comment timestamp presses under `AGENTS.md`'s exhaustion clause
+   (both surfaces are CENSUSED, but the earliest pass is read from the comment surface only — see
+   the `edited` paragraph above; on an exact tie, which has not occurred — 0 in 279 bodies across 14
+   PRs, ISSUES 4's census on #977 — and which ids cannot break, because review ids sit ~437 million
+   below comment ids and "lower id" would always pick the review, both lanes re-affirm in a new
+   comment and the earlier of those presses) and pastes
+   the four-class list, with timestamps and the carry noted, into the merge
+   comment. A carried pass keeps its own timestamp; it does not become "earliest" by being carried. A census from a time
+   window or from one surface is not a reading, and a lane's own refusal to press is a recusal from
+   PRESSING only, never from having reviewed (#959: four passes read as two; #958: a filtered
+   table dropped sixteen bodies and read a seven-verdict lane as none).
 
 ## After the merge (read the output — do not report what you intended)
 

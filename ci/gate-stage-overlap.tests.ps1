@@ -106,7 +106,7 @@ try {
         'and JOINED inside the stage it has always been recorded as, so the manifest keeps one shape and one name'
 
     Assert-True ($gateText.IndexOf('Test-StageOverlapped -Records', [System.StringComparison]::Ordinal) -ge 0) `
-        'and the gate asks the predicate about its OWN records, so a run that quietly went serial reddens'
+        'and the gate asks the predicate about its OWN records, so a run that quietly went serial is recorded'
 
     # ---------------------------------------------------------------------------------------------
     # A CONCURRENT FAILURE MUST NOT BE SWALLOWED, and it must still be READABLE.
@@ -224,39 +224,28 @@ try {
     Assert-True ($listAnswer -eq $true) `
         'and answers the same for a List as for the array the other cells build'
 
-    $constantMatch = [regex]::Match($gateText, '\$OverlapStageName\s*=\s*''([^'']+)''')
-    # ANCHORED ON THE ALARM'S OWN Write-Host, not on the first append in the file. An unanchored
-    # `$failed +=` match is a POSITIONAL claim wearing a regex -- the same family as the three order
-    # cells already fixed here, one layer down. It happens to land on the alarm today, but a literal
-    # append added ABOVE it later would be read as the alarm's, and the cell would compare the
-    # constant against the wrong site and stay green through a real drift. The failure line is the
-    # one thing only this site has. (Raised as risk 2 by lane orchestrator's pass at 8dd84add.)
-    # UNIQUE to the alarm site: the first anchor tried here ('started early but overlapped no other
-    # stage') also appears in Get-GateVerdictLines near the TOP of the file, so the slice began
-    # above the alarm and a decoy append placed below it was still read as the alarm's -- risk 2
-    # alive by a different route. Caught by running the decoy sabotage, not by reading the regex.
-    $alarmAnchor = 'FAILED: ci powershell suites started early'
-    $alarmIndex = $gateText.IndexOf($alarmAnchor, [System.StringComparison]::Ordinal)
-    $appendMatch = if ($alarmIndex -ge 0) {
-        [regex]::Match($gateText.Substring($alarmIndex), '\$failed\s*\+=\s*(\$OverlapStageName|''[^'']+'')')
-    } else { [regex]::Match('', 'x') }
-    if (-not $constantMatch.Success -or -not $appendMatch.Success) {
-        throw 'HARNESS-BROKE: could not read the alarm name from its declaration and from its append site'
-    }
-    $overlapName = $constantMatch.Groups[1].Value
-    $appendedName = if ($appendMatch.Groups[1].Value -eq '$OverlapStageName') { $overlapName } else { $appendMatch.Groups[1].Value.Trim("'") }
-    Assert-True ($appendedName -eq $overlapName) `
-        "the name the alarm APPENDS is the name the frame FILTERS (appends [$appendedName], frame holds [$overlapName]) -- two literals that drift leave the frame unreachable"
+    # A NOTE, NEVER A VERDICT (#956, 2026-09-07). The first version of the alarm appended a frame to
+    # $failed and turned a 59-of-59 HDD run RED (#979's manifest 66259741ff2a-20260907T212946.729Z:
+    # failed stages [], psSuitesStartedEarly true, psSuitesOverlapped false). On the HDD the first
+    # build pass outlasts the suites, so "serial" is the common case and says nothing about the tree.
+    # Three claims, each about text the sabotage moves: the note site exists and is a NOTE; between
+    # the note and the status derivation nothing touches $failed; and no stage name is appended for
+    # the overlap anywhere -- status is derived from stages alone.
+    $noteAnchor = 'NOTE: ci powershell suites started early but overlapped no other stage'
+    $noteIndex = $gateText.IndexOf($noteAnchor, [System.StringComparison]::Ordinal)
+    Assert-True ($noteIndex -ge 0) `
+        'a run that started early and overlapped nothing is reported as a NOTE on the console -- the saving that did not happen, named'
+    $statusIndex = if ($noteIndex -ge 0) { $gateText.IndexOf("`$status = if (`$failed.Count -eq 0)", $noteIndex, [System.StringComparison]::Ordinal) } else { -1 }
+    $noteToStatus = if ($noteIndex -ge 0 -and $statusIndex -gt $noteIndex) { $gateText.Substring($noteIndex, $statusIndex - $noteIndex) } else { '<no slice>' }
+    Assert-True ($statusIndex -gt $noteIndex -and $noteToStatus -notmatch '\$failed\s*\+=') `
+        'and between that note and the status derivation nothing is appended to $failed -- the status is derived from the stages alone'
+    Assert-True ($gateText -notmatch '\$failed\s*\+=\s*(\$OverlapStageName|''stage overlap regression'')') `
+        'and no overlap name is appended to $failed anywhere, under the old constant or its literal -- the frame that reddened #979 is gone'
 
-    $framed = @(Get-GateVerdictLines -FreshnessStageName 'binary freshness cross-check' -OverlapStageName $overlapName `
-        -Failed @('workspace tests', $appendedName) -StaleBinaryCount 0)
-    $framedText = $framed -join "`n"
-    Assert-True ($framedText -notmatch "failed stages:.*$([regex]::Escape($overlapName))") `
-        'the overlap alarm is not listed among the failed STAGES, because no stage ran under that name'
-    Assert-True ($framedText -match 'overlapped no other stage') `
-        'it gets its own line instead, saying what was lost -- time, not correctness'
-    Assert-True ($framedText -match 'failed stages: workspace tests') `
-        'and the real red beside it is still named on its own line'
+    # THE FIELDS STAY. The measurement is the point; only the verdict was wrong.
+    $writer = Get-GateSlice -Start 'function Write-RunManifest {' -End "`n}" -IncludeEnd
+    Assert-True ($writer.Contains('psSuitesStartedEarly') -and $writer.Contains('psSuitesOverlapped')) `
+        'the manifest still carries psSuitesStartedEarly and psSuitesOverlapped, so a decayed arrangement is visible to a reader even though it no longer reddens'
 } finally {
     Write-Host ''
     if ($script:total -ne $ExpectedAssertionCount) {

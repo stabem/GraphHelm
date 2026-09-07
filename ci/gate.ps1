@@ -315,7 +315,6 @@ $FreshnessStageName = 'binary freshness cross-check'
 # nothing ran under it, it has no record and no output tail, so a reader who finds it listed among
 # real stages goes looking for a transcript that does not exist. Like the freshness cross-check it is
 # the FRAME the run is read in, and `Get-GateVerdictLines` prints it as one.
-$OverlapStageName = 'stage overlap regression'
 
 function Get-GateVerdictLines {
     param(
@@ -330,20 +329,14 @@ function Get-GateVerdictLines {
         # A parameter keeps the function extractable (the suite cuts it out by anchor and dot-sources
         # it alone, so a script-scope constant would not travel with it) AND lets the caller be the
         # single place the string is written.
-        [Parameter(Mandatory)] [string] $FreshnessStageName,
-        # #956: OPTIONAL, and absent means "this run did not measure overlap" -- older callers and
-        # the cells that already drive this function keep working unchanged, and no default here
-        # duplicates the constant that gate.ps1 owns.
-        [string] $OverlapStageName
+        [Parameter(Mandatory)] [string] $FreshnessStageName
     )
     $lines = New-Object System.Collections.Generic.List[string]
     # The cross-check's own entry is never printed as a peer; it is the frame the others are read in.
     # ORDINAL, not -cne: PowerShell's case-sensitive operators are still culture comparisons (#753).
-    $frames = @($FreshnessStageName)
-    if (-not [string]::IsNullOrWhiteSpace($OverlapStageName)) { $frames += $OverlapStageName }
-    $others = @($Failed | Where-Object { $name = $_; -not ($frames | Where-Object { [string]::Equals($name, $_, [System.StringComparison]::Ordinal) }) })
-    $overlapFailed = (-not [string]::IsNullOrWhiteSpace($OverlapStageName)) -and
-        (@($Failed | Where-Object { [string]::Equals($_, $OverlapStageName, [System.StringComparison]::Ordinal) }).Count -gt 0)
+    # #956: the overlap alarm used to be a second frame here. It is a NOTE now (see the alarm site):
+    # a run's status is derived from its stages alone, so there is no overlap name in $Failed to frame.
+    $others = @($Failed | Where-Object { -not [string]::Equals($_, $FreshnessStageName, [System.StringComparison]::Ordinal) })
     if ($StaleBinaryCount -gt 0) {
         $lines.Add("[gate] NOT A MEASUREMENT: $StaleBinaryCount test binary(ies) predate this run's start, so every stage that ran a test binary measured a DIFFERENT PROGRAM than this run's tree. This run's stage results are not readable as results for this head.")
         if ($others.Count -gt 0) {
@@ -352,10 +345,6 @@ function Get-GateVerdictLines {
             $lines.Add('[gate] RED - no stage failed, and none of them measured this head.')
         }
         return $lines.ToArray()
-    }
-    if ($overlapFailed) {
-        $lines.Add('[gate] RED - the PowerShell suites were started early but overlapped no other stage, so this run ' +
-            'spent them in line. Nothing about the code is in question; the gate lost the time #956 bought.')
     }
     if ($others.Count -gt 0) {
         $lines.Add("[gate] RED - failed stages: $($others -join ', ')")
@@ -3045,25 +3034,26 @@ if ($artifactManifest -and $artifactManifest.artifacts) {
 # no cargo, so it is the only one that holds no target-directory lock, and its ~5 minutes are spent
 # beside the Rust stages instead of after them. That arrangement is exactly the kind that decays in
 # silence -- put the start back where it was and every stage still runs, still passes, still appears
-# in the manifest, and the ONLY symptom is minutes nobody counts. So the claim gets an alarm.
+# in the manifest, and the ONLY symptom is minutes nobody counts. So the claim is MEASURED and the
+# measurement is published, in the manifest and on the console.
 #
 # TWO STATES, NOT ONE. `psSuitesStartedEarly` records whether the child was launched at all;
-# `psSuitesOverlapped` whether it actually ran beside something. The distinction is the whole point:
-# a run whose early start FAILED (no Start-Process, a busted PowerShell) is correct and merely slow,
-# already said so on the console, and MUST NOT redden -- it is the fallback doing its job. Only the
-# case that started early and still came out serial is the defect, and it is the case the alarm
-# fires on.
+# `psSuitesOverlapped` whether it actually ran beside something. A run whose early start FAILED (no
+# Start-Process, a busted PowerShell) is correct and merely slow, and already said so on the console.
 #
-# ABOVE `$status`, NOT INSIDE THE MANIFEST WRITER, and the first draft got this wrong: the check ran
-# where `$passedEverything` is computed, which is AFTER `$status` was decided at this call site. The
-# run still exited 1 -- `$failed` is the same variable -- but the manifest it had already been handed
-# said GREEN while its own `overallPassed` said false. A check has to run before the value it exists
-# to change (#822's cross-check sits here for the same reason).
+# A NOTE, NEVER A VERDICT. The first version appended a frame to $failed when the suites started
+# early and overlapped nothing, and on 2026-09-07 it turned a 59-of-59 run RED (#979, manifest
+# 66259741ff2a-20260907T212946.729Z-45d781f4.json: failed stages [], both matrices 49 of 256, canary
+# true, stale 0). On the HDD the first build pass takes longer than the suites do -- there the
+# suites finished at 19:55 and cargo reached its first stage at 20:35 -- so "serial" is the
+# common case, not a regression, and it says nothing about the tree. A run's status is derived
+# from its STAGES alone; what the overlap measures is the optimisation's saving, and a saving that
+# did not happen is reported as a saving that did not happen. The fields stay in the manifest so
+# the arrangement's decay is still visible to anyone who reads them.
 $script:psSuitesStartedEarly = ($null -ne $script:psSuitesStarted)
 $script:psSuitesOverlapped = Test-StageOverlapped -Records $stageRecords -Name 'ci powershell suites'
 if ($script:psSuitesStartedEarly -and -not $script:psSuitesOverlapped) {
-    Write-Host "[gate] FAILED: ci powershell suites started early but overlapped no other stage; the run went serial." -ForegroundColor Red
-    if ($failed -notcontains $OverlapStageName) { $failed += $OverlapStageName }
+    Write-Host "[gate] NOTE: ci powershell suites started early but overlapped no other stage; the run went serial and the status does not depend on it." -ForegroundColor Yellow
 }
 
 $manifestPath = $null
@@ -3122,7 +3112,7 @@ if ($script:headMovedDuringRun) {
 if ($failed.Count -gt 0) {
     # #822: the cross-check is printed as the FRAME the other reds are read in, never as their peer.
     foreach ($line in (Get-GateVerdictLines -Failed $failed -StaleBinaryCount $staleBinaryCount `
-                -FreshnessStageName $FreshnessStageName -OverlapStageName $OverlapStageName)) {
+                -FreshnessStageName $FreshnessStageName)) {
         Write-Host $line -ForegroundColor Red
     }
     exit 1

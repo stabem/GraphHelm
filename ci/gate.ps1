@@ -201,6 +201,41 @@ function Read-ScopeSelection {
     }
     $crates = @($selection.crates)
     if ($crates.Count -eq 0) {
+        # TWO EMPTINESSES, and until #903's third state they were one. An empty list usually means
+        # the derivation could not answer, and that must widen -- selecting nothing would run
+        # nothing and pass. But a selection can also be empty because nothing the run compiles
+        # CHANGED: a `ci/*.tests.ps1` suite is discovered by `ci/run-ps-suites.ps1` and run in an
+        # unconditional stage, so it cannot change what a Rust stage measures. The producer says
+        # which of the two this is, in `rustInputsChanged`, and the field is read by INDEX because
+        # an absent one must read as "may have changed" rather than throw or default to the narrow
+        # answer (`$selection['x']` answers '' for an absent key under StrictMode; `.x` throws).
+        #
+        # The narrow answer here is still not narrow about Rust: an empty crate list produces no
+        # `-p` arguments, so `workspace tests` keeps compiling the whole workspace. What this state
+        # buys is the PostgreSQL matrix, measured at 35% of all gate time -- and it buys it only for
+        # a diff that provably cannot reach the adapter.
+        #
+        # A WRONG TYPE MUST WIDEN, and `-eq $false` alone made it narrow. PowerShell coerces the
+        # right operand's type onto the left, so the string 'false', the string 'False' and the
+        # integer 0 all satisfy `-eq $false` -- measured under StrictMode 2.0, together with '0',
+        # which widens, so the coercion is not even uniform. That inverts the whole rule this state
+        # was added under: every way of being unsure runs everything. A producer emitting a JSON
+        # string after a refactor, or a hand-written selection file, would have quietly run fewer
+        # stages and reported the same green. `-is [bool]` first: only a real boolean false narrows,
+        # and anything else -- wrong type, absent, null -- falls through to FULL.
+        $rustInputs = $selection.PSObject.Properties['rustInputsChanged']
+        if ($null -ne $rustInputs -and $rustInputs.Value -is [bool] -and $rustInputs.Value -eq $false) {
+            $matrix = $false
+            if ($selection.PSObject.Properties['matrix']) { $matrix = [bool]$selection.matrix }
+            $reason = [string]($selection.PSObject.Properties['matrixReason']).Value
+            return [ordered]@{
+                full         = $false
+                reason       = 'SCOPED: no Rust build input changed, so no crate is selected and the workspace still compiles'
+                crates       = @()
+                matrix       = $matrix
+                matrixReason = $reason
+            }
+        }
         return New-FullScope -Reason 'FULL: the scope selection names no crates, which would run nothing and pass'
     }
     $matrix = $true

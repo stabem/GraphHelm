@@ -71,7 +71,10 @@ function Write-Selection {
         [string[]] $Changed = @(),
         [string[]] $Unmapped = @(),
         [bool] $Matrix = $true,
-        [string] $MatrixReason = ''
+        [string] $MatrixReason = '',
+        # TRUE unless a caller says otherwise: an omission must read as "Rust input may have
+        # changed", which is the answer that widens.
+        [bool] $RustInputsChanged = $true
     )
     # `crates` is EMPTY on an escalation on purpose: a FULL run has no selection, and printing the
     # partial one the script had computed invites a caller to use it.
@@ -83,6 +86,7 @@ function Write-Selection {
         unmapped       = @($Unmapped)
         matrix         = $Matrix
         matrixReason   = $MatrixReason
+        rustInputsChanged = $RustInputsChanged
     }
     Write-Output ($document | ConvertTo-Json -Depth 6 -Compress)
 }
@@ -112,9 +116,63 @@ if ($changed.Count -eq 0) {
     exit 0
 }
 
+# ---- KNOWN AND NOT BUILD INPUT --------------------------------------------------------------
+#
+# A THIRD state, and it exists because the first two collapse two different claims into one output.
+# `unmapped-path` means "this path is in no class I know" and `crates: []` means "the selection is
+# empty"; both widen, correctly, because an unknown must never narrow. But a `ci/*.tests.ps1` file
+# is neither unknown nor build input: it is a PowerShell suite FOR the gate, discovered by
+# `ci/run-ps-suites.ps1` and run in a stage that is unconditional. It cannot change what a Rust
+# stage measures.
+#
+# MEASURED BEFORE IT WAS DESIGNED (X, 2026-09-06): the selector was run against the real diff of
+# every pull request the fleet handled that day. One of eight skipped the PostgreSQL matrices; five
+# of the other seven were exactly this class, escalating under the `ci/` deny-list. The naive
+# repair -- exempting suites from that rule -- was measured by K and buys nothing: the path then
+# reaches the unmapped rule and escalates for a different reason. So the class has to be NAMED, and
+# the emptiness it produces has to be distinguishable from the emptiness nobody can explain.
+#
+# THE MEMBERSHIP IS DELIBERATELY NARROW. `ci/gate.ps1`, `ci/merge-proof.ps1` and `ci/select-scope.ps1`
+# stay on the escalation list: a change to the gate changes what every other stage measures, which
+# is a different claim from "a suite for the gate changed". Adding a member here is loosening an
+# escalation, so it is an edit a reviewer sees and a cell has to survive.
+$KnownNonBuildInput = @(
+    @{ Name = 'ci-suite'; Test = { param($p) $p -like 'ci/*.tests.ps1' } }
+)
+
+function Test-KnownNonBuildInput {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Path)
+    foreach ($class in $KnownNonBuildInput) { if (& $class.Test $Path) { return $true } }
+    return $false
+}
+
+# The escalation rules run FIRST and this class is subtracted from what they see, so a suite file
+# does not trip `ci/`. Everything else in the diff still reaches every rule below unchanged.
+# Run manifests are subtracted here TOO, but only so they cannot make a suite-only diff look mixed.
+# They keep their own handling further down (`manifest-only` escalates to FULL), and this block
+# refuses to fire on them alone: a diff of nothing but receipts is a question about the diff, and
+# the answer to that question is already written below.
+$RunManifestPrefix = '.factory/gate-runs/'
+$suitePaths = @($changed | Where-Object { Test-KnownNonBuildInput -Path $_ })
+$buildInput = @($changed | Where-Object {
+    -not (Test-KnownNonBuildInput -Path $_) -and
+    -not $_.StartsWith($RunManifestPrefix, [System.StringComparison]::Ordinal)
+})
+
+if ($buildInput.Count -eq 0 -and $suitePaths.Count -gt 0) {
+    # KNOWN empty, and the reason says which class made it empty. `rustInputsChanged` is the field
+    # the gate reads to tell this apart from an empty list it could not explain -- see the guard in
+    # `Read-ScopeSelection`, which still answers FULL when the field is absent or true.
+    Write-Selection -Escalated $false -Rule '' -Changed $changed -Crates @() `
+        -Matrix $false `
+        -MatrixReason "skipped: no Rust build input changed -- every changed path is a known non-build class (ci-suite): $($suitePaths -join ', ')" `
+        -RustInputsChanged $false
+    exit 0
+}
+
 # ---- escalation, BEFORE any selection ------------------------------------------------------
 foreach ($rule in $EscalationRules) {
-    foreach ($path in $changed) {
+    foreach ($path in $buildInput) {
         if (& $rule.Test $path) {
             Write-Selection -Escalated $true -Rule $rule.Name -Changed $changed `
                 -MatrixReason "FULL run: $($rule.Name) changed ($path)"
@@ -183,7 +241,7 @@ if ($changed.Count -eq 0) {
 # ---- map changed paths to crates, by LONGEST directory prefix -------------------------------
 $seeds = New-Object System.Collections.Generic.HashSet[string]
 $unmapped = New-Object System.Collections.Generic.List[string]
-foreach ($path in $changed) {
+foreach ($path in $buildInput) {
     $best = $null
     $bestLength = -1
     foreach ($crate in $crates.Values) {

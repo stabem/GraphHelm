@@ -15,7 +15,7 @@
 # EVERY CELL BELOW FAILS BEFORE ci/select-scope.ps1 EXISTS. That is the point of writing them
 # first: a selector that was tested after it was written is tested against what it does.
 
-$ExpectedAssertionCount = 18
+$ExpectedAssertionCount = 26
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -140,6 +140,47 @@ try {
         'and does NOT run when nothing in the selection reaches the adapter'
     Assert-True ($null -ne $unrelated.result -and -not [string]::IsNullOrWhiteSpace([string]$unrelated.result.matrixReason)) `
         'and the manifest says WHY the matrix was skipped, rather than leaving a silent false'
+
+
+    # ---- KNOWN-EMPTY: a change that is known and reaches no Rust (#903, after X's measurement) ---
+    # MEASURED FIRST, NOT DESIGNED FIRST: the selector was run against the real diff of every pull
+    # request this fleet handled on 2026-09-06, and one of eight skipped the matrix. Five of the
+    # other seven were `ci/*.tests.ps1` changes -- a PowerShell suite for the gate, which cannot
+    # change what a Rust test measures. They escalated because `ci/` is a deny-list entry.
+    #
+    # The naive repair (exempt tests from the `ci/` rule) buys nothing: K measured that the path
+    # then falls to the unmapped rule and escalates for a different reason. So this is a THIRD
+    # state, and its whole difficulty is that it must not weaken the two guards beside it --
+    # "no crate list" and "an empty list from an unknown diff" both still mean FULL.
+    $suiteOnly = Invoke-Select -ChangedFiles @('ci/gate-verdict.tests.ps1')
+    Assert-True ($null -ne $suiteOnly.result -and $suiteOnly.result.escalated -eq $false) `
+        "a change to a ci/*.tests.ps1 suite alone does NOT escalate (got escalated=$(if ($null -eq $suiteOnly.result) { 'unparseable' } else { $suiteOnly.result.escalated }), rule '$(if ($null -eq $suiteOnly.result) { '' } else { $suiteOnly.result.escalationRule })')"
+    Assert-True ($null -ne $suiteOnly.result -and $suiteOnly.result.rustInputsChanged -eq $false) `
+        'and says the emptiness is KNOWN -- rustInputsChanged is false, which is what separates it from an empty list nobody could explain'
+    Assert-True ($null -ne $suiteOnly.result -and $suiteOnly.result.matrix -eq $false) `
+        'so the PostgreSQL matrix is skipped'
+    Assert-True ($null -ne $suiteOnly.result -and $suiteOnly.result.matrixReason -match 'no Rust') `
+        "and the reason names the class rather than leaving a bare false (got '$(if ($null -eq $suiteOnly.result) { '' } else { $suiteOnly.result.matrixReason })')"
+
+    # CONTROL 1: the gate's OWN scripts keep escalating. A change to ci/gate.ps1 changes what every
+    # other stage measures, which is a different claim from "a suite for the gate changed".
+    $gateScript = Invoke-Select -ChangedFiles @('ci/gate.ps1')
+    Assert-True ($null -ne $gateScript.result -and $gateScript.result.escalated -eq $true -and $gateScript.result.escalationRule -eq 'ci/') `
+        'CONTROL: ci/gate.ps1 still escalates under the ci/ rule, so the new state did not swallow the old one'
+
+    # CONTROL 2: a suite change WITH a Rust change is an ordinary selection, not the known-empty
+    # state. Without this, a rule that fires on "any suite file present" would pass every cell above.
+    $mixed = Invoke-Select -ChangedFiles @('ci/gate-verdict.tests.ps1', 'core/leaf/src/lib.rs')
+    Assert-True ($null -ne $mixed.result -and $mixed.result.escalated -eq $false -and @($mixed.result.crates).Count -gt 0) `
+        "CONTROL: a suite change alongside a Rust change selects crates normally (got $(@(if ($null -ne $mixed.result) { $mixed.result.crates }).Count))"
+    Assert-True ($null -ne $mixed.result -and $mixed.result.rustInputsChanged -eq $true) `
+        'CONTROL: and reports that Rust input DID change, so the known-empty state cannot be reached with Rust in the diff'
+
+    # CONTROL 3: an unmapped path still escalates. The new state is a NAMED class, not "anything
+    # the mapper could not place".
+    $stillUnmapped = Invoke-Select -ChangedFiles @('deploy/restore-vps.sh')
+    Assert-True ($null -ne $stillUnmapped.result -and $stillUnmapped.result.escalated -eq $true -and $stillUnmapped.result.escalationRule -eq 'unmapped-path') `
+        "CONTROL: a path in no class still escalates as unmapped (got rule '$(if ($null -eq $stillUnmapped.result) { '' } else { $stillUnmapped.result.escalationRule })')"
 
     # ---- FAIL CLOSED: the two ways the derivation can be wrong -------------------------------
     # The escalation list is a DENY-LIST over a class ("a path whose change can invalidate the graph

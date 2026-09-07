@@ -8,7 +8,7 @@
 # The subject is `Read-ScopeSelection`, cut out of ci/gate.ps1 by anchor text and never retyped --
 # running gate.ps1 would run the gate.
 
-$ExpectedAssertionCount = 32
+$ExpectedAssertionCount = 41
 $ErrorActionPreference = 'Stop'
 # THE SUITE RUNS UNDER THE GATE'S OWN RULES. ci/gate.ps1:88 sets `Set-StrictMode -Version 2.0`,
 # and this file did not: the cells exercised the extracted functions under LAXER rules than
@@ -250,6 +250,59 @@ try {
     # cannot act on either, and both leave the same hole in the record.
     Assert-True ($gateText.IndexOf('SKIPPED by scope', [System.StringComparison]::Ordinal) -ge 0) `
         'and a scope-skipped matrix names its reason rather than printing a bare SKIPPED'
+
+    # ---- THE KNOWN-EMPTY SELECTION (#903, X): empty because nothing Rust changed ------------------
+    # Two empties that used to be one. "No crate list" and "an empty list from a diff nobody could
+    # explain" still mean FULL -- those are the guards below and they must not move. This one carries
+    # `rustInputsChanged: false`, which is the producer saying the emptiness is a RESULT and not a gap.
+    $known = Read-ScopeSelection -Path (New-SelectionFile -Name 'known-empty.json' `
+        -Content '{"escalated":false,"crates":[],"matrix":false,"matrixReason":"skipped: no Rust build input changed","rustInputsChanged":false}')
+    Assert-True ($known.full -eq $false) `
+        'a selection that is empty BECAUSE no Rust input changed is not a FULL run'
+    Assert-True ($known.matrix -eq $false) `
+        'and its matrix decision is honoured, which is the whole saving'
+    Assert-True (@(Get-ScopePackageArgs -Scope $known).Count -eq 0) `
+        'and it still compiles the WORKSPACE: an empty crate list means no -p arguments, so Rust coverage is unchanged and only the matrix is skipped'
+
+    # CONTROL: the same shape WITHOUT the field is the old empty list, and still means FULL.
+    $unexplained = Read-ScopeSelection -Path (New-SelectionFile -Name 'unexplained-empty.json' `
+        -Content '{"escalated":false,"crates":[],"matrix":false,"matrixReason":"skipped"}')
+    Assert-True ($unexplained.full -eq $true) `
+        'CONTROL: an empty crate list with no explanation is still FULL -- selecting nothing would run nothing and pass'
+    Assert-True ($unexplained.matrix -eq $true) `
+        'CONTROL: and a FULL run runs the matrix, whatever the selection asked for'
+
+    # CONTROL: the field cannot be used to claim the emptiness when Rust DID change.
+    $claimed = Read-ScopeSelection -Path (New-SelectionFile -Name 'claimed-empty.json' `
+        -Content '{"escalated":false,"crates":[],"matrix":false,"rustInputsChanged":true}')
+    Assert-True ($claimed.full -eq $true) `
+        'CONTROL: rustInputsChanged TRUE with an empty list is the unexplained case again, so FULL'
+
+    # CONTROL: A WRONG TYPE MUST WIDEN. `-eq $false` alone coerced the right operand's type onto the
+    # left, so the string 'false' and the integer 0 both satisfied it and NARROWED -- while the
+    # string '0' widened, so the coercion was not even uniform. That inverts the rule this whole
+    # state was added under: every way of being unsure runs everything. A producer emitting a JSON
+    # string after a refactor, or a hand-written selection file, would have run fewer stages and
+    # reported the same green. These three pin the two directions apart.
+    # (Found by the second pass on PR #952 at c0f9504c, not by this suite.)
+    #
+    # Both fixtures carry `matrixReason` deliberately. The narrow branch reads it, so a fixture
+    # without it makes the UNGUARDED code THROW rather than answer -- and a throw aborts the suite
+    # into HARNESS-BROKE, which hides which cell moved. The sabotage has to produce a clean red.
+    $stringFalse = Read-ScopeSelection -Path (New-SelectionFile -Name 'string-false.json' `
+        -Content '{"escalated":false,"crates":[],"matrix":false,"matrixReason":"skipped","rustInputsChanged":"false"}')
+    Assert-True ($stringFalse.full -eq $true) `
+        'CONTROL: the STRING "false" is not the producer saying no Rust input changed -- a wrong type is a way of being unsure, so FULL'
+
+    $zero = Read-ScopeSelection -Path (New-SelectionFile -Name 'zero-false.json' `
+        -Content '{"escalated":false,"crates":[],"matrix":false,"matrixReason":"skipped","rustInputsChanged":0}')
+    Assert-True ($zero.full -eq $true) `
+        'CONTROL: the integer 0 is not a boolean false either, and it narrowed before the -is [bool] guard'
+
+    $boolFalse = Read-ScopeSelection -Path (New-SelectionFile -Name 'bool-false.json' `
+        -Content '{"escalated":false,"crates":[],"matrix":false,"matrixReason":"skipped","rustInputsChanged":false}')
+    Assert-True ($boolFalse.full -eq $false) `
+        'and the REAL boolean false still narrows -- the guard rejects wrong types without rejecting the case it exists for'
 
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

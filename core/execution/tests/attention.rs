@@ -30,6 +30,164 @@ fn projection(
     projection
 }
 
+/// A projection carrying one recorded mis-burn for `session`, and nothing else wrong.
+///
+/// `WakeMisBurn` keeps both armings on purpose (`projection.rs`): "something was wrong here" is
+/// not actionable and the PAIR is the diagnosis. These cells never read the pair -- attention's
+/// question is existence -- but they build a faithful one so the fixture cannot pass by being
+/// shaped differently from what the fold writes.
+fn with_mis_burn(session: &str, at_sequence: u64) -> ExecutionProjection {
+    let mut projection = projection(
+        &[
+            ("build", NodeState::Succeeded),
+            ("ship", NodeState::Succeeded),
+        ],
+        Some(SimulationStatus::Completed),
+    );
+    projection.wake_mis_burns.insert(
+        session.to_owned(),
+        graphhelm_events::WakeMisBurn {
+            at_sequence,
+            captured_arming: 41,
+            live_arming: 42,
+        },
+    );
+    projection
+}
+
+/// #119: the fold records a consumption that burned an arming other than the one it captured,
+/// and no operator surface reads it.
+///
+/// This is NOT a wake-timing defect and the reason must not read as one. Post-#74 the serve
+/// path's own filter drops a stale capture, so the fold's mis-burn arm fires only for a
+/// consumption written by something else: a direct append, an older binary, or a bug. The
+/// remedy is provenance -- *check who is writing to this store* -- which is why it belongs in
+/// attention rather than in the wake surfaces alone (`.factory/c-agent-119-design.md`).
+///
+/// The PRESENCE member of the absence-guard pair: without this cell, the "raises nothing"
+/// assertion below would pass just as well if the predicate were never reached at all.
+#[test]
+fn a_recorded_mis_burn_reaches_the_operator() {
+    let projection = with_mis_burn("session-a", 77);
+    let answer = attention(&projection, &AttentionInputs::default());
+    assert_eq!(
+        answer.reasons(),
+        &[AttentionReason::ForeignWakeConsumption {
+            session: "session-a".to_owned(),
+        }],
+        "a mis-burn the fold recorded must reach the operator: {answer:?}"
+    );
+}
+
+/// The mirror, and it is what makes the cell above a claim about mis-burns rather than about
+/// wake activity: the SAME graph with no recorded mis-burn says nothing.
+#[test]
+fn a_projection_with_no_mis_burn_raises_nothing() {
+    let projection = projection(
+        &[
+            ("build", NodeState::Succeeded),
+            ("ship", NodeState::Succeeded),
+        ],
+        Some(SimulationStatus::Completed),
+    );
+    assert!(
+        projection.wake_mis_burns.is_empty(),
+        "ARRANGEMENT: the mirror must differ from the cell above ONLY by the mis-burn"
+    );
+    let answer = attention(&projection, &AttentionInputs::default());
+    assert_eq!(
+        answer.verdict,
+        graphhelm_execution::Verdict::CanSleep,
+        "no mis-burn, nothing else wrong: {answer:?}"
+    );
+}
+
+/// THE GRAIN, pinned so it cannot be "improved" into something the map cannot support.
+///
+/// `wake_mis_burns` is `BTreeMap<session, WakeMisBurn>` and inserts OVERWRITE, so the map can
+/// answer *has this session ever mis-burned* and never *how many times*. Existence survives the
+/// overwrite; count and history do not. A later reader who turns this into a count would find
+/// this cell red rather than shipping an answer the record cannot back.
+#[test]
+fn a_second_mis_burn_on_one_session_is_still_one_reason() {
+    let mut projection = with_mis_burn("session-a", 77);
+    projection.wake_mis_burns.insert(
+        "session-a".to_owned(),
+        graphhelm_events::WakeMisBurn {
+            at_sequence: 91,
+            captured_arming: 43,
+            live_arming: 44,
+        },
+    );
+    assert_eq!(
+        projection.wake_mis_burns.len(),
+        1,
+        "ARRANGEMENT: the map overwrote rather than accumulated, which is the shape this pins"
+    );
+    let answer = attention(&projection, &AttentionInputs::default());
+    assert_eq!(
+        answer.reasons(),
+        &[AttentionReason::ForeignWakeConsumption {
+            session: "session-a".to_owned(),
+        }],
+        "existence per session, not a count: {answer:?}"
+    );
+}
+
+/// #119, SECOND PASS (ISSUES 3, BLOCK at `798b7dcb`): a wedge and a foreign writer are TWO
+/// findings, not one, and the first version of this change let the second erase the first.
+///
+/// It pushed `ForeignWakeConsumption` into `reasons` above a wedge test written as
+/// `reasons.is_empty()`, so any recorded mis-burn suppressed `WedgedQuiescence`. And permanently,
+/// not for a run: `wake_mis_burns` has exactly one write site (`projection.rs:1926`, an insert) and
+/// no `remove`, `clear`, `retain` or `drain` anywhere in the workspace -- so the first mis-burn a
+/// store ever recorded would have switched off its wedge detector for the life of that store.
+///
+/// The two answer different questions. The five reasons the wedge defers to all explain WHY NOTHING
+/// ADVANCES, and deferring to them is coherent -- the wedge is the last-resort explanation. A
+/// mis-burn explains WHO IS WRITING TO THIS STORE, which is orthogonal: a store can be wedged and
+/// foreign-written at once, and the operator needs both.
+///
+/// THE INTERACTION HAD NO CELL, which is the other half of why the defect shipped green: every
+/// wedge cell built an empty `wake_mis_burns` and every mis-burn cell built a projection that was
+/// not wedged. Neither assertion below can pass vacuously -- both are positive, so a fixture that
+/// stopped being wedged, or an insert that failed to take, reddens rather than quietly agreeing.
+#[test]
+fn a_wedged_run_still_reports_its_wedge_when_a_mis_burn_is_recorded() {
+    // The wedge fixture, verbatim from `the_judges_shape_running_while_nothing_can_advance`: every
+    // node in a published graph is in a state no dispatch can pick up, and the aggregate still
+    // claims to be running.
+    let mut projection = projection(
+        &[
+            ("start", NodeState::Skipped),
+            ("build", NodeState::Succeeded),
+        ],
+        Some(SimulationStatus::Running),
+    );
+    projection.current_graph = Some(published_graph());
+    projection.wake_mis_burns.insert(
+        "session-a".to_owned(),
+        graphhelm_events::WakeMisBurn {
+            at_sequence: 77,
+            captured_arming: 41,
+            live_arming: 42,
+        },
+    );
+
+    let answer = attention(&projection, &AttentionInputs::default());
+    let reasons = answer.reasons();
+    assert!(
+        reasons.contains(&AttentionReason::WedgedQuiescence),
+        "a foreign writer does not explain why nothing advances, so it must not suppress the wedge: {answer:?}"
+    );
+    assert!(
+        reasons.contains(&AttentionReason::ForeignWakeConsumption {
+            session: "session-a".to_owned(),
+        }),
+        "and the mis-burn is reported beside the wedge, not instead of it: {answer:?}"
+    );
+}
+
 #[test]
 fn a_clean_completed_story_lets_the_operator_sleep() {
     let projection = projection(

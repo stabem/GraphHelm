@@ -438,6 +438,21 @@ pub enum AttentionReason {
     /// `Ready`, or parked in a state that resumes itself. The exact shape the judge saw
     /// reported green.
     WedgedQuiescence,
+    /// A consumption named an arming that was not the live one, so a lease was taken by a
+    /// writer that is not this server.
+    ///
+    /// NAMED FOR THE REMEDY, not for the symptom. The fold calls the record a *mis-burn*
+    /// (`wake_mis_burns`), and a reason spelled that way beside the wake surfaces would be
+    /// read as "your wake is broken right now" — which it is not. Post-#74 the serve path
+    /// filters a stale capture before it is ever appended, so this arm fires only for a
+    /// consumption written by something else: a direct append, an older binary, or a future
+    /// bug. The operator's action is *check who is writing to this store*, and the variant
+    /// says so (`.factory/c-agent-119-design.md`).
+    ///
+    /// Carries the SESSION because that is the actionable identifier, and one reason per
+    /// session because the record is `BTreeMap<session, WakeMisBurn>` with overwriting
+    /// inserts: existence survives that shape, count and history do not.
+    ForeignWakeConsumption { session: String },
 }
 
 /// A node state that still moves without the operator: either a dispatcher can pick it up
@@ -610,6 +625,43 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
     reasons.append(&mut waiting_input);
     reasons.append(&mut silent);
 
+    // CAPTURED HERE, BEFORE ANYTHING ELSE IS PUSHED, and the wedge below is decided against THIS
+    // rather than against `reasons` as a whole (#119, second pass by ISSUES 3).
+    //
+    // The five reasons above all answer the SAME question the wedge answers -- why is nothing
+    // advancing? -- so suppressing the wedge when one of them fired is coherent: the wedge is the
+    // last-resort explanation, and a run that already has one does not need it.
+    //
+    // `ForeignWakeConsumption` answers a DIFFERENT question. Its own doc says the operator's action
+    // is to check who is writing to this store; provenance of writes is orthogonal to whether this
+    // run is stuck. A store can be both wedged AND written by a foreign writer, and testing
+    // `reasons.is_empty()` after the mis-burn push would tell the operator only the second.
+    //
+    // The consequence was permanent, not transient: `wake_mis_burns` is only ever inserted into --
+    // one write site, `projection.rs:1926`, and no `remove`, `clear`, `retain` or `drain` anywhere
+    // in the workspace -- so the first mis-burn a store ever recorded would have switched off its
+    // wedge detector for the life of that store.
+    let nothing_explains_non_advancement = reasons.is_empty();
+
+    // #119: the fold records a consumption that burned an arming other than the one it captured,
+    // and until now nothing read it. EXISTENCE, not history: `wake_mis_burns` is keyed by session
+    // and its inserts OVERWRITE, so the map can answer "has this session ever mis-burned" and
+    // never "how many times". One reason per session is therefore the finest grain the record can
+    // back, and the pair inside the entry is deliberately not spent here — an operator who needs
+    // the sequences reads the journal, which loses nothing.
+    //
+    // Read from the PROJECTION rather than re-derived from events, and that is the point: the
+    // fold's own note says the record lives in the projection precisely because the verdict is
+    // computed from the projection through one predicate, and a discrepancy visible only in raw
+    // events is one this surface structurally cannot see.
+    //
+    // BTreeMap iterates in key order, so the reasons are ordered by session id without sorting.
+    for session in projection.wake_mis_burns.keys() {
+        reasons.push(AttentionReason::ForeignWakeConsumption {
+            session: session.clone(),
+        });
+    }
+
     // The wedge: the aggregate claims it is running while nothing left can move it. A node
     // already named above is a reason of its own; the wedge is the case where the story
     // looks alive and is not.
@@ -675,7 +727,7 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
             .any(|node| !projection.node_states.contains_key(node.as_str()))
     });
     let graph_defines_completeness = complete_node_set.is_some();
-    if claims_running && !anything_advances && reasons.is_empty() {
+    if claims_running && !anything_advances && nothing_explains_non_advancement {
         if graph_defines_completeness {
             if !untouched_topology_work {
                 reasons.push(AttentionReason::WedgedQuiescence);

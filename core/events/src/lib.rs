@@ -47,8 +47,8 @@ pub use projection::{
     ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
     MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt, MemoryRecordProjection, OpenClaim,
     OpenWait, OverdueStage, ProjectionGeneration, ProjectionRebuildRequest, ProjectionRebuilder,
-    ProjectionRepository, ProjectionWatermark, ReplayError, claim_evidence_digest, overdue_at,
-    project_customs_stage, replay, replay_within,
+    ProjectionRepository, ProjectionWatermark, ReplayError, WakeMisBurn, claim_evidence_digest,
+    overdue_at, project_customs_stage, replay, replay_within,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

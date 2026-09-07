@@ -181,6 +181,15 @@ fn attention_line(answer: &Attention) -> String {
             AttentionReason::WedgedQuiescence => {
                 "wedged — the run says running while nothing can advance".to_owned()
             }
+            // #119: NOT a wake fault, and the sentence must not read as one. This server
+            // filters a stale capture before appending, so a recorded mis-burn means some
+            // OTHER writer took the lease — a direct append, an older binary, or a bug. The
+            // operator's action is provenance, so that is what the line says.
+            AttentionReason::ForeignWakeConsumption { session } => {
+                format!(
+                    "{session}: a wake lease was taken by a writer that is not this server — check who is writing to this store"
+                )
+            }
         })
         .collect();
     format!("needs you: {}", reasons.join("; "))
@@ -870,6 +879,10 @@ mod tests {
                 | graphhelm_execution::AttentionReason::WaitingInputNode { node }
                 | graphhelm_execution::AttentionReason::SilentNode { node } => node.clone(),
                 graphhelm_execution::AttentionReason::WedgedQuiescence => "wedged".to_owned(),
+                // #119: the session is the identifying string this reason puts on the page.
+                graphhelm_execution::AttentionReason::ForeignWakeConsumption { session } => {
+                    session.clone()
+                }
             };
             assert!(
                 page.contains(&node),

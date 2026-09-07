@@ -500,6 +500,39 @@ function Get-ClosureVerdict {
     }
 }
 
+<#
+.SYNOPSIS
+    The refusal that names issues a merge would close and the operator did not intend.
+
+.DESCRIPTION
+    A FUNCTION, and deliberately inside the seam this directory's suite slices, so the cell that
+    feeds this sentence back through `Get-ClosingReferences` reads the SHIPPED text rather than a
+    copy of it. A copy would agree until the day somebody edits the message, which is the one day
+    the cell is for.
+
+    THE NOUN IS NOT DECORATION (#965). `Get-ClosingReferences` keys on `\b(keyword)\b\s*#(\d+)`:
+    only whitespace may sit between the word and the hash. So `close #815` is a closure instruction
+    and `close issue #815` is inert, while reading identically to a person.
+
+    Without it this message could not be pasted into the two places it is most useful -- a pull
+    request body, a review comment -- because quoting it re-triggers the tool on the very numbers
+    being quoted. Measured on the pull request for #873: a second run refused on a number that by
+    then existed only inside the quoted refusal from the first. The workaround was to elide the
+    numbers, which removes the part a reader needs.
+
+    The numbers themselves are NOT softened. Nothing here may make the message inert by saying less
+    than it did; the suite asserts both halves.
+#>
+function Get-UnexpectedClosureRefusal {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Numbers)
+    $list = @($Numbers)
+    $noun = if ($list.Count -eq 1) { 'issue' } else { 'issues' }
+    $rendered = if ($list.Count -eq 0) { '(none)' } else { (@($list) | ForEach-Object { "#$_" }) -join ', ' }
+    return ("[closing] REFUSED: merging this would close $noun $rendered, which is not in the " +
+        "stated intent. Remember the keyword fires inside a NEGATION too: write ``Refs #N`` or " +
+        "``Scope: #N stays open``, never a closing word next to a number you mean to keep open.")
+}
+
 function Invoke-Gh {
     <#
         `gh` read through its own exit code, with stderr kept OUT of the stream this parses.
@@ -579,9 +612,7 @@ if ($verdict.unexpected.Count -eq 0 -and $verdict.missing.Count -eq 0) {
 }
 
 if ($verdict.unexpected.Count -gt 0) {
-    Write-Host ("[closing] REFUSED: merging this would close $(& $show $verdict.unexpected), which is not in the " +
-        "stated intent. Remember the keyword fires inside a NEGATION too: write ``Refs #N`` or " +
-        "``Scope: #N stays open``, never a closing word next to a number you mean to keep open.") -ForegroundColor Red
+    Write-Host (Get-UnexpectedClosureRefusal -Numbers $verdict.unexpected) -ForegroundColor Red
 }
 if ($verdict.missing.Count -gt 0) {
     Write-Host ("[closing] REFUSED: $(& $show $verdict.missing) is intended to close and appears in neither text, " +

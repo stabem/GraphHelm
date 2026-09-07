@@ -13,7 +13,7 @@
 #
 # Measured on Windows PowerShell 5.1.26100.9168.
 
-$ExpectedAssertionCount = 52
+$ExpectedAssertionCount = 56
 $ErrorActionPreference = 'Continue'
 $script:total = 0
 $script:failures = 0
@@ -483,6 +483,36 @@ Write-Output ('ok=' + $stated.ok + ' numbers=[' + (@($stated.numbers) -join ',')
     $noTitle = Get-ClosureVerdict -BodyText 'Closes #735' -CommitText 'fix: work`n`nCloses #735' -TitleText 'fix(735): an ordinary title with no keyword next to a number' -Intended @('735')
     Assert-True -Condition ($noTitle.unexpected.Count -eq 0 -and $noTitle.missing.Count -eq 0 -and $noTitle.title.Count -eq 0) `
         -Message 'an ordinary title contributes nothing, so the usual pull request still passes'
+
+    Write-Host ''
+    Write-Host '-- the refusal can be quoted where it is discussed (#965) --' -ForegroundColor Cyan
+
+    # THE SHIPPED SENTENCE, not a copy: `Get-UnexpectedClosureRefusal` comes from the seam above.
+    # AGENTS.md mandates running this tool before a press, so the line that explains a refusal is
+    # the thing most likely to be pasted into a pull request body or a review comment -- and until
+    # #965 that paste re-triggered the tool on the numbers it was quoting. Measured on #873: run 2
+    # refused on a number that by then existed ONLY inside run 1's quoted refusal.
+    $refusal = Get-UnexpectedClosureRefusal -Numbers @('815', '925')
+    Assert-Set -Actual (Get-ClosingReferences -Text $refusal) -Expected @() `
+        -Message 'the tool own refusal, fed back through the parser, names nothing: it can be pasted where it is discussed'
+
+    # AND IT STILL SAYS WHICH. Without this, deleting the numbers would satisfy the cell above --
+    # and eliding them is exactly the workaround #965 was filed to remove.
+    Assert-True -Condition ($refusal.Contains('#815') -and $refusal.Contains('#925')) `
+        -Message 'and it still names every offending number, in a form a human reads without decoding'
+
+    # THE CONTROL. Same sentence, the noun taken out, which is what it said before #965. If this
+    # did not name both numbers, the cell above would be measuring a broken parser rather than the
+    # adjacency the fix is about.
+    $adjacent = $refusal.Replace('close issues #', 'close #')
+    Assert-Set -Actual (Get-ClosingReferences -Text $adjacent) -Expected @('815') `
+        -Message 'CONTROL: with the noun removed the first number fires again, so the cell above is about the ADJACENCY'
+
+    # One number reads as one. A message that said "issues #815" would be inert too, and would look
+    # like a program that cannot count.
+    Assert-True -Condition ((Get-UnexpectedClosureRefusal -Numbers @('815')).Contains('close issue #815')) `
+        -Message 'a single offender is named in the singular'
+
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

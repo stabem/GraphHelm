@@ -575,6 +575,11 @@ function Invoke-Stage {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    # #841: CREATED BEFORE THE TRY, so the `finally` below always has a list to publish. A body that
+    # throws before this line existed inside the try would leave `$capturedLines` undefined, and the
+    # publication in the finally would then throw over the top of the original error -- replacing the
+    # cause with a complaint about the instrument that was trying to record it.
+    $capturedLines = New-Object System.Collections.Generic.List[string]
     try {
         # `& $Body` without capturing its result makes the native command's STDOUT part of THIS
         # FUNCTION'S OWN output stream (ordinary PowerShell function behaviour) - every call site
@@ -587,7 +592,6 @@ function Invoke-Stage {
         # into $capturedLines, live output unaffected - the manifest (#152) embeds the tail of
         # this on failure, so a reader sees the named assertion in the JSON itself, not only in a
         # console scrollback that may already be gone by the time anyone reads the manifest.
-        $capturedLines = New-Object System.Collections.Generic.List[string]
         # Invoke-Postgres publishes its detached child's files with Write-Host so that reading
         # them cannot become this function's numeric return value. Write-Host is information
         # stream 6 in Windows PowerShell 5.1 and PowerShell Core. Merge only that stream into the
@@ -624,14 +628,34 @@ function Invoke-Stage {
         # on the first line that names a failure, and `Blocking waiting for file lock` is printed
         # BEFORE any of that -- so the one line that identifies a lock is exactly the line the tail
         # is entitled to drop.
-        $script:lastStageLines = $capturedLines.ToArray()
-        # #207: and the running concatenation. A target a manifest gates behind a feature prints
-        # its binary in whichever stage builds it, so a check reading only `$script:lastStageLines`
-        # would ask the wrong transcript and answer "not run" about a target that ran earlier.
-        $script:allStageLines += $capturedLines.ToArray()
     } finally {
         $ErrorActionPreference = $previous
         $stopwatch.Stop()
+        # #841: PUBLISHED IN THE FINALLY, so these two always describe the stage that just ran --
+        # including one whose body THREW. As the last statements of the `try` they were skipped by
+        # any terminating error, and the effect was not that they went empty; it was that
+        # `$script:lastStageLines` kept the PREVIOUS STAGE'S capture. A reader would then answer
+        # confidently about the wrong subject, which is worse than answering nothing: an empty read
+        # reddens, a neighbour's transcript does not.
+        #
+        # Measured on the real sliced Invoke-Stage before the move: stage A printed STAGE-A-MARKER
+        # and passed, stage B printed STAGE-B-MARKER and threw, and afterwards
+        # `$script:lastStageLines` held STAGE-A-MARKER while `$script:allStageLines` had never
+        # heard of stage B at all -- B's bytes were in `$capturedLines` and were simply not
+        # published. `ci/gate-stage-verdict-source.tests.ps1` drives exactly that.
+        #
+        # Harmless in the gate as it stands, because today a throwing body aborts the run through
+        # the outer finally and nothing reads the stale value afterwards. It is written for the
+        # SECOND consumer: the day a stage reads these after a neighbour throws, it reads the wrong
+        # stage's transcript, and nothing about the value says so.
+        $script:lastStageLines = $capturedLines.ToArray()
+        # #207: and the running concatenation, which feeds the run transcript the
+        # `required-features coverage` stage writes. A target a manifest gates behind a feature
+        # prints its binary in whichever stage builds it, so a check reading only
+        # `$script:lastStageLines` would ask the wrong transcript and answer "not run" about a
+        # target that ran earlier -- and a stage that threw used to contribute nothing here at all,
+        # so whatever it had already printed was lost from the record.
+        $script:allStageLines += $capturedLines.ToArray()
     }
     if ($code -ne 0) {
         Write-Host "[gate] FAILED: $Name (exit $code)" -ForegroundColor Red

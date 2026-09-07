@@ -6,7 +6,7 @@
 # The real `Invoke-Stage` is cut out of ci/gate.ps1 by anchor text (the helper region, the same cut
 # gate-stage-reddens.tests.ps1 makes) and run in a child PowerShell against three bodies. Nothing
 # here runs the gate.
-$ExpectedAssertionCount = 13
+$ExpectedAssertionCount = 18
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -71,6 +71,44 @@ function Invoke-StageSlice {
     return [ordered]@{ passed = [bool]::Parse($parts[2]); exitCode = [int]$parts[3]; failed = $failed[0].Substring(7) }
 }
 
+
+# #841: TWO stages in one child, the second of which THROWS -- which the single-stage helper above
+# cannot express, because it requires exactly one record and a throwing stage produces none.
+#
+# Returns what the two script-scoped captures hold AFTER the throw, joined with `~` so one output
+# line carries a whole transcript. The markers are printed by `cmd`, not by PowerShell, because the
+# capture path under test is the native-command one: `& $Body 2>&1 6>&1 | ForEach-Object {...}`.
+function Invoke-ThrowingSecondStage {
+    param([Parameter(Mandatory)] [string] $SecondBodyText)
+    $slicePath = Join-Path $fixtureRoot "throwing-$([guid]::NewGuid().ToString('N')).ps1"
+    $script = @(
+        "`$ErrorActionPreference = 'Stop'"
+        "`$repositoryRoot = '$($fixtureRoot.Replace("'", "''"))'"
+        $sliceHelpers
+        "`$null = Invoke-Stage 'first' { & cmd /c `"echo STAGE-A-MARKER & exit 0`" }"
+        "`$threw = `$false"
+        "try { `$null = Invoke-Stage 'second' { $SecondBodyText } } catch { `$threw = `$true }"
+        "Write-Output ('THREW|' + `$threw)"
+        "Write-Output ('LAST|' + ((`$script:lastStageLines) -join '~'))"
+        "Write-Output ('ALL|' + ((`$script:allStageLines) -join '~'))"
+        'exit 0'
+    ) -join [Environment]::NewLine
+    [System.IO.File]::WriteAllText($slicePath, $script, $utf8NoBom)
+    $output = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $slicePath 2>&1 |
+            ForEach-Object { [string]$_ })
+    $get = {
+        param($prefix)
+        $hit = @($output | Where-Object { $_.StartsWith($prefix, [System.StringComparison]::Ordinal) })
+        if ($hit.Count -ne 1) { throw "HARNESS-BROKE: expected one $prefix line, got $($hit.Count): $($output -join ' / ')" }
+        return $hit[0].Substring($prefix.Length)
+    }
+    return [ordered]@{
+        threw = [bool]::Parse((& $get 'THREW|'))
+        last  = (& $get 'LAST|')
+        all   = (& $get 'ALL|')
+    }
+}
+
 try {
     Write-Host ''
     Write-Host '-- CONTROL: a body that speaks is judged by what it said --' -ForegroundColor Cyan
@@ -119,6 +157,44 @@ try {
         "no statement runs between the poison and the body, so nothing can overwrite it (anchors found: $anchorsFound; offending lines: $($between.Count)$(if ($between.Count) { ' -> ' + ($between -join ' | ') }))"
     Assert-True ($gateText.IndexOf('$MuteStageExitCode = 99', [System.StringComparison]::Ordinal) -ge 0) 'the sentinel is the named 99, the value merge-proof already runs behind'
     Assert-True ($gateText.IndexOf('$global:LASTEXITCODE = 0', [System.StringComparison]::Ordinal) -lt 0) 'and nothing clears the code to 0 before a body, which would turn every mute body into a pass'
+
+    Write-Host ''
+    Write-Host '-- #841: a stage that THROWS publishes its own capture, never the neighbour''s --' -ForegroundColor Cyan
+
+    # The body prints through `cmd` and THEN throws, so there is real captured output to publish and
+    # a terminating error to skip past. Before the fix the two publications were the last statements
+    # of the `try`, so this arrangement skipped both.
+    $threwAfterPrinting = Invoke-ThrowingSecondStage -SecondBodyText '& cmd /c "echo STAGE-B-MARKER & exit 0"; throw ''deliberate'''
+
+    # ARRANGEMENT, asserted rather than assumed: if the body stopped throwing, every cell below would
+    # pass for the wrong reason -- they would be measuring the ordinary path the other 13 already cover.
+    Assert-True $threwAfterPrinting.threw `
+        'ARRANGEMENT: the second stage really did throw, so what follows is measured on the unwinding path'
+
+    # THE DEFECT. Not "the value is empty" -- empty would redden and send someone looking. The value
+    # was the PREVIOUS STAGE'S transcript, which answers confidently about the wrong subject.
+    Assert-True ($threwAfterPrinting.last -notmatch 'STAGE-A-MARKER') `
+        "after a stage that threw, `$script:lastStageLines does not still hold the PREVIOUS stage's capture (got [$($threwAfterPrinting.last)])"
+
+    # The other half, and it is what makes the first a fix rather than a clearing. Assigning `$null`
+    # on entry would satisfy the cell above and lose the evidence the throwing stage did produce.
+    Assert-True ($threwAfterPrinting.last -match 'STAGE-B-MARKER') `
+        "and it holds what the throwing stage itself printed before it threw (got [$($threwAfterPrinting.last)])"
+
+    # THE RUNNING CONCATENATION, which `required-features coverage` writes out as the run transcript.
+    # A throwing stage used to contribute nothing to it, so whatever it had printed was absent from
+    # the record entirely -- the transcript is evidence, and evidence that silently omits a stage is
+    # worse than a short one.
+    Assert-True ($threwAfterPrinting.all -match 'STAGE-A-MARKER' -and $threwAfterPrinting.all -match 'STAGE-B-MARKER') `
+        "and the run transcript keeps BOTH stages, so a stage that threw is not missing from the record (got [$($threwAfterPrinting.all)])"
+
+    # CONTROL: publishing in the `finally` did not swallow the error it now survives. A fix that
+    # recorded the evidence and ate the exception would pass all four cells above and turn every
+    # throwing stage into a silent pass, which is the #896 defect wearing a different hat.
+    $ordinary = Invoke-ThrowingSecondStage -SecondBodyText '& cmd /c "echo STAGE-B-MARKER & exit 0"'
+    Assert-True ((-not $ordinary.threw) -and ($ordinary.last -match 'STAGE-B-MARKER') -and ($ordinary.last -notmatch 'STAGE-A-MARKER')) `
+        "CONTROL: a second stage that does NOT throw is unchanged -- no throw, its own capture, not the neighbour's (threw=$($ordinary.threw), last=[$($ordinary.last)])"
+
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

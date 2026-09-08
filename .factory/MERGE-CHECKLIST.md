@@ -68,6 +68,30 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    selection — absent, missing, unparseable, no crate list, an EMPTY crate list, or the selector
    escalating — runs the FULL gate, because a selector that narrows on a bad selection runs fewer
    stages and reports the same green.
+   **DERIVING A SCOPE FOR A HAND-LAUNCHED RUN (#903).** The runner does this for every entry it
+   builds (`ci/gate-runner.ps1` runs the selector at the `'-File', … 'ci/select-scope.ps1'` call and passes the file through `$scopeArgument`; line numbers move, those anchors do not). A gate launched by
+   hand does NOT, and that is the split to be careful about: two runs of the same head can disagree
+   about what they covered while both printing GREEN. Three lines, from the bench, with the file
+   written OUTSIDE it:
+
+   ```powershell
+   # 1. derive, against the PR's own range. The parameters are -MergeBase and -Head, not -BaseRef.
+   powershell -NoProfile -ExecutionPolicy Bypass -File ci/select-scope.ps1 `
+       -MergeBase (git merge-base origin/main HEAD) -Head HEAD | Select-Object -Last 1 |
+       Set-Content -Path D:/<lane>-<pr>-run/scope.json -Encoding ASCII
+   # 2. read what it decided BEFORE spending the slot -- escalated, crates, matrix, matrixReason
+   Get-Content D:/<lane>-<pr>-run/scope.json | ConvertFrom-Json
+   # 3. launch with it
+   & ./ci/gate.ps1 -ScopeSelection 'D:/<lane>-<pr>-run/scope.json'
+   ```
+
+   `Select-Object -Last 1` because the selector may print notes before the JSON. The file goes in
+   the RUN directory, never the bench: a foreign file in the tree makes the publication stage refuse
+   and the run ends RED with every stage green. **A hand run WITHOUT `-ScopeSelection` is a FULL
+   run** — the manifest says `"reason": "FULL: no scope selection was given"` — and the comment
+   reporting it must say so, because a reader comparing it with a scoped run of the same head is
+   comparing two different questions.
+
    **The manifest-only exception (#752, #674(b)):** a PR whose only change is `.factory/gate-runs/*.json`
    produced by the gate, and nothing else, RECORDS a run — it does not vouch for a merge. It may merge with
    `merge-proof` NOT or ABSENT under a NAMED exception: the merge comment cites the run's sha, status and

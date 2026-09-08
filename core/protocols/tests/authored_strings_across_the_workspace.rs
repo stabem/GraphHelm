@@ -97,7 +97,7 @@ fn offends(line: &str) -> bool {
 /// their own crate's per-crate guard still scans — which is the first thing making the twelve
 /// load-bearing rather than redundant, and a reason not to delete them without replacing that
 /// coverage. The exceptions are named in their entries.
-const EXEMPT: [(&str, &str); 7] = [
+const EXEMPT: [(&str, &str); 8] = [
     // ---- Species A: a guard quoting the defect on purpose. -------------------------------------
     // These files exist to hold examples of collapsed runs. Rewriting them to satisfy this sweep
     // would delete the samples the predicate is tested against, which is the one edit a guard must
@@ -137,6 +137,13 @@ const EXEMPT: [(&str, &str); 7] = [
         "a canonical-JSON sample whose exact two- and four-space indentation is what the assertion \
          compares; migrated from apps/cli's `canonical_json_fixture_source_line`, which carries the \
          same reason",
+    ),
+    (
+        "core/protocols/tests/only_declared_crates_write_the_repository.rs",
+        "the_form_matches_the_three_spellings_and_leaves_their_siblings_alone's fixture lines: each \
+         is a sample of REAL Rust source code (an append call, a comment) whose leading indentation \
+         is the input `names_an_append`/`is_comment` are measured against, not authored prose that \
+         leaked whitespace",
     ),
 ];
 

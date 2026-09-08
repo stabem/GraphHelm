@@ -223,14 +223,42 @@ fn sources_with_fs<F: SourceFs>(
 /// Composing them here rather than importing a bundled predicate is what lets an exemption be
 /// asserted to be doing work instead of merely having a subject.
 ///
-/// This crate needs only the shared one. Both of its candidates are authored prose in assertion
-/// messages; none of the DATA species that force a role exemption elsewhere occurs here --
-/// rendered `html:` surfaces, canonical-JSON samples whose formatting IS the test, a guard's own
-/// detection fixtures, deliberate column alignment inside a `\n`-formatted report, or a value that
-/// IS whitespace. That is a measurement, and if one ever lands here the exemption belongs beside
-/// it, by ROLE and never per-file.
-fn offends(line: &str) -> bool {
-    !is_line_comment(line) && has_run_in_literal(line)
+/// The line-comment exemption used to be the only one this crate needed. It no longer is:
+/// `only_declared_crates_write_the_repository.rs`'s `the_form_matches_the_three_spellings_...`
+/// test carries the detection fixtures of `names_an_append`/`is_comment` -- sample Rust source
+/// whose leading indentation IS the input those predicates are measured against, the exact
+/// species the doc above once said did not occur here.
+fn offends(line: &str, in_fixture: bool) -> bool {
+    !is_line_comment(line) && has_run_in_literal(line) && !in_fixture
+}
+
+/// The 1-based line range of the named fixture function in ONE already-loaded file, computed
+/// once rather than per offending line -- the first version re-read the file and rebuilt its
+/// line index from disk for every matching line, which is quadratic file I/O on a file with many
+/// such lines (Codex, on this PR). Taking `text` rather than re-reading it is also a smaller
+/// change than caching would have been: there is nothing to invalidate when the population is
+/// walked once per test run.
+///
+/// By ROLE rather than by exempting the whole file: every OTHER string in this file still obeys
+/// the rule it enforces (see the module doc), including the rest of
+/// `only_declared_crates_write_the_repository.rs`. Scoped by function name and its own closing
+/// brace rather than a fixed line range, so the exemption tracks the function if it moves and
+/// does not silently widen if it grows.
+fn detection_fixture_range(path: &str, text: &str) -> Option<std::ops::RangeInclusive<usize>> {
+    const FIXTURE_FILE: &str = "only_declared_crates_write_the_repository.rs";
+    const FIXTURE_FUNCTION: &str =
+        "fn the_form_matches_the_three_spellings_and_leaves_their_siblings_alone() {";
+    if !path.ends_with(FIXTURE_FILE) {
+        return None;
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == FIXTURE_FUNCTION)?;
+    let end = lines[start..].iter().position(|line| line.trim() == "}")?;
+    let end = start + end;
+    // `start`/`end` are 0-based indices into `lines`; the range this returns is 1-based.
+    Some(start + 1..=end + 1)
 }
 
 #[test]
@@ -238,9 +266,15 @@ fn authored_strings_carry_no_collapsed_indentation() {
     let offenders: Vec<String> = sources()
         .iter()
         .flat_map(|(path, text)| {
+            let fixture_range = detection_fixture_range(path, text);
             text.lines()
                 .enumerate()
-                .filter(|(_, line)| offends(line))
+                .filter(move |(number, line)| {
+                    let in_fixture = fixture_range
+                        .as_ref()
+                        .is_some_and(|range| range.contains(&(number + 1)));
+                    offends(line, in_fixture)
+                })
                 .map(move |(number, line)| format!("{path}:{}: {}", number + 1, line.trim_start()))
         })
         .collect();

@@ -7,6 +7,112 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
 
 ## Before `gh pr merge`
 
+**Two standing lines for whoever presses (owner's restructure, 2026-09-08).** First: the authority to
+press is **a record in the execution** - append-only, sealed, and read by the owner in the Studio -
+never a chat message and never `.factory/orchestrator-board.md`, whose addresses belong to sessions
+that no longer exist. Second: the gate runs BEFORE the passes (`.factory/lane-loop.md` section 0), so
+item 2 below is not asking whether SOME gate ran - it asks for the manifest that vouches for the head
+you are pressing, and it expects the passes at that same head. **`headSha` equal to the head is the
+rarer case**, and the two arms are not one case at two moments - **they are the two STATES of a
+receipt, unpublished and published:**
+
+- **`headSha == head` cannot occur among COMMITTED manifests, by construction**, and the mechanics say
+  why rather than reporting that nobody has seen one: publication does `read-tree $HeadSha`, then
+  `update-index --add` the manifest blob, then `write-tree`, then `commit-tree $tree -p $HeadSha`
+  (`ci/gate.ps1:1944`, `:1950`, `:1957`, `:2023`). The tree holding the manifest that names H is
+  therefore always H's CHILD - H's own tree never contains it, and a second run over the receipt
+  repeats the shape one level up. No publish path produces a tree containing the manifest that names
+  it. (Boundary, inside the sentence rather than under it: this is a statement about what the GATE
+  commits. A manifest placed in a tree by hand is outside this path, and is what the provenance items
+  below exist to catch.)
+
+  **Where the arm does exist is the LEDGER record of a run whose publication did not happen.** `ci/gate.ps1`
+  writes both copies - repository and durable ledger - at `Write-GateManifestPair` (`:2563`), and
+  publishes only later at `Publish-RunManifest` (`:2622`), which is where `commit-tree ... -p $HeadSha`
+  (`:2023`) and `update-ref <branch> <commit> $HeadSha` (`:2043`) run. If publication does not happen,
+  the ledger record exists and the branch tip is still `$HeadSha` - so a manifest names the head. **What
+  `merge-proof` then answers is ABSENT, and that is correct**: `$mine` is built only from manifests
+  COMMITTED in the target tree (`:744`) and an empty set exits ABSENT at `:783`, before the ledger scan
+  at `:823` ever runs - that scan only corroborates (`:121`). The `:341` line ("a ledger record is a
+  manifest") says the same PREDICATE is applied to a ledger record when one is read; it does not make a
+  ledger-only record satisfy the proof. So this arm exists in the world and does NOT produce a
+  SATISFIED: the remedy is a gate run that publishes, which is the safe direction. An earlier version of
+  this paragraph said `merge-proof` judges it - that came from a traced path's declared assumption
+  ("assumes `merge-proof` compares a ledger sweep against the branch tip"), published as fact by me
+  and refuted by reading `:744`-`:783`. The
+  causes are all already recorded here rather than imagined: a detached bench (this file records TWO
+  lanes on one night, 2026-09-05), a non-null `dirtyDiffHash` (the "green but ABSENT" class), a refused
+  `update-ref`, a failed `commit-tree`, or the process dying between the two calls. `ci/gate.ps1:2618`
+  names the shape in its own words: *a refused publication left a durable `status: GREEN` for a run
+  that never published*.
+- **`headSha == parent(head)` is the published case**, and the ordinary one: the receipt is the head
+  and names the tree it judged.
+
+  (Traced by lane A and re-derived here from `ci/gate.ps1` and `ci/merge-proof.ps1`. **Its declared
+  limits, kept because they are what makes it usable:** only `ci/gate.ps1` was read at `e53e3e22` and
+  confirmed as the receipt writer - the other files touching `gate-runs` were not each read to prove
+  none writes a manifest; the path was READ IN THE CODE, not executed; and it assumes `merge-proof`
+  compares a ledger sweep against the branch tip. **And the method note worth more than the answer:**
+  counting the committed store returned 0 of 341 for the first arm, and could not have done otherwise -
+  the committed population IS the published one, and publication is what forces the second arm. A zero
+  measured in the only place the case cannot appear. The earlier sentence here reached the right
+  conclusion through a reason that argued for its opposite, and its two examples described a case that
+  does not occur; both are replaced by the arms above.)
+
+### THE TWO MANIFEST QUESTIONS - CANONICAL
+
+**This block is the only statement of these two rules. Every other mention in these files POINTS here
+and does not restate, summarise or illustrate in its own words.** Five review rounds landed on this
+same point, one reformulation at a time, because five places said it differently; a second statement
+is a second thing to correct, and whichever is corrected last starts lying. If you find a restatement,
+delete it and leave a pointer.
+
+**Two questions, two different rules. Do not merge them.**
+
+- **Does a manifest vouch for this head? ONE STEP.** `headSha == head`, or `headSha == parent(head)`
+  with a tip that adds nothing but the record. A manifest always names the commit immediately below
+  it, so one step is exact, and it self-sustains under stacking: with a second manifest on top, the
+  newest still names its own parent. This is item 2's predicate and the contract of
+  `ci/merge-proof.ps1` (`Test-ManifestVouches`), which implements exactly this - the words here and
+  that function must say the same thing, and were read against each other when this was written.
+- **Does a pass still cover this head? ANCESTRY FIRST, THEN THE WHOLE GAP.**
+  `git merge-base --is-ancestor <the sha the pass names> <head>` must succeed BEFORE the diff is read.
+  `git diff A B` compares two TREES and says nothing about history: a force-push whose new tree happens
+  to be the reviewed tree plus one receipt produces exactly the clean `A .factory/gate-runs/...` output,
+  and the passes would carry across a rebase that `.factory/lane-loop.md` says kills them (Codex,
+  measured on this PR by reproducing a divergent history). Ancestry is part of THIS predicate, not
+  something a caller is expected to infer. Then: `git diff --name-status <the sha the pass
+  names> <head>` must return, for EVERY entry, the status `A` on a path under `.factory/gate-runs/` -
+  however many manifest commits stand between. A pass names a sha a PERSON chose, at any distance,
+  which is why this question needs the gap and the manifest question does not.
+  **The status is half the check, and the rule is an ALLOWLIST OF ONE.** `A` is accepted. **Every other
+  status voids the carry, whatever its letter** - stated as an allowlist on purpose, so no letter has to
+  be foreseen: `git diff --name-status` can also emit `C`, `T`, `U`, `X` and `B`, and a rule written as
+  "not `M`, `D` or `R`" would have to grow a case for each. What the three seen so far mean:
+
+  | status | what it means for a carry |
+  |---|---|
+  | `A` | a receipt was added. The ONLY case a pass survives, and what a real publication does. |
+  | `M` | a receipt was rewritten - a status, head or stage list no reviewer saw, arriving as the evidence read at the button. VOID. |
+  | `D` | a receipt was deleted: evidence removed. VOID. |
+  | `R` | a receipt was renamed, which no publication does - the name carries the head and the timestamp. VOID. |
+
+  A path-only reading (`--name-only`) waves all three through, because they are all the same path list.
+  A modified receipt is never a normal one: every publication writes a NEWLY NAMED file,
+  `.factory/gate-runs/<HEAD12>-<timestamp>.json` (`ci/gate.ps1`).
+  **This is deliberately stricter than `ci/merge-proof.ps1`'s `'^[AM]'` (`:405`, `:819`), and the two
+  are not in conflict** - they answer different questions. The verifier asks whether a manifest vouches
+  and validates that manifest's own content; a carry asks whether anything changed that the reviewers
+  did not see, and a rewritten receipt is exactly that. Where the rules differ, this one refuses more,
+  which is the safe direction for evidence.
+
+The gap rule replaced an earlier wording for the PASS question - "the manifest names the parent and
+the tip is manifest-only" - which is named here rather than deleted, because it was true against what
+it corrected and goes false the moment two manifests stack. Do not apply the gap to the manifest
+question to make the two symmetrical: the document would then promise a case `merge-proof` answers NOT
+to, which is a false red in the one command the presser runs. (Both halves found on this PR: the
+author flattened them into one rule twice, and lane C and Codex measured them apart.)
+
 0. **Measure from a fresh worktree of `origin/main`, not from your session's.** Measured 2026-09-04:
    session worktrees sat 315–374 commits behind main (a sweep found 3 of 35 `.ps1` files because the
    tree it ran in had 3). Print `git rev-list --count HEAD..origin/main` before any count — the hook does.
@@ -19,16 +125,18 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    not theirs (H pressed #852 on 6 of 9 comments — two re-pins and a measurement were already there; #888).
    The same for whoever ASSIGNS: an order written from a reading older than the newest comment is a cache
    too (three stale orders in one morning; a pass already on #826 at 10:28Z while the order to give it went
-   out). **A rebase is not a manifest-only tip.** Before asking for or giving a re-pin: `git merge-base
+   out). **A rebase does not satisfy the gap rule** (it was written "is not a manifest-only tip"; same point, gap wording). Before asking for or giving a re-pin: `git merge-base
    --is-ancestor <pinned-sha> <new-head>`. If it fails, the branch was REBUILT and a sentence does not carry —
    run `git range-diff <old-base>..<pinned> <new-base>..<head>`: `=` on every line means the measurements
    transfer; any `!` names the commit to re-review. `git diff --stat` between two tips does not serve: it
    shows main moving and looks like the author's work (15 files, +1089 on #836 with nothing changed — H).
-   **One carry, and only one:** when the gate's manifest-only commit moves the head, a pass that names the
-   PARENT carries to the new head — the presser verifies `git diff --name-only <parent> <head>` lists only
-   `.factory/gate-runs/*.json` (`--name-only`, never `--stat`: `--stat` truncates the path from the LEFT to
-   `...45f43a3e66f9-…json` and hides the directory the rule tells you to see — K, measured on #885) and
-   writes that in the merge comment; any other path in that diff voids
+   **Whether a pass still covers the head is answered by THE TWO MANIFEST QUESTIONS above** (canonical
+   block, top of this file). Do not re-derive it here. The wording this line used to carry - "one carry,
+   and only one", from the head's PARENT - is named rather than deleted and is RETIRED: it goes false on
+   the second stacked manifest and never looks between the commits, so a source file hidden there passed
+   it by luck. The presser runs the command the canonical block gives, never `--name-only` (it hides the
+   status the rule turns on) and never `--stat` (it truncates the path from the LEFT to
+   `...45f43a3e66f9-…json` and hides the directory the rule tells you to see - K, measured on #885), and   writes that in the merge comment; any other path in that diff voids
    the carry (#674(b) for the proof, #852 for the passes — decided on #826, 2026-09-04).
    **The sha scopes what a pass VOUCHES for. It never scopes who may press (#970).** Everything above
    is about the first question; item 8 answers the second, and reading this item as an answer to both
@@ -41,7 +149,20 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    ./ci/merge-proof.ps1 -PullRequest N          # exit 0 SATISFIED · 1 HARNESS-BROKE · 2 NOT (a run that does not vouch) · 3 ABSENT (no run recorded)
    ```
    Predicate, whole: `status == GREEN AND pushed == true AND pullRequest == N AND (headSha == head
-   OR (headSha == parent(head) AND the tip touches only .factory/gate-runs/))`. **Exit 0 is
+   OR (headSha == parent(head) AND the tip touches only .factory/gate-runs/))`.
+   **This is the ONE deliberate exception to the canonical block's pointer rule**: it is written out
+   because it is the CONTRACT of `ci/merge-proof.ps1`, which must be checkable against the code without
+   a hop. The rules themselves live in THE TWO MANIFEST QUESTIONS at the top of this file.
+   **This `parent(head)` is CORRECT and is deliberately not the gap form — do not "finish the job" by
+   changing it.** Two different questions wear the same shape. A MANIFEST always names the commit
+   immediately below it (the gate commits its receipt on top of the tree it judged), so one step is
+   exact here, and it self-sustains under stacking: with a third manifest on top, the newest still names
+   its own parent and the predicate still answers SATISFIED — measured on #1010 (`e171ca48` names
+   `8f1f0fc1` names `f49d3fdf`). A PASS names a sha a PERSON chose, at any distance, which is why passes
+   need the gap and this predicate does not. This line is also the CONTRACT of `ci/merge-proof.ps1`,
+   which implements exactly this (`rev-parse Head^`): widening the words without widening the tool would
+   make the document promise a case the tool answers NOT to. (Author widened it once on this PR; lane C
+   measured it back.) **Exit 0 is
    necessary, not sufficient, while #825's P1 is open:** the reader checks `status` only, so open
    the manifest it names and confirm the stage list is green. Exit 3 (ABSENT) means nobody
    ran the gate on this head — a gate run owed, not a merge; exit 2 (NOT) means a run exists and does
@@ -575,7 +696,7 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    - **author** — never presses;
    - **verdict at `<sha>`** — a body carrying `APPROVE`, `APPROVE-WITH-RISK` or `BLOCK` at any
      head; disqualified from pressing, counted as a pass only if the sha is the current head or
-     carries under item 1's parent rule;
+     carries under THE TWO MANIFEST QUESTIONS (canonical block, top of this file);
    - **body without verdict** — measurement, routing, question, `**not a verdict**`; the lane is
      **ELIGIBLE** (item 8 says so; a census that lacks this class declares the set empty while an
      independent lane exists). One clause draws the boundary: **a body that states a condition on
@@ -644,8 +765,8 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    shortest=162` — the axis was never varied), which is why the synthetic CRLF row is the cell.
    Merge the two lists by timestamp before choosing.
    If every non-author lane is `author` or `verdict`, the reviewer whose pass at the current head —
-   or carried to it under item 1's parent rule, when the tip is manifest-only over the reviewed
-   parent — has the EARLIEST issue-comment timestamp presses under `AGENTS.md`'s exhaustion clause
+   or carried to it under THE TWO MANIFEST QUESTIONS (canonical block, top of this file)
+   — has the EARLIEST issue-comment timestamp presses under `AGENTS.md`'s exhaustion clause
    (both surfaces are CENSUSED, but the earliest pass is read from the comment surface only — see
    the `edited` paragraph above; on an exact tie, which has not occurred — 0 in 279 bodies across 14
    PRs, ISSUES 4's census on #977 — and which ids cannot break, because review ids sit ~437 million
@@ -700,6 +821,22 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
   Corrections go INSIDE the same PR as a follow-up comment, never elsewhere.
 
 ## Tooling traps that produced false readings on 2026-09-03/04 (each measured)
+
+- **Every `gh`/`git` body goes in a FILE (`--body-file`, `-F`), never inline.** An inline argument is
+  read by the shell first: backticks in it EXECUTE, and what lands is a corrupted published text - a
+  merge comment, a squash body, a review. No gate sees this, because nothing about it is code; the only
+  damaged thing is the record. Write the file with `UTF8Encoding($false)` and read the bytes back
+  before and after, which is what E did for both squash bodies and both merge comments today
+  (`e53e3e22`, `eb40bf0c`). **This rule lived ONLY on `.factory/orchestrator-board.md`** (line 39,
+  beside its M09 assignments) until it was moved here when that file was tombstoned - swept for by the
+  DECISION it makes (how a body reaches a command), not by the flag name; the only other copy is in
+  the M09/M10 archive, which is equally dead.
+- **`git add` per file, never `-A`.** Same origin, same measurement: `-A` sweeps whatever else the
+  working tree happens to hold into a commit that claims to be about one thing - recorded in this
+  repository's own history (`.factory/d-agent-323-blueprint.md:785`: a file "has nothing to do with -
+  and `git add -A` committed it"), and reproduced by a gate cell whose trap fired for exactly that
+  reason (`ci/crate-input-hash.tests.ps1:397`).
+
 
 - `git cat-file -e "<ref>:<path>"` under MSYS is mangled for some path shapes and not others
   (measured: `origin/main:core/x` fine; `origin/main:.factory/x` and `origin/main:/core/x` mangled to

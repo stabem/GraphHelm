@@ -1,3 +1,14 @@
+> **OBSOLETE - DO NOT ACT ON THIS FILE (tombstone, 2026-09-08).** Everything below was written by
+> sessions that no longer exist, during M09/M10. Its worker table, its addresses and its standing
+> orders are all dead: a session name here cannot be messaged, and a task here has no owner. Authority
+> now lives in the **execution records** (append-only, read by the owner in the Studio); the lane
+> sequence lives in `.factory/lane-loop.md` and the press rules in `.factory/MERGE-CHECKLIST.md`.
+> **Two rules that lived only here were moved out BEFORE this line was written** - `gh`/`git` bodies
+> via `--body-file`/`-F` and `git add` per file - and are now in `.factory/MERGE-CHECKLIST.md`'s tooling
+> traps. Nothing else here was found to exist nowhere else.
+> Kept only as history - it misled a lane on 2026-09-08, which is why this line exists. A dead file
+> nobody marked dead is a loaded trap.
+
 # Orchestrator board — M09 stabilization
 
 ## FULL AUTONOMY (owner, 2026-08-19, sleeping): orchestrator authorizes everything incl.

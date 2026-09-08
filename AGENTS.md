@@ -217,7 +217,10 @@ another session can message, and a hook cannot know it, so run `ListAgents` once
 (`local_<session_id>` from the hook JSON is **not** deliverable — measured.) A lane letter, when the
 board has given you one, goes in front: `Lane: <letter> · Session: … · Head: …`; it is a label for the
 board, never a substitute for the session name. A comment without this line cannot be addressed,
-re-asked, or audited; a carry without the head sha covers nothing.
+re-asked, or audited; a carry without the head sha covers nothing. **Put it in the OPENING of the
+comment, not in the footer.** A line at the bottom of a long body is read as absent by whoever is
+counting passes: measured 2026-09-08, an identity line that was present as the last of 49 lines
+behaved exactly like a missing one.
 
 ### Peer review and peer merge (owner order, 2026-09-04)
 
@@ -225,8 +228,8 @@ re-asked, or audited; a carry without the head sha covers nothing.
   measured. Say "no open roots **against `<sha>`**", never "no open roots". **Whoever presses is a
   third lane** — neither the author nor either reviewer. **When no such lane exists** — every live
   lane other than the author holds a verdict on the PR — **the reviewer whose pass is EARLIEST at
-  the current head, or carried to it by the parent rule (a manifest-only tip over a reviewed
-  parent), presses**, and writes in the merge comment that the third-lane set was empty, naming
+  the current head, or carried to it under THE TWO MANIFEST QUESTIONS (canonical block at the top of
+  `.factory/MERGE-CHECKLIST.md`, which this line does not restate), presses**, and writes in the merge comment that the third-lane set was empty, naming
   every lane and the sha of its verdict. The earliest pass is read from the ISSUE-COMMENT surface
   only: a pull-request review can be edited in place too (the update-review endpoint) and its
   listing carries no edit instant, so a review body classifies its lane but is never the earliest
@@ -246,6 +249,19 @@ re-asked, or audited; a carry without the head sha covers nothing.
   waste time waiting for my answer" — and applied in #977: the orchestrator decides the protocol;
   #952 sat twelve hours with complete evidence because the eligible set was empty, and that wait
   is the cost this clause removes.)
+- **The gate runs before the passes, and nothing is pushed after them.** `ci/gate.ps1` commits its
+  manifest onto the branch it judged, so a pass written before the gate names a sha the PR no longer
+  has; the order is A plans, B implements, C gates, D passes at the head that CARRIES the manifest (not
+  the head it NAMES - a published receipt is itself the head, and names the parent), E presses.
+  After the passes, a new finding on an otherwise clean PR is a declared gap in that PR's own body -
+  no new issue and no follow-up PR (owner, 2026-09-05), and named without a closing keyword so the
+  squash cannot shut a number that must stay open - not a push. What DOES authorise moving a reviewed
+  head is the three-condition rule in `.factory/lane-loop.md` section 0, which this line points at
+  rather than repeating: a partial copy here listed two of the three, which is how the same rule
+  disagreed with itself across two files.
+  Sequencing lives in `.factory/lane-loop.md` section 0, which nothing in this file referenced before
+  (measured: zero occurrences of `lane-loop` in `AGENTS.md` at `68519ce2`), which is how a restarted
+  lane kept reading the old order. (Owner's restructure, 2026-09-08.)
 - Approval is the reviewer's **word in the text**. GitHub cannot record it — self-approval is
   refused on a shared account — so every review is `COMMENTED`, and a review whose body declines
   to verify ("not a pin", "I will not record this as verified") is **not** a pass. The identity line

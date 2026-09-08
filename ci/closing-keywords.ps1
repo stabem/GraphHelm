@@ -97,7 +97,9 @@
     PowerShell prompt: there the empty LITERAL is dropped while the native command line is built,
     so it never reaches the binder and the run dies with "Missing an argument for parameter
     'Closes'" -- an error about the wrong thing, from a layer this program cannot explain from. It
-    survives from bash, from cmd, and when splatted, which is exactly why it went unnoticed.
+    survives from bash and from cmd -- and NOT when splatted, which the table below records as a
+    correction: splatting the argument array was believed to work and does not. It survives from two
+    launchers out of four, which is exactly why it went unnoticed.
 
     Anything that is not digits after its `#`, and is not the word `none`, is refused by name.
 
@@ -238,7 +240,19 @@ param(
     #     bash        -> powershell -File ... -Closes ''       WORKS
     #     cmd.exe     -> powershell -File ... -Closes ""       WORKS
     #     PowerShell  -> & powershell -File ... -Closes ''     FAILS  "Missing an argument"
-    #     PowerShell  -> the same call, SPLATTED array         WORKS
+    #     PowerShell  -> the same call, SPLATTED array         FAILS  identically  <- corrected
+    #
+    # THE FOURTH ROW WAS WRONG, and it was the row a reader would have reached for. Reported by L
+    # after it bit them on the #1006 census; measured again on 2026-09-08 against THIS script from
+    # Windows PowerShell 5.1, both forms, and both answer with the same words:
+    #
+    #     closing-keywords.ps1 : Missing an argument for parameter 'Closes'.
+    #     Specify a parameter of type 'System.String[]' and try again.
+    #
+    # Splatting the ARGUMENT ARRAY does not help, because the empty literal is dropped while
+    # PowerShell builds the native command line -- before the array shape matters. The parameter is
+    # `System.String[]`, which is why an argument that arrives as nothing binds as absent rather
+    # than as empty. From PowerShell, launch through bash or cmd; there is no in-shell form.
     #
     # So the trigger is not `-File`; it is PowerShell's own construction of a native command line
     # dropping an empty LITERAL, in some contexts and not others. Their failure was real and their
@@ -246,8 +260,9 @@ param(
     #
     # This program's documentation used to prescribe `-Closes ''` for "closes nothing" -- the MOST
     # COMMON intent on this board, every partial delivery and every `Refs #N`. A remedy that works
-    # on three launchers out of four is worse than none, because the operator who hits the fourth
-    # reads the binder's complaint as a fact about their pull request. `-Closes none` survives all
+    # on two launchers out of four is worse than none, because the operator who hits either of the
+    # other two reads the binder's complaint as a fact about their pull request. `-Closes none`
+    # survives all
     # four; see `ConvertTo-IntendedClosures`.
     [Parameter(Mandatory)] [AllowEmptyCollection()] [AllowEmptyString()] [string[]] $Closes,
     [string] $Repository,
@@ -674,7 +689,7 @@ $stated = ConvertTo-IntendedClosures -Tokens $Closes
 if (-not $stated.ok) {
     Write-Host ("[closing] REFUSED: -Closes was given [$($stated.offending)], which is not an issue " +
         "number. Write the digits, with or without a leading hash. For a pull request that closes " +
-        "nothing, pass an empty string: -Closes ''") -ForegroundColor Red
+        "nothing, pass the word none: -Closes none") -ForegroundColor Red
     exit 1
 }
 $intended = @($stated.numbers)

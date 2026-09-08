@@ -327,7 +327,10 @@ Write-Output ('ok=' + $stated.ok + ' numbers=[' + (@($stated.numbers) -join ',')
     #   bash        -> powershell -File ... -Closes ''       WORKS   (count=1 first=[])
     #   cmd.exe     -> powershell -File ... -Closes ""       WORKS
     #   PowerShell  -> & powershell -File ... -Closes ''     FAILS   "Missing an argument"
-    #   PowerShell  -> the same call with a SPLATTED array   WORKS
+    #   PowerShell  -> the same call with a SPLATTED array   FAILS identically (corrected 2026-09-08:
+    #                                                       measured against the real script, both forms
+    #                                                       answer "Missing an argument for parameter
+    #                                                       'Closes'... type 'System.String[]'")
     #   this suite  -> both shapes                           WORKS
     #
     # So the trigger is not `-File`. It is PowerShell's construction of a native command line
@@ -411,7 +414,7 @@ Write-Output ('ok=' + $stated.ok + ' numbers=[' + (@($stated.numbers) -join ',')
     Assert-Set -Actual (Get-ClosingReferences -Text '`Closes #796`.') -Expected @('796') `
         -Message 'the_backtick_direction: a keyword in a CODE SPAN is flagged, though GitHub links nothing (#873)'
     # AND THE BOUNDARY, measured rather than assumed -- I asserted the opposite of this first and the
-    # cell caught me. The pattern is `(keyword)\s*#(\d+)`: only WHITESPACE may sit between the
+    # cell caught me. The pattern is `\b(keyword)\b\s*#(\d+)`: only WHITESPACE may sit between the
     # keyword and the hash. So a span AROUND the phrase is flagged (above) and a backtick BETWEEN
     # its halves is not.
     #

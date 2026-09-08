@@ -254,10 +254,12 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    its summary says quota exhausted, and the REST `mergeable` field does not show them. Read
    `reviewThreads` (GraphQL, paginated by `gh` itself — the query must declare `$endCursor` and
    pass it, or `--paginate` cannot advance: `gh api graphql --paginate -f query='query($endCursor:
-   String) { repository(owner:"stabem", name:"GraphHelm") { pullRequest(number:N) {
+   String) { repository(owner:"stabem", name:"GraphHelm") { pullRequest(number:N) { headRefOid
    reviewThreads(first:50, after:$endCursor) { pageInfo { hasNextPage endCursor } nodes { id
    isResolved path } } } } }'`; a PR with more than 50 threads hides the rest from an unpaginated
-   call. In Windows PowerShell 5.1 that same line loses its inner double quotes on the way to `gh`
+   call. **`headRefOid` is selected in this query on purpose**: the verdict rule below compares the
+   head and the thread set from ONE read, and it cannot if this query returns only threads.
+   In Windows PowerShell 5.1 that same line loses its inner double quotes on the way to `gh`
    — `invalid value (stabem)` — so there escape them, `owner:\"stabem\", name:\"GraphHelm\"`, or
    read the query from a file with `-F query=@path` (`-f` sends the `@` literally, and `--input`
    refuses `--paginate`); both forms answered `2` on #977 before being written here) BEFORE `mergeable`,
@@ -292,7 +294,55 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    item 8 reads after the fact.
    `closingIssuesReferences` reads the BODY only; the squash acts on the TITLE plus COMMIT MESSAGES
    (repository setting `squash_merge_commit_title: COMMIT_OR_PR_TITLE` — found by ISSUES 3 on this PR). All four,
-   `grep -iEo '(close[sd]?|fixe[sd]?|resolve[sd]?|refs?) #[0-9]+'`, and the union must equal what
+   `ci/closing-keywords.ps1` (`Get-ClosingReferences`), which is the parser this repository already trusts, and the union must equal what
+   **AND IT DECIDES THREE OF THE FOUR, NOT ALL FOUR** (Codex on #1016 — my sentence overstated it).
+   `Get-ClosureVerdict` unions the BODY, the COMMIT MESSAGES and the TITLE, and prints
+   `closingIssuesReferences` as GitHub's own reading with the words *"Decides nothing here"* beside
+   it, because that field is computed from links this program cannot see. So a number that appears
+   in the API's linked field and in none of the three texts **exits 0 from the tool and is still an
+   unexpected closure**. The fourth place stays an explicit comparison the presser makes by hand:
+   read `closingIssuesReferences`, and require the union of all four to equal the intent.
+   **RUN THE REPOSITORY'S PARSER; DO NOT HAND-ROLL THE PATTERN** (Codex on #1016, and it is the
+   better answer than the one I first shipped). `ci/closing-keywords.ps1` already decides this for
+   the fleet — `Get-ClosingReferences` matches `(?i)\b(<the nine forms>)\b\s*#(\d+)` over a text, and
+   `$ClosingKeywords` lists them explicitly. A census that re-derives the pattern by hand is a second
+   implementation of the thing that presses the button, and it will drift from it. **Read the four
+   places with the parser. **THERE IS NO QUICK GREP HERE ANY MORE, and its removal is the rule.**
+   The first version of this item offered one "if you must eyeball something", and it listed
+   `refs?` among the closing forms -- but `Refs #N` is precisely the form this repository
+   prescribes for a PR that must NOT close (#1018 for #902, #1004 for #90, #1020 for #996). So the
+   shortcut reported a closure that neither GitHub nor the parser sees, **in the most common
+   legitimate case**, inside the very paragraph that had just fixed an under-match (J, on #1016).
+   Two hand-written patterns were wrong here in one night, both found by review and neither by any
+   test, which is the argument for mirroring rather than rewriting:
+   - `fixe[sd]?` expands to *fixe / fixes / fixed*: `fixe` is not a keyword and **bare `fix #N` —
+     which GitHub does close — slipped through**, so the census read 8 of the 9 forms and a closing
+     PR could read as carrying none. `close[sd]?` and `resolve[sd]?` are fine because their stems
+     are bare forms; only `fix` has this shape.
+   - The repair for that, `(^|[^A-Za-z])`, then **over**-matched: digits and underscore satisfy
+     `[^A-Za-z]`, so identifier-like text matched. `\b` is correct in grep and is what the parser
+     uses; the caution about `\b` differing between tools is a property of jq's regex and of sed,
+     and does not apply to `grep -E`.
+   **The control has two halves, and a positive-only half is what let the second error through.**
+   Nine lines that must match, one per keyword form; nine that must NOT, including the identifier
+   shapes. Measured, one line per case:
+   ```
+   MUST match  : close #1  closes #2  closed #3  fix #4  fixes #5  fixed #6
+                 resolve #7  resolves #8  resolved #9
+   MUST NOT    : prefix #12  affixes #12  unresolved #12  closing #12  suffix #12
+                 1fix #41  _fix #42  9closes #43  a_resolved #44
+   grep -iEo with \b            -> 9 of 9 match, 0 of 9 decoys      CORRECT
+   grep -iEo with (^|[^A-Za-z]) -> 9 of 9 match, 4 decoys matched   (1fix, _fix, 9closes, a_resolved)
+   grep -iEo with fixe[sd]?     -> 8 of 9 match ('fix #4' missed)
+   ```
+   `unresolved` is the decoy that matters most: the word sits in this rule's own prose, so an
+   unanchored census **reads this file as carrying a closing keyword** — the instrument inside its
+   own population. Over-matching is noise and under-matching is silence, so the two errors are not
+   equally bad; but a census nobody trusts is a census nobody runs, and both end in the same place.
+   These lines are kept as the RECORD of why this item calls the parser, not as a pattern to
+   maintain. Three hand-written patterns were wrong here in one night, every one found by a reviewer
+   and none by any test. If a hand pattern ever returns it must pass BOTH halves -- nine that must
+   match, nine that must not -- before it is written down.
    the PR means to close. A keyword next to a number you do not want closed — even inside a
    negation, even in a commit body — must be reworded (`Refs #N`, "#N stays open").
 6. **Read the CARRY BODIES, not the count.** `reviewThreads` unresolved = 0 was true on #758 with
@@ -310,8 +360,13 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    has a pass there) before it is read as "none". Every time:
    ```
    gh api --paginate repos/stabem/GraphHelm/issues/N/comments --jq '.[] | select(.user.login != "chatgpt-codex-connector[bot]") | "\(.created_at) \(.body[0:80])"'
-   gh api repos/stabem/GraphHelm/pulls/N/reviews --jq '.[] | "\(.submitted_at) \(.state) \(.body[0:80])"'
+   gh api --paginate repos/stabem/GraphHelm/pulls/N/reviews --jq '.[] | "\(.submitted_at) \(.state) \(.body[0:80])"'
    ```
+   **`--paginate` ON BOTH LINES, and the one that lacked it dropped the NEWEST rows.** Measured on
+   #1005 today: 30 reviews without it, 37 with, and the seven missing were the most recent. An
+   eligibility read taken with the unpaginated form is blind to exactly the verdicts most likely to
+   change the answer, and it bites on every pull request past 30 reviews. Its neighbours above and
+   below both carried the flag; this one did not, which is how it survived being read many times.
 7. **Read the STATE of each review, not its existence.** Every review in this repo is
    `COMMENTED` (the fleet shares one account; GitHub refuses self-approval), so "approve" is the
    reviewer's own word in the text, never a GitHub state. A `COMMENTED` whose body declines to
@@ -323,6 +378,19 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    the merge comment names what the mechanical sweep would have caught and did not:
    prose contradicting code, form-vs-instance matching, the third actor.
    Lanes are told apart by the **identity line** (`Lane: … · Session: … · Head: …`, see `AGENTS.md`),
+   **ONE FORM, EVERYWHERE — comment, review, merge comment and commit body:**
+   ```
+   Lane: X · Session: <ListAgents name> [ref] · Head: <sha8>
+   ```
+   Separators are `·` THROUGHOUT, which is `AGENTS.md`'s own form -- I first wrote `| Head:` here
+   and it conflicted with the protocol this file is supposed to serve (Codex on #1016).
+   The lane letter comes FIRST when the board gave one, and the `Session: L · <name>` variant is
+   retired. This is not tidiness: the queue scorer's lane regex needs a literal `Lane:`, and a body
+   that opens with anything else scores ZERO for its lane. Measured by L on #1023: #992's second body
+   opens `SKILLS USADAS:` and scores nothing, so that PR scores 1 where this file predicts 2 -- a
+   tool cannot parse two conventions nobody agreed on, and the fleet paid for that twice in one
+   night. Readers still LIST rather than filter (below); the single form is what lets a MACHINE
+   agree with them.
    never by the GitHub login — every login here is one account. `AGENTS.md` asks writers to put it
    FIRST; the counter looks for it **anywhere in the body** (C's pass on #833 signs on its last line —
    H counted one pass too few by reading the top line only, #840). A writer's slip must not become the
@@ -382,6 +450,102 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
    ```
    Ask `gh` for `--json` and shape it in the shell you are in; never put a quoted space inside `-q` on
    Windows.
+   **A VERDICT STATES THE UNRESOLVED-THREAD COUNT IT WAS FORMED OVER.** One field, beside the sha:
+   `Head: <sha> · unresolved threads read: N`. L's proposal, after withdrawing a pass that had been
+   formed over three unread P1s — the pass was honest about the diff and silent about the blockers,
+   and nothing in its text let a later reader tell that from a pass formed over a clean board.
+   A sha says WHICH TREE a verdict covers; it says nothing about what the reviewer had in front of
+   them. Two passes over the same sha, one taken before three P1s were filed and one after, are not
+   the same evidence, and today they are indistinguishable.
+   **Stating the count does not require reading every thread — it makes the omission visible**, which
+   is the property a count has and prose does not. `N` greater than zero is not disqualifying: a pass
+   may knowingly leave a thread to its author. A pass that never names the number is the one nobody
+   can price, and the presser should ask before counting it.
+   **THE EARLIEST PASS IS AN ISSUE COMMENT. Its instant is `created_at`, and an edited body is not
+   a pass FOR THAT CHOICE.** This is about which pass is earliest and nothing else: **the two-pass
+   count accepts BOTH surfaces** -- a verdict written as a review still classifies its lane and
+   still counts toward the pair. Read wider, this sentence would disqualify every pass ever written
+   as a review, which is neither what item 8 says nor what the fleet does (Codex on #1016; the rule
+   was issued and retracted within an hour today, so what lands is the surviving half)
+   (item 8's earliest-pass rule, further down this file: the review listing carries no edit instant,
+   so the review surface CLASSIFIES a lane but never supplies the earliest pass).
+   **A DESIGN THAT WAS PROPOSED, MEASURED AND REJECTED TONIGHT, recorded so it is not re-proposed:**
+   `ci/gate-runner.ps1` orders the queue by the length of `pulls/N/reviews`, so a pair whose passes
+   live only in issue comments scores zero and waits behind everything. The obvious remedy — have
+   each lane add a one-line `COMMENTED` review pointing at its pass — was withdrawn once the metric
+   itself was measured: it counts review OBJECTS, including empty inline-comment containers and bot
+   reviews. `#1014` scored **18 with zero verdicts** and outranked `#1006` at **17 with three**.
+   Adding reviews to move up the queue is therefore an arms race and a lever an author can pull on
+   their own PR, and a convention that rewards it would have been worse than the delay it fixed.
+   **The ordering is the runner's defect and is being fixed in the runner**, not worked around here.
+   **A CITATION INTO A FILE IS `path:lines@sha`, NEVER BARE `path:lines`.** Line numbers drift
+   silently while the content stays identical, so a bare coordinate is a claim about a tree the
+   reader cannot identify. Measured tonight, one sentence in this very file, three readers:
+   ```
+   :414-417   a 511-line bench                    <- the lane that cited it
+   :436-441   main@5069ef1a, 535 lines            <- where it actually is on main
+   absent     a 65-line untracked copy            <- a third reader called it nonexistent
+   ```
+   All three were reading honestly. **When a lane reports that a coordinate does not exist, the
+   first question is which tree it read** -- not whether the citing lane invented it. I made that
+   mistake in the other direction on this PR: told a lane their line numbers were "not where the
+   rule lives", when the rule was exactly there in the tree they had read. Write
+   `.factory/MERGE-CHECKLIST.md:436-441@5069ef1a` and the question cannot arise.
+   **THE COUNT IS READ FROM THE SERVER, BEFORE THE BODY IS WRITTEN AND AGAIN AFTER IT IS POSTED.**
+   **The first read earns its place twice, and the second reason is the one nobody expects:
+   IT IS ALSO WHAT CATCHES THE HEAD MOVING UNDER YOU** — but only if you ask for the head, and item
+   4's query does not (Codex on #1016; the first version of this rule said "the same call returns
+   the head", which was false of the query it pointed at). **Item 4's query selects `headRefOid` for
+   exactly this reason; compare it on BOTH reads:**
+   ```
+   pullRequest(number:N) { headRefOid reviewThreads(first:50, after:$endCursor) { ... } }
+   ```
+   A lane about to name `c993b288` in a verdict found the server holding `14593a09` — caught at the
+   count read, because the head check had happened earlier and was a cache by the time the body was
+   written (L, tonight). A verdict is a claim about a sha AND a board; reading one of them fresh
+   while trusting a remembered copy of the other is how a pass ends up covering neither. One call,
+   both facts, twice.
+   Both halves are load-bearing and both were learned the same night. A verdict on #1016 said
+   "0 of 0" while the server had held 5 threads, 2 unresolved, since 03:59Z: the number had come from
+   a routing MESSAGE and was typed as if it were current. **A count relayed is not a count read** —
+   the same class as a stale sha, and worse, because it looks like evidence of the thing it omits.
+   The second read is for the window between writing and posting: threads land while a body is being
+   composed, and a verdict formed over an empty board can be published onto a board that no longer is.
+   **COMPARE THE SET OF UNRESOLVED THREAD IDs, NOT THE COUNT, AND A CHANGED SET WITHDRAWS THE
+   VERDICT** (Codex on #1016, correcting the first version of this rule twice over).
+   - **Totals miss a swap.** One thread resolved and another filed between the reads leaves the
+     count identical and the board different, and equal totals raise no warning at all. Capture ids:
+     `... reviewThreads(first:50, after:$endCursor){ nodes { id isResolved } }`, keep the unresolved
+     set, and diff the two sets.
+   - **Reporting the mismatch does not undo the verdict.** The first version said to say so in the
+     thread — but the verdict word still stands on the page, this file says `N > 0` is not
+     disqualifying, and a presser counting passes by their word will count one whose author never
+     read the new blocker. **So: withdraw the verdict, read the new threads, and re-post.** A pass
+     is a claim about a board; when the board changes under it, annotating it leaves a claim
+     nobody has made.
+   - **And the HEAD is half of the same read** -- use item 4's query, which selects `headRefOid` beside the
+     threads, so ask for both and compare both: a verdict is a claim about a sha AND a board,
+     and either one moving invalidates it. Measured on this PR (D): the unresolved ID set stayed
+     identical across two reads while the head moved underneath, so a rule watching only the set
+     would have called that stable. **A moved head withdraws the verdict on the same terms as a
+     changed set** -- not a note, a withdrawal.
+   Saying it in the thread is still right, and it is no longer sufficient.
+   **USE ITEM 4'S QUERY; DO NOT WRITE A SECOND ONE.** The first version of this rule shipped its own
+   `first:50` snippet with a bash `\` continuation, and Codex caught both faults in one pass: an
+   unpaginated query silently under-reports on a PR with more than 50 threads -- so the field could
+   claim a cleaner board than the one that exists, which is the exact failure this rule was written
+   to stop -- and `\` is not a line continuation in Windows PowerShell 5.1, where item 4 already
+   records that the inline GraphQL quoting loses its inner double quotes as well. **Item 4 carries
+   the paginated form, with `$endCursor`, `pageInfo { hasNextPage endCursor }` and `--paginate`, and
+   the query-file approach for 5.1.** Count the `isResolved: false` nodes it returns. This is the
+   same lesson as the census above: the file already had the right instrument, and re-deriving it by
+   hand produced a worse one twice in one night.
+   **And re-read it periodically on every PR where you hold a standing verdict**, not only when you
+   write one. A pass is a claim that keeps being cited after the moment it was formed; threads filed
+   afterwards do not notify its author, so an unreviewed finding sits under a standing APPROVE until
+   someone counts again. Withdrawing a pass you can no longer support is cheap; a press taken on it
+   is not.
+
 9. **Stacked PR before `--delete-branch`.** `gh pr list --base <head-branch> --state all`.
    Non-empty → merge WITHOUT `--delete-branch` (#713's delete closed the stacked #729). And what is known
    about `--delete-branch` when a worktree holds the branch — only this, measured (L, #862, #889): (i) the
@@ -496,7 +660,38 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
 ## After the merge (read the output — do not report what you intended)
 
 - `gh pr view N --json mergedAt,mergeCommit` — cite these, not the branch head.
-- `git log -1 --format=%B origin/main | grep -iEo '(close[sd]?|fixe[sd]?|resolve[sd]?) #[0-9]+'`
+- **The post-merge census RUNS THE PARSER. There is no grep here either** (Codex on #1016, three
+  times over). A grep was kept for this one reading because its input is a raw commit message and
+  the parser's entry point takes a pull request. That reasoning was wrong, and the record of it is
+  the argument for the rule: the hand pattern was corrected three times, each time by a reviewer,
+  and each correction found a further way a line-oriented grep differs from a .NET regex over a
+  whole document:
+  ```
+    ' #'                  -> missed fix#22, fix<TAB>#23, closes  #24     (1 of 4)
+    '[[:space:]]*#'       -> missed fix\n#21: grep records end at newlines, so the class
+                             cannot cross one; Get-ClosingReferences uses \s* over the whole text
+    Get-ClosingReferences -> all of them, every time
+  ```
+  Expressing .NET's whole-document semantics in a line-oriented tool is a game that keeps producing
+  one more case. Read the squash message and hand it to the parser:
+  ```powershell
+  $msg = git log -1 --format=%B origin/main | Out-String
+  # NAMED TREE, NOT A RELATIVE PATH (D, on #1016). `[IO.File]::ReadAllText` resolves a relative
+  # path against `[Environment]::CurrentDirectory`, which does NOT follow `Set-Location` -- measured:
+  # after `Set-Location C:\Windows` the two disagreed and the read still went to the ORIGINAL
+  # directory. With sixteen sibling checkouts on this machine carrying that same path, a lane
+  # running this from a bench would read another tree's parser and never know.
+  $src = git show origin/main:ci/closing-keywords.ps1 | Out-String
+  $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
+  # BOTH lifted from the file: the function AND the `$ClosingKeywords` list it reads out of the
+  # caller's scope. Retyping that list is the same defect as retyping the pattern was (D, on
+  # #1016) -- they match today, and a keyword added to the script would leave this copy at nine,
+  # under-reporting silently. The empty case is loud rather than silent and is worse: with no
+  # list the pattern becomes `\b()\b\s*#(\d+)`, which matches `banana #902`.
+  . ([scriptblock]::Create($ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$ClosingKeywords' }, $true).Extent.Text))
+  . ([scriptblock]::Create($ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-ClosingReferences' }, $true).Extent.Text))
+  Get-ClosingReferences -Text $msg      # the issue numbers the squash actually closes
+  ```
   — what the squash ACTUALLY carried; then `gh issue view` each cited issue and confirm state.
 - `gh api repos/stabem/GraphHelm/branches/<branch>` → expect `404` "Branch not found"
   (the text is `Branch not found`, not `Not Found`; a wrong grep read a deleted branch as alive).
@@ -513,7 +708,7 @@ they are the ones that caught #746, #754 and #758. Run it; do not remember it.
 - A failed `git fetch` leaves the ref with its OLD value; the next `rev-parse` succeeds. Check
   the fetch rc immediately, or fetch into a NEW ref name each time.
 - PowerShell: after `<cmd> | Select-Object -First N`, `$LASTEXITCODE` is not the command's. Instance, same
-  host and git version: `Git\cmd\git.exe` (launcher) → `-1` in 8/8 successful runs; `Git\mingw64in\git.exe`
+  host and git version: `Git\cmd\git.exe` (launcher) → `-1` in 8/8 successful runs; `Git\mingw64\bin\git.exe`
   (the binary) → `0` in 8/8. Which one `git` resolves to is `(Get-Command git).Source`, and it can change
   between sessions without you touching anything. Read nothing from that code — test the VALUE.
 - Bash: after a pipe, `$?` is the LAST element's. `cmd 2>&1 | head -2; echo $?` reports head.

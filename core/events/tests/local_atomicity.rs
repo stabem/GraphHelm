@@ -2000,3 +2000,694 @@ fn one_injected_fault_checked_at_two_sites_names_the_site_it_fired_from() {
         );
     }
 }
+
+/// #837: a provoked failure must NAME its kind, and two kinds must not share a name.
+///
+/// `#824` gave `Storage` a sited sibling. This cell is the criterion #837 asks for, and the reason
+/// it takes a LOOP rather than an assertion: one provoked failure with one assertion passes just as
+/// well against a variant that hard-codes a single string. **Distinctness across kinds is what one
+/// case cannot buy.**
+///
+/// Every kind here answers with the SAME code -- `GHE008_STORAGE_FAILURE` -- and that is asserted
+/// rather than assumed, because it is the whole reason the name has to carry the discrimination. A
+/// consumer keying on the code cannot tell a poisoned mutex from a failed journal sync; the site
+/// tag is the only thing that separates them, so nothing else may be trusted to.
+///
+/// The kinds come from `LocalFailpoint::all()` and not from a list written here. A new variant
+/// enters this cell by existing -- a deny-list would let the next one through, which is the shape
+/// #837 was opened about.
+#[test]
+fn every_provoked_storage_failure_names_its_own_kind_and_no_two_kinds_share_a_name() {
+    // NEGATIVE CONTROL, and it runs FIRST. Without it every assertion below is satisfied by a
+    // fixture that fails for a reason having nothing to do with the failpoint -- a broken request,
+    // an unwritable tempdir -- and the cell would certify the provocation machinery by accident.
+    let clean = tempfile::tempdir().unwrap();
+    let control_repository = repository(clean.path());
+    let control_evidence = sealed_evidence();
+    let control_reference = control_evidence.reference().clone();
+    control_repository
+        .append_atomic(&prepared(Some(control_reference), vec![control_evidence]))
+        .expect("CONTROL: the same request must SUCCEED when no failpoint is armed");
+
+    let mut named: Vec<(String, String)> = Vec::new();
+    for failpoint in LocalFailpoint::all() {
+        let kind = format!("{failpoint:?}");
+        let slug = kebab_case(&kind);
+        let directory = tempfile::tempdir().unwrap();
+        let repository = LocalEventRepository::open_with_failpoint(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::default()),
+            failpoint,
+        )
+        .unwrap();
+        let sealed = sealed_evidence();
+        let reference = sealed.reference().clone();
+        let error = repository
+            .append_atomic(&prepared(Some(reference), vec![sealed]))
+            .expect_err("an armed failpoint must produce a failure");
+
+        assert_eq!(
+            error.code(),
+            "GHE008_STORAGE_FAILURE",
+            "{kind}: the code is shared by every kind, which is why the NAME has to discriminate"
+        );
+
+        let site = match error {
+            EventRepositoryError::StorageAt { site, .. } => site,
+            EventRepositoryError::Storage => panic!(
+                "{kind} produced a NAMELESS Storage. This is exactly #837: the failure crossed the \
+                 boundary without saying which check raised it, and no amount of re-running \
+                 separates it from the other kinds."
+            ),
+            other => panic!("{kind} produced {other:?}, which is not a storage failure at all"),
+        };
+
+        assert!(
+            site.contains(&format!("failpoint:{slug}@")),
+            "{kind} must name ITSELF, not merely carry some name: got {site:?}, expected a site \
+             containing \"failpoint:{slug}@\". Distinctness alone would let two arms be SWAPPED \
+             and stay green, so the cell checks identity as well."
+        );
+
+        named.push((kind, site.to_owned()));
+    }
+
+    let mut distinct: Vec<&str> = named.iter().map(|(_, site)| site.as_str()).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        named.len(),
+        "two kinds share a name, so a live failure cannot be told apart: {named:?}"
+    );
+}
+
+/// `PhysicalBatchAppend` -> `physical-batch-append`, so the expected tag is DERIVED from the kind.
+///
+/// Written out rather than hand-listed on purpose: a table mapping kinds to tags would be a second
+/// copy of the thing under test, and the copy is what a future variant would fail to update.
+fn kebab_case(camel: &str) -> String {
+    let mut out = String::with_capacity(camel.len() + 4);
+    for (index, character) in camel.char_indices() {
+        if character.is_ascii_uppercase() {
+            if index != 0 {
+                out.push('-');
+            }
+            out.push(character.to_ascii_lowercase());
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
+/// #837, item 3: the class of sites that still decide on a NAMELESS `Storage`, made visible.
+///
+/// The issue's own framing is why this is a census and not a conversion: *"something that can say
+/// 'these N sites decide on `Storage` by name' is worth more than converting N sites once."* A
+/// conversion is finite work that ends; a class that nobody can see grows back with the next
+/// variant, which is what happened between `Integrity` and `IntegrityAt`.
+///
+/// **The count is EXACT, and it started as a ceiling.** A ceiling only reddens on growth, which
+/// sounded right -- converting a site is progress and a guard that fires on the improvement it
+/// encourages gets deleted. It decays instead: convert one site inside a file that stays in the
+/// pinned set and the ceiling silently gains a site of slack, which a later bare construction can
+/// spend without any failure (Codex P2 on #1015). Exact costs the converter one line and the
+/// message tells them which; a ceiling costs a reader nothing and protects nothing after the first
+/// conversion.
+///
+/// The FILE SET is exact, and that is the half the ceiling cannot carry: a ceiling alone stays
+/// silent when the sites move to a new file, and silent when a file is emptied (leaving a stale
+/// number nobody notices). Equality on the set makes both events say something.
+///
+/// **`#[cfg(test)]` REGIONS ARE EXCLUDED, and this cell's first version got that wrong** -- it
+/// skipped `tests/` DIRECTORIES only, so five sites inside test modules in `src/` counted as
+/// production while the docstring claimed they did not (G's pass on #1015). Two reasons the
+/// exclusion is load-bearing rather than tidiness:
+///
+/// 1. A test that NAMES the variant is not a site that discards a cause. Counting it inflates the
+///    class and makes the pinned number drift with test churn.
+/// 2. **`core/governor/src/apply.rs` keeps `#824`'s controls, and they must stay BARE**:
+///    `assert!(bare.is_io(), "CONTROL: the bare variant still is")`. A guard that told a reader to
+///    shrink that number would be telling them to convert a control and destroy what it proves --
+///    a guard teaching the wrong edit. The cell protects those sites instead; see the sibling.
+///
+/// The region detector is NOT a parser, so it carries its own controls: the
+/// per-file count of EXCLUDED sites is pinned, and regions that never find their closer must
+/// number zero. See `cfg_test_regions` for why brace counting was abandoned mid-fix.
+#[test]
+fn the_nameless_storage_sites_are_a_visible_class_pinned_by_count_and_by_file() {
+    const PINNED_PRODUCTION: usize = 64;
+    const PINNED_FILES: [&str; 7] = [
+        "adapters/postgres-event-store/src/error.rs",
+        "adapters/postgres-event-store/src/integrity.rs",
+        "adapters/postgres-event-store/src/journal.rs",
+        "adapters/postgres-event-store/src/lib.rs",
+        "apps/cli/src/commands/events/verify.rs",
+        "core/events/src/local.rs",
+        "core/governor/src/apply.rs",
+    ];
+    // The DETECTOR's control: sites inside `#[cfg(test)]` regions in `src/`, which the census must
+    // not count. `core/events/src/store.rs` is absent from PINNED_FILES for exactly this reason --
+    // its only nameless site is a test one, so it carries no production class at all.
+    const PINNED_EXCLUDED: [(&str, usize); 3] = [
+        ("core/events/src/local.rs", 3),
+        ("core/events/src/store.rs", 1),
+        ("core/governor/src/apply.rs", 1),
+    ];
+
+    let root = workspace_root();
+    // THE ROOTS COME FROM THE WORKSPACE, not from a list written here. `core`, `apps` and
+    // `adapters` were hand-written and missed `tools/` -- `tools/acceptance-map` and
+    // `tools/development-benchmark` are members that depend on `graphhelm-events`, so a nameless
+    // site in either left every exact pin green and the no-growth promise was false for a whole
+    // directory (Codex P2 on #1015). Adding "tools" by hand would close the instance and leave the
+    // class open for the next root somebody adds; deriving them closes the class.
+    let scanned_roots = workspace_member_roots(&root);
+    assert!(
+        ["adapters", "apps", "core", "tools"]
+            .iter()
+            .all(|known| scanned_roots.iter().any(|root| root == known)),
+        "the workspace member parse lost roots that are known to exist: {scanned_roots:?}. The \
+         census would then be silent about whatever it stopped walking (#837)"
+    );
+    let mut census = StorageCensus::default();
+    for area in &scanned_roots {
+        census.walk(&root.join(area), &root);
+    }
+    census.production_files.sort();
+    census.excluded.sort();
+
+    // INSTRUMENT CONTROL, in the same walk that produces the claim. `Storage` is a prefix of
+    // `StorageAt`, so a counter that fails to exclude the sited variant reports every mention and
+    // reads as a much larger class. If these two numbers are equal the counter is not
+    // discriminating and every assertion below is about the wrong population.
+    assert!(
+        census.every_mention > census.nameless,
+        "the counter does not tell `Storage` from `StorageAt`: {} mentions and {} nameless sites \
+         are the same number, so nothing here measures the class",
+        census.every_mention,
+        census.nameless
+    );
+
+    // The REGION RULE's own control. Every top-level `#[cfg(test)]` module must find a closing
+    // brace in column zero; one that does not means the rule stopped holding for some file, and
+    // sites would move between production and excluded on the strength of a bug rather than a fact.
+    assert_eq!(
+        census.unclosed_regions, 0,
+        "{} `#[cfg(test)]` module(s) in src/ never reached a column-zero closer. The census cannot \
+         say which side their sites belong on -- fix the detector or the file before trusting any \
+         number below (#837)",
+        census.unclosed_regions
+    );
+
+    assert_eq!(
+        census.excluded,
+        PINNED_EXCLUDED
+            .iter()
+            .map(|(path, count)| ((*path).to_owned(), *count))
+            .collect::<Vec<_>>(),
+        "the `#[cfg(test)]` sites in src/ changed. If you did not add or remove a test that names \
+         the variant, suspect the BRACE MATCHER first -- a lost brace ends a region early and \
+         returns production sites to the count without anything else moving (#837)"
+    );
+
+    assert_eq!(
+        census.production_files,
+        PINNED_FILES
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect::<Vec<_>>(),
+        "the set of files carrying a nameless `Storage` in production changed. A NEW file means \
+         the class spread; a file that vanished means it was fully converted -- lower PINNED_PRODUCTION and \
+         update this list in the same commit (#837)"
+    );
+
+    assert_eq!(
+        census.production, PINNED_PRODUCTION,
+        "the nameless `Storage` class is no longer {PINNED_PRODUCTION} production sites. If it \
+         GREW, a new site discards which check raised it and a live failure names one cause for \
+         many -- that is the thing #837 exists to stop. If it SHRANK, you converted a site: lower \
+         this number in the same commit, and thank you. Either way the class moved and the number \
+         must move with it (#837, #824)"
+    );
+
+    // No import may hide a site from the substring census. `use EventRepositoryError::Storage;`
+    // followed by a bare `Err(Storage)` spells no occurrence of the scanned needle, so the class
+    // could grow with every pin above still agreeing. The convention is asserted rather than
+    // trusted. (Codex P2 on #1015.)
+    assert!(
+        census.budget_refusals.is_empty(),
+        concat!(
+            "the census walk refused its own budget, so the counts above describe only part of ",
+            "the tree: {:?}"
+        ),
+        census.budget_refusals
+    );
+
+    assert!(
+        census.oversized.is_empty(),
+        concat!(
+            "these files are past the census size bound and were not read, so the counts above ",
+            "describe a SMALLER tree than the one on disk: {:?}. Raise the bound deliberately or ",
+            "split the file -- do not let the class shrink because a file got big (#837)"
+        ),
+        census.oversized
+    );
+
+    assert!(
+        census.variant_imports.is_empty(),
+        "these files import the variant instead of spelling it, so the census cannot see their \
+         sites: {:?}. Either qualify the uses as `EventRepositoryError::Storage` or teach this \
+         cell to follow imports before trusting any number above (#837)",
+        census.variant_imports
+    );
+}
+
+/// `LocalFailpoint::all()` is a hand-written `[Self; 7]`, so a new variant could be added without
+/// joining it -- and the loop above would silently stop being exhaustive while staying green.
+///
+/// This match has no wildcard arm. A new variant does not make it fail; it makes it **not
+/// compile**, which is the only signal that cannot be ignored by a suite that still passes.
+/// (Codex P2 on #1015.)
+#[test]
+fn every_failpoint_variant_reaches_the_provocation_loop() {
+    let named = [
+        LocalFailpoint::Validation,
+        LocalFailpoint::EvidenceStaging,
+        LocalFailpoint::BlobSync,
+        LocalFailpoint::BlobPublish,
+        LocalFailpoint::PhysicalBatchAppend,
+        LocalFailpoint::JournalSync,
+        LocalFailpoint::ActiveMarker,
+    ];
+    for failpoint in named {
+        // The wildcard-free match is the compile-time half: a new variant makes THIS not compile.
+        match failpoint {
+            LocalFailpoint::Validation
+            | LocalFailpoint::EvidenceStaging
+            | LocalFailpoint::BlobSync
+            | LocalFailpoint::BlobPublish
+            | LocalFailpoint::PhysicalBatchAppend
+            | LocalFailpoint::JournalSync
+            | LocalFailpoint::ActiveMarker => {}
+        }
+        assert!(
+            LocalFailpoint::all().contains(&failpoint),
+            "{failpoint:?} is a variant this file names but `all()` omits, so the #837 loop never \
+             provokes it and its site tag is never checked"
+        );
+    }
+    assert_eq!(
+        LocalFailpoint::all().len(),
+        named.len(),
+        "`all()` and this file's list disagree on how many kinds exist"
+    );
+}
+
+/// #824's controls must stay BARE, and the census above is the reason this cell exists.
+///
+/// `apply.rs` proves `is_io` accepts BOTH shapes: a `StorageAt` that names its cause, and a bare
+/// `Storage`. The bare one is the control -- without it the assertion says nothing about the
+/// predicate having kept its old behaviour. A census that counted it as debt would invite a future
+/// reader to "convert the last site in apply.rs" and delete the control while the suite stays
+/// green. So the sites are named here, and converting one reddens THIS cell with the reason.
+#[test]
+fn the_bare_storage_witnesses_that_824_uses_as_controls_are_still_bare() {
+    let root = workspace_root();
+    let witnesses: [(&str, &str); 2] = [
+        (
+            "core/governor/src/apply.rs",
+            "let bare = ApplyError::Repository(EventRepositoryError::Storage);",
+        ),
+        (
+            "core/events/src/store.rs",
+            "let error = EventRepositoryError::Storage;",
+        ),
+    ];
+    for (path, line) in witnesses {
+        let text = std::fs::read_to_string(root.join(path))
+            .unwrap_or_else(|error| panic!("{path} must be readable: {error}"));
+        assert!(
+            text.contains(line),
+            "{path} no longer carries `{line}`. If that was a conversion to `StorageAt`, it \
+             DELETED a control: #824's proof that `is_io` still accepts the bare variant needs a \
+             bare variant to accept. Convert production sites, never the witnesses (#837)"
+        );
+    }
+}
+
+fn workspace_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("core/events is two levels below the workspace root")
+        .to_path_buf()
+}
+
+/// First path segment of every workspace member, so the census walks what the workspace contains
+/// rather than what somebody remembered when writing it.
+fn workspace_member_roots(root: &std::path::Path) -> Vec<String> {
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml"))
+        .expect("the workspace manifest must be readable to know what to scan");
+    let Some(start) = manifest.find("members") else {
+        return Vec::new();
+    };
+    let Some(open) = manifest[start..].find('[').map(|at| start + at) else {
+        return Vec::new();
+    };
+    let Some(close) = manifest[open..].find(']').map(|at| open + at) else {
+        return Vec::new();
+    };
+    let mut roots: Vec<String> = manifest[open..close]
+        .split('"')
+        .filter(|piece| piece.contains('/') || !piece.trim().is_empty())
+        .filter(|piece| !piece.contains(',') && !piece.contains('[') && !piece.trim().is_empty())
+        .filter_map(|member| member.split('/').next().map(str::to_owned))
+        .filter(|segment| !segment.trim().is_empty())
+        .collect();
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// Whether a file imports the NAMELESS variant, matched as a whole path segment.
+///
+/// The boundary is the point: `Storage` is a prefix of `StorageAt`, so anything that merely looks
+/// for the shorter name also fires on the sited one -- and this guard's false positive is a red on
+/// the mandatory workspace suite for code that did nothing wrong.
+/// STATEMENTS, not lines, and this is the second time the same defect arrived by a different door.
+///
+/// A rustfmt-valid grouped import splits the path from the name:
+///
+/// ```text
+/// use graphhelm_events::EventRepositoryError::{
+///     Storage,
+/// };
+/// ```
+///
+/// The line holding `Storage` does not hold `EventRepositoryError`, so a per-LINE predicate drops
+/// it; a later bare `Err(Storage)` holds neither census needle. Both instruments then agree that
+/// nothing is there, and every exact pin stays green with the site in the tree -- which is the
+/// hole this guard exists to close, reopened by the shape of the import. Found by G on #1015, who
+/// reproduced it in `verify.rs` rather than describing it.
+fn imports_the_nameless_variant(text: &str) -> bool {
+    use_statements(text)
+        .into_iter()
+        .filter(|statement| statement.contains("EventRepositoryError"))
+        .any(|statement| {
+            // AN ALIAS RENAMES THE THING THIS CENSUS LOOKS FOR. `use ...EventRepositoryError as
+            // RepoError;` followed by `RepoError::Storage` spells neither needle: the import holds
+            // no `Storage`, and the construction holds no `EventRepositoryError`. Both instruments
+            // then agree nothing is there -- the third door into the same hole, after the
+            // per-line predicate and the grouped import (Codex P2 on #1015).
+            //
+            // The conservative direction, deliberately: this REFUSES the alias rather than
+            // following it. Resolving names is a compiler's job, and a lexical census that
+            // pretends to resolve names is worse than one that states its limit -- it would be
+            // confidently wrong about a population instead of admitting it cannot see one.
+            statement.contains(" as ") || names_the_bare_variant(&statement)
+        })
+}
+
+/// Every `use` statement, joined from its keyword to its `;` so a grouped import is ONE string.
+fn use_statements(text: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current: Option<String> = None;
+    for line in text.lines().map(str::trim) {
+        if current.is_none() && !line.starts_with("use ") {
+            continue;
+        }
+        let statement = current.get_or_insert_with(String::new);
+        statement.push(' ');
+        statement.push_str(line);
+        if line.ends_with(';') {
+            statements.push(current.take().unwrap_or_default());
+        }
+    }
+    // An unterminated `use` at end of file: keep it rather than drop it. Dropping would be the
+    // silent direction, and this predicate exists because silence is what let a site through.
+    if let Some(statement) = current {
+        statements.push(statement);
+    }
+    statements
+}
+
+/// `Storage` as a whole path segment: `Storage` is a prefix of `StorageAt`, and a guard that fires
+/// on the sited variant reddens the mandatory suite for code that did nothing wrong.
+fn names_the_bare_variant(statement: &str) -> bool {
+    let needle = "Storage";
+    statement.match_indices(needle).any(|(at, _)| {
+        let before_is_boundary = statement[..at]
+            .chars()
+            .last()
+            .is_none_or(|character| !character.is_alphanumeric() && character != '_');
+        let after_is_boundary = statement[at + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|character| !character.is_alphanumeric() && character != '_');
+        before_is_boundary && after_is_boundary
+    })
+}
+
+/// Counts nameless `EventRepositoryError::Storage` sites in `src/`, splitting production from the
+/// ones inside `#[cfg(test)]` regions.
+#[derive(Default)]
+struct StorageCensus {
+    /// Every mention including `StorageAt`; only ever compared against `nameless` as a control.
+    every_mention: usize,
+    nameless: usize,
+    production: usize,
+    production_files: Vec<String>,
+    excluded: Vec<(String, usize)>,
+    /// `#[cfg(test)]` modules whose column-zero closer was never found; asserted to be zero.
+    unclosed_regions: usize,
+    /// Files importing the variant unqualified, which the substring census cannot see.
+    variant_imports: Vec<String>,
+    /// Files past the size bound, which were NOT read; asserted to be empty rather than skipped.
+    oversized: Vec<String>,
+    /// Directory entries visited; the aggregate half of the budget, checked INSIDE the walk.
+    entries_seen: usize,
+    /// Budget refusals, in the house's words. Asserted empty: a walk that stopped early would
+    /// otherwise report a smaller class with every pin agreeing.
+    budget_refusals: Vec<String>,
+}
+
+/// Aggregate bounds, in the shape `apps/cli/tests/source_invariants.rs` already uses.
+///
+/// The per-file byte cap bounds ONE read; it says nothing about ten thousand small files, which
+/// cost the same authoritative gate unbounded time and I/O with no compiler ever touching them
+/// (Codex P1 on #1015). Both halves REFUSE rather than truncate -- a walk that quietly stopped
+/// would shrink the class exactly like a skipped oversized file, and every pin would agree.
+const MAX_CENSUS_ENTRIES: usize = 20_000;
+const MAX_CENSUS_DEPTH: usize = 24;
+
+impl StorageCensus {
+    fn walk(&mut self, area: &std::path::Path, root: &std::path::Path) {
+        self.walk_bounded(area, root, 0);
+    }
+
+    fn walk_bounded(&mut self, area: &std::path::Path, root: &std::path::Path, depth: usize) {
+        if depth > MAX_CENSUS_DEPTH {
+            self.budget_refusals.push(format!(
+                "HARNESS-BROKE: the Storage census exceeded depth {MAX_CENSUS_DEPTH} at {}",
+                area.display()
+            ));
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(area) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            // INSIDE the walk, never before it: a budget checked only at the top cannot see the
+            // shape of what it is walking.
+            self.entries_seen += 1;
+            if self.entries_seen > MAX_CENSUS_ENTRIES {
+                self.budget_refusals.push(format!(
+                    "HARNESS-BROKE: the Storage census exceeded {MAX_CENSUS_ENTRIES} entries at {}",
+                    area.display()
+                ));
+                return;
+            }
+            let path = entry.path();
+            // `is_dir()` FOLLOWS symlinks, so a link pointing at an ancestor makes this walk recurse
+            // until the stack ends -- in a test the local gate runs on every PR. `file_type()` comes
+            // from the directory entry and does not follow. (Codex P1 on #1015.)
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                let name = path
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("");
+                // `<crate>/tests/` is Rust's integration-test directory and is not production.
+                // `<crate>/src/tests/` is an ORDINARY MODULE -- `mod tests;` backed by
+                // `src/tests/mod.rs` compiles into the crate like any other, and Rust attaches no
+                // meaning to the directory's name. Skipping both counted the second as absent, so
+                // a bare `Storage` compiled into production there was invisible to the count and
+                // to the file set (Codex P2 on #1015). The boundary is whether `src` is already
+                // above us: sibling of `src` is skipped, inside `src` is walked.
+                let inside_src = path
+                    .components()
+                    .any(|component| component.as_os_str() == "src");
+                if name == "target" || (name == "tests" && !inside_src) {
+                    continue;
+                }
+                self.walk_bounded(&path, root, depth + 1);
+                continue;
+            }
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+                continue;
+            }
+            // BOUNDED BEFORE READ, and the bound REFUSES rather than skips. Reading every `.rs`
+            // whole lets one very large file stall or OOM the local gate (Codex P1 on #1015) --
+            // but skipping an oversized file silently would be worse than the stall: the census
+            // would report a smaller class and every pin would agree with it. So the size is
+            // taken from METADATA, no bytes are read, and an oversized file is collected and
+            // asserted against. A census that cannot read a file must say so, not shrink.
+            const LARGEST_SOURCE_FILE: u64 = 4 * 1024 * 1024;
+            let oversized = std::fs::metadata(&path)
+                .map(|data| data.len() > LARGEST_SOURCE_FILE)
+                .unwrap_or(false);
+            if oversized {
+                self.oversized.push(
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace(std::path::MAIN_SEPARATOR, "/"),
+                );
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            // EXACT variant, not a prefix. `Storage` is a prefix of `StorageAt`, so the first
+            // version of this guard also matched `use ...::EventRepositoryError::StorageAt;` and
+            // would have reddened the mandatory workspace test with no nameless site anywhere --
+            // a guard whose false positive is a red on somebody else's correct code. The `,
+            // Storage,` fallback was worse still: it matched any import list with a `Storage`
+            // token in it, from any crate. (Codex P2 on #1015.)
+            if imports_the_nameless_variant(&text) {
+                self.variant_imports.push(
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace(std::path::MAIN_SEPARATOR, "/"),
+                );
+            }
+            let (test_regions, unclosed) = cfg_test_regions(&text);
+            self.unclosed_regions += unclosed;
+            let needle = "EventRepositoryError::Storage";
+            let (mut production, mut excluded) = (0usize, 0usize);
+            for (index, _) in text.match_indices(needle) {
+                self.every_mention += 1;
+                if text[index + needle.len()..].starts_with("At") {
+                    continue;
+                }
+                self.nameless += 1;
+                if test_regions
+                    .iter()
+                    .any(|(from, to)| (*from..*to).contains(&index))
+                {
+                    excluded += 1;
+                } else {
+                    production += 1;
+                }
+            }
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            if production > 0 {
+                self.production += production;
+                self.production_files.push(relative.clone());
+            }
+            if excluded > 0 {
+                self.excluded.push((relative, excluded));
+            }
+        }
+    }
+}
+
+/// Byte ranges of top-level `#[cfg(test)]` modules: attribute line to the next line that is a lone
+/// closing brace in COLUMN ZERO.
+///
+/// **Brace counting was tried first and is wrong on this tree.** `core/events/src/local.rs` carries
+/// a test module at line 5532 whose braces never balance for a naive counter -- braces inside
+/// string and char literals -- so the region either swallowed the rest of the file or covered
+/// nothing, and the three sites inside it landed on whichever side the bug fell. Two prototypes of
+/// the same idea disagreed (3 excluded against 1), which is how the defect surfaced.
+///
+/// Column zero is what makes this robust without a parser: a brace inside a literal is indented,
+/// and a top-level module's closing brace is not. The assumption is not left implicit -- the census
+/// counts regions that never found their closer and the cell asserts that count is zero, so a file
+/// that breaks the rule says so instead of quietly moving sites between the two populations.
+fn cfg_test_regions(text: &str) -> (Vec<(usize, usize)>, usize) {
+    let mut regions = Vec::new();
+    let mut unclosed = 0usize;
+    let mut offsets = Vec::new();
+    let mut cursor = 0usize;
+    let lines: Vec<&str> = text.split('\n').collect();
+    for line in &lines {
+        offsets.push(cursor);
+        cursor += line.len() + 1;
+    }
+    let mut index = 0usize;
+    while index < lines.len() {
+        // ONLY a module opens a region. `#[cfg(test)]` also decorates a `use`, a `type` alias or a
+        // `#[derive]`, and treating those as regions invents one: `core/events/src/local.rs:2768`
+        // carries `#[cfg(test)] type LoadsByKind = ...`, and the rule without this guard produced a
+        // region 2768..2778 that belongs to nothing. It happened to contain no site, so the counts
+        // were right BY LUCK -- a spurious region one line earlier would have moved production
+        // sites into the excluded pile with every pin still agreeing. (Codex P2 on #1015.)
+        // A module DECLARATION (`mod x;`) opens no block, so it must not open a region either: the
+        // scan would run to the next unrelated column-zero brace, or to the end of the file, and
+        // either outcome moves sites. There are none in this tree today; the guard is here because
+        // the residual was measured rather than imagined (M's pass on #1015).
+        // NOT the immediate next line, and NOT only `mod`/`pub mod`. Another attribute may sit
+        // between `#[cfg(test)]` and the module, and `pub(crate) mod tests` is an ordinary
+        // declaration. Rejecting either counted a test module's BARE `Storage` controls as
+        // production, so the mandatory gate failed on a test-only change -- a guard reddening for
+        // correct code, which is the failure direction that gets guards deleted. (Codex P2 on
+        // #1015.)
+        let mut candidate = index + 1;
+        while lines
+            .get(candidate)
+            .is_some_and(|line| line.starts_with("#["))
+        {
+            candidate += 1;
+        }
+        let opens_a_module = lines
+            .get(candidate)
+            .map(|line| {
+                let declaration = line.trim_end_matches('\r').trim_end().ends_with(';');
+                let head = line.trim_end_matches('\r');
+                let is_module = head.starts_with("mod ")
+                    || head.starts_with("pub mod ")
+                    || (head.starts_with("pub(") && head.contains(") mod "));
+                is_module && !declaration
+            })
+            .unwrap_or(false);
+        if lines[index].starts_with("#[cfg(test)]") && opens_a_module {
+            let mut end = index + 1;
+            while end < lines.len() && lines[end].trim_end_matches('\r') != "}" {
+                end += 1;
+            }
+            if end < lines.len() {
+                regions.push((offsets[index], offsets[end]));
+            } else {
+                unclosed += 1;
+            }
+            index = end + 1;
+        } else {
+            index += 1;
+        }
+    }
+    (regions, unclosed)
+}

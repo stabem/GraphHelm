@@ -278,7 +278,16 @@ fn the_judges_shape_running_while_nothing_can_advance() {
 
 #[test]
 fn a_running_story_with_work_in_flight_is_not_wedged() {
-    for advanceable in [NodeState::Running, NodeState::Queued, NodeState::Ready] {
+    // #92: `Ready` rode in this list until #920 took it out of `advances_without_the_operator`,
+    // and the cell kept passing for it -- NOT because a `Ready` node advances, but because this
+    // fixture declares no published graph, so `graph_defines_completeness` is false and the wedge
+    // branch is unreachable whatever the state says. The message below ("can advance") was then
+    // true of `Running` and `Queued` and false of `Ready`, and nothing could tell.
+    //
+    // Measured on this tree: with a published graph, `Ready` answers `WedgedQuiescence` and
+    // `Queued` answers `CanSleep`. The two states diverge, so `Ready` is pinned by its own cell
+    // below rather than riding here where the fixture, not the behaviour, decides the answer.
+    for advanceable in [NodeState::Running, NodeState::Queued] {
         let projection = projection(
             &[("build", advanceable), ("ship", NodeState::Draft)],
             Some(SimulationStatus::Running),
@@ -313,6 +322,52 @@ fn a_running_story_with_work_in_flight_is_not_wedged() {
             "only work in flight can be unevaluated: {answer:?}"
         );
     }
+}
+
+#[test]
+fn a_ready_node_under_a_published_graph_is_the_wedge_920_chose() {
+    // #92 / #920. `advances_without_the_operator` excludes `Ready` because no dispatcher runs on
+    // its own: a node left `Ready` waits for an operator to run `resume`. This cell pins the
+    // CONSEQUENCE of that choice, which no cell held before: under a PUBLISHED graph -- the only
+    // shape where the wedge branch is reachable -- a merely `Ready` node reads as wedged.
+    //
+    // It is here so the choice cannot be reverted in silence. Putting `Ready` back into that
+    // predicate turns this red at the assertion, which the sibling loop above cannot do.
+    // ON A NODE THE PUBLISHED TOPOLOGY ACTUALLY DECLARES (Codex P2 on this PR, accepted).
+    // `published_graph()` loads conformance/schemas/valid/persisted-graph-version.json, whose
+    // `topology.nodes` is exactly {"start"}. The first draft of this cell put `Ready` on a
+    // `build` node that the graph does not contain: the wedge still fired, but for the
+    // completeness of an out-of-topology state map rather than for a Ready node under the
+    // graph -- the same "satisfied by the fixture, not the behaviour" defect this cell exists
+    // to correct in its sibling. One node, and it is the graph's own.
+    let mut projection = projection(
+        &[("start", NodeState::Ready)],
+        Some(SimulationStatus::Running),
+    );
+    projection.current_graph = Some(published_graph());
+    assert_eq!(
+        attention(&projection, &AttentionInputs::default()).reasons(),
+        vec![AttentionReason::WedgedQuiescence],
+        "a node nothing will dispatch is the wedge #920 chose to make audible"
+    );
+
+    // CONTROL, and it is what makes the assertion above about the STATE rather than the fixture:
+    // the identical projection with `Queued` -- a state that does advance -- stays calm.
+    let mut queued = projection_with_queued();
+    queued.current_graph = Some(published_graph());
+    let answer = attention(&queued, &AttentionInputs::default());
+    assert!(
+        answer.reasons().is_empty(),
+        "the same shape with a dispatchable state is not a wedge: {answer:?}"
+    );
+}
+
+/// The control's projection, kept out of the cell so the two differ in exactly one state.
+fn projection_with_queued() -> ExecutionProjection {
+    projection(
+        &[("start", NodeState::Queued)],
+        Some(SimulationStatus::Running),
+    )
 }
 
 #[test]

@@ -211,6 +211,188 @@ function Find-CultureComparison {
 # Ordinal, like everything this tool asks of other files. It reported this very line when run
 # over itself, which is the right behaviour: an instrument that exempted itself from its own
 # rule would be the first place the rule stopped holding.
+# ------------------------------------------------------------------------------------------
+# #835: WHICH TREE THIS NUMBER CAME FROM.
+#
+# A lane ran this sweep from its own session worktree and read `3 culture-aware comparison(s) over
+# 3 file(s)`. From a fresh worktree of the same head: `354 over 36`. Same tool, same command, exit 0
+# both times, no error either way -- the twelve-fold under-report reads exactly like a clean
+# repository, and it was caught only because the total disagreed with another pass's.
+#
+# So the headline number now arrives with the tree it was taken from. This is NOT a refusal: the
+# tool is a reporter, and pointing it at an old tree on purpose is a legitimate thing to do. What it
+# must not do is leave the reader to assume otherwise, because every command succeeded.
+#
+# THE MAIN-CHECKOUT TEST IS `--git-dir` VS `--git-common-dir`, NEVER A FILE COUNT. In a directory
+# that resolves to the main checkout, `git ls-files` is scoped to the CWD PREFIX -- it answers about
+# that path, not about the repository -- so a file count there reads 0, and that zero is the very
+# hazard this line exists to expose. An instrument for measuring a hazard must not be subject to it.
+function Format-TreeProvenance {
+    param(
+        [string] $Head,
+        [string] $GitDir,
+        [string] $GitCommonDir,
+        # $null when it could not be measured. NOT 0: "no commits behind" and "I could not ask" are
+        # different facts, and collapsing them onto 0 is how the reassuring zero gets back in.
+        $Behind,
+        # #1006 review: `rev-list --count HEAD..origin/main` counts what origin/main has and HEAD
+        # does not. A branch AHEAD of main and missing nothing answers 0 -- and the first version of
+        # this function printed "level with origin/main" for it, which is FALSE and was quoted as
+        # evidence in this PR's own body. "Level" is now said only when BOTH sides are zero.
+        $Ahead,
+        # The scan reads WORKING-COPY bytes (`git ls-files` selects tracked paths; the parser reads
+        # the file on disk), so a dirty tree is not the commit named here. Two different inputs
+        # under one label is the confusion this whole line exists to end.
+        $Dirty,
+        # Scanned files marked assume-unchanged or skip-worktree: `git status` cannot see them.
+        $Hidden,
+        [string] $BehindReason
+    )
+
+    $where = if ([string]::IsNullOrWhiteSpace($GitDir) -or [string]::IsNullOrWhiteSpace($GitCommonDir)) {
+        'a checkout whose kind could NOT be determined'
+    } elseif ([string]::Equals($GitDir.TrimEnd('/', '\'), $GitCommonDir.TrimEnd('/', '\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        # Ordinal-ignore-case rather than `-eq`: paths on Windows are case-insensitive and that is a
+        # per-site decision this file argues for elsewhere, so it is spelled rather than inherited.
+        'the MAIN checkout'
+    } else {
+        'a linked worktree'
+    }
+
+    $headText = if ([string]::IsNullOrWhiteSpace($Head)) { 'an UNKNOWN head' } else { $Head }
+
+    $behindText = if ($null -eq $Behind) {
+        "distance from origin/main: UNKNOWN ($BehindReason)"
+    } elseif (([int] $Behind -eq 0) -and ($null -ne $Ahead) -and ([int] $Ahead -eq 0)) {
+        'level with origin/main'
+    } elseif ([int] $Behind -eq 0) {
+        $aheadPart = if ($null -eq $Ahead) { 'ahead: UNKNOWN' } else { "$Ahead ahead" }
+        "0 commits behind origin/main, $aheadPart"
+    } else {
+        $aheadPart = if ($null -eq $Ahead) { '' } else { ", $Ahead ahead" }
+        "$Behind commit(s) BEHIND origin/main (so anything newer is NOT in this count)$aheadPart"
+    }
+
+    $dirtyText = if ($null -eq $Dirty) {
+        ', working tree: UNKNOWN'
+    } elseif ([int] $Dirty -gt 0) {
+        ", and $Dirty uncommitted change(s) were SCANNED rather than the commit above"
+    } else {
+        ''
+    }
+
+    # An index flag makes the count above unreliable rather than wrong, and saying which is the
+    # point: a reader who sees "0 uncommitted" on a tree with a hidden edit is being misled by
+    # silence, which is the failure mode this line exists to end.
+    $hiddenText = if (($null -ne $Hidden) -and ([int] $Hidden -gt 0)) {
+        ", and $Hidden scanned file(s) are hidden from `git status` by an index flag, so the count above is NOT reliable"
+    } else {
+        ''
+    }
+
+    return "Tree: $headText in $where, $behindText$dirtyText$hiddenText"
+}
+
+# The three git questions behind the line above, each with its own exit code read on the NEXT
+# statement. `$LASTEXITCODE` is lost across a pipeline, which this file has already been bitten by
+# once (see the `--show-toplevel` note below).
+function Get-TreeProvenance {
+    param(
+        [Parameter(Mandatory)] [string] $Root,
+        # The files this run actually read. `git status` covers the whole repository, so counting it
+        # unscoped made a modified README read as "SCANNED" -- a false sentence in the line that
+        # exists to stop false sentences (review of #1006). Empty means "ask about nothing".
+        [string[]] $ScannedPaths = @()
+    )
+
+    $headOutput = @(& git -C $Root rev-parse --short HEAD 2>$null)
+    $headExit = $LASTEXITCODE
+    $head = ''
+    if ($headExit -eq 0) {
+        $first = @($headOutput | Where-Object { $_ } | Select-Object -First 1)
+        if ($first) { $head = ([string]$first).Trim() }
+    }
+
+    # ONE call for both, so the two paths can never come from different moments.
+    $dirsOutput = @(& git -C $Root rev-parse --path-format=absolute --git-dir --git-common-dir 2>$null)
+    $dirsExit = $LASTEXITCODE
+    $gitDir = ''
+    $commonDir = ''
+    if ($dirsExit -eq 0) {
+        $lines = @($dirsOutput | Where-Object { $_ })
+        if ($lines.Count -ge 2) {
+            $gitDir = ([string]$lines[0]).Trim()
+            $commonDir = ([string]$lines[1]).Trim()
+        }
+    }
+
+    # BOTH SIDES, from one command. `--left-right --count` prints "<behind>	<ahead>" for
+    # `origin/main...HEAD`: left is what origin/main has and HEAD does not, right is the reverse.
+    # The two-dot form used here first answered only the left side, so a branch AHEAD of main read
+    # as `0` and was printed as "level" -- false, and quoted as evidence in this PR's own body.
+    $behind = $null
+    $ahead = $null
+    $reason = ''
+    $countOutput = @(& git -C $Root rev-list --left-right --count origin/main...HEAD 2>$null)
+    $countExit = $LASTEXITCODE
+    if ($countExit -ne 0) {
+        $reason = 'origin/main is not present in this checkout'
+    } else {
+        $first = @($countOutput | Where-Object { $_ } | Select-Object -First 1)
+        $text = if ($first) { ([string]$first).Trim() } else { '' }
+        $parts = @($text -split '\s+' | Where-Object { $_ })
+        $leftParsed = 0
+        $rightParsed = 0
+        if ($parts.Count -ge 2 -and [int]::TryParse($parts[0], [ref] $leftParsed) -and [int]::TryParse($parts[1], [ref] $rightParsed)) {
+            $behind = $leftParsed
+            $ahead = $rightParsed
+        } else {
+            $reason = "rev-list --left-right --count printed '$text'"
+        }
+    }
+
+    # The working tree, because the scan reads it rather than the commit. Counted, not described:
+    # a number a reader can compare beats an adjective.
+    # Scoped to the scanned paths, because the claim is about what was READ. A repository-wide
+    # count would be true about the repository and false about this sweep.
+    $dirty = $null
+    if (@($ScannedPaths).Count -gt 0) {
+        $statusOutput = @(& git -C $Root status --porcelain --untracked-files=no -- @ScannedPaths 2>$null)
+        $statusExit = $LASTEXITCODE
+        if ($statusExit -eq 0) {
+            $dirty = @($statusOutput | Where-Object { $_ }).Count
+        }
+    } else {
+        $dirty = 0
+    }
+
+    # #1006 review, reproduced by the reviewer: `git status` OMITS a file marked
+    # `--assume-unchanged` or `--skip-worktree`, while the parser still reads its edited
+    # working-copy bytes. So the dirty count above can read 0 on a tree whose scanned input has
+    # changed -- the false-clean this whole line exists to prevent, hiding behind an index flag.
+    # `git ls-files -v` is where the flags are visible: a LOWERCASE status letter means
+    # assume-unchanged, `S` means skip-worktree. Counted, not resolved: the honest answer is that
+    # the count cannot be trusted, not a different number.
+    $hidden = 0
+    if (@($ScannedPaths).Count -gt 0) {
+        $flagOutput = @(& git -C $Root ls-files -v -- @ScannedPaths 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+            # ORDINAL, and the reason is this file: my first spelling used `-ceq`, which is
+            # case-sensitive and still CULTURE-AWARE -- and this sweep flagged it in its own
+            # source on the first run. The tool caught its author, which is the strongest thing
+            # it can do and the reason the check exists at all.
+            $hidden = @($flagOutput | Where-Object {
+                    $_ -and (
+                        [char]::IsLower($_[0]) -or
+                        [string]::Equals([string]$_[0], 'S', [System.StringComparison]::Ordinal)
+                    )
+                }).Count
+        }
+    }
+
+    return Format-TreeProvenance -Head $head -GitDir $gitDir -GitCommonDir $commonDir -Behind $behind -Ahead $ahead -Dirty $dirty -Hidden $hidden -BehindReason $reason
+}
+
 if ([string]::Equals($MyInvocation.InvocationName, '.', [System.StringComparison]::Ordinal)) { return }
 
 $files = if ($Path) { @($Path) } else {
@@ -234,6 +416,9 @@ $files = if ($Path) { @($Path) } else {
     $root = @($rootOutput | Where-Object { $_ } | Select-Object -First 1)
     if ($rootExit -ne 0 -or -not $root) { throw 'not inside a git working tree, and no -Path was given' }
     $root = ([string]$root).Trim()
+    # #835: kept for the provenance line at the end. The root is the tree this sweep READ, and the
+    # summary has to be able to name it after this expression has gone out of scope.
+    $script:sweepRoot = $root
     # AND THE LISTING'S EXIT CODE IS READ TOO, which it was not: a failed `ls-files` produced an
     # empty list, the map over it produced no files, and the summary said "0 culture-aware
     # comparisons over 0 files" -- a clean answer built out of a failure. Found by the cell written
@@ -247,7 +432,18 @@ $files = if ($Path) { @($Path) } else {
 $found = @(foreach ($file in $files) { Find-CultureComparison -File $file -Include $Include })
 
 if ($AsJson) {
-    $found | ConvertTo-Json -Depth 4
+    # #1006 review: this path returned before the provenance line existed, so a machine caller got
+    # findings from a stale checkout with no head and no distance -- the very false reading the
+    # line was added to end, surviving in the one mode nobody looks at.
+    #
+    # The shape changes from a bare array to `{ tree, sites }`. MEASURED before changing it: no
+    # caller in this repository passes `-AsJson` (`git grep AsJson` over ci/, .factory/, apps/,
+    # tools/, core/ finds only this script), so there is no consumer to break -- and provenance
+    # BESIDE the JSON on another stream would be the same absence one pipe along.
+    [ordered]@{
+        tree  = if ($Path) { 'not asked -- an explicit -Path was given' } else { Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files }
+        sites = @($found)
+    } | ConvertTo-Json -Depth 5
     return
 }
 
@@ -280,6 +476,15 @@ if ([string]::Equals($Include, 'all', [System.StringComparison]::Ordinal)) {
     Write-Host ('  (not looked for, because they are ORDINAL and measured so: .Equals, .Contains, ' +
         '.Replace, -like, -match. A false positive is how a sweep gets deleted.)')
 }
+# #835: the tree, printed with the number rather than left for the reader to assume. Only asked in
+# repository-wide mode -- with an explicit -Path the files are whatever was named on the command
+# line, and a line about the current directory's checkout would be describing something else.
+$provenance = if ($Path) {
+    'Tree: not asked -- an explicit -Path was given, so this counts the files named on the command line and nothing else'
+} else {
+    Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files
+}
+Write-Host $provenance
 Write-Host ("$foundCount culture-aware comparison(s) over $fileCount file(s)" +
     $(if ($unreadCount -gt 0) { ", and $unreadCount file(s) COULD NOT BE READ: " + (@($script:unreadable) -join ', ') } else { '' }) + '. ' +
     'A LIST, not a verdict: which of these is a defect depends on where the value comes from, ' +

@@ -288,3 +288,10 @@ squash actually carried; `gh issue view` for every issue it names; the branch en
 - `git ls-tree` without `--full-tree` is scoped to the CWD prefix and returns empty with rc=0.
 - A zero produced by a filter you wrote (`grep`, `head`, a regex calibrated on the old format) is
   a measurement of the filter. Put a known positive in the same command.
+- A repository-wide sweep measures **the tree you ran it in**, and a stale one under-reports without
+  erroring. Seven fleet worktrees were 315-374 commits behind; `ci/find-culture-comparisons.ps1` read
+  `3 over 3` in one of them where a fresh checkout of the same head read `354 over 36`, exit 0 both
+  times (#835). Measure from a fresh worktree of `origin/main`, and read the `Tree:` line the sweep
+  prints before you believe its number. Whether a directory IS the main checkout is decided by
+  `--git-dir` against `--git-common-dir` and **never by a file count** -- `git ls-files` there is
+  scoped to the CWD prefix and answers 0, which is the same hazard wearing the shape of an answer.

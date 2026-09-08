@@ -148,6 +148,54 @@ function Get-FrozenReleaseOffences {
     zero commits" and "zero offences over three commits" are the same number and not the same
     statement.
 #>
+<#
+.SYNOPSIS
+    One `git show --name-status` line per change, with the letter kept.
+
+.DESCRIPTION
+    A FUNCTION over TEXT so fixtures can drive it. Until #978 this was six lines inline inside
+    `Get-RangeCommits`, which needs a repository and a commit to exercise, so the one shape that
+    mattered had no cell and the comment beside it described a discrimination the code did not make.
+
+    A RENAME IS A DELETION AND A CREATION, which is how git itself models it, and modelling it that
+    way here makes both directions fall out of the existing predicate with no new branch (#978):
+
+        git mv schemas/releases/1.0.0/x.json docs/x.json    ->  D on a frozen path   OFFENCE
+        git mv docs/x.json schemas/releases/2.0.0/x.json    ->  A on a frozen path   exempt
+
+    Reading only the LAST field, as this did, records the destination. For a move OUT of a frozen
+    directory the destination is not frozen, so the change never entered the population at all and
+    the pin four readers depend on could be moved away in silence.
+
+    A COPY IS NOT A LOSS. `C100<TAB>old<TAB>new` leaves the source where it was, so only the
+    destination is new and there is nothing to license. Emitting a `D` for it would refuse a commit
+    that took nothing away -- the same over-refusal #947 was sent back for, in the other letter.
+#>
+function ConvertTo-CommitChanges {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Lines)
+    $changes = New-Object System.Collections.Generic.List[object]
+    foreach ($line in @($Lines)) {
+        # `A<TAB>path`; a rename or copy is `R100<TAB>old<TAB>new`.
+        $fields = ([string] $line) -split "`t"
+        if ($fields.Count -lt 2) { continue }
+        $letter = ([string] $fields[0]).Substring(0, 1)
+        $last = [string] $fields[$fields.Count - 1]
+        if (($fields.Count -ge 3) -and ($letter -eq 'R')) {
+            $changes.Add([pscustomobject]@{ Status = 'D'; Path = [string] $fields[1] })
+            $changes.Add([pscustomobject]@{ Status = 'A'; Path = $last })
+            continue
+        }
+        if (($fields.Count -ge 3) -and ($letter -eq 'C')) {
+            $changes.Add([pscustomobject]@{ Status = 'A'; Path = $last })
+            continue
+        }
+        $changes.Add([pscustomobject]@{ Status = $letter; Path = $last })
+    }
+    # `.ToArray()`, not `return , ([object[]] …)`: every caller wraps in `@()`, and under that shape
+    # the comma idiom reads an EMPTY list as one row.
+    return $changes.ToArray()
+}
+
 function Get-RangeCommits {
     param(
         [Parameter(Mandatory)] [string] $Root,
@@ -177,17 +225,7 @@ function Get-RangeCommits {
         $raw = @(& git -C $Root show --name-status --format= $sha 2>$null | Where-Object { $_ })
         if ($LASTEXITCODE -ne 0) { return $null }
         $ErrorActionPreference = $previous
-        $changes = @()
-        foreach ($line in $raw) {
-            # `A<TAB>path`, and for a rename `R100<TAB>old<TAB>new`. The LAST field is the path the
-            # commit leaves behind, which is the one a later reader will find.
-            $fields = ([string] $line) -split "`t"
-            if ($fields.Count -lt 2) { continue }
-            $changes += [pscustomobject]@{
-                Status = ([string] $fields[0]).Substring(0, 1)
-                Path   = [string] $fields[$fields.Count - 1]
-            }
-        }
+        $changes = @(ConvertTo-CommitChanges -Lines $raw)
         $commits += [pscustomobject]@{ Sha = $sha; Message = $message; Changes = $changes }
     }
     return , ([object[]] $commits)

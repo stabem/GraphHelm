@@ -25,8 +25,13 @@
 #   1  a DELETION is an offence too: removing a pin is the loss, not just changing it
 #   1  AN EMPTY RANGE IS EMPTY, NOT UNREAD -- the two must not become one verdict
 #   1  and zero offences over zero commits is COVERAGE ZERO, never a clean tree
+#   1  A RENAME OUT of a frozen path parses to D old + A new (#978)
+#   1  and it is an OFFENCE, named by the path it LEFT
+#   1  a rename INTO a frozen path is exempt -- arriving somewhere empty is a first publication
+#   1  a COPY out of one is not an offence: the source is still there
+#   1  CONTROL: an ordinary M line still parses to exactly one change
 #   2  REAL TREE: the frozen directory exists, and this branch rewrites nothing in it
-$ExpectedAssertionCount = 19
+$ExpectedAssertionCount = 24
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -57,6 +62,13 @@ function New-Commit {
     param([string] $Sha, [string] $Message, [string[]] $Paths, [string] $Status = 'M')
     $changes = @($Paths | ForEach-Object { [pscustomobject]@{ Status = $Status; Path = $_ } })
     return [pscustomobject]@{ Sha = $Sha; Message = $Message; Changes = $changes }
+}
+
+# The same shape as New-Commit, but built from RAW `--name-status` lines, so a cell can exercise the
+# parser and the predicate together rather than hand-writing the Changes the parser would produce.
+function New-CommitFromLines {
+    param([string] $Sha, [string] $Message, [string[]] $Lines)
+    return [pscustomobject]@{ Sha = $Sha; Message = $Message; Changes = @(ConvertTo-CommitChanges -Lines $Lines) }
 }
 
 $marked = "fix(schema): reissue 1.0.0`n`nRewrites-Release: D-042 -- 1.0.0 reissued because the sealed key id was wrong"
@@ -135,6 +147,31 @@ $deleted = @(New-Commit -Sha '111111117777' -Message 'chore(schema): drop 1.0.0'
     -Paths @($frozenPath) -Status 'D')
 Assert-Equal 1 (Get-FrozenReleaseOffences -Commits $deleted).Count `
     'and DELETING one is an offence too -- the exemption is for what was not there before, not for every non-modification'
+
+Write-Host ''
+Write-Host '-- a rename is a deletion and a creation, and the letter alone could not say so (#978) --' -ForegroundColor Cyan
+
+# The parser is driven with the exact bytes `git show --name-status` emits. Until #978 these six
+# lines lived inside Get-RangeCommits, which needs a repository, so the one shape that mattered had
+# no cell -- and the comment beside the code claimed a discrimination the code did not make.
+$renamedOut = @(ConvertTo-CommitChanges -Lines @("R100`t$frozenPath`tdocs/old-catalog.json"))
+Assert-Equal 'D|A' (($renamedOut | ForEach-Object { $_.Status }) -join '|') `
+    'a rename parses to TWO changes, a deletion of the old path and a creation of the new'
+
+Assert-True -Condition ((Get-FrozenReleaseOffences -Commits @(New-CommitFromLines -Sha 'aaaa11112222' -Message 'chore: tidy' -Lines @("R100`t$frozenPath`tdocs/old-catalog.json"))) -join ' ').Contains($frozenPath) `
+    'moving a pin OUT of the frozen directory is an offence, and the message names the path it LEFT'
+
+Assert-Equal 0 (Get-FrozenReleaseOffences -Commits @(New-CommitFromLines -Sha 'bbbb22223333' -Message 'feat: publish 2.0.0' -Lines @("R100`tdocs/draft.json`tschemas/releases/2.0.0/catalog.json"))).Count `
+    'and moving one IN is not: arriving where nothing was is a first publication, the same case A is exempt for'
+
+# A COPY leaves the source in place. Emitting a D for it would refuse a commit that took nothing
+# away -- #947 was sent back for exactly that over-refusal in the other letter.
+Assert-Equal 0 (Get-FrozenReleaseOffences -Commits @(New-CommitFromLines -Sha 'cccc33334444' -Message 'chore: snapshot' -Lines @("C100`t$frozenPath`tdocs/copy.json"))).Count `
+    'a COPY out of a frozen path is not an offence: the pin is still where its readers look'
+
+# CONTROL, because a parser that split everything into two would satisfy the first cell.
+Assert-Equal 1 @(ConvertTo-CommitChanges -Lines @("M`t$frozenPath")).Count `
+    'CONTROL: an ordinary modification still parses to exactly one change'
 
 Write-Host ''
 Write-Host '-- and the real tree, so the subject is not only a fixture --' -ForegroundColor Cyan

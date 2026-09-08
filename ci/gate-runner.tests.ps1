@@ -33,7 +33,10 @@
 #   1  ARRANGEMENT: the selection really does pass the skip list, so removing it is a sabotage
 #   1  THE FAILURE MODE IS A FAILURE: with the exclusion removed, the run EXITS rather than spins
 #   1  and it exits 3, the code that says the skip list stopped excluding
-$ExpectedAssertionCount = 17
+#   1  #943 arrangement: the target assignment and the launch are both found, in order
+#   1  the target is removed between them          1  and the runner says so in the log
+#   1  a traversing `pr` is refused as malformed    1  and the directory it aimed at survives
+$ExpectedAssertionCount = 22
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -317,6 +320,116 @@ try {
         'with the skip list ignored the run ENDS rather than spinning -- a hang is not a red, and this is the cell that says so'
     Assert-True -Condition ($ended -and $spinner.ExitCode -eq 3) `
         "and it ends with 3, the code that says an entry is being re-picked (got $(if ($ended) { $spinner.ExitCode } else { 'no exit' }))"
+
+    # #943: THE TARGET IS COLD BEFORE THE LAUNCH -- read from the file, and here is why it is not
+    # driven as behaviour.
+    #
+    # Every case above reaches its assertion because the entry is DROPPED before a bench is prepared:
+    # the fake server's head disagrees, the runner drops, and line for line it never reaches the
+    # target allocation. Reaching it means agreeing with the fake, preparing a bench and STARTING A
+    # REAL GATE -- half an hour of cargo per assertion, on the machine's only spinning disk, from a
+    # suite that is supposed to cost seconds. So this is a source claim and says so, rather than
+    # pretending to be a behavioural one.
+    #
+    # A CONTAINMENT CLAIM, NEVER A POSITION COMPARISON. `IndexOf(removal) -lt IndexOf(launch)` reads
+    # as the same property and is not: file order is not execution order, and a removal moved into a
+    # function defined earlier in the file would satisfy it while running after the gate started.
+    # The claim that survives a sabotage is that the removal is INSIDE the region between the target
+    # assignment and the launch. (#958 paid for this distinction one suite over.)
+    $runnerText = [System.IO.File]::ReadAllText($runner)
+    $assignAt = $runnerText.IndexOf('$target = Join-Path $TargetRoot', [System.StringComparison]::Ordinal)
+    $launchAt = $runnerText.IndexOf('Start-Process powershell', [System.StringComparison]::Ordinal)
+
+    # THE ARRANGEMENT IS ITS OWN BOOLEAN and is never inferred from the emptiness of the region: an
+    # anchor that stopped matching gives `IndexOf` -1, and a region built from -1 is not "clean", it
+    # is unmeasured. Two states must not share one representation.
+    $anchorsFound = ($assignAt -ge 0 -and $launchAt -gt $assignAt)
+    Assert-True -Condition $anchorsFound `
+        -Message "ARRANGEMENT: the target assignment and the gate launch are both found, in that order (assign=$assignAt, launch=$launchAt)"
+
+    $beforeLaunch = if ($anchorsFound) { $runnerText.Substring($assignAt, $launchAt - $assignAt) } else { '' }
+
+    Assert-True -Condition ($beforeLaunch -match 'Remove-Item[^\r\n]*\$target') `
+        -Message 'the previous run''s target is REMOVED between its allocation and the gate launch, so a re-run of the same pull request is cold (#943)'
+
+    # AND IT SAYS SO IN THE LOG. Deleting tens of gigabytes takes minutes on the HDD, and a runner
+    # that goes quiet for minutes with no line explaining why is indistinguishable from a wedged one
+    # -- which is exactly the reading the liveness watchdog below is built to avoid making.
+    Assert-True -Condition ($beforeLaunch -match 'Write-Note[^\r\n]*943') `
+        -Message 'and the runner records that it did it, naming the issue, so a quiet minute in the log is explained rather than suspicious'
+
+
+    # ---------------------------------------------------------------------------------------------
+    # #943 / the delete's own precondition: a `pr` that is not a number never reaches a path.
+    #
+    # This is the one case in this suite that is BEHAVIOURAL rather than a source claim, and it can
+    # be, because the refusal happens before a bench is prepared -- the same early return every other
+    # case here rides on.
+    #
+    # WHY IT IS WORTH A CELL AT ALL. `$pr` is interpolated into a path that is then removed
+    # recursively and forcibly, and `-LiteralPath` does NOT forbid traversal. Measured:
+    #
+    #   pr = '\..\..\..'   Join-Path 'D:\runner-targets\hdd' -> D:\runner-targets\hdd\pr\..\..\..
+    #                      GetFullPath                       -> D:\
+    #   Remove-Item -LiteralPath <a traversing path> -Recurse -Force -WhatIf
+    #                      -> "Remove Directory" on the RESOLVED parent, not on the literal text
+    #
+    # THE FIXTURE IS SELF-CONTAINED ON PURPOSE. The traversal aims at a sibling of the target root
+    # INSIDE this suite's own temp directory, and both roots are passed explicitly, so a run against
+    # a tree with the guard removed destroys a fixture directory and nothing else. That is deliberate:
+    # the red-first check for this cell must be safe to perform.
+    # THE QUEUE IS EMPTIED FIRST, and this is not tidiness. `-Once` drains ONE entry, and the case
+    # above deliberately leaves its entry QUEUED -- so without this the runner would process THAT
+    # entry again and this cell would read an empty status and fail for the wrong reason. It did,
+    # while this cell was being written.
+    Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $statusPath -Force -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath $shimPath -Value $strictShim -Encoding ASCII
+
+    $victim = Join-Path $root 'victim'
+    $null = New-Item -ItemType Directory -Path $victim -Force
+    Set-Content -LiteralPath (Join-Path $victim 'canary.txt') -Value 'must survive' -Encoding ASCII
+    $fixtureTargets = Join-Path $root 'targets'
+    $fixtureBenches = Join-Path $root 'benches'
+
+    # THE HEAD MATCHES THE FAKE SERVER'S, and that is what makes this cell non-vacuous. With a
+    # mismatched head the runner drops at "head moved" -- before the delete -- and the cell would
+    # pass without the guard existing. Matching it means the `pr` refusal is the ONLY thing between
+    # the entry and a recursive delete.
+    $traversalEntry = [ordered]@{
+        pr        = '\..\..\victim'
+        head      = $serverHead
+        lane      = 'TESTS'
+        timestamp = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    # THE QUEUE IS SHARED WITH EVERY CELL ABOVE, and `-Once` processes the entry the selection
+    # RANKS FIRST, not the one this cell just wrote. Leftovers from an earlier cell therefore decide
+    # whether this cell measures anything -- and the failure is silent: the runner refuses somebody
+    # else's entry, no `.status` is written beside this one, and the assertion reads an empty string
+    # rather than a wrong one. Found merging #951 into this branch, where the added cells above left
+    # entries behind and this cell went red at a head where the guard it tests was intact.
+    Get-ChildItem -LiteralPath $queue -Filter '*.json' -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
+    $traversalPath = Join-Path $queue "traversal-$($serverHead.Substring(0, 8)).json"
+    Set-Content -LiteralPath $traversalPath -Value (ConvertTo-Json $traversalEntry) -Encoding UTF8
+
+    $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+        -TargetRoot $fixtureTargets -BenchRoot $fixtureBenches 2>&1
+
+    $traversalStatusPath = [System.IO.Path]::ChangeExtension($traversalPath, '.status')
+    $traversalStatus = if (Test-Path -LiteralPath $traversalStatusPath) {
+        (Get-Content -LiteralPath $traversalStatusPath -Raw)
+    } else { '' }
+    # THE REASON, not merely "it was refused". Any of three earlier checks could also refuse this
+    # entry, and a cell that accepted any refusal would pass on a runner that never learned to look
+    # at `pr` at all.
+    Assert-True -Condition ($traversalStatus -match 'malformed pr') `
+        -Message "a `pr` that is not a number is refused AS SUCH, before anything path-shaped is built (status: '$($traversalStatus.Trim())')"
+
+    Assert-True -Condition (Test-Path -LiteralPath (Join-Path $victim 'canary.txt')) `
+        -Message 'and the directory the traversal aimed at is still there, with its contents'
 
 } finally {
     $ErrorActionPreference = $previousPreference

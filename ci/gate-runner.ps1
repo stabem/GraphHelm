@@ -244,6 +244,37 @@ function Invoke-OneEntry {
         return 'dropped'
     }
 
+    # AND `pr` IS VALIDATED FOR THE SAME REASON `head` IS -- which became true only when this file
+    # started DELETING things (#943, found by ISSUES 2 reviewing the change that added the delete).
+    #
+    # `$pr` is interpolated straight into a path that is then removed recursively and forcibly:
+    #
+    #     $target = Join-Path $TargetRoot ("pr{0}" -f $pr)
+    #     Remove-Item -LiteralPath $target -Recurse -Force
+    #
+    # Measured on this machine, because `-LiteralPath` sounds like it forbids traversal and DOES NOT:
+    #
+    #     pr = '\..\..\..'    Join-Path -> D:\runner-targets\hdd\pr\..\..\..   GetFullPath -> D:\
+    #     Remove-Item -LiteralPath <that> -Recurse -Force -WhatIf
+    #         -> "Performing the operation "Remove Directory" on target "<the resolved parent>"
+    #
+    # The whole drive, unattended, on the machine holding every lane's bench and every gate target.
+    #
+    # `Resolve-PullRequestBranch` already returns early for a non-numeric value -- verified, `gh pr
+    # view "../../.."` exits 1 -- so the hazard is not reachable today. THAT IS INCIDENTAL, NOT
+    # STRUCTURAL: it makes the safety of a recursive force-delete rest on the error behaviour of an
+    # unrelated network call, three checks away, and a reorder for any other reason removes it
+    # silently. The refusal belongs here, beside the one for `head`, where a reader looks for it.
+    #
+    # This also restores the claim the comment below makes about the queue being safe to leave
+    # world-writable. That sentence was written when the worst a poisoned entry could do was waste a
+    # build; adding the delete made it false, and this makes it true again.
+    if ("$pr" -notmatch '^[0-9]+$') {
+        Write-Note "entry $($Candidate.File.Name): pr is not a number; dropping"
+        Set-EntryStatus -EntryPath $entryPath -State 'refused: malformed pr'
+        return
+    }
+
     # THE BRANCH COMES FROM THE SERVER, NEVER FROM THE FILE, and the resolved head must equal the one
     # the lane enqueued. This is the check that makes the queue safe to leave world-writable: the
     # worst a poisoned entry can do is name a pull request whose real head disagrees, and that is
@@ -290,6 +321,34 @@ function Invoke-OneEntry {
 
     foreach ($d in @($StateDirectory, $BenchRoot, $TargetRoot)) {
         if (-not (Test-Path -LiteralPath $d)) { $null = New-Item -ItemType Directory -Path $d -Force }
+    }
+
+    # #943: EVERY RUN GETS A COLD TARGET, and this runner is the one place that can guarantee it.
+    #
+    # `$target` is `pr<N>` -- stable across every run of the same pull request, and removed by
+    # nothing. So the second gate on any PR built into the first one's artefacts, and a warm target
+    # reddens `workspace tests` on the gate's OWN canary: the canary rewrites
+    # `tools/ci-canary/src/nonce.rs` as the FIRST stage, `graphhelm.exe` does not depend on
+    # ci-canary so nothing forces it to relink, and on a warm target the binary still on disk is the
+    # PREVIOUS run's. That is a source newer than the binary, which the staleness instrument
+    # correctly refuses. On a cold target the binary does not exist yet, so the window never opens.
+    #
+    # Four lanes reached "use a fresh target for the second run" independently and left the evidence
+    # in their directory names -- `issues1-920b-targets`, `g-220b-targets`, `c-753-target2` -- with
+    # no note saying why, so each rediscovery cost a wasted gate. A hand-run can rename its target.
+    # THE RUNNER CANNOT: without this it hits the bug on every re-run, deterministically, and the
+    # only symptom is a red that is not about the tree.
+    #
+    # REPORTED, NEVER SILENT, AND THE RUN CONTINUES EITHER WAY. A removal that cannot finish leaves
+    # a target warmer than nothing, and the honest thing is to say so and let the gate speak: a red
+    # carrying this note in its log is diagnosable, whereas failing the entry here would trade a
+    # wasted run for no run at all.
+    if (Test-Path -LiteralPath $target) {
+        Write-Note "entry $($Candidate.File.Name): removing the previous run's target $target (#943: a re-run must be cold)"
+        Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $target) {
+            Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+        }
     }
 
     # THE BENCH IS THE PULL REQUEST'S REAL BRANCH. Not an alias: the manifest commit is written to

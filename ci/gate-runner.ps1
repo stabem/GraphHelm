@@ -224,10 +224,49 @@ function Get-NextEntry {
 # The answer is advisory. It exists so the runner can say "held, waiting" in a status file instead of
 # spending a bench preparation on a gate that will refuse -- not so it can decide. The decision is
 # the gate's, atomically, thirty seconds later.
+# #902: the liveness reader the gate uses, so the runner's answer about a lock is the gate's answer.
+# Beside this file when it runs from ci/; from the repository it probes when it runs as a COPY
+# elsewhere (the suite's sabotage cells WRITE a mutated copy of this file into a scratch directory
+# -- `WriteAllText`, not `Copy-Item` -- and run it from there), so a relocated runner keeps the
+# same answer instead of dying on a missing dot-source.
+# DOT-SOURCED AT SCRIPT SCOPE, never inside a function: a function that dot-sources defines the
+# helpers in its own scope and they vanish when it returns (measured: the first draft did exactly
+# that, and `Get-SlotHolderPairFromContent` was unknown at the call site). This only RESOLVES the
+# path; the dot-source is the caller's, at top level.
+function Resolve-SlotLockReaderPath {
+    param([AllowNull()] [AllowEmptyString()] [string] $RepositoryRoot)
+    $beside = Join-Path $PSScriptRoot 'slot-lock.ps1'
+    if (Test-Path -LiteralPath $beside) { return $beside }
+    if (-not [string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+        $inRepo = Join-Path $RepositoryRoot 'ci/slot-lock.ps1'
+        if (Test-Path -LiteralPath $inRepo) { return $inRepo }
+    }
+    throw "ci/slot-lock.ps1 was found neither beside this runner ($PSScriptRoot) nor in the repository ($RepositoryRoot); the liveness reader is required"
+}
+
 function Get-SlotHolder {
     param([string] $Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
     try { return (Get-Content -LiteralPath $Path -Raw).Trim() } catch { return $null }
+}
+
+# #902: A LOCK WHOSE HOLDER IS DEAD IS NOT A REASON TO WAIT. On 2026-09-08 the HDD gate for #979
+# died at ~04:12Z without its `finally`, its pair stayed in `D:/graphhelm-slot/SLOT.lock`, and the
+# relaunched runner sat on "the HDD slot lock is held" for good -- `Get-SlotHolder` reads CONTENT
+# and never asks whether the process still exists. The gate's own `Enter-GateSlot` reclaims exactly
+# that pair (`ci/slot-lock.ps1`: a pair the OS says is dead), but the gate is never launched while
+# this loop waits, so the reclaim that would have freed the slot could not run: a deadlock between
+# a reader that defers to the exclusion and an exclusion that needs the reader to launch it.
+#
+# The question is the same one the gate asks, through the same function: `Test-SlotHolderLiveness`
+# over the `holder: pid=… start=…` pair. `dead` proceeds -- the gate is the exclusion and reclaims
+# it; `live` waits; `indeterminate` waits too, because a pair this cannot judge is one the gate
+# will not reclaim either, and preparing a bench for a gate that will refuse is the cost this
+# branch exists to avoid. Still ADVISORY: nothing here writes the lock.
+function Get-SlotHolderLiveness {
+    param([AllowNull()] [AllowEmptyString()] [string] $Content)
+    $pair = Get-SlotHolderPairFromContent -Content ([string]$Content)
+    return Test-SlotHolderLiveness -HolderPid ([string]$pair.pid) -HolderStartUtc ([string]$pair.startUtc)
 }
 
 function Invoke-OneEntry {
@@ -489,6 +528,7 @@ if ($probe.Code -ne 0 -or $probe.Output.Count -eq 0) {
     exit 2
 }
 $repoRoot = ([string]$probe.Output[0]).Trim()
+. (Resolve-SlotLockReaderPath -RepositoryRoot $repoRoot)
 
 if (-not (Test-Path -LiteralPath $StateDirectory)) { $null = New-Item -ItemType Directory -Path $StateDirectory -Force }
 
@@ -560,10 +600,19 @@ try {
         # answer as permission would be the second claimant all over again.
         $holder = Get-SlotHolder -Path $slotLock
         if ($holder) {
-            Write-Note "the $Slot slot lock is held; waiting rather than preparing a bench"
-            if ($Once) { exit 1 }
-            Start-Sleep -Seconds $PollSeconds
-            continue
+            $liveness = Get-SlotHolderLiveness -Content $holder
+            # ORDINAL (C on #1022): -eq is culture-sensitive, and the unsafe direction of a folded compare
+            # is the one that reads a live holder as dead and proceeds past it.
+            if ([string]::Equals($liveness, 'dead', [System.StringComparison]::Ordinal)) {
+                # #902: the pair in the lock names a process the OS no longer has. The gate reclaims
+                # such a pair on entry; this loop only had to stop treating it as a holder.
+                Write-Note "the $Slot slot lock names a dead holder ($(([string]$holder -split "`n" | Select-Object -Last 1).Trim())); the gate reclaims it, preparing a bench"
+            } else {
+                Write-Note "the $Slot slot lock is held ($liveness); waiting rather than preparing a bench"
+                if ($Once) { exit 1 }
+                Start-Sleep -Seconds $PollSeconds
+                continue
+            }
         }
 
         $outcome = Invoke-OneEntry -Candidate $candidate

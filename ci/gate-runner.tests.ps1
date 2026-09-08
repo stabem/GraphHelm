@@ -36,7 +36,7 @@
 #   1  #943 arrangement: the target assignment and the launch are both found, in order
 #   1  the target is removed between them          1  and the runner says so in the log
 #   1  a traversing `pr` is refused as malformed    1  and the directory it aimed at survives
-$ExpectedAssertionCount = 22
+$ExpectedAssertionCount = 25
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -431,6 +431,81 @@ try {
     Assert-True -Condition (Test-Path -LiteralPath (Join-Path $victim 'canary.txt')) `
         -Message 'and the directory the traversal aimed at is still there, with its contents'
 
+
+    # ---------------------------------------------------------------------------------------------
+    # A LOCK WHOSE HOLDER IS DEAD (#902, 2026-09-08). The HDD gate for #979 died without its
+    # finally, its pair stayed in SLOT.lock, and the relaunched runner waited on it for good: the
+    # old wait branch read the lock's CONTENT and never asked whether the process existed, while the
+    # gate that would have reclaimed the dead pair is never launched by a runner that is waiting.
+    # Two cells against a real pid each: a process that has exited, and this very process.
+    # ---------------------------------------------------------------------------------------------
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force -ErrorAction SilentlyContinue
+    $deadEntry = [ordered]@{ pr = 932; head = $serverHead; lane = 'TESTS'; timestamp = (Get-Date).ToUniversalTime().ToString('o') }
+    $deadEntryPath = Join-Path $queue "932-$($serverHead.Substring(0, 8)).json"
+    Set-Content -LiteralPath $deadEntryPath -Value (ConvertTo-Json $deadEntry) -Encoding UTF8
+    $gone = Start-Process -FilePath 'cmd' -ArgumentList '/c', 'exit', '0' -PassThru -WindowStyle Hidden
+    $goneStart = $gone.StartTime.ToUniversalTime().ToString('o')
+    $null = $gone.WaitForExit(30000)
+    $lockPath = Join-Path $slotRoot 'SLOT.lock'
+    $null = New-Item -ItemType Directory -Force -Path $slotRoot
+    Set-Content -LiteralPath $lockPath -Encoding ASCII -Value @(
+        "HELD by gate | $((Get-Date).ToUniversalTime().ToString('o')) | gate cwd=D:\nowhere head=$serverHead | STATUS: gate run",
+        'Claimed through create-or-fail: the kernel refused every other claimant.',
+        "holder: pid=$($gone.Id) start=$goneStart"
+    )
+    $deadLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+        -TargetRoot $fixtureTargets -BenchRoot $fixtureBenches 2>&1
+    $deadCode = $LASTEXITCODE
+    $deadText = ($deadLog | Out-String)
+    # THE JOURNEY, NOT THE NOTE (Codex on #1022): the note is printed before Invoke-OneEntry, so a
+    # regression that keeps the note and then continues/exits would pass a note-only cell while a
+    # dead lock still stops every bench. The entry's status file is written only INSIDE
+    # Invoke-OneEntry ('preparing bench' first, then the bench's own outcome), so its existence is
+    # the effect the promise is about.
+    $deadStatusPath = [System.IO.Path]::ChangeExtension($deadEntryPath, '.status')
+    $deadStatus = if (Test-Path -LiteralPath $deadStatusPath) { (Get-Content -LiteralPath $deadStatusPath -Raw).Trim() } else { '<no status file>' }
+    Assert-True -Condition ($deadText -match 'names a dead holder' -and $deadText -notmatch 'waiting rather than preparing a bench' -and (Test-Path -LiteralPath $deadStatusPath)) `
+        -Message "a lock whose holder pid $($gone.Id) has exited is not waited on: the runner says the holder is dead and Invoke-OneEntry ran -- the entry carries a status written there (rc=$deadCode; status: '$deadStatus')"
+
+    # CONTROL: the same lock naming THIS process, which is alive, is waited on -- so the cell above
+    # measured liveness and not merely the presence of a pid line.
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath $deadEntryPath -Value (ConvertTo-Json $deadEntry) -Encoding UTF8
+    $selfStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+    Set-Content -LiteralPath $lockPath -Encoding ASCII -Value @(
+        "HELD by gate | $((Get-Date).ToUniversalTime().ToString('o')) | gate cwd=D:\nowhere head=$serverHead | STATUS: gate run",
+        'Claimed through create-or-fail: the kernel refused every other claimant.',
+        "holder: pid=$PID start=$selfStart"
+    )
+    $liveLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+        -TargetRoot $fixtureTargets -BenchRoot $fixtureBenches 2>&1
+    $liveCode = $LASTEXITCODE
+    $liveText = ($liveLog | Out-String)
+    Assert-True -Condition ($liveText -match 'is held \(live\); waiting' -and $liveCode -eq 1) `
+        -Message "CONTROL: a lock naming this live process is waited on (rc=$liveCode)"
+
+    # THE THIRD ANSWER: a holder line the reader cannot judge (a pid that is not an integer) is
+    # 'indeterminate', and indeterminate is WAITED ON exactly as live is -- the gate's own
+    # Enter-GateSlot will not reclaim a pair it cannot judge either, so a runner that proceeded here
+    # would launch a gate that sits on the same lock. The note names the verdict.
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath $deadEntryPath -Value (ConvertTo-Json $deadEntry) -Encoding UTF8
+    Set-Content -LiteralPath $lockPath -Encoding ASCII -Value @(
+        "HELD by gate | $((Get-Date).ToUniversalTime().ToString('o')) | gate cwd=D:
+owhere head=$serverHead | STATUS: gate run",
+        'Claimed through create-or-fail: the kernel refused every other claimant.',
+        "holder: pid=not-a-pid start=$selfStart"
+    )
+    $vagueLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+        -TargetRoot $fixtureTargets -BenchRoot $fixtureBenches 2>&1
+    $vagueCode = $LASTEXITCODE
+    $vagueText = ($vagueLog | Out-String)
+    Assert-True -Condition ($vagueText -match 'is held \(indeterminate\); waiting' -and $vagueCode -eq 1 -and $vagueText -notmatch 'names a dead holder') `
+        -Message "a lock whose holder the reader cannot judge is waited on as indeterminate, never reclaimed as dead (rc=$vagueCode)"
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
 } finally {
     $ErrorActionPreference = $previousPreference
     $env:PATH = $previousPath

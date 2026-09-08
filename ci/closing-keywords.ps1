@@ -21,7 +21,8 @@
     to the parser, in a commit whose pull request body correctly said `Refs #710`.
 
     THE INSTRUMENT LESSON, which is why this program exists rather than a paragraph:
-    `closingIssuesReferences` is precise, authoritative-sounding, and scoped to the BODY. Trusting
+    `closingIssuesReferences` is precise, authoritative-sounding, and scoped to neither text this
+    program reads -- see the CALIBRATION for a case where it reports a closure NO text names. Trusting
     it retired the commit-message check that was the one actually gating. A stronger instrument that
     answers a NARROWER question is worse than a weak one that answers yours, because it reforms the
     doubt that would have made you look.
@@ -114,21 +115,91 @@
     Exit 0 when the union equals the intent, 1 when it does not, 2 when the texts could not be read
     and therefore nothing was measured.
 
+    The report also prints a `linked` line: GitHub's own `closingIssuesReferences`, shown as a
+    LABELLED SECOND READING THAT DECIDES NOTHING. It is not consulted, for the reasons in the
+    DESCRIPTION and in the CALIBRATION below -- it answers a different question from the one this
+    program asks, and it does not read the same texts -- and adding it to the verdict would
+    reintroduce exactly the instrument that retired the commit-message check.
+
+    Displaying it is a different act from consulting it. When the three texts agree and this field
+    is empty, the operator is looking at a keyword GitHub will not link (#873) and the squash
+    message is what will do the closing. Without the line that disagreement is silent, which is the
+    one state where a tighter-on-purpose instrument looks identical to a broken one.
+
+    Three states, kept apart: a number, `(none)` when GitHub linked nothing, and `(unread)` when the
+    field never arrived. `(unread)` is NOT `(none)` -- an absence that arrived as a failure must
+    never be read as a finding.
+
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File ci/closing-keywords.ps1 -Number 746 -Closes 735
 
 .NOTES
-    CALIBRATION, measured on #754 and recorded here rather than in a comment somewhere else,
-    because a check whose relationship to the real parser is unwritten gets "fixed" until it agrees:
+    CALIBRATION, recorded here rather than in a comment somewhere else, because a check whose
+    relationship to the real parser is unwritten gets "fixed" until it agrees:
 
-    this program's match is TIGHTER than GitHub's. The text `` `Refs #752`, not `Closes` -- #752 ``
-    is flagged here and is NOT linked by GitHub. Why is unmeasured -- a backtick code span, an
-    em-dash, the distance between the keyword and the number, or some combination.
+    this program's match is TIGHTER than GitHub's, and the cause is a CODE SPAN. Measured on four
+    pull requests on 2026-09-05 (#873). The two on the right are the positive control -- without
+    them an empty answer from the API is indistinguishable from a broken query -- and the trailing
+    period appears in one of each pair, so it is not the period:
+
+      #865  body `` `Closes #796`. ``   linked: (none)      #856  body `Closes #822`   linked: 822
+      #862  body `` `Closes #815` ``    linked: (none)      #833  body `Closes #751.`  linked: 751
+
+    The difference is the backticks. This program flags all four. GitHub links the right-hand two.
+
+    (Those four bodies have since been un-backticked, so the table is the RECORD of a measurement
+    and not something a reader can re-run against them today. `the_backtick_direction` in the test
+    suite is the part that still executes.)
+
+    AND IT IS STILL HAPPENING, WHICH IS THE POINT OF WRITING IT DOWN. A fifth instance, 2026-09-07,
+    a different author again, caught on a pull request that was otherwise ready to press -- two
+    passes, a GREEN gate, `merge-proof` SATISFIED:
+
+      pull request 966
+        body     : #841, #925        <- #925 cited inside a code span, in "Notes for reviewers"
+        commits  : #841
+        intended : #841
+        REFUSED: merging this would close #925, which is not in the stated intent.
+        closingIssuesReferences  [841]      <- GitHub linked NOTHING for 925
+
+    The citation was explaining a stacking relationship, which is the ordinary way it happens: an
+    author reaches for backticks around a coordinate and the parser reads a closure. **So a presser
+    meeting this refusal on a ready pull request is meeting the DESIGNED false positive**, not a
+    defect -- the union really does declare a closure the page shows none of, and the tool is right
+    to make somebody look. What it costs is one reading of one sentence, which is the trade this
+    direction was chosen for.
+
+    Five instances across five authors now, and none of them noticed while writing.
 
     That direction is the safe one and is chosen on purpose. A false positive costs a human one
     reading of a sentence. A false negative is what closed #717. **Do not tune this to agree with
     GitHub.** It is the cheap alarm that decides when to look, never a model of the parser, and the
     cell named `the_calibration` exists to make anyone who tries watch a test go red.
+
+    A FOURTH CAUSE, AND IT IS NOT TEXT AT ALL (#941, measured 2026-09-07). The three causes above
+    are all "the texts say a closure and the field is empty". This one runs the other way -- the
+    field names a closure that NO text anywhere names:
+
+      pull request 941
+        closingIssuesReferences   [902]                 <- #902 is an ISSUE, open
+        title keyword             none
+        body / commit keywords    `fixes #911` only     <- #911 is a PULL REQUEST, merged
+        branch                    issue-902-queue-delivers
+
+    GitHub does not treat a pull request as a closing reference, and the field agrees: it says 902
+    and not 902, 911. The source is the BRANCH LINK a branch created from an issue's Development
+    panel carries. It is not text, so no edit to a body or a commit message removes it, and this
+    program -- which reads text -- cannot explain it or see it coming.
+
+    So a reader can legitimately meet `body: (none) · commits: (none) · linked: 902` and conclude
+    one of the two must be broken. Neither is. That row means the merge will close 902 through a
+    link nobody wrote in words, and the only place to change it is the issue's Development panel.
+
+    Which is why the `linked` column is printed rather than consulted, and why "body-scoped" was
+    the wrong shorthand: the field answers a different question from a different set of inputs, and
+    the four causes met on one board in one night are the argument for showing both answers rather
+    than picking one. Measured by the GraphHelm ISSUES 3 lane while reviewing this program, and
+    re-measured here before it was written down.
 
     IT CAN ANSWER WITH THE COMMITS YOU JUST REPLACED. Measured on this program's own pull request:
     a force-push amended the offending commit, the check ran seconds later, and it still reported
@@ -431,17 +502,17 @@ function Read-PullRequestTexts {
     param([Parameter(Mandatory)] [AllowNull()] $Answer)
 
     if ($null -eq $Answer -or $Answer.exitCode -ne 0) {
-        return [ordered]@{ ok = $false; reason = 'gh could not read the pull request'; body = ''; commits = ''; title = ''; base = '' }
+        return [ordered]@{ ok = $false; reason = 'gh could not read the pull request'; body = ''; commits = ''; title = ''; base = ''; linked = (Get-LinkedReading -Payload $null) }
     }
     $payload = $null
     try {
         $payload = $Answer.text | ConvertFrom-Json
     } catch {
-        return [ordered]@{ ok = $false; reason = "gh's answer did not parse as JSON"; body = ''; commits = ''; title = ''; base = '' }
+        return [ordered]@{ ok = $false; reason = "gh's answer did not parse as JSON"; body = ''; commits = ''; title = ''; base = ''; linked = (Get-LinkedReading -Payload $null) }
     }
     $shape = Test-PullRequestPayload -Payload $payload
     if (-not $shape.ok) {
-        return [ordered]@{ ok = $false; reason = $shape.reason; body = ''; commits = ''; title = ''; base = '' }
+        return [ordered]@{ ok = $false; reason = $shape.reason; body = ''; commits = ''; title = ''; base = ''; linked = (Get-LinkedReading -Payload $null) }
     }
     # Both halves of a commit message. GitHub links from the subject as well as the body, and
     # #746's offending keyword was in a body while its intended one was in a subject -- reading
@@ -454,6 +525,7 @@ function Read-PullRequestTexts {
         commits = $commitText
         title   = [string]$payload.title
         base    = [string]$payload.baseRefName
+        linked  = Get-LinkedReading -Payload $payload
     }
 }
 
@@ -533,6 +605,48 @@ function Get-UnexpectedClosureRefusal {
         "``Scope: #N stays open``, never a closing word next to a number you mean to keep open.")
 }
 
+function Get-LinkedReading {
+    <#
+        GitHub's own `closingIssuesReferences`, as a THREE-STATE reading.
+
+        The third state is the whole point. `read = $false` means the field never arrived -- an old
+        `gh` that does not know the name, or a fallback fetch that deliberately dropped it -- and
+        rendering that as "GitHub linked nothing" would manufacture the exact disagreement this
+        line exists to surface. An absence that arrived as a failure must never be read as a
+        finding, and `(none)` is a finding.
+
+        Read from the PAYLOAD rather than re-queried, so it is the same snapshot as the texts. A
+        second `gh` call would answer about a different instant, and this field's whole job here is
+        to be compared against those texts.
+    #>
+    param([Parameter(Mandatory)] [AllowNull()] $Payload)
+
+    if ($null -eq $Payload) { return [ordered]@{ read = $false; numbers = @() } }
+    $names = @($Payload.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($names -notcontains 'closingIssuesReferences') {
+        return [ordered]@{ read = $false; numbers = @() }
+    }
+    # Present but null is still READ: gh returns null for a pull request GitHub linked nothing for,
+    # which is the #873 state itself and must not be confused with the field being absent.
+    $entries = @($Payload.closingIssuesReferences)
+    $numbers = @($entries | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.number } |
+        Where-Object { $_ -match '^\d+$' })
+    return [ordered]@{ read = $true; numbers = @($numbers) }
+}
+
+function Format-LinkedReading {
+    <#
+        The three states as the operator sees them. A function rather than an inline `Write-Host`
+        for the reason this file has already learned twice: a decision the script body holds is a
+        decision no cell can reach.
+    #>
+    param([Parameter(Mandatory)] [AllowNull()] $Reading)
+
+    if ($null -eq $Reading -or -not $Reading.read) { return '(unread)' }
+    if (@($Reading.numbers).Count -eq 0) { return '(none)' }
+    return (@($Reading.numbers) | ForEach-Object { "#$_" }) -join ', '
+}
+
 function Invoke-Gh {
     <#
         `gh` read through its own exit code, with stderr kept OUT of the stream this parses.
@@ -565,9 +679,26 @@ if (-not $stated.ok) {
 }
 $intended = @($stated.numbers)
 
-$arguments = @('pr', 'view', "$Number", '--json', 'body,commits,title,baseRefName')
-if ($Repository) { $arguments += @('--repo', $Repository) }
-$read = Read-PullRequestTexts -Answer (Invoke-Gh -Arguments $arguments)
+# `closingIssuesReferences` is asked for in the SAME call as the texts, so the second reading is a
+# view of one snapshot rather than of a later instant.
+#
+# AND IT FALLS BACK, because an unknown --json field is fatal to the WHOLE call -- measured:
+# `gh pr view N --json body,notARealField` exits non-zero with "Unknown JSON field" and returns no
+# body at all. Without this retry, a `gh` that did not know the name would turn a working gate into
+# exit 2 for the sake of a line that decides nothing. A decorative reading must never be able to
+# take the load-bearing one down with it.
+$requiredFields = 'body,commits,title,baseRefName'
+function Get-GhArguments {
+    param([Parameter(Mandatory)] [string] $Fields)
+    $built = @('pr', 'view', "$Number", '--json', $Fields)
+    if ($Repository) { $built += @('--repo', $Repository) }
+    return $built
+}
+$answer = Invoke-Gh -Arguments (Get-GhArguments -Fields "$requiredFields,closingIssuesReferences")
+if ($null -eq $answer -or $answer.exitCode -ne 0) {
+    $answer = Invoke-Gh -Arguments (Get-GhArguments -Fields $requiredFields)
+}
+$read = Read-PullRequestTexts -Answer $answer
 if (-not $read.ok) {
     Write-Host ("[closing] HARNESS-BROKE: for pull request $Number, $($read.reason), so neither " +
         "text was measured. An absence that arrived as a failure must never be read as a finding.") -ForegroundColor Magenta
@@ -605,6 +736,10 @@ Write-Host "  title    : $(& $show $verdict.title)   <- the squash's SUBJECT lin
 Write-Host "  body     : $(& $show $verdict.body)"
 Write-Host "  commits  : $(& $show $verdict.commits)   <- the text a SQUASH carries"
 Write-Host "  intended : $(& $show $intended)"
+# A SECOND READING, PRINTED AND NOT CONSULTED. Below the four lines above and visually apart from
+# them, because it is not a fifth text of equal standing -- it is what GitHub's own parser made of
+# ONE of them. Nothing below reads it.
+Write-Host "  linked   : $(Format-LinkedReading -Reading $read.linked)   <- GitHub's own answer, from texts and links this program cannot see. Decides nothing here."
 
 if ($verdict.unexpected.Count -eq 0 -and $verdict.missing.Count -eq 0) {
     Write-Host "[closing] the union of all three texts equals the stated intent." -ForegroundColor Green

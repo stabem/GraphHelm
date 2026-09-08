@@ -13,7 +13,7 @@
 #
 # Measured on Windows PowerShell 5.1.26100.9168.
 
-$ExpectedAssertionCount = 56
+$ExpectedAssertionCount = 71
 $ErrorActionPreference = 'Continue'
 $script:total = 0
 $script:failures = 0
@@ -398,6 +398,101 @@ Write-Output ('ok=' + $stated.ok + ' numbers=[' + (@($stated.numbers) -join ',')
     $line754 = '`Refs #752`, not `Closes` ' + $dash + ' #752 also owns the structural question'
     Assert-Set -Actual (Get-ClosingReferences -Text $line754) -Expected @() `
         -Message "CALIBRATION #754: NOT flagged here, and GitHub links nothing either -- #757's example does not reproduce"
+
+    # THE DIRECTION, PINNED (#873). A closing keyword inside a CODE SPAN is flagged here and is not
+    # linked by GitHub -- measured on #865 and #862, whose bodies read `` `Closes #796`. `` and
+    # `` `Closes #815` `` and whose closingIssuesReferences were both empty, against #856 and #833
+    # as the positive control.
+    #
+    # This cell exists to be IN THE WAY. The obvious repair is to strip code spans before matching,
+    # and it is wrong: it would miss `` `Closes #815` `` -- a body that genuinely intends to close,
+    # written by an author who reached for backticks out of habit -- trading a false positive that
+    # costs one reading of a sentence for the false negative that closed #717.
+    Assert-Set -Actual (Get-ClosingReferences -Text '`Closes #796`.') -Expected @('796') `
+        -Message 'the_backtick_direction: a keyword in a CODE SPAN is flagged, though GitHub links nothing (#873)'
+    # AND THE BOUNDARY, measured rather than assumed -- I asserted the opposite of this first and the
+    # cell caught me. The pattern is `(keyword)\s*#(\d+)`: only WHITESPACE may sit between the
+    # keyword and the hash. So a span AROUND the phrase is flagged (above) and a backtick BETWEEN
+    # its halves is not.
+    #
+    # This is a discrimination cell, not a wish. It pins where the tighter-than-GitHub direction
+    # actually stops, so the next reader does not infer from the cell above that any backtick
+    # anywhere is caught -- and so that widening `\s*` to `[^#]*` reddens something.
+    Assert-Set -Actual (Get-ClosingReferences -Text 'Fixed `#4` by hand') -Expected @() `
+        -Message 'but a backtick BETWEEN the keyword and the number breaks the match: only whitespace may sit there'
+
+    Write-Host ''
+    Write-Host "-- GitHub's own reading, shown and never consulted --" -ForegroundColor Cyan
+
+    # THE THREE STATES, AND THE ONE THAT MATTERS IS THE THIRD. `(unread)` is not `(none)`: rendering
+    # a field that never arrived as "GitHub linked nothing" manufactures the exact disagreement the
+    # line was added to surface, and it would do so on every machine with an older `gh`.
+    $linkedSome = Get-LinkedReading -Payload ([pscustomobject]@{ closingIssuesReferences = @([pscustomobject]@{ number = 796 }) })
+    Assert-True -Condition ($linkedSome.read -and (@($linkedSome.numbers) -join ',') -ceq '796') `
+        -Message 'a linked issue is read as read, with its number'
+
+    $linkedEmpty = Get-LinkedReading -Payload ([pscustomobject]@{ closingIssuesReferences = @() })
+    Assert-True -Condition ($linkedEmpty.read -and @($linkedEmpty.numbers).Count -eq 0) `
+        -Message 'an EMPTY list is READ and empty -- GitHub linking nothing is a finding, not an absence'
+
+    # gh returns null, not [], for some pull requests. That is still an answer.
+    $linkedNull = Get-LinkedReading -Payload ([pscustomobject]@{ closingIssuesReferences = $null })
+    Assert-True -Condition ($linkedNull.read -and @($linkedNull.numbers).Count -eq 0) `
+        -Message 'a NULL field is read as read-and-empty, not as unread'
+
+    $linkedAbsent = Get-LinkedReading -Payload ([pscustomobject]@{ body = 'Closes #796' })
+    Assert-True -Condition ((-not $linkedAbsent.read) -and @($linkedAbsent.numbers).Count -eq 0) `
+        -Message 'a field that never arrived is UNREAD -- the fallback fetch drops it, and an old gh never had it'
+
+    Assert-True -Condition ((-not (Get-LinkedReading -Payload $null).read)) `
+        -Message 'and a null payload is unread rather than empty'
+
+    # The renderer, separately, because a correct tri-state printed through two identical strings
+    # is a tri-state nobody can see.
+    Assert-True -Condition ((Format-LinkedReading -Reading $linkedSome) -ceq '#796') `
+        -Message 'the renderer prints the number with its hash'
+    Assert-True -Condition ((Format-LinkedReading -Reading $linkedEmpty) -ceq '(none)') `
+        -Message 'an empty reading prints (none)'
+    Assert-True -Condition ((Format-LinkedReading -Reading $linkedAbsent) -ceq '(unread)') `
+        -Message 'an unread reading prints (unread)'
+    # THE DISCRIMINATION. Both of the above could return one string and every cell but this passes.
+    Assert-True -Condition ((Format-LinkedReading -Reading $linkedEmpty) -cne (Format-LinkedReading -Reading $linkedAbsent)) `
+        -Message '(none) and (unread) are DIFFERENT text, so a failed read can never read as a finding'
+
+    Write-Host ''
+    Write-Host "-- and GitHub's reading stays OUT of the decision (#873) --" -ForegroundColor Cyan
+
+    # TRUE IS NOT THE SAME AS KEPT TRUE. The program's central claim -- that `linked` is printed and
+    # never consulted -- holds structurally today: `Get-ClosureVerdict` has no parameter for it, so
+    # the decision function cannot see it. That is stronger than any assertion about behaviour, and
+    # it is also one line away from being false, with nothing red. These pin it.
+    #
+    # The parameter SET, not the absence of a name. A cell asserting `-notcontains 'Linked'` passes
+    # over a fifth parameter called `ApiReading`, which is the same defect wearing a hat.
+    $verdictParameters = @((Get-Command Get-ClosureVerdict).Parameters.Keys |
+        Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
+    $expectedParameters = @('BodyText', 'CommitText', 'TitleText', 'Intended')
+    $extraParameters = @($verdictParameters | Where-Object { $expectedParameters -notcontains $_ })
+    Assert-True -Condition ($extraParameters.Count -eq 0) `
+        -Message "the decision function takes the three texts and the intent, and nothing else (extra: $($extraParameters -join ', '))"
+    $absentParameters = @($expectedParameters | Where-Object { $verdictParameters -notcontains $_ })
+    Assert-True -Condition ($absentParameters.Count -eq 0) `
+        -Message "CONTROL: and it really does take all four, so the cell above is not passing over a renamed function (absent: $($absentParameters -join ', '))"
+
+    # THE OTHER HALF. The reader could stay out of the decision function and still reach a decision
+    # through `$read.linked` in the script body -- an `if` on it, a value folded into the exit code.
+    # Scanned over the program text BELOW the seam, which is the part the cells above cannot reach.
+    $bodyStart = $programText.IndexOf('function Invoke-Gh {')
+    $scriptBody = $programText.Substring($bodyStart)
+    $linkedUses = @($scriptBody -split "`r?`n" | Where-Object {
+        $_ -match 'Format-LinkedReading' -or $_ -match '\$read\.linked'
+    })
+    # Vacuity first: a scan that found nothing would satisfy the rule below by measuring nothing.
+    Assert-True -Condition ($linkedUses.Count -ge 1) `
+        -Message "the scan found the reading being used at all in the script body (found $($linkedUses.Count))"
+    $decidingUses = @($linkedUses | Where-Object { $_.TrimStart() -notmatch '^Write-Host' })
+    Assert-True -Condition ($decidingUses.Count -eq 0) `
+        -Message "every use of GitHub's reading below the seam is a Write-Host: printed, never consulted"
 
     Write-Host ''
     Write-Host '-- the union against the stated intent --' -ForegroundColor Cyan

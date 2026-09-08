@@ -169,6 +169,48 @@ function New-FullScope {
     }
 }
 
+# #464: independent of the crate-graph scope above -- `apps/studio` is a Node/TypeScript project,
+# not a Rust crate, so `ci/select-scope.ps1`'s compiled-dependency graph has nothing to map it
+# onto. Read the SAME selection file `select-scope.ps1` already wrote, but for a question it never
+# answers: did this change touch `apps/studio`. FAIL WIDE, same discipline as `Read-ScopeSelection`
+# above -- absent, unreadable, unparseable, or escalated all mean "run it", because a selector's
+# failure mode is a green run that measured less than it claimed, and running the Studio suite an
+# unnecessary time costs minutes, not correctness.
+function Test-StudioScopeChanged {
+    param([string] $Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    $selection = $null
+    try {
+        $selection = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    } catch {
+        return $true
+    }
+    if ($null -eq $selection) { return $true }
+    if ($selection.PSObject.Properties.Name -contains 'escalated' -and $selection.escalated) {
+        return $true
+    }
+    if (-not ($selection.PSObject.Properties.Name -contains 'changedFiles')) {
+        return $true
+    }
+    # A SHAPE THIS PREDICATE CANNOT READ MUST WIDEN, THE SAME AS AN ABSENT ONE (Codex P2, review of
+    # #1003). `changedFiles: null` used to fall through to `@($null) | ForEach-Object { [string]$_ }`
+    # -- one element, coerced to `''` -- which matches no `apps/studio/*` pattern and silently
+    # narrowed to false: the Studio stage skipped on a document this function could not actually
+    # read, not on one it read and found clean. Any element that is not a string is the same
+    # unreadable shape, however it arrived (a number, an object, a nested array).
+    if ($null -eq $selection.changedFiles) {
+        return $true
+    }
+    $rawChanged = @($selection.changedFiles)
+    if ($rawChanged | Where-Object { $_ -isnot [string] }) {
+        return $true
+    }
+    $changed = $rawChanged | ForEach-Object { [string]$_ }
+    return [bool]($changed | Where-Object { $_ -like 'apps/studio/*' })
+}
+
 # #903: read a scope selection and decide whether this run is FULL. EVERY FAILURE PATH IS FULL --
 # absent, missing, unparseable, shapeless, or empty -- because the failure mode of a scope selector
 # is not a crash, it is a green run that measured less than it claimed. A narrow selection is
@@ -261,6 +303,10 @@ function Read-ScopeSelection {
 # with scope. `Test-Path variable:` asks whether it exists instead of assuming it does.
 $scopeArgument = if (Test-Path variable:ScopeSelection) { [string]$ScopeSelection } else { '' }
 $script:gateScope = Read-ScopeSelection -Path $scopeArgument
+# #464: DECIDED ONCE, same instant the crate scope is, from the same file. A Rust-only change
+# never pays npm; a Studio-only change (which the crate graph reads as an empty selection with
+# nothing to compile) still gets its own suite run.
+$script:studioScopeIncluded = Test-StudioScopeChanged -Path $scopeArgument
 # #903: THE MATRIX DECISION, DECIDED ONCE. Measured over 169 manifests, the two PostgreSQL
 # matrices are 10.3 minutes of a 26.2-minute run -- 35% of all gate time on this board -- and
 # four of one day's seven pull requests touched neither Rust nor SQL and paid it anyway (X).
@@ -368,6 +414,21 @@ $runStartUtc = $null
 # that finished, and release only a claim that is this process's own.
 $script:slotOutcome = $null
 $script:stagesCompleted = $false
+# #1003 review (Codex P2): DEFINED HERE, not only at their own start sites, so the outer `finally`
+# can reach them even when the run aborts before either background stage is ever started (the
+# canary failing is the common case) -- `Set-StrictMode -Version 2.0` throws on a script-scope
+# variable that was never assigned, and a `finally` block that throws while reaping a leaked
+# process is a worse abort than the one it was cleaning up after.
+$script:psSuitesStarted = $null
+$script:studioStarted = $null
+# #1003 review (X): the SAME class, on `Write-RunManifest` rather than the reap `finally` --
+# `studioNodePresent`/`studioStartedEarly`/`studioOverlapped` are read into the manifest and are
+# not assigned until well after the canary can already have aborted and called that function. `$false`
+# is correct for all three on that path: node was not confirmed present, the stage was not started
+# early, and it did not overlap anything, all because the run never got that far.
+$script:studioNodePresent = $false
+$script:studioStartedEarly = $false
+$script:studioOverlapped = $false
 # #207: every stage's captured output, concatenated, so a check at the end can ask about a
 # transcript rather than about whichever stage happened to run last.
 $script:allStageLines = @()
@@ -2419,6 +2480,15 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # this change has neither field, which means NOT MEASURED and never "it ran serial".
         psSuitesStartedEarly = $script:psSuitesStartedEarly
         psSuitesOverlapped   = $script:psSuitesOverlapped
+        # #464: whether this run's scope touched `apps/studio` at all, whether Node/npm were found
+        # (only meaningful when the first is true -- a Rust-only run never checked), and the same
+        # started/overlapped pair the PowerShell suites carry. NEVER a warning read as green: a
+        # scope-included, Node-absent run has no `apps/studio (npm)` entry in `stages[]` at all --
+        # these four fields are the only record of what happened.
+        studioScopeIncluded = [bool]$script:studioScopeIncluded
+        studioNodePresent   = [bool]$script:studioNodePresent
+        studioStartedEarly  = [bool]$script:studioStartedEarly
+        studioOverlapped    = [bool]$script:studioOverlapped
         # [object[]] cast, NOT @() - caught live, reproduced in isolation before guessing: under
         # this machine's Windows PowerShell 5.1 (5.1.26100.9168), `@(<a System.Collections.
         # Generic.List[object] VARIABLE>)` throws "Argument types do not match" unconditionally
@@ -2774,6 +2844,30 @@ try {
         -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')) `
         -WorkingDirectory $repositoryRoot
 
+    # #464: the Studio suite, same shape as the PowerShell suites just above -- npm touches no
+    # cargo, holds no target-directory lock, so it runs BESIDE the Rust stages rather than after
+    # them. Started only when the scope says `apps/studio` changed, so a Rust-only PR never pays
+    # npm at all. Node's presence is checked HERE, once, rather than inside the child script on
+    # every run: a machine without Node gets a console note now and no process is spawned, which
+    # is simpler to read than a child that starts and immediately exits.
+    $script:studioNodePresent = $false
+    $script:studioStarted = $null
+    if ($script:studioScopeIncluded) {
+        $studioNode = Get-Command -Name 'node' -ErrorAction SilentlyContinue
+        $studioNpm = Get-Command -Name 'npm' -ErrorAction SilentlyContinue
+        $script:studioNodePresent = ($null -ne $studioNode -and $null -ne $studioNpm)
+        if ($script:studioNodePresent) {
+            $script:studioStarted = Start-BackgroundStage -Name 'apps/studio (npm)' -FilePath 'powershell' `
+                -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot 'ci/studio-stage.ps1')) `
+                -WorkingDirectory $repositoryRoot
+        } else {
+            # NEVER a warning that could read as green: no stage entry exists for this run, so
+            # nothing in `stages[]` could be mistaken for the Studio suite having passed. The
+            # manifest's `studioNodePresent: false` is the only record, and it is unambiguous.
+            Write-Host '[gate] NOTE: apps/studio changed but node/npm were not found on PATH; the Studio suite did not run this gate.' -ForegroundColor Yellow
+        }
+    }
+
     # One build pass, enumerated and fingerprinted, ahead of the human-facing stages that reuse it.
     $artifactManifest = Get-TestArtifactManifest
 
@@ -2943,6 +3037,33 @@ try {
         # No else: `Complete-BackgroundStage` sets both instants itself, from the child's own times.
     } | Out-Null
 
+    # #464: the stage exists ONLY when scope included Studio AND Node was present -- the same two
+    # conditions the early-start block above checked. `$script:studioNodePresent -eq $false` (scope
+    # included it, Node was not found) already printed its NOTE up there and creates no entry here:
+    # a stage this block did not run must not appear as though it did.
+    if ($script:studioScopeIncluded -and $script:studioNodePresent) {
+        Invoke-Stage 'apps/studio (npm)' {
+            # NOT `$joined = Complete-BackgroundStage ...` (Codex, review of #1003). The assignment
+            # captures every line `Complete-BackgroundStage` emits -- the joined child's own stdout
+            # and stderr, `STAGE_FAILED_AT` included -- into `$joined` instead of letting it flow
+            # through this scriptblock's own output, which is what `Invoke-Stage`'s
+            # `& $Body 2>&1 6>&1 | ForEach-Object {...}` captures into `$capturedLines` /
+            # `outputTail`. The null-check moves to BEFORE the call, on `$script:studioStarted`
+            # itself -- `Complete-BackgroundStage` returns `$null` for exactly the same reason (the
+            # early start never happened), so this is the identical branch, just checked on the
+            # value that is already known rather than on a return value that would have to be
+            # captured to read.
+            if ($null -eq $script:studioStarted) {
+                # The early start itself failed to launch (not: Node is absent -- that path never
+                # reaches here). Same command, in line, exactly as long as it would have been
+                # without the overlap optimisation.
+                & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/studio-stage.ps1')
+            } else {
+                Complete-BackgroundStage -Started $script:studioStarted
+            }
+        } | Out-Null
+    }
+
     if ($script:matrixSkipped) {
         Write-Host ''
         if ($SkipPostgres) {
@@ -3010,6 +3131,33 @@ try {
     $script:stagesCompleted = $true
 } finally {
     Pop-Location
+    # #1003 review (Codex P2): a background stage that was STARTED but never reached its own
+    # `Complete-BackgroundStage` join -- because something between the two threw -- used to leak its
+    # child process past this run's lifetime. A retry in the same checkout could then start a SECOND
+    # `npm ci`/`run-ps-suites.ps1` against files the first is still using. Reaped here because this
+    # is the one path every abort (an exception, an `exit` inside a stage, Ctrl-C's own finally)
+    # still runs; a normal run reaches this with both processes already joined and exited, so
+    # `HasExited` is true and nothing below does anything.
+    foreach ($started in @($script:studioStarted, $script:psSuitesStarted)) {
+        if ($null -eq $started) { continue }
+        try {
+            if (-not $started.Process.HasExited) {
+                Write-Host "[gate] $($started.Name) never reached its join; stopping its background process tree (pid $($started.Process.Id))." -ForegroundColor Yellow
+                # `/T`, NOT `.Kill()` (X, review of #1003). `.Process` is the `powershell.exe`
+                # WRAPPER `Start-BackgroundStage` launched to run `ci/studio-stage.ps1`; on
+                # PowerShell 5.1, `Process.Kill()` ends only that one process, not the `npm`/`node`
+                # children it spawned to run the stage. A killed wrapper leaves `npm ci` still
+                # writing into `apps/studio/node_modules` -- exactly the interference this reap
+                # exists to prevent, just one process down. `taskkill /T` walks the tree by parent
+                # pid, the same shape B's tree-kill for #1005 uses.
+                & taskkill /T /F /PID $started.Process.Id 2>&1 | Out-Null
+                $started.Process.WaitForExit(5000) | Out-Null
+            }
+        } catch {
+            # Best effort: a process that exited between the check and the kill, or a handle this
+            # session can no longer reach, is not a reason to fail the abort path itself.
+        }
+    }
     # #700: a run that leaves this block without completing its stages and without having written
     # RUN-END -- an exception, an `exit` inside a stage, Ctrl-C -- says so on the ledger. The canary
     # abort writes RUN-END before it exits, so it is not double-counted. A hard kill skips every
@@ -3071,6 +3219,13 @@ $script:psSuitesStartedEarly = ($null -ne $script:psSuitesStarted)
 $script:psSuitesOverlapped = Test-StageOverlapped -Records $stageRecords -Name 'ci powershell suites'
 if ($script:psSuitesStartedEarly -and -not $script:psSuitesOverlapped) {
     Write-Host "[gate] NOTE: ci powershell suites started early but overlapped no other stage; the run went serial and the status does not depend on it." -ForegroundColor Yellow
+}
+
+# #464: same measured-not-assumed discipline as the PowerShell suites above.
+$script:studioStartedEarly = ($null -ne $script:studioStarted)
+$script:studioOverlapped = Test-StageOverlapped -Records $stageRecords -Name 'apps/studio (npm)'
+if ($script:studioStartedEarly -and -not $script:studioOverlapped) {
+    Write-Host "[gate] NOTE: apps/studio (npm) started early but overlapped no other stage; the run went serial and the status does not depend on it." -ForegroundColor Yellow
 }
 
 $manifestPath = $null

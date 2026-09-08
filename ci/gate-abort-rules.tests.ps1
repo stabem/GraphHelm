@@ -32,7 +32,17 @@
 #   1  a failed canary exits non-zero
 #   1  CONTROL: a passing canary does not exit at all
 #   1  and the abort says which of its two voices it used
-$ExpectedAssertionCount = 10
+#   1  the reap loop is locatable in gate.ps1
+#   1  and it still uses taskkill, not a bare Process.Kill() that reaches only the wrapper
+#   1  ARRANGEMENT: the synthetic wrapper spawned its own child and recorded its pid
+#   1  ARRANGEMENT: the child is alive before the reap runs
+#   1  the reap ends the wrapper process
+#   1  and the wrapper's own child too -- the whole tree
+#   1  the studio-stage join branch is locatable in gate.ps1
+#   1  and it still calls Complete-BackgroundStage, not a deleted stand-in
+#   1  the joined child's STAGE_FAILED_AT line reaches Invoke-Stage's own capture
+#   1  and so does an ordinary diagnostic line from the same join
+$ExpectedAssertionCount = 20
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -162,6 +172,105 @@ exit 0
     } finally {
         Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+Write-Host ''
+Write-Host '-- a background stage reaped after an abort takes its children with it (#1003 review, X) --' -ForegroundColor Cyan
+
+# `.Process.Kill()` on PowerShell 5.1 ends only the `powershell.exe` WRAPPER `Start-BackgroundStage`
+# launches, not the `npm`/`node` children it spawns to run the stage -- a killed wrapper leaves
+# `npm ci` still writing into `apps/studio/node_modules`, exactly the interference this reap exists
+# to prevent, one process down. Extracted by text, not retyped: the fix is `taskkill /T`, and this
+# proves that flag against a REAL two-level process tree, not against a claim about what it does.
+$reapBlock = Get-Block -Opening 'foreach ($started in @($script:studioStarted, $script:psSuitesStarted)) {'
+Assert-True -Condition ($null -ne $reapBlock) `
+    'the reap loop is locatable in gate.ps1'
+Assert-True -Condition ($reapBlock -and $reapBlock.Contains('taskkill')) `
+    'and it still uses taskkill, not a bare Process.Kill() that reaches only the wrapper'
+
+if ($reapBlock) {
+    $wrapperScript = Join-Path ([System.IO.Path]::GetTempPath()) ("gar-wrapper-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+    $pidFile = Join-Path ([System.IO.Path]::GetTempPath()) ("gar-child-pid-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+    [System.IO.File]::WriteAllText($wrapperScript, @"
+`$child = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru
+`$child.Id | Out-File -LiteralPath '$pidFile'
+Start-Sleep -Seconds 120
+"@)
+    try {
+        $wrapper = Start-Process -FilePath 'powershell.exe' `
+            -ArgumentList '-NoProfile', '-File', $wrapperScript -PassThru
+        $null = $wrapper.Handle
+        $deadline = (Get-Date).AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $pidFile) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        Assert-True -Condition (Test-Path -LiteralPath $pidFile) `
+            'ARRANGEMENT: the synthetic wrapper spawned its own child and recorded its pid'
+        $childProcessId = [int](Get-Content -LiteralPath $pidFile -Raw).Trim()
+        Assert-True -Condition ($null -ne (Get-Process -Id $childProcessId -ErrorAction SilentlyContinue)) `
+            "ARRANGEMENT: the child ($childProcessId) is alive before the reap runs, or the cells below prove nothing"
+
+        # THE SUBJECT: gate.ps1's own reap block, driven with a real Started-shaped object.
+        $script:studioStarted = [pscustomobject]@{ Name = 'synthetic stage'; Process = $wrapper }
+        $script:psSuitesStarted = $null
+        . ([scriptblock]::Create($reapBlock)) | Out-Null
+
+        $wrapperGone = $false
+        $childGone = $false
+        $waitDeadline = (Get-Date).AddSeconds(10)
+        while ((Get-Date) -lt $waitDeadline) {
+            $wrapperGone = ($null -eq (Get-Process -Id $wrapper.Id -ErrorAction SilentlyContinue))
+            $childGone = ($null -eq (Get-Process -Id $childProcessId -ErrorAction SilentlyContinue))
+            if ($wrapperGone -and $childGone) { break }
+            Start-Sleep -Milliseconds 200
+        }
+        Assert-True -Condition $wrapperGone `
+            'the reap ends the wrapper process'
+        Assert-True -Condition $childGone `
+            "and the wrapper's own child ($childProcessId) too -- the whole tree, not just the process gate.ps1 held a handle to"
+    } finally {
+        Remove-Item -LiteralPath $wrapperScript -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        foreach ($leftover in @($wrapper.Id, $childProcessId)) {
+            if ($leftover) {
+                try { & taskkill /T /F /PID $leftover 2>&1 | Out-Null } catch {}
+            }
+        }
+    }
+}
+
+Write-Host ''
+Write-Host '-- the joined studio child''s own output reaches the manifest, not just its exit code (Codex, review of #1003) --' -ForegroundColor Cyan
+
+# `$joined = Complete-BackgroundStage -Started ...` would capture EVERY line the join emits -- the
+# child's stdout and stderr, `STAGE_FAILED_AT` included -- into `$joined` instead of letting it flow
+# through this scriptblock's own output stream, which is what `Invoke-Stage`'s own
+# `& $Body 2>&1 6>&1 | ForEach-Object {...}` captures into `$capturedLines` / `outputTail`. A failed
+# Studio stage would then record an empty tail and nothing else. Extracted by text, driven with a
+# stand-in `Complete-BackgroundStage` that emits known lines, so this proves the lines actually leave
+# the block rather than trusting a read of the shape.
+$joinBlock = Get-Block -Opening 'if ($null -eq $script:studioStarted) {'
+Assert-True -Condition ($null -ne $joinBlock) `
+    'the studio-stage join branch is locatable in gate.ps1'
+Assert-True -Condition ($joinBlock -and $joinBlock.Contains('Complete-BackgroundStage')) `
+    'and it still calls Complete-BackgroundStage, not a deleted stand-in'
+
+if ($joinBlock) {
+    function Complete-BackgroundStage {
+        param([Parameter(Mandatory)] [AllowNull()] $Started)
+        Write-Output 'STAGE_FAILED_AT=typecheck'
+        Write-Output 'npm ERR! synthetic diagnostic line for this test'
+        return 1
+    }
+    $script:studioStarted = [pscustomobject]@{ Name = 'synthetic stage' }
+
+    $joinedOutput = New-Object System.Collections.Generic.List[string]
+    . ([scriptblock]::Create($joinBlock)) | ForEach-Object { $joinedOutput.Add([string]$_) }
+
+    Assert-True -Condition ($joinedOutput -contains 'STAGE_FAILED_AT=typecheck') `
+        "the joined child's STAGE_FAILED_AT line reaches Invoke-Stage's own capture (got: $($joinedOutput -join ' | '))"
+    Assert-True -Condition ($joinedOutput -contains 'npm ERR! synthetic diagnostic line for this test') `
+        'and so does an ordinary diagnostic line from the same join'
 }
 
 Write-Host ''

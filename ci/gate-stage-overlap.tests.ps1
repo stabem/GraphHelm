@@ -126,9 +126,20 @@ try {
     if ($null -eq $started) { throw 'HARNESS-BROKE: the probe child could not be started at all' }
 
     $global:LASTEXITCODE = 0
-    $childLines = @(Complete-BackgroundStage -Started $started)
-    # The join's own return value is the last element; everything before it is the child's output,
-    # emitted on the success stream exactly as Invoke-Stage would capture, redact and tail it.
+    # `6>&1` MERGES THE INFORMATION STREAM, and its absence is what let these two cells stay green
+    # over a blind gate. The join used to re-emit the child's lines with `Write-Output`, so a BARE
+    # call like the one here saw them on the success stream -- but the gate's own call site assigns
+    # the join (`$joined = Complete-BackgroundStage ...`), and an assignment consumes that stream
+    # whole. The arrangement here was therefore not the arrangement at the firing site, and the two
+    # cells below certified a property the real gate did not have: on #1009's red the runner printed
+    # `HARNESS-BROKE in: <name> (exit 2)` and the manifest recorded `<absent: ... no output ...>`.
+    #
+    # The join now publishes with `Write-Host`, which an assignment cannot swallow, and this line
+    # reads the same stream `Invoke-Stage` merges. The property that the lines reach the RECORD is
+    # pinned at the firing site by ci/gate-background-stage-evidence.tests.ps1; what these two cells
+    # keep is that the join emits them at all.
+    $childLines = @(Complete-BackgroundStage -Started $started 6>&1)
+    # The join's own return value is the last element; everything before it is the child's output.
     $returned = $childLines[-1]
     $childText = ($childLines | ForEach-Object { [string]$_ }) -join "`n"
 
@@ -235,7 +246,14 @@ try {
     $noteIndex = $gateText.IndexOf($noteAnchor, [System.StringComparison]::Ordinal)
     Assert-True ($noteIndex -ge 0) `
         'a run that started early and overlapped nothing is reported as a NOTE on the console -- the saving that did not happen, named'
-    $statusIndex = if ($noteIndex -ge 0) { $gateText.IndexOf("`$status = if (`$failed.Count -eq 0)", $noteIndex, [System.StringComparison]::Ordinal) } else { -1 }
+    # ANCHOR ON THE SHAPE, NOT ON ONE SPELLING. This searched for the literal
+    # `$status = if ($failed.Count -eq 0)`, so #455 rewriting that derivation as a call to
+    # `Get-GateStatus` broke the cell -- and the PROPERTY it measures ("nothing appends to $failed
+    # between the note and the derivation") was untouched. A cell that fails when the code is
+    # correctly refactored spends a reviewer's attention on itself. `$status = ` searched forward
+    # FROM THE NOTE is form-agnostic: the note sits near the end of the file, so the earlier
+    # `$status = @(& git status ...)` cannot be reached from here.
+    $statusIndex = if ($noteIndex -ge 0) { $gateText.IndexOf("`$status = ", $noteIndex, [System.StringComparison]::Ordinal) } else { -1 }
     $noteToStatus = if ($noteIndex -ge 0 -and $statusIndex -gt $noteIndex) { $gateText.Substring($noteIndex, $statusIndex - $noteIndex) } else { '<no slice>' }
     Assert-True ($statusIndex -gt $noteIndex -and $noteToStatus -notmatch '\$failed\s*\+=') `
         'and between that note and the status derivation nothing is appended to $failed -- the status is derived from the stages alone'

@@ -433,6 +433,14 @@ $script:studioOverlapped = $false
 # transcript rather than about whichever stage happened to run last.
 $script:allStageLines = @()
 $script:slotRunEnded = $false
+# #455: DECLARED HERE because `Write-RunManifest` reads both unconditionally, and the early
+# target-provenance abort calls it long before the stage block assigns them. Under
+# `Set-StrictMode -Version 2.0` an unassigned variable THROWS, so that abort would have died during
+# serialization -- writing no manifest and never reaching its own `exit` (Codex P2 on #1009). The
+# real values are computed after the stages; these are the honest "not measured yet" defaults for a
+# run that ends before that point.
+$script:psSuitesStartedEarly = $false
+$script:psSuitesOverlapped = $false
 
 # #755: ONE WRITER FOR THE TERMINAL LINE, used by both exits. #905 gave the stage block its own
 # inline RUN-ABORT; this keeps that behaviour and adds the two things it left open.
@@ -1039,7 +1047,21 @@ function Complete-BackgroundStage {
     }
     foreach ($path in @($Started.Out, $Started.Err)) {
         if (Test-Path -LiteralPath $path) {
-            foreach ($line in [System.IO.File]::ReadAllLines($path)) { Write-Output $line }
+            # WRITE-HOST, NOT WRITE-OUTPUT, and it is the difference between a stage that speaks and
+            # one that is recorded as mute. `Write-Output` puts the child's lines on THIS FUNCTION'S
+            # success stream, and the call site assigns that stream -- `$joined = Complete-Background
+            # Stage ...` -- so the assignment consumed the lines together with the exit code and
+            # `Invoke-Stage` captured nothing. Measured on #1009's own red: the runner printed
+            # `HARNESS-BROKE in: <name> (exit 2)` and the manifest recorded `outputTail: ["<absent:
+            # exit 2 with no output on stdout, stderr or the information stream>"]`. 1971 seconds,
+            # zero bytes, and the absence marker made it read as a child that had nothing to say.
+            #
+            # Write-Host is information stream 6, which `Invoke-Stage` merges with `6>&1` and
+            # redacts, and which an assignment cannot swallow. `Invoke-Postgres` already publishes
+            # its own detached child's files this way for exactly this reason, and the comment above
+            # `& $Body` in Invoke-Stage states the rule; this stage was the one place that did not
+            # follow it.
+            foreach ($line in [System.IO.File]::ReadAllLines($path)) { Write-Host $line }
             # Named, never silent: a gate that swallows an exception without a word teaches the next
             # reader that the failure did not happen. Leaving a temp file behind is not fatal, so the
             # stage carries on -- but it says so.
@@ -1313,6 +1335,327 @@ function Get-TestArtifactManifest {
         buildExitCode = $buildExit
         artifacts     = $artifacts
     }
+}
+
+function Get-TargetBuildState {
+    <#
+        #455: whether a target directory can be REUSED, answered before the first compile.
+
+        The late artefact-freshness flag (`$freshBuild = ($mtimeUtc -ge $runStartUtc)` below) is
+        correct and useless this early: at the instant before a build nothing has been rebuilt, so
+        every artefact of every reused target predates the run's start. Measured: 77 of 77 test
+        executables in a real target fail that predicate at run start, while across the 128
+        manifests in `.factory/gate-runs/` only 9 of 27 observed reuses were actually contaminated.
+        The canary nonce is no better a key -- `Write-CanaryNonce` rotates it unconditionally every
+        run (#152), so a nonce-keyed check also flags all 27. An early guard wrong two times in
+        three is one the fleet learns to skip, and it then occupies the place where a real one
+        would go.
+
+        The distinction that DOES separate them is in #455's own evidence: the contaminated target
+        was reused "after an earlier gate ATTEMPT". A target left mid-build carries cargo
+        fingerprints claiming freshness for binaries whose source has since moved; a target left by
+        a run that finished does not. So the question this asks is not what the target was built
+        FOR, but whether the last build ENDED.
+
+        Fails closed, with one deliberate exception: an absent marker condemns a directory that
+        already holds build output, and does NOT condemn an empty or missing one. Without that
+        exception "absent means contaminated" would flag every first run on a new target, and the
+        guard would collapse back into the naive check it exists to replace.
+
+        KNOWN LIMIT, in the safe direction: the owner check asks the operating system whether the
+        recorded process id is still running, and a recycled pid therefore reads as `concurrent`
+        when the truth is `interrupted`. Both are contaminated, so the VERDICT is unaffected and
+        only the named cause can be wrong. Narrowing it further would add a path no cell covers.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $TargetDir)
+
+    # The name is repeated in Write-TargetBuildState rather than shared, because each function is
+    # lifted out of this file on its own by ci/gate-target-build-state.tests.ps1 and a script-scope
+    # constant would not travel with it. The round-trip cell in that suite is what holds the two
+    # copies together: a writer that emitted a different name would read back as 'unknown'.
+    $markerName = '.graphhelm-build-state.json'
+
+    if ([string]::IsNullOrWhiteSpace($TargetDir) -or -not (Test-Path -LiteralPath $TargetDir)) {
+        return [ordered]@{
+            contaminated = $false
+            suspect      = $false
+            state        = 'fresh'
+            reason       = 'no target directory yet, so nothing is being reused'
+        }
+    }
+
+    # BOUNDED IN DEPTH, not merely short-circuited (Codex on #1009). The first version recursed with
+    # `Select-Object -First 1`, which stops only once a FILE has been emitted -- so a target whose
+    # tree begins with many directories is walked in full before the pipeline can stop, and this runs
+    # before the first compile in the only authoritative gate. Depth is now fixed: the target's own
+    # top level, then `debug` and `release`, never below them. Cargo puts its output in those two, so
+    # a directory holding build output is found by looking exactly where build output goes.
+    $hasOutput = $false
+    $scanExhausted = $false
+    $probeFailed = $false
+    # FILES, never directories -- measured, and the cell caught it: counting entries at the top level
+    # made an EMPTY target "have output", because the empty `debug` directory is itself an entry.
+    # `debug`/`release` existing says nothing; something INSIDE them does.
+    # `deps` is named because a target used only for `cargo test` can have NOTHING at the top of
+    # `debug` and all of its binaries one level down -- a probe that stopped at `debug` would read
+    # such a target as empty and skip the very check this function exists for. Depth is still fixed.
+    $probes = @(
+        $TargetDir,
+        (Join-Path $TargetDir 'debug'), (Join-Path $TargetDir 'debug\deps'),
+        (Join-Path $TargetDir 'release'), (Join-Path $TargetDir 'release\deps')
+    )
+    foreach ($probe in $probes) {
+        if ($hasOutput) { break }
+        if (-not (Test-Path -LiteralPath $probe)) { continue }
+        # BREADTH AS WELL AS DEPTH (Codex on #1009). `-File` filters AFTER enumeration, so a probed
+        # directory holding only subdirectories is walked in full before `Select-Object` can see a
+        # file and stop. The ceiling is on ENTRIES INSPECTED, not on files found: 512 is far past any
+        # real `debug` or `deps`, and a directory wider than that has told us enough -- we are asking
+        # "is there any build output here", and a target that wide is not one this gate should be
+        # walking before its first compile.
+        # THE ENUMERATION ITSELF IS BOUNDED, not only the loop body (Codex on #1009). PowerShell's
+        # `foreach` statement materialises its whole collection BEFORE the body runs once, so a
+        # counter inside the body bounds nothing: measured on a 5000-entry directory,
+        # `Get-ChildItem` + break at 512 took 76 ms while the lazy enumerator took 9 ms and inspected
+        # the same 513. `EnumerateFileSystemInfos` streams, and its `Attributes` come from the find
+        # data already read -- so telling a file from a directory costs no extra call.
+        $inspected = 0
+        try {
+            $probeInfo = New-Object System.IO.DirectoryInfo $probe
+            foreach ($entry in $probeInfo.EnumerateFileSystemInfos()) {
+                $inspected++
+                # EXHAUSTING THE CAP IS NOT "NOTHING HERE" (Codex on #1009). Breaking out left
+                # `$hasOutput` false, which nothing downstream could tell apart from having looked at
+                # everything and found none -- so a target whose first 512 entries are directories
+                # read as `fresh`, and the check this function exists for was skipped on the one
+                # target too wide to inspect. Two states in one representation, inside my own bound.
+                if ($inspected -gt 512) { $scanExhausted = $true; break }
+                if ($entry.Attributes -band [System.IO.FileAttributes]::Directory) { continue }
+                if ($entry.Name -eq $markerName) { continue }
+                $hasOutput = $true
+                break
+            }
+        } catch {
+            # A PROBE WE COULD NOT READ IS NOT A PROBE THAT FOUND NOTHING (Codex/J on #1009). This
+            # catch was silent, so a restrictive ACL or a transient I/O error left BOTH flags false
+            # and an unmarked target then returned `fresh` -- "could not inspect" arriving downstream
+            # as "contains nothing, safe to reuse". A FALSE GREEN inside the mechanism this PR exists
+            # to build, and the same shape as the exhaustion case one commit earlier: exhaustion got
+            # a state and failure did not.
+            $probeFailed = $true
+        }
+    }
+
+    $markerPath = Join-Path $TargetDir $markerName
+    if (-not (Test-Path -LiteralPath $markerPath)) {
+        if (-not $hasOutput -and ($scanExhausted -or $probeFailed)) {
+            $whyUnknown = if ($scanExhausted) {
+                'a probed directory exceeded the 512-entry scan bound before any build output was seen'
+            } else {
+                'a probed directory could not be read'
+            }
+            return [ordered]@{
+                contaminated = $true
+                suspect      = $false
+                state        = 'unknown'
+                reason       = "$whyUnknown, so whether this target holds output is unknown"
+            }
+        }
+        if (-not $hasOutput) {
+            return [ordered]@{
+                contaminated = $false
+                suspect      = $false
+                state        = 'fresh'
+                reason       = 'the target directory holds no build output, so nothing is being reused'
+            }
+        }
+        return [ordered]@{
+            contaminated = $true
+            suspect      = $false
+            state        = 'unknown'
+            reason       = "the target holds build output but no $markerName, so what produced it cannot be established"
+        }
+    }
+
+    # BOUNDED BEFORE IT IS READ (Codex on #1009). This file lives in a target directory another
+    # process wrote, and this runs before the first compile in the only authoritative gate -- so an
+    # oversized or deeply nested marker must become a bounded UNKNOWN, never a parse that exhausts
+    # the gate. A real marker is four short fields; 64 KiB is four hundred times that.
+    # ONE HANDLE FOR THE CHECK AND THE READ (Codex on #1009). Asking `FileInfo.Length` and then
+    # calling `Get-Content -Raw` are two operations on a path another process owns: it can replace or
+    # grow the file in between, and the read would then consume whatever is there despite the guard.
+    # The stream below is opened once and reads at most 64 KiB + 1 byte; if that last byte exists the
+    # file is over the bound, and the bound is enforced by the SAME handle that produced the bytes.
+    $markerText = $null
+    $markerTooBig = $false
+    try {
+        $stream = [System.IO.File]::Open($markerPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $buffer = New-Object byte[] 65537
+            $read = 0
+            while ($read -lt 65537) {
+                $n = $stream.Read($buffer, $read, 65537 - $read)
+                if ($n -le 0) { break }
+                $read += $n
+            }
+            if ($read -gt 65536) { $markerTooBig = $true }
+            else { $markerText = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read) }
+        } finally { $stream.Dispose() }
+    } catch {
+        $markerText = $null
+    }
+    if ($markerTooBig) {
+        return [ordered]@{
+            contaminated = $true
+            suspect      = $false
+            state        = 'unknown'
+            reason       = "$markerName is larger than the 65536 bytes this gate will parse"
+        }
+    }
+    $marker = $null
+    if ($null -ne $markerText) {
+        try { $marker = $markerText | ConvertFrom-Json -ErrorAction Stop } catch { $marker = $null }
+    }
+    if ($null -eq $marker) {
+        return [ordered]@{
+            contaminated = $true
+            suspect      = $false
+            state        = 'unknown'
+            reason       = "$markerName is present but could not be read as JSON, so provenance is unknown"
+        }
+    }
+
+    # `$marker.state` would THROW under Set-StrictMode 2.0 when the field is absent, which is one of
+    # the states this function exists to report. Read through PSObject.Properties instead.
+    $recordedState = ''
+    if ($null -ne $marker.PSObject.Properties['state']) {
+        $recordedState = [string] $marker.PSObject.Properties['state'].Value
+    }
+    if ([string]::IsNullOrWhiteSpace($recordedState)) {
+        return [ordered]@{
+            contaminated = $true
+            suspect      = $false
+            state        = 'unknown'
+            reason       = "$markerName parses but names no build state -- valid JSON is not a valid marker"
+        }
+    }
+
+    if ([string]::Equals($recordedState, 'complete', [System.StringComparison]::Ordinal)) {
+        return [ordered]@{
+            contaminated = $false
+            suspect      = $false
+            state        = 'complete'
+            reason       = 'the last build in this target finished, so the reuse is a legitimate one'
+        }
+    }
+
+    if ([string]::Equals($recordedState, 'building', [System.StringComparison]::Ordinal)) {
+        $ownerPid = 0
+        if ($null -ne $marker.PSObject.Properties['processId']) {
+            [void][int]::TryParse([string]$marker.PSObject.Properties['processId'].Value, [ref] $ownerPid)
+        }
+        $owner = $null
+        if ($ownerPid -gt 0) {
+            $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $owner) {
+            return [ordered]@{
+                contaminated = $true
+                suspect      = $true
+                state        = 'concurrent'
+                reason       = "process $ownerPid is still building in this target directory -- two gates in one target corrupt each other's fingerprints"
+            }
+        }
+        return [ordered]@{
+            contaminated = $true
+            suspect      = $true
+            state        = 'interrupted'
+            reason       = "the build owned by process $ownerPid never finished and that process is gone, so cargo's fingerprints may claim freshness for binaries whose source has moved"
+        }
+    }
+
+    # NEVER ECHOED VERBATIM (Codex on #1009). `$recordedState` is a string another process put in a
+    # file, and this `reason` is printed to the gate console AND persisted into `targetBuildState` in
+    # a manifest that is COMMITTED. A hostile or accidental value could carry newlines or terminal
+    # control sequences into the log, or copy content into the repository. So the value is quoted
+    # back only when it is a plain short identifier -- which keeps the diagnostic useful for the
+    # ordinary case, a typo or a state from a newer gate -- and is otherwise described by SHAPE.
+    $safeState = ''
+    if ($recordedState -cmatch '^[A-Za-z0-9_-]{1,32}$') { $safeState = "'$recordedState'" }
+    else { $safeState = "a value that is not a plain identifier ($($recordedState.Length) chars)" }
+    return [ordered]@{
+        contaminated = $true
+        suspect      = $false
+        state        = 'unknown'
+        reason       = "$markerName names an unrecognised build state $safeState"
+    }
+}
+
+function Write-TargetBuildState {
+    <#
+        #455: the other half of Get-TargetBuildState. Called with 'building' before the first
+        compile and 'complete' after the build stage returns, so that a run which dies in between
+        leaves a marker saying exactly that.
+
+        Written at the target ROOT, never under debug/ or release/, so no cargo fingerprint hashes
+        it: a marker that became build input would change every crate's fingerprint and destroy the
+        caching this guard exists to preserve.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $TargetDir,
+        # NOT a [ValidateSet]. ci/classify-run.tests.ps1 DERIVES the gate's closed status
+        # vocabulary by finding a ValidateSet in this file rather than copying it, so a second one
+        # here silently redefines what a gate status is: adding this function with the attribute
+        # made that suite report the gate's statuses as `building, complete`. The constraint is kept
+        # -- it just cannot be spelled in the shape another guard reads as its subject.
+        [Parameter(Mandatory)] [string] $State,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Head
+    )
+    if (-not ([string]::Equals($State, 'building', [System.StringComparison]::Ordinal) -or
+            [string]::Equals($State, 'complete', [System.StringComparison]::Ordinal))) {
+        throw "Write-TargetBuildState: '$State' is not a build state; expected 'building' or 'complete'."
+    }
+    if (-not (Test-Path -LiteralPath $TargetDir)) {
+        [void][System.IO.Directory]::CreateDirectory($TargetDir)
+    }
+    $document = [ordered]@{
+        state      = $State
+        processId  = $PID
+        head       = $Head
+        startedUtc = [DateTime]::UtcNow.ToString('o')
+    }
+    # No BOM, for the reason Write-CanaryNonce gives: 5.1's -Encoding utf8 always prepends one.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $TargetDir '.graphhelm-build-state.json'),
+        ($document | ConvertTo-Json -Compress),
+        $utf8NoBom)
+}
+
+function Get-GateStatus {
+    <#
+        #455: the run's status, as a rule a cell can call.
+
+        Extracted from an inline `if` at the caller because the claim it carries could not otherwise
+        be tested: `merge-proof.ps1` requires `status == GREEN` and reads neither `overallPassed` nor
+        `instrumentSuspect` -- measured, the latter appears there zero times -- so the STATUS is the
+        only field that gates anything, and a rule that decides it belongs where a cell can reach it.
+
+        HARNESS-BROKE and not RED for a suspect target. RED is a claim about the tree, and the tree
+        did not fail: the run could not vouch for what it measured, which is the third state this
+        vocabulary already carries. A red raised for the instrument sends a lane hunting a defect
+        that is not there, and is the kind pressers learn to wave through.
+
+        Failure outranks suspicion: a run with a failed stage is RED whatever the target looked like,
+        because the failing stage is the more specific fact.
+    #>
+    param(
+        [Parameter(Mandatory)] [int] $FailedStageCount,
+        [Parameter(Mandatory)] [bool] $TargetSuspect
+    )
+    if ($FailedStageCount -ne 0) { return 'RED' }
+    if ($TargetSuspect) { return 'HARNESS-BROKE' }
+    return 'GREEN'
 }
 
 function Get-RecordedStatus {
@@ -2382,7 +2725,12 @@ function Write-RunManifest {
 # Stale artifacts are the FIRST EXAMPLE in this file's own definition of `instrument-red`. Deriving
 # the new field from the WEAKER of two verdicts the manifest already holds imports exactly the
 # flattening the field was added to remove. (Found in review by L Agent, against `2b5396e`.)
-$passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($staleArtifacts.Count -eq 0)
+# #455: computed HERE and not beside `instrumentSuspect` below, because `$passedEverything`
+# uses it on the very next line -- the first draft assigned it 27 lines later, which under
+# Set-StrictMode is a throw and without it a silent $null that reads as 'not suspect'.
+$targetSuspect = $false
+if ($null -ne $script:targetBuildState) { $targetSuspect = [bool] $script:targetBuildState.suspect }
+$passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($staleArtifacts.Count -eq 0) -and (-not $targetSuspect)
 $runClass = Get-RunClassFrom -Status $Status -PassedEverything $passedEverything
 
 # #199: "was the INSTRUMENT broken?" is DERIVED, never chosen -- and it is born HERE, beside the
@@ -2401,7 +2749,15 @@ $runClass = Get-RunClassFrom -Status $Status -PassedEverything $passedEverything
 #
 # ABSENT IS NOT FALSE. A manifest written before this change has no `instrumentSuspect` at all, and
 # that means NOT MEASURED -- never "the instrument was healthy".
-$instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
+# #455: a target whose previous build DEMONSTRABLY broke -- interrupted, or being written by another
+# live gate -- is an instrument this run cannot vouch for, read BEFORE the first compile rather than
+# inferred from artefact mtimes at the end. It joins this disjunction instead of getting a refusal of
+# its own, so it forbids a GREEN without inventing a second way for a run to die.
+#
+# `unknown` is deliberately NOT here; see the reading site for the measurement. It is recorded in the
+# manifest as a fact about the instrument, and the `staleArtifactCount` term above still catches an
+# unknown target that really is stale.
+$instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed) -or $targetSuspect
 
     # #199: "is it real?" and "is it MINE?" are orthogonal, so they are two fields and not four
     # classes. Found by the first real case the taxonomy met (#166's gate, 2026-08-20): it went RED
@@ -2518,6 +2874,10 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed)
         # the same word; this is the field that tells them apart, and merge-proof prints it.
         scope              = Get-ScopeRecord -Selection $script:gateScope
         instrumentSuspect  = $instrumentSuspect
+        # #455: what the target looked like BEFORE this run compiled anything. Recorded whole --
+        # state and reason, not a boolean -- because "interrupted" and "concurrent" want different
+        # remedies and a presser reading the manifest should not have to guess which happened.
+        targetBuildState   = $script:targetBuildState
         # A run whose head moved did not pass everything, whatever the stages said: they did not all
         # inspect one revision, so there is no revision this record can vouch for.
         overallPassed      = ($passedEverything -and -not $headMoved)
@@ -2793,6 +3153,36 @@ if ($script:slotOutcome -notin @('claimed', 'inherited')) {
 # so `runEndUtc - runStartUtc` is a machine number, and the ledger's RUN-START agrees to the second.
 $runStartUtc = [DateTime]::UtcNow
 
+# #455: THE EARLY READ, before the first compile and therefore before the 40 minutes a contaminated
+# run would otherwise spend proving itself suspect at the end. It asks whether the previous build in
+# this target FINISHED -- see Get-TargetBuildState for why age and the canary nonce both condemn
+# every reuse instead, and for the measurement.
+#
+# IT DOES NOT ABORT, and `unknown` DOES NOT REDDEN. Both are deliberate, and the second was a
+# correction: the first draft fed every non-clean state into `instrumentSuspect`, and `unknown` is
+# the state every target in the fleet is in until a run writes its first marker. Measured on this
+# machine, 178 of 178 cargo-shaped target directories on D: and E: hold build output and no marker,
+# so that draft cost one non-GREEN hand-launched run per directory on first reuse -- for a guard
+# whose entire argument is that a check firing on clean runs is one the fleet learns to skip.
+#
+# It also bought no detection: an `unknown` target that really is stale still fails the late
+# `staleArtifactCount` check, which is how #455's own contamination was caught in the first place.
+# So `unknown` is a fact about the INSTRUMENT and goes in the manifest, while the verdict stays with
+# the tree -- the same division #989 and #1005 settled on. Only a build that demonstrably broke --
+# `building` with a dead owner, or `building` with a live one -- makes the run's instrument suspect,
+# and both states can only be observed for builds started AFTER this change. The guard therefore
+# tightens by itself as markers appear, with no migration and no flag day.
+$script:targetBuildState = Get-TargetBuildState -TargetDir $actualTargetDir
+if ($script:targetBuildState.suspect) {
+    Write-Host "[gate] TARGET PROVENANCE: $($script:targetBuildState.state) -- $($script:targetBuildState.reason)" -ForegroundColor Red
+    Write-Host '[gate] Read before the first compile. The run continues and cannot report GREEN.' -ForegroundColor Red
+} elseif ($script:targetBuildState.contaminated) {
+    Write-Host "[gate] NOTE: target provenance is $($script:targetBuildState.state) -- $($script:targetBuildState.reason)" -ForegroundColor Yellow
+    Write-Host '[gate] This is recorded in the manifest and does NOT redden the run; artefact freshness is still checked at the end.' -ForegroundColor Yellow
+} else {
+    Write-Host "[gate] target provenance: $($script:targetBuildState.state) -- $($script:targetBuildState.reason)"
+}
+
 $slotLockAtStart = Read-SlotLockSnapshot
 
 # #199: the START half of the append-only pair. Written BEFORE any stage runs, so a run that dies
@@ -2804,6 +3194,39 @@ Write-SlotEvent -Event 'RUN-START' -Detail "targetDirBase64=$(ConvertTo-SlotEven
 
 Push-Location -LiteralPath $repositoryRoot
 try {
+    # #455: A SUSPECT TARGET ENDS THE RUN HERE, before the first compile -- which is the word the
+    # issue asked for and the first draft did not deliver. It continued into every cargo stage and
+    # recorded the verdict at the end, which is the expensive half of exactly the defect #455 is
+    # about (Codex P2 on #1009).
+    #
+    # The rollout argument that keeps `unknown` from aborting does NOT reach here: `unknown` is the
+    # state every target is in until a run writes its first marker, but `interrupted` and
+    # `concurrent` require a marker a POST-CHANGE run wrote, so no legacy target can produce them
+    # and there is no flag day to fear.
+    #
+    # It aborts the way the canary does -- manifest, then exit 1 -- rather than through a new path:
+    # both are "this run cannot vouch for what it would measure", and the status tells them apart.
+    if ($script:targetBuildState.suspect) {
+        Write-Host ''
+        Write-Host "[gate] ABORTING: $($script:targetBuildState.reason)" -ForegroundColor Magenta
+        Write-Host '[gate] Every stage below would run against a target this run cannot trust, and' -ForegroundColor Magenta
+        Write-Host '[gate] nothing past this point would be evidence of anything. See #455.' -ForegroundColor Magenta
+        Write-Host "[gate] To proceed: use a FRESH target directory (the runner allocates one per run), or" -ForegroundColor Magenta
+        Write-Host "[gate] clean this one and delete its marker: $actualTargetDir\.graphhelm-build-state.json" -ForegroundColor Magenta
+        Write-Host '[gate] This mark is deliberately sticky -- the target stays refused until someone acts.' -ForegroundColor Magenta
+        $emptyArtifacts = [ordered]@{ buildExitCode = $null; artifacts = @() }
+        $manifestPath = Write-RunManifest -Status 'HARNESS-BROKE' -CanaryPassed $false `
+            -ArtifactManifest $emptyArtifacts -SlotLockAtStart $slotLockAtStart `
+            -SlotLockAtEnd (Read-SlotLockSnapshot)
+        Write-Host "[gate] manifest: $manifestPath" -ForegroundColor Cyan
+        exit 1
+    }
+    # Claim the directory for this run -- AFTER the abort, never before it. Writing this first would
+    # overwrite the very marker just read, destroying the evidence of the previous run's death.
+    # A run killed between here and the completion marker leaves `building` with this process id,
+    # which is exactly the `interrupted` state the next run reads.
+    Write-TargetBuildState -TargetDir $actualTargetDir -State 'building' -Head ([string]$gatedHeadAtStart)
+
     # #152: the canary runs FIRST and is the one stage that aborts the whole gate immediately
     # rather than accumulating alongside the rest - see the top-of-file rationale.
     Write-CanaryNonce
@@ -2832,6 +3255,29 @@ try {
             -ArtifactManifest $emptyArtifacts -SlotLockAtStart $slotLockAtStart `
             -SlotLockAtEnd (Read-SlotLockSnapshot)
         Write-Host "[gate] manifest: $manifestPath" -ForegroundColor Cyan
+        # #455: RELEASE THE TARGET before leaving. This exit sits between the `building` stamp and
+        # the `complete` one, so without this line the marker stays `building` with a pid about to
+        # die -- and the NEXT run reads `interrupted` and aborts before the canary. The
+        # cargoLockObserved branch above tells the operator to re-run when the other run releases the
+        # lock, and that re-run could never succeed: the instruction and the guard would contradict
+        # each other, with no way out but deleting the marker by hand (Codex P1 on #1009).
+        #
+        # `complete` is the honest word. Neither branch leaves a half-built target: the lock branch
+        # never compiled at all, and a canary that ran and failed is a TEST result, not an
+        # interrupted build.
+        # ONLY THE LOCK BRANCH RELEASES THE TARGET (Codex on #1009, and it is my own defect from the
+        # commit that added this line). The release was unconditional, and `ABORTED-BY-CANARY` means
+        # the canary DETECTED that cargo served contaminated output -- so stamping `complete` there
+        # told the next run the target was a legitimate reuse, and it would skip the very early abort
+        # this PR adds and recompile against the same uncorrected target. A mechanism that erases the
+        # proof of exactly what it detects.
+        #
+        # The lock branch is different and is why the release exists at all: that run never compiled,
+        # its own instruction is "re-run when the other run releases the lock", and leaving `building`
+        # behind would make that instruction impossible to follow.
+        if ($canaryOutcome.cargoLockObserved) {
+            Write-TargetBuildState -TargetDir $actualTargetDir -State 'complete' -Head ([string]$gatedHeadAtStart)
+        }
         exit 1
     }
 
@@ -3128,6 +3574,36 @@ try {
         }
     } | Out-Null
 
+    # #455: the build in this target finished. Written HERE and not in the finally below, because
+    # the whole value of the marker is that it distinguishes a run that completed from one that did
+    # not -- a completion stamp written on every exit path would say "complete" for the interrupted
+    # run too, which is the one case the next gate needs to recognise.
+    #
+    # AND BEFORE THE FLAG, not after it (Codex P1 on #1009), for two reasons that point the same way.
+    # `ci/gate-run-abort.tests.ps1` pins the literal text `$script:stagesCompleted = $true` followed
+    # by `} finally {` -- the flag must be the LAST statement of the try so nothing after it can be
+    # skipped -- and my first draft put this call between them: measured, that suite went to exit 1
+    # on the one assertion, which would have reddened `ci powershell suites` on every gate in the
+    # fleet. The pin was right and the draft was wrong. Second, if this write throws, the flag is
+    # still false when `finally` runs, so `Write-RunAbort` fires and the run leaves a terminal
+    # ledger record; with the old order a throwing marker write left the run with none.
+    # ONLY OVER A RUN WHOSE ARTEFACTS ARE FRESH (Codex on #1009). The stamp was unconditional, so a
+    # run that finished with stale binaries -- the exact contamination the freshness cross-check is
+    # about to redden the gate for -- still recorded `complete`, and the NEXT run trusted that target
+    # as a legitimate reuse and spent another full gate rediscovering the same stale output. Third
+    # instance tonight of one shape: releasing the mark before the answer is known. The canary path
+    # had it, and I fixed that one and left this.
+    #
+    # A stale run deliberately leaves the mark UNSTAMPED, so the next run reads `interrupted` and
+    # refuses early. The word is imprecise -- nothing was interrupted, the run completed badly -- and
+    # the VERDICT is right, which is the half that matters; the reason string names the marker and
+    # the abort names the remedy.
+    $staleAtEnd = @($artifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false }).Count
+    if ($staleAtEnd -eq 0) {
+        Write-TargetBuildState -TargetDir $actualTargetDir -State 'complete' -Head ([string]$gatedHeadAtStart)
+    } else {
+        Write-Host "[gate] NOTE: $staleAtEnd stale artefact(s), so this target is NOT stamped as a clean reuse." -ForegroundColor Yellow
+    }
     $script:stagesCompleted = $true
 } finally {
     Pop-Location
@@ -3231,7 +3707,20 @@ if ($script:studioStartedEarly -and -not $script:studioOverlapped) {
 $manifestPath = $null
 $manifestFailed = $false
 try {
-    $status = if ($failed.Count -eq 0) { 'GREEN' } else { 'RED' }
+    # #455: a suspect target reaches the STATUS, because that is the only field anything downstream
+    # reads (Codex P1 on #1009, and it was right about a claim I had published twice).
+    # `$passedEverything` and `instrumentSuspect` are computed inside Write-RunManifest and are
+    # recorded, not enforced: `merge-proof.ps1` requires `status == GREEN` and never reads either of
+    # them -- measured, `instrumentSuspect` appears in that file zero times. So the first draft's
+    # console line "the run continues and cannot report GREEN" was FALSE: every stage passing on a
+    # target left broken by a previous run produced GREEN, exit 0, and a manifest merge-proof
+    # accepts.
+    #
+    # HARNESS-BROKE, not RED. RED is a claim about the tree, and the tree did not fail -- the run
+    # could not vouch for what it measured, which is exactly the third state this vocabulary already
+    # carries. Reporting it as RED would send a lane hunting a defect that is not there, and a red
+    # that fires for the instrument is the kind pressers learn to wave through.
+    $status = Get-GateStatus -FailedStageCount $failed.Count -TargetSuspect ([bool]($null -ne $script:targetBuildState -and $script:targetBuildState.suspect))
     $manifestPath = Write-RunManifest -Status $status -CanaryPassed $true -ArtifactManifest $artifactManifest `
         -SlotLockAtStart $slotLockAtStart -SlotLockAtEnd (Read-SlotLockSnapshot)
 } catch {
@@ -3287,6 +3776,15 @@ if ($failed.Count -gt 0) {
                 -FreshnessStageName $FreshnessStageName)) {
         Write-Host $line -ForegroundColor Red
     }
+    exit 1
+}
+# #455: the process verdict, not only the manifest. The abort above makes this unreachable for a
+# suspect target today, and it is here anyway: "unreachable" is a claim, the terminal block decided
+# on `$failed.Count` alone for the whole life of this script, and a later edit that moves the abort
+# would restore GREEN-and-exit-0 over an untrusted target with nothing to catch it (Codex P1, #1009).
+if ($null -ne $script:targetBuildState -and $script:targetBuildState.suspect) {
+    Write-Host "[gate] HARNESS-BROKE: every stage passed, but $($script:targetBuildState.reason)" -ForegroundColor Magenta
+    Write-Host '[gate] The stages are not evidence about this head. See #455.' -ForegroundColor Magenta
     exit 1
 }
 Write-Host '[gate] GREEN - every stage passed.' -ForegroundColor Green

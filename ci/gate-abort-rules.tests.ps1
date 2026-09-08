@@ -130,6 +130,14 @@ $ErrorActionPreference = 'Stop'
 function Write-Host { param([Parameter(ValueFromRemainingArguments)] $Rest) }
 function Write-RunManifest { param([Parameter(ValueFromRemainingArguments)] $Rest) 'stub-manifest' }
 function Read-SlotLockSnapshot { $null }
+# #455 added a target-marker release inside the canary block. Stubbed here rather than lifted,
+# because the subject of this suite is the ABORT RULE: the block must still exit, whatever it calls
+# on the way out. A block that grows a call this harness does not know goes red as
+# "term not recognized" with no count line -- which is what happened, and is why the stub is named
+# in the same breath as the two variables the call needs.
+function Write-TargetBuildState { param([Parameter(ValueFromRemainingArguments)] $Rest) }
+$actualTargetDir = 'stub-target'
+$gatedHeadAtStart = 'stubhead'
 $emptyArtifacts = @()
 $slotLockAtStart = $null
 $canaryOutcome = [pscustomobject]@{ passed = $CANARY; status = 'RED'; cargoLockObserved = $LOCKED }

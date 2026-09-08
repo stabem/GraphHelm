@@ -207,8 +207,8 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution.as_deref(),
                 &signal,
                 &evidence_out,
-                &keyring,
-                &key_id,
+                keyring.as_deref(),
+                key_id.as_deref(),
             ),
             ExecutionCommand::Approve {
                 events,

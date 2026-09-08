@@ -385,13 +385,40 @@ pub enum ExecutionCommand {
         signal: PathBuf,
         #[arg(long = "evidence-out")]
         evidence_out: PathBuf,
-        /// Sealed keyring directory; the envelope now also seals into the Evidence store
-        /// (Milestone 05d Task 6) — the command refuses to run without a keyring rather than
-        /// silently skipping the seal. The 32-byte key arrives via `GRAPHHELM_EVENTS_KEY`.
+        /// REQUIRED, with `--key-id`. Sealed keyring directory; the 32-byte key arrives out of
+        /// band via `GRAPHHELM_EVENTS_KEY`.
+        ///
+        /// Have no keyring? Create an empty directory, then run
+        /// `gateway keyring init --keyring <dir> --key-id <id>` with `GRAPHHELM_EVENTS_KEY` set —
+        /// that command does not create the directory. Then pass both here.
+        // ^ THE LINES ABOVE ARE `--help` TEXT. clap turns a doc comment on a field into what the
+        // operator reads, so everything a maintainer needs and an operator does not belongs below
+        // this line, as an ordinary comment (#1002, Codex P2: the rationale had become the help,
+        // and `signal --help` answered an operator with "#135 was filed as …").
+        //
+        // WHY `Option` FOR A REQUIRED PAIR: so THIS crate produces the refusal instead of clap.
+        // clap can say which arguments are missing and cannot say what to do about it, and that
+        // sentence is the whole point of #135. The behaviour is unchanged — `sealing()` rejects
+        // `(None, None)` exactly as the parser used to.
+        //
+        // THE COST, stated because it is real: the usage line now shows these inside `[OPTIONS]`
+        // rather than as required, so clap's own metadata is looser than the contract. The help
+        // text carries the requirement instead. `required = true` would restore the metadata and
+        // take the message back to clap's, which is the thing being repaired.
+        //
+        // #135 was filed as "a keyless store cannot record a signal at all". Measured, that is not
+        // a capability gap: `gateway keyring init` mints exactly the keyring this command opens —
+        // same provider, same environment variable, same 32 bytes — and the signal then records,
+        // sealed, on a store created without one. The operator was blocked by not knowing that
+        // command. An earlier version made the pair genuinely optional behind `--unsealed`; it
+        // reversed the rule in `docs/superpowers/plans/2026-08-14-real-executor.md:396-406`
+        // ("refusing to run without a keyring rather than silently skipping the seal") to solve a
+        // problem that already had a compliant answer, and was withdrawn.
         #[arg(long)]
-        keyring: PathBuf,
+        keyring: Option<PathBuf>,
+        /// REQUIRED, with `--keyring`. The key id inside that keyring.
         #[arg(long = "key-id")]
-        key_id: String,
+        key_id: Option<String>,
     },
     /// The owner approves a `Ghost` or `Blocked` node, readying it. Does not auto-drive: nothing
     /// auto-starts out of a manual intervention (D-020); run `resume` to continue.

@@ -34,10 +34,12 @@ const COMMAND: &str = "execution.signal";
 /// from a JSON body's inline envelope instead of a file), then calls `execute` with the owner actor
 /// and a fresh per-invocation idempotency key, exactly as before this task — byte-identical CLI
 /// behaviour.
-/// The keyring coordinates the CLI surface makes mandatory (Milestone 05d Task 6): the
-/// signal command refuses to run without a keyring rather than silently skipping the seal.
-/// The API seam still passes `None` — HTTP-side sealing lands with the serve keyring wiring
-/// (a declared Task 6 discrepancy, not a silent skip: the CLI cannot reach that path).
+/// The keyring coordinates (Milestone 05d Task 6). The API seam passes `None` — HTTP-side
+/// sealing lands with the serve keyring wiring.
+///
+/// #135: the pair stays required. What changed is that the refusal now names the command that
+/// mints a keyring, because the operator who filed that issue was blocked by not knowing it rather
+/// than by the requirement. See `sealing`.
 pub(crate) struct SignalKeyring {
     pub(crate) directory: PathBuf,
     pub(crate) key_id: String,
@@ -48,23 +50,62 @@ pub fn run(
     execution: Option<&str>,
     signal: &Path,
     evidence_out: &Path,
-    keyring: &Path,
-    key_id: &str,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
 ) -> Outcome {
     finish(
         COMMAND,
-        run_from_file(
-            events,
-            execution,
-            signal,
-            evidence_out,
-            &SignalKeyring {
-                directory: keyring.to_path_buf(),
-                key_id: key_id.to_owned(),
-            },
-        ),
+        sealing(keyring, key_id)
+            .and_then(|sealing| run_from_file(events, execution, signal, evidence_out, &sealing)),
         |value| value,
     )
+}
+
+/// THE REFUSAL CARRIES ITS REMEDY (#135).
+///
+/// The pair is still required. It is `Option` here only so this function produces the refusal
+/// rather than clap, because clap can say which arguments are missing and cannot say what to do
+/// about it — and that sentence is the whole fix.
+///
+/// #135 reported that a keyless store could not record a signal at all. Measured, that is not a
+/// capability gap: `gateway keyring init` mints exactly the keyring this command opens, and the
+/// signal then records, sealed, on a store created without one. Two commands. The operator was
+/// blocked by not knowing the first, which is a discoverability defect and is repaired by writing
+/// the reason where the refusal is — the second remedy the issue itself offered.
+///
+/// The first attempt at this fix made the pair optional behind `--unsealed`. It was withdrawn: it
+/// reversed the rule recorded in `docs/superpowers/plans/2026-08-14-real-executor.md:396-406`
+/// ("refusing to run without a keyring rather than silently skipping the seal") to solve a problem
+/// that already had a compliant answer, and — because this command reads invocation flags and never
+/// the store — it also let an operator on a SEALED store skip the seal by forgetting two flags.
+///
+/// Half a pair stays refused for the older reason: `--keyring` with no `--key-id` asks for a seal
+/// without naming a key, and the only things that could do are seal under a guessed identity or
+/// skip the seal.
+fn sealing(keyring: Option<&Path>, key_id: Option<&str>) -> Result<SignalKeyring, Failure> {
+    match (keyring, key_id) {
+        (Some(directory), Some(key_id)) => Ok(SignalKeyring {
+            directory: directory.to_path_buf(),
+            key_id: key_id.to_owned(),
+        }),
+        (None, None) => Err(argument(
+            "this signal would be recorded with no seal. If this store has no keyring, make one: \
+             create an empty directory, then run `gateway keyring init --keyring <dir> --key-id \
+             <id>` with GRAPHHELM_EVENTS_KEY set to 64 lowercase hex characters, then pass the \
+             same \"keyring\" and \"key-id\" here. That command does not create the directory",
+            "/keyring",
+        )),
+        (Some(_), None) => Err(argument(
+            "\"keyring\" was given without \"key-id\", so the envelope could only be sealed under a \
+             key nobody named; give \"key-id\" as well",
+            "/keyId",
+        )),
+        (None, Some(_)) => Err(argument(
+            "\"key-id\" was given without \"keyring\", so there is no keyring to find that key in; \
+             give \"keyring\" as well",
+            "/keyring",
+        )),
+    }
 }
 
 fn run_from_file(

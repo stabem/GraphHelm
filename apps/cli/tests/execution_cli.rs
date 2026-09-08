@@ -540,6 +540,300 @@ fn signal_admits_a_valid_envelope_and_reports_the_governance_verdict() {
     assert_eq!(status(&events, "exec_signal_valid")["signalsRecorded"], 1);
 }
 
+/// #135: the refusal NAMES THE REMEDY, and the store was never the obstacle.
+///
+/// Filed as "a keyless store cannot record a signal at all". Measured, that is not a capability
+/// gap — the cell below drives the two commands that do it — so the repair is the issue's own
+/// second remedy: write the requirement's reason where the refusal is.
+///
+/// This asserts BOTH halves, because either alone is satisfiable by the wrong program: a refusal
+/// with clap's bare "required arguments were not provided" would pass an assertion that only
+/// checks the refusal, and a message naming `gateway keyring init` printed beside a RECORDED
+/// signal would pass an assertion that only checks the text.
+#[test]
+fn a_signal_with_no_keyring_is_refused_and_told_how_to_get_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = all_success_fixtures(directory.path());
+    start(&events, &fixtures, "supervised", "exec_signal_nokeyring");
+
+    let envelope_value = signal_envelope("signal-nokeyring", "no_progress");
+    let envelope_path = write_json(directory.path(), "signal-nokeyring.json", &envelope_value);
+    let evidence_out = directory.path().join("evidence-nokeyring.json");
+
+    let output = command()
+        .args([
+            "execution",
+            "signal",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_signal_nokeyring",
+            "--signal",
+            envelope_path.to_str().unwrap(),
+            "--evidence-out",
+            evidence_out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "a signal with no keyring was recorded: the seal is required and its absence must never be \
+         silent: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        status(&events, "exec_signal_nokeyring")["signalsRecorded"],
+        0,
+        "nothing may be appended when the envelope could not be sealed"
+    );
+
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        said.contains("gateway keyring init"),
+        "the refusal did not name the command that mints a keyring, so the operator learns only \
+         that something is missing -- which is the state #135 was filed from: {said}"
+    );
+    assert!(
+        said.contains("GRAPHHELM_EVENTS_KEY"),
+        "the refusal named the command but not the environment variable it needs, which is the \
+         half of the setup that is not in any argument list: {said}"
+    );
+    // THE STEP THE ADVICE FORGOT, and the reason it survived a review: `gateway keyring init`
+    // answers "the keyring directory does not exist" for a directory it is not given, so a refusal
+    // that names only the command sends the operator to a THIRD refusal. Measured on 40c38abe.
+    assert!(
+        said.contains("directory"),
+        "the refusal names the command but not the empty directory it requires first, so following \
+         it literally produces another refusal -- the defect this PR exists to repair: {said}"
+    );
+    // The STRUCTURED refusal, not only the prose: a caller parsing JSON reads these, and an
+    // assertion on the message alone would pass while the code or the path moved.
+    let refusal = json(&output.stdout);
+    assert_eq!(refusal["ok"], false, "{refusal}");
+    assert_eq!(
+        refusal["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+        "{refusal}"
+    );
+    assert_eq!(refusal["diagnostics"][0]["path"], "/keyring", "{refusal}");
+}
+
+/// #135: THE HELP TEXT IS AN OPERATOR SURFACE, AND THIS IS THE ONLY THING THAT WATCHES IT.
+///
+/// A `///` comment on a clap field IS the `--help` text. That is not a detail: three revisions of
+/// this PR shipped rationale written for maintainers into the one surface a stuck operator reads,
+/// and `signal --help` answered a person with the issue's history. Nothing in the suite could see
+/// it, and the squash body for this change originally claimed no cell could -- which was false, and
+/// is why this exists (J's APPROVE-WITH-RISK at `65e83216` named the gap).
+///
+/// COUNTS, NOT `contains`. A rationale paragraph drifting back above the `//` marker does not
+/// remove these strings, it ADDS text around them -- and the failure that actually happened was
+/// extra prose, not missing prose. `"REQUIRED, with"` appears once per flag and
+/// `"gateway keyring init"` once in the recipe; a fourth `REQUIRED` or a second recipe means the
+/// boundary moved, and an assertion on presence alone would stay green through it.
+#[test]
+fn the_signal_help_tells_an_operator_what_to_do_and_nothing_else() {
+    let output = command()
+        .args(["execution", "signal", "--help"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "`signal --help` did not succeed, so the assertions below would measure nothing"
+    );
+    let help = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        help.matches("REQUIRED, with").count(),
+        2,
+        "the two sealing flags must each be announced as required -- clap's usage line shows them \
+         inside [OPTIONS], so this sentence is the only place an operator learns the contract:\n{help}"
+    );
+    assert_eq!(
+        help.matches("gateway keyring init").count(),
+        1,
+        "the help must name the command that mints a keyring exactly once -- twice means the \
+         rationale drifted back into the `///` block, which is the defect #135 kept reproducing:\n{help}"
+    );
+    assert_eq!(
+        help.matches("does not create the directory").count(),
+        1,
+        "the recipe must keep its own first step: `gateway keyring init` answers \"the keyring \
+         directory does not exist\" for a directory it is not given, and an operator following the \
+         help literally would meet a second refusal:\n{help}"
+    );
+    // THE OTHER HALF: maintainer prose must NOT be here. `//` is invisible to clap, and the
+    // marker line below moved every rationale paragraph behind it.
+    assert!(
+        !help.contains("#135 was filed as"),
+        "the rationale is back in the help text -- an operator asking for help is being answered \
+         with the issue's history:\n{help}"
+    );
+    assert!(
+        !help.contains("real-executor.md"),
+        "a maintainer's document reference reached the operator's help text:\n{help}"
+    );
+}
+
+/// #135, END TO END: the two commands that unblock the operator, run as one story.
+///
+/// This is the measurement that retracted the first version of this change, kept as a cell so the
+/// claim in the refusal above cannot rot. If `gateway keyring init` ever stops producing a keyring
+/// `execution signal` can open, the refusal starts telling operators to run something that does not
+/// help, and only this cell would notice — the message assertion above would still pass.
+///
+/// The store is created WITHOUT a keyring, which is the #135 fixture exactly.
+#[test]
+fn a_minted_keyring_lets_a_keyless_store_record_a_sealed_signal() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = all_success_fixtures(directory.path());
+    start(&events, &fixtures, "supervised", "exec_signal_minted");
+
+    // Step one, IN THE ORDER THE REFUSAL GIVES IT. The `create_dir_all` here is not a test
+    // convenience -- it is the first step of the advice, and it is here because the advice says so.
+    // Until 40c38abe the message did not mention it while this cell did it anyway, so the cell
+    // proved the COMMAND works given a directory and never that the ADVICE works. That is how the
+    // omission survived: the end-to-end cell quietly supplied what the sentence left out.
+    let keyring = directory.path().join("minted-keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let minted = command()
+        .args([
+            "gateway",
+            "keyring",
+            "init",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "minted-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(
+        minted.status.success(),
+        "the command the refusal tells the operator to run did not work: {}",
+        String::from_utf8_lossy(&minted.stdout)
+    );
+
+    // Step two: the same store, now with the keyring it never had.
+    let envelope_value = signal_envelope("signal-minted", "no_progress");
+    let envelope_path = write_json(directory.path(), "signal-minted.json", &envelope_value);
+    let evidence_out = directory.path().join("evidence-minted.json");
+    let output = command()
+        .args([
+            "execution",
+            "signal",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_signal_minted",
+            "--signal",
+            envelope_path.to_str().unwrap(),
+            "--evidence-out",
+            evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "minted-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "a minted keyring did not satisfy the requirement, so the refusal's advice is wrong: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(json(&output.stdout)["ok"], true);
+    assert_eq!(
+        status(&events, "exec_signal_minted")["signalsRecorded"],
+        1,
+        "the signal was reported as admitted but never recorded"
+    );
+    assert!(
+        evidence_out.exists(),
+        "the operator copy must still be written beside the seal"
+    );
+}
+
+/// CONTROL: half a keyring is refused, and the refusal names the missing half.
+///
+/// A `--keyring` with no `--key-id` is an operator asking for a seal and not saying which key --
+/// accepting it would either seal with a guessed identity or silently skip the seal.
+///
+/// The name and the reason both said "making the pair optional must not make it separable" until
+/// #1002's second withdrawal. Nothing is optional now, and a cell that describes a version of the
+/// code that no longer exists is the defect this PR is about, sitting inside the PR (A's block on
+/// `67725c20`). What it guards today is the refusal being USEFUL: the sibling above pins that the
+/// no-keyring refusal names its remedy, and this one would have looked finished while still ending
+/// in "or neither to record without sealing" -- an instruction that now produces a second refusal.
+#[test]
+fn half_a_keyring_is_refused_and_the_missing_half_is_named() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = all_success_fixtures(directory.path());
+    start(&events, &fixtures, "supervised", "exec_signal_half_keyring");
+
+    let envelope_value = signal_envelope("signal-half", "no_progress");
+    let envelope_path = write_json(directory.path(), "signal-half.json", &envelope_value);
+    let evidence_out = directory.path().join("evidence-half.json");
+    let keyring = signal_keyring(directory.path());
+
+    let output = command()
+        .args([
+            "execution",
+            "signal",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_signal_half_keyring",
+            "--signal",
+            envelope_path.to_str().unwrap(),
+            "--evidence-out",
+            evidence_out.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "a keyring with no key-id was accepted: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let refusal = json(&output.stdout);
+    assert_eq!(
+        refusal["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+        "{refusal}"
+    );
+    assert_eq!(refusal["diagnostics"][0]["path"], "/keyId", "{refusal}");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        said.contains("key-id"),
+        "the refusal did not name the half that is missing, so it is the bare \"something is \
+         wrong\" this PR exists to stop shipping: {said}"
+    );
+    assert_eq!(
+        status(&events, "exec_signal_half_keyring")["signalsRecorded"],
+        0,
+        "the half-configured request recorded a signal anyway"
+    );
+}
+
 /// Scenario 2: a garbage envelope is refused as `GHCLI003_SIGNAL_INVALID`, writes no evidence,
 /// and records no signal.
 #[test]

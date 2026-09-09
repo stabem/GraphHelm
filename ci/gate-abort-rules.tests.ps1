@@ -42,7 +42,18 @@
 #   1  and it still calls Complete-BackgroundStage, not a deleted stand-in
 #   1  the joined child's STAGE_FAILED_AT line reaches Invoke-Stage's own capture
 #   1  and so does an ordinary diagnostic line from the same join
-$ExpectedAssertionCount = 20
+#   1  the manifest's requiredFeaturesExcluded expression is locatable
+#   1  ARRANGEMENT: gate.ps1's early init lines for both fields are found, extracted not retyped
+#   1  on the CANARY-ABORT PATH -- only the early inits set -- it does not throw under StrictMode
+#   1  and reads as UNREADABLE (null), not as an empty array dressed up as "the stage ran"
+#   1  a report that WAS read and named nothing excluded reads as an empty array, not null
+#   1  NEGATIVE CONTROL: with NEITHER variable set at all, the same expression DOES throw -- proving
+#      the cells above measure the early init, not a StrictMode-tolerant accident
+#   1  the required-features argument-building block is locatable in gate.ps1
+#   1  and it no longer emits an explicit-value -Full: token
+#   1  a FULL-scope run reaches required-features.ps1 and writes its scope report
+#   1  a SCOPED run (excluding the gating crate) reaches required-features.ps1 and writes it too
+$ExpectedAssertionCount = 30
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -279,6 +290,172 @@ if ($joinBlock) {
         "the joined child's STAGE_FAILED_AT line reaches Invoke-Stage's own capture (got: $($joinedOutput -join ' | '))"
     Assert-True -Condition ($joinedOutput -contains 'npm ERR! synthetic diagnostic line for this test') `
         'and so does an ordinary diagnostic line from the same join'
+}
+
+Write-Host ''
+Write-Host '-- #1019 review (B): the manifest field must not throw before the stage that fills it runs --' -ForegroundColor Cyan
+
+# EXTRACTED BY TEXT, one line: the required-features stage runs long after the canary can already
+# have aborted, and a manifest write on THAT path evaluates this expression with only gate.ps1's
+# own top-of-file inits (if any) in scope -- never the stage's own assignments.
+$excludedLine = @($gateLines | Where-Object { $_.TrimStart().StartsWith('requiredFeaturesExcluded = if (') }) |
+Select-Object -First 1
+Assert-True -Condition ($null -ne $excludedLine) `
+    'the manifest''s requiredFeaturesExcluded expression is locatable'
+
+if ($excludedLine) {
+    $expr = $excludedLine.Trim().Substring('requiredFeaturesExcluded = '.Length)
+
+    # A REAL CHILD PROCESS FOR EACH CASE, the same isolation the canary cells above use and for the
+    # same reason: `$script:` inside a dynamically created scriptblock binds to whichever scope
+    # invokes it, so running the early-init case and the bare case back to back IN this file's own
+    # process would leak the first case's assignments into the second and prove nothing about either.
+    function Test-RequiredFeaturesExpression {
+        param([string] $Prelude)
+        # `$ErrorActionPreference = 'Stop'`, MATCHING gate.ps1's OWN SETTING (near its top): without
+        # it a StrictMode violation is a non-terminating error under PowerShell's own default --
+        # printed, not thrown, and the script that hit it still exits 0. Omitting this line here
+        # measured a claim about a script that behaves differently from the one under test.
+        $body = "Set-StrictMode -Version 2.0`n`$ErrorActionPreference = 'Stop'" + "`n" + $Prelude + "`n" +
+        '$r = ' + $expr + "`n" +
+        'if ($null -eq $r) { Write-Host "RESULT:NULL" } else { Write-Host "RESULT:COUNT=$(@($r).Count)" }'
+        $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) ("gar-expr-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+        [System.IO.File]::WriteAllText($tempScript, $body)
+        # NOT `2>&1` -- the bare case is BUILT to throw, and under this file's own
+        # `$ErrorActionPreference = 'Stop'` (top of file), merging the child's stderr into the
+        # success stream turns that expected stderr line into a terminating NativeCommandError here,
+        # crashing the harness instead of letting it observe the exit code it exists to check
+        # (measured live while writing this cell: the exact hazard #1003 names in `ci/gate.ps1`'s
+        # own `Invoke-Stage` comment, reproduced by this suite about a different subject). Scoped
+        # `Continue`, the same remedy, so stdout and stderr stay two separate streams read after the
+        # process ends rather than one that can abort mid-read.
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = (& powershell -NoProfile -ExecutionPolicy Bypass -File $tempScript 2>&1 | Out-String)
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+            Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
+        }
+        return [pscustomobject]@{ ExitCode = $exitCode; Output = $output }
+    }
+
+    # THE CANARY-ABORT PATH: only gate.ps1's early, top-of-file inits have run by the time this
+    # expression would be reached there -- the required-features STAGE that would otherwise fill
+    # these in is never started on this path.
+    #
+    # THE PRELUDE IS EXTRACTED, NOT RETYPED (#1019 review, B, second pass caught a defect the first
+    # version of this cell had by construction: it hardcoded `$script:requiredFeaturesReportUnreadable
+    # = $true` as "what the early init should say" rather than reading what gate.ps1's early init
+    # ACTUALLY says, so a regression on gate.ps1's own line -- exactly B's finding -- would have gone
+    # on passing this cell forever). The two assignment lines are found by their variable name and
+    # used verbatim.
+    # THE FIRST OCCURRENCE OF EACH, not every occurrence: both variables are also reset locally
+    # right before the stage runs (so a fresh run's manifest, if the stage DOES complete, is not
+    # reading a previous run's leftovers), and `Unreadable` is set again inside three failure
+    # branches -- all of them later in the file than the early init this cell is about. File order is
+    # the ordering that matters here, because it is the ordering gate.ps1 itself executes in.
+    $excludedInitLine = @($gateLines | Where-Object {
+            $_.TrimStart().StartsWith('$script:requiredFeaturesExcluded = @()')
+        }) | Select-Object -First 1
+    $unreadableInitLine = @($gateLines | Where-Object {
+            $_.TrimStart().StartsWith('$script:requiredFeaturesReportUnreadable = ')
+        }) | Select-Object -First 1
+    Assert-True -Condition ($null -ne $excludedInitLine -and $null -ne $unreadableInitLine) `
+        'ARRANGEMENT: gate.ps1 has an early init line for both fields, or the cells below measure a prelude nobody''s early init actually has'
+
+    $abort = Test-RequiredFeaturesExpression -Prelude ($excludedInitLine.Trim() + "`n" + $unreadableInitLine.Trim())
+    Assert-True -Condition ($abort.ExitCode -eq 0) `
+        "on the CANARY-ABORT PATH -- only the early inits set -- it does not throw under StrictMode (exit $($abort.ExitCode): $($abort.Output))"
+    Assert-True -Condition ($abort.Output -like '*RESULT:NULL*') `
+        "and reads as UNREADABLE (null), not as an empty array dressed up as `"the stage ran and excluded nothing`" (got: $($abort.Output))"
+
+    # THE CASE THE OLD CELL WAS ACTUALLY NAMING, restored under its own name: a report WAS read
+    # (`Unreadable` goes `$false` only at the one call site that follows a successful parse) and it
+    # genuinely named nothing excluded.
+    $readEmpty = Test-RequiredFeaturesExpression -Prelude (
+        '$script:requiredFeaturesExcluded = @()' + "`n" + '$script:requiredFeaturesReportUnreadable = $false')
+    Assert-True -Condition ($readEmpty.Output -like '*RESULT:COUNT=0*') `
+        "a report that WAS read and named nothing excluded reads as an empty array, not null (got: $($readEmpty.Output))"
+
+    # NEGATIVE CONTROL: neither variable defined at all -- the shape B actually found (the field
+    # assigned only inside the stage; a manifest write the canary-abort path reaches first sees
+    # neither). If this does NOT throw, the cells above are not measuring the early init.
+    $bare = Test-RequiredFeaturesExpression -Prelude ''
+    Assert-True -Condition ($bare.ExitCode -ne 0) `
+        'NEGATIVE CONTROL: with NEITHER variable set at all, the same expression DOES throw -- proving the cells above measure the early init, not a StrictMode-tolerant accident'
+}
+
+Write-Host ''
+Write-Host '-- #1019 follow-up: the required-features argument list survives the -File boundary in both scope states --' -ForegroundColor Cyan
+
+# Two real defects lived in the inline argument list this block replaces, both measured directly
+# against the real `ci/required-features.ps1` across the same `-File` process boundary this suite
+# always drives through: `-Full:([bool]$script:gateScope.full)` -- an explicit value on a `[switch]`
+# parameter -- arrives as a bare STRING under `-File` and `[switch]` refuses to convert it ("Cannot
+# convert value \"System.String\" to type \"...SwitchParameter\""), exit 1, every run; and
+# `-InScopeCrates ''` -- an EMPTY STRING argument -- is dropped entirely at the boundary rather than
+# received as empty, so the NEXT token is read as `-InScopeCrates`'s value and PowerShell reports
+# "Missing an argument for parameter 'InScopeCrates'" instead. A FULL run hit the second defect
+# before the first was ever reached, because `$inScopeCratesArg` is always empty on FULL.
+#
+# NOT `Get-Block`: this is a flat sequence of statements inside `Invoke-Stage`'s scriptblock, not a
+# brace-delimited block of its own, so it is sliced by start/end line text instead.
+function Get-Slice {
+    param([string] $StartsWith, [string] $EndsWith)
+    $startIndex = -1
+    for ($i = 0; $i -lt $gateLines.Count; $i++) {
+        if ($gateLines[$i].TrimStart().StartsWith($StartsWith)) { $startIndex = $i; break }
+    }
+    if ($startIndex -lt 0) { return $null }
+    for ($j = $startIndex; $j -lt $gateLines.Count; $j++) {
+        if ($gateLines[$j].TrimStart().StartsWith($EndsWith)) {
+            return ($gateLines[$startIndex..$j] -join "`n")
+        }
+    }
+    return $null
+}
+
+$argsBlock = Get-Slice -StartsWith '$requiredFeaturesArgs = @(' -EndsWith '@requiredFeaturesArgs'
+Assert-True -Condition ($null -ne $argsBlock) `
+    'the required-features argument-building block is locatable in gate.ps1'
+Assert-True -Condition ($argsBlock -and -not $argsBlock.Contains('-Full:')) `
+    'and it no longer emits an explicit-value -Full: token, the shape that could never bind under -File'
+
+if ($argsBlock) {
+    # A REAL CHILD LAUNCH, not a claim about the argument list: this drives the extracted block
+    # verbatim, which itself invokes the real `ci/required-features.ps1` through the real `-File`
+    # boundary -- the only way either defect above was ever actually caught.
+    function Invoke-RequiredFeaturesArgsBlock {
+        param([bool] $Full, [string[]] $Crates)
+        $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("gar-rf-transcript-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+        $requiredFeaturesScopeReportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("gar-rf-report-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+        [System.IO.File]::WriteAllText($transcriptPath, 'nothing built in this synthetic transcript')
+        try {
+            $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+            $script:gateScope = [pscustomobject]@{ full = $Full; crates = $Crates }
+            . ([scriptblock]::Create($argsBlock)) | Out-Null
+            return [pscustomobject]@{
+                ExitCode      = $LASTEXITCODE
+                ReportWritten = (Test-Path -LiteralPath $requiredFeaturesScopeReportPath)
+            }
+        } finally {
+            Remove-Item -LiteralPath $transcriptPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $requiredFeaturesScopeReportPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $fullResult = Invoke-RequiredFeaturesArgsBlock -Full $true -Crates @()
+    Assert-True -Condition $fullResult.ReportWritten `
+        "a FULL-scope run reaches required-features.ps1 and writes its scope report (exit $($fullResult.ExitCode))"
+
+    # Excludes the gating crate deliberately -- the shape #990 measured broken before this PR's own
+    # scoping fix existed, driven here through the SAME argument list the switch/empty-string defects
+    # lived in.
+    $scopedResult = Invoke-RequiredFeaturesArgsBlock -Full $false -Crates @('some-other-crate')
+    Assert-True -Condition $scopedResult.ReportWritten `
+        "a SCOPED run (excluding the gating crate) reaches required-features.ps1 and writes its scope report too (exit $($scopedResult.ExitCode))"
 }
 
 Write-Host ''

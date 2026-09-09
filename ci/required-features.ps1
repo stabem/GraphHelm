@@ -29,6 +29,15 @@
     BOTH SEPARATORS, because the transcript carries the host's. A gate on Windows prints `deps\`
     and one on Linux prints `deps/`; checking only the local one would make this pass vacuously on
     the other platform, which is the failure this file exists to refuse.
+
+    A SCOPED RUN NEVER BUILDS AN EXCLUDED CRATE, AND THAT IS NOT #207'S FAILURE (#207 follow-up,
+    the required-features stage's own first scoped run). Checking every workspace-gated target
+    against a transcript that a scope selection deliberately narrowed made every scoped run that
+    excludes `adapters/postgres-event-store` red, on any diff, for a crate the run never intended to
+    touch -- burning the queue's single runner on a defect that is not there. `-InScopeCrates` (or
+    `-Full`) narrows the CHECKED population to what this run actually selected; the DERIVED
+    population from `cargo metadata` is unchanged, so an excluded target is named as excluded rather
+    than silently dropped.
 #>
 
 [CmdletBinding()]
@@ -41,7 +50,23 @@ param(
     # `dirtyDiffHash` non-null and the gate correctly refuses to commit a manifest into a tree
     # holding changes it did not make -- measured twice on 2026-09-05, by two lanes, and recorded in
     # ci/gate-runner.ps1's own header.
-    [string] $TranscriptPath
+    [string] $TranscriptPath,
+    # Package names this run actually selected (`ci/gate.ps1`'s `$script:gateScope.crates`), passed
+    # rather than re-read from the scope selection file: that parsing already happened once in
+    # `Read-ScopeSelection`, and this script re-deriving it from the raw JSON would be a second copy
+    # of the same rule, free to drift from the first. Omitted, or `-Full`, means every crate is in
+    # scope -- unchanged from before this parameter existed.
+    #
+    # ONE COMMA-JOINED STRING, NOT `[string[]]`. Measured invoking this script the way `ci/gate.ps1`
+    # does, through `-File` across a process boundary: a `[string[]]` bound only the FIRST element
+    # of a two-element array and silently dropped the rest -- no error, no warning, a population
+    # this stage exists to get right that was wrong from the first real call. A single string this
+    # script splits itself has one, unambiguous shape on the command line.
+    [string] $InScopeCrates,
+    [switch] $Full,
+    # Where to write which gated targets this run excluded, as JSON, for the caller's manifest.
+    # Omitted when the caller does not need the record (e.g. `-File` from a terminal).
+    [string] $ScopeReportPath
 )
 
 Set-StrictMode -Version 2.0
@@ -166,6 +191,52 @@ function Test-RequiredFeatureTargetsRan {
     }
 }
 
+<#
+.SYNOPSIS
+    Which of a gated population this run's scope actually selected (#207 follow-up).
+
+.DESCRIPTION
+    `$Full`, or omitting `$InScopeCrates` altogether, checks everyone -- the behaviour before this
+    function existed, unchanged. A named `$InScopeCrates` narrows `Checked` to targets whose
+    PACKAGE is in that list; everything else lands in `Excluded`, named rather than dropped, so a
+    caller can print or record which targets this run did not judge and why.
+
+    Comparison is by PACKAGE, ordinal: package names in `cargo metadata` and in a scope selection's
+    `crates` list are both written by tooling, never typed by a person mid-review, so there is no
+    case here for a culture-aware comparer to earn its keep and every case for it to fold two
+    distinct crate names together by accident.
+
+    AN EMPTY `$InScopeCrates` IS FULL, THE SAME AS OMITTING IT -- not "select nothing". A scope
+    selection whose crate list is empty already means "no Rust narrowing" one layer up
+    (`Read-ScopeSelection`'s own doc), and repeating that rule here as "exclude everything" would
+    invert it: the one shape this function must never produce is every gated target reported as
+    excluded because the caller passed `@()` for "I did not compute a list".
+#>
+function Split-RequiredFeatureTargetsByScope {
+    [CmdletBinding()]
+    param(
+        # `[AllowEmptyCollection()]`, not just `[AllowNull()]` (Codex, review of #1019): a mandatory
+        # `[object[]]` parameter rejects an EMPTY array by default, distinctly from rejecting `$null`
+        # -- a workspace with no `required-features`-gated targets at all makes `Get-RequiredFeatureTargets`
+        # return `@()` legitimately (not an error; `$null` means unreadable, `@()` means "read, and
+        # there is nothing"), and this function terminated on that real, valid input instead of
+        # reporting a successful check of zero targets.
+        [Parameter(Mandatory)] [AllowNull()] [AllowEmptyCollection()] [object[]] $Targets,
+        [string[]] $InScopeCrates,
+        [switch] $Full
+    )
+
+    $all = @($Targets)
+    if ($Full -or -not $InScopeCrates -or @($InScopeCrates).Count -eq 0) {
+        return [pscustomobject]@{ Checked = $all; Excluded = @() }
+    }
+    $inScope = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]] $InScopeCrates, [System.StringComparer]::Ordinal)
+    $checked = @($all | Where-Object { $inScope.Contains([string] $_.Package) })
+    $excluded = @($all | Where-Object { -not $inScope.Contains([string] $_.Package) })
+    return [pscustomobject]@{ Checked = $checked; Excluded = $excluded }
+}
+
 if (-not $script:RequiredFeaturesDotSourced) {
     $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
     $targets = Get-RequiredFeatureTargets -WorkspaceRoot $root
@@ -177,6 +248,28 @@ if (-not $script:RequiredFeaturesDotSourced) {
     foreach ($row in $targets) {
         Write-Host "  $($row.Package)/$($row.Target)  [$($row.Kind)]  required-features: $($row.Features)"
     }
+
+    $inScopeCratesArray = @()
+    if (-not [string]::IsNullOrWhiteSpace($InScopeCrates)) {
+        $inScopeCratesArray = @($InScopeCrates -split ',' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+    $split = Split-RequiredFeatureTargetsByScope -Targets $targets -InScopeCrates $inScopeCratesArray -Full:$Full
+    if ($split.Excluded.Count -gt 0) {
+        $excludedNames = @($split.Excluded | ForEach-Object { "$($_.Package)/$($_.Target)" }) -join ', '
+        Write-Host "[required-features] NOTE: SCOPED run, $($split.Excluded.Count) gated target(s) outside this run's selection are not checked: $excludedNames"
+    }
+    if ($ScopeReportPath) {
+        # WRITTEN EVEN WHEN EMPTY, so a caller reading this file after a FULL run can tell "excluded:
+        # none" from "this run never wrote the field" -- the same absence-is-not-zero rule the rest
+        # of this file exists to enforce, applied to its own output.
+        $report = [ordered]@{
+            excluded = @($split.Excluded | ForEach-Object {
+                    [ordered]@{ package = $_.Package; target = $_.Target; features = $_.Features }
+                })
+        }
+        ($report | ConvertTo-Json -Depth 4) | Out-File -LiteralPath $ScopeReportPath -Encoding utf8 -Force
+    }
+
     if (-not $TranscriptPath) { exit 0 }
 
     if (-not (Test-Path -LiteralPath $TranscriptPath)) {
@@ -186,7 +279,7 @@ if (-not $script:RequiredFeaturesDotSourced) {
         Write-Host "[required-features] the transcript at $TranscriptPath does not exist, so coverage is UNKNOWN."
         exit 2
     }
-    $verdict = Test-RequiredFeatureTargetsRan -Targets $targets `
+    $verdict = Test-RequiredFeatureTargetsRan -Targets $split.Checked `
         -Transcript ([System.IO.File]::ReadAllText($TranscriptPath))
     if (-not $verdict.Ok) {
         Write-Host "[required-features] these gated targets built nothing in this run: $($verdict.Missing -join '; ')"

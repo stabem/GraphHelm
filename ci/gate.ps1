@@ -414,6 +414,19 @@ $runStartUtc = $null
 # that finished, and release only a claim that is this process's own.
 $script:slotOutcome = $null
 $script:stagesCompleted = $false
+# #1019 review (B, twice): DEFINED HERE, not only at the required-features stage, so the manifest
+# write on the CANARY-ABORT path (which runs before that stage even starts) can read them under
+# `Set-StrictMode -Version 2.0` without throwing.
+#
+# `Unreadable` STARTS TRUE. The first version started it `$false`, which read as "checked, and
+# nothing was excluded" -- exactly wrong for a run that aborts before the stage that would prove
+# either claim ever starts. UNREPORTED IS THE DEFAULT; only a stage that actually read its own scope
+# report earns `$false`, at the one place that sets it (the success branch, where `Excluded` is also
+# filled in). Every failure path -- missing report, unparseable, wrong shape -- already sets `$true`
+# explicitly and stays that way; this default just means an abort that never reaches any of them
+# also lands on `$true` instead of silently inheriting a claim nobody made.
+$script:requiredFeaturesExcluded = @()
+$script:requiredFeaturesReportUnreadable = $true
 # #1003 review (Codex P2): DEFINED HERE, not only at their own start sites, so the outer `finally`
 # can reach them even when the run aborts before either background stage is ever started (the
 # canary failing is the common case) -- `Set-StrictMode -Version 2.0` throws on a script-scope
@@ -2803,6 +2816,27 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed) -or 
         # is indistinguishable from a full gate to `ci/merge-proof.ps1`, which can only check fields
         # the producer wrote.
         coverage           = $coverage
+        # #207 follow-up: which gated targets this run's SCOPE excluded from the required-features
+        # check, so a reader can tell "SCOPED, and nothing gated was excluded" from "SCOPED, and the
+        # postgres targets were" without re-deriving the population itself. Empty on a FULL run,
+        # always -- every gated target is in scope by definition -- and empty on a scoped run that
+        # happens to select the gating crate too.
+        #
+        # NULL, NOT `@()`, WHEN THE STAGE'S OWN SCOPE REPORT COULD NOT BE READ (#1019 review, B): an
+        # empty array here is the CLAIM "this run excluded nothing", and a report that could not be
+        # parsed has not earned that claim -- it could just as well have excluded everything. The
+        # first version wrote `@()` in both cases, which is the exact "unreadable is not empty"
+        # failure this whole field exists to name in #207's own subject, arriving through the record
+        # meant to prevent it. `status`/`coverage` remain the fields that decide PASS/FAIL either
+        # way: this one is a record, not a verdict (instrument-fact rule, #989/#1009).
+        #
+        # THE LEADING COMMA IS LOAD-BEARING, found writing this cell's own test. An `if`/`else`
+        # EXPRESSION assigned to a hashtable value collapses a branch whose last statement outputs
+        # ZERO items to `$null` -- so `else { @($script:requiredFeaturesExcluded) }` alone would
+        # write `$null` for "read, and genuinely nothing excluded" too, indistinguishable from the
+        # unreadable case this field exists to tell apart from it. `, @(...)` is the standard
+        # PowerShell idiom that stops the collapse without nesting a non-empty array inside another.
+        requiredFeaturesExcluded = if ($script:requiredFeaturesReportUnreadable) { $null } else { , @($script:requiredFeaturesExcluded) }
         # A FACT, not an inference: the head moved between the start of the gate and this write.
         # The record names the head the STAGES ran against, and this says the working tree is no
         # longer on it -- which is why the publication below refuses to commit.
@@ -3561,18 +3595,92 @@ try {
     # non-null and this gate correctly refuses to commit a manifest into a tree holding changes it
     # did not make -- a run with every stage green ending RED for "run manifest not published",
     # measured twice on 2026-09-05 by two lanes.
+    # #207 follow-up: a SCOPED run never builds a crate outside its selection, and checking every
+    # workspace-gated target regardless made every scoped run that excludes the gating crate
+    # (`adapters/postgres-event-store`) red for a defect that is not there -- measured on #990's
+    # first scoped run, the stage's own manifest, `graphhelm-postgres-event-store/concurrency` and
+    # `/repository_conformance` reported missing on a diff that never selected that crate. The
+    # POPULATION `required-features.ps1` derives is unaffected (`cargo metadata`, unscoped, as
+    # #207 requires); only which of it this run is judged AGAINST narrows, to `$script:gateScope`.
+    $requiredFeaturesScopeReportPath = Join-Path ([System.IO.Path]::GetTempPath()) `
+        ("gate-required-features-scope-" + [guid]::NewGuid().ToString('N').Substring(0, 12) + ".json")
+    $script:requiredFeaturesExcluded = @()
+    $script:requiredFeaturesReportUnreadable = $true
     Invoke-Stage 'required-features coverage' {
         $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) `
             ("gate-transcript-" + [guid]::NewGuid().ToString('N').Substring(0, 12) + ".txt")
         try {
             [System.IO.File]::WriteAllText($transcriptPath, ($script:allStageLines -join "`n"))
+            # THE ARGUMENT LIST IS BUILT, NOT WRITTEN INLINE (measured, #1019 follow-up). Two separate
+            # defects lived in the inline form this replaces, both across the SAME `-File` process
+            # boundary:
+            #   1. `-Full:([bool]$script:gateScope.full)` -- an EXPLICIT VALUE on a `[switch]`
+            #      parameter. Under `-File` on Windows PowerShell 5.1 the value arrives as a bare
+            #      STRING ("True"/"False"), and `[switch]` refuses to convert one:
+            #      "Cannot convert value \"System.String\" to type \"System.Management.Automation.
+            #      SwitchParameter\"" -- exit 1, every run, `-Full:$true` and `-Full:$false` alike.
+            #   2. `-InScopeCrates ''` -- an EMPTY STRING passed as a `-File` argument is dropped
+            #      entirely at the process boundary, not received as an empty string. The next
+            #      token (`-Full:...`) is then read as ITS value, and PowerShell reports
+            #      "Missing an argument for parameter 'InScopeCrates'" -- so a FULL run (where this
+            #      argument is always empty) failed before the switch bug was even reached.
+            # Both are avoided by never emitting either token on the command line unless it carries a
+            # real value: `-Full` (bare, `IsPresent`-style) only when true, `-InScopeCrates` (still one
+            # comma-joined STRING, not `[string[]]` -- see `required-features.ps1`'s own param doc for
+            # why) only when there is a non-empty selection to pass. Verified directly against the
+            # real script, both branches, before wiring it here: FULL -> reportWritten (empty
+            # `excluded`); SCOPED, selection excluding the gating crate -> reportWritten (both gated
+            # targets named `excluded`). Neither exited 1 with the report missing, which is what every
+            # prior call shape did.
+            $requiredFeaturesArgs = @('-TranscriptPath', $transcriptPath)
+            if ($script:gateScope.full) {
+                $requiredFeaturesArgs += '-Full'
+            } else {
+                $inScopeCratesArg = (@($script:gateScope.crates) -join ',')
+                if ($inScopeCratesArg) {
+                    $requiredFeaturesArgs += '-InScopeCrates'
+                    $requiredFeaturesArgs += $inScopeCratesArg
+                }
+            }
+            $requiredFeaturesArgs += '-ScopeReportPath'
+            $requiredFeaturesArgs += $requiredFeaturesScopeReportPath
             & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
                 -File (Join-Path $repositoryRoot 'ci/required-features.ps1') `
-                -TranscriptPath $transcriptPath
+                @requiredFeaturesArgs
         } finally {
             Remove-Item -LiteralPath $transcriptPath -Force -ErrorAction SilentlyContinue
         }
     } | Out-Null
+    if (Test-Path -LiteralPath $requiredFeaturesScopeReportPath) {
+        try {
+            $requiredFeaturesReport = [System.IO.File]::ReadAllText($requiredFeaturesScopeReportPath) | ConvertFrom-Json
+            if ($requiredFeaturesReport -and ($requiredFeaturesReport.PSObject.Properties.Name -contains 'excluded')) {
+                $script:requiredFeaturesExcluded = @($requiredFeaturesReport.excluded)
+                # THE ONE PLACE THIS GOES FALSE: a report was actually read and had the shape this
+                # reads, whether or not it named anything as excluded. Every other path here leaves
+                # the `$true` default (or sets it explicitly) standing.
+                $script:requiredFeaturesReportUnreadable = $false
+            } else {
+                # PARSED, BUT NOT THE SHAPE THIS READS: same as a parse failure below -- a document
+                # that is not an object, or is one with no `excluded` key, has not said "nothing was
+                # excluded" any more than an unparseable one has.
+                $script:requiredFeaturesReportUnreadable = $true
+            }
+        } catch {
+            # UNREADABLE IS NOT EMPTY (#1019 review, B): the manifest write reads this flag and
+            # writes `null` rather than `@()`, so a reader can tell "the stage's report could not be
+            # read" apart from "the stage reported nothing excluded" -- an empty array is a claim
+            # this run has not earned when its own instrument never answered.
+            $script:requiredFeaturesReportUnreadable = $true
+        } finally {
+            Remove-Item -LiteralPath $requiredFeaturesScopeReportPath -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        # THE STAGE'S SUBPROCESS NEVER WROTE THE REPORT AT ALL (crashed, or `-ScopeReportPath` was
+        # never reached) -- the same absence as a report that could not be parsed, not a report that
+        # said "nothing excluded".
+        $script:requiredFeaturesReportUnreadable = $true
+    }
 
     # #455: the build in this target finished. Written HERE and not in the finally below, because
     # the whole value of the marker is that it distinguishes a run that completed from one that did

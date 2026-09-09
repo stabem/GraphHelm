@@ -22,7 +22,16 @@
 #   1  a missing target is reported by package/target with its features
 #   2  REAL TREE: the two known gated targets are derived from the manifests
 #   1  REAL TRANSCRIPT: both are found in a gate log's own shape
-$ExpectedAssertionCount = 14
+#   1  FULL (the switch) checks the whole population, unchanged from before scope existed
+#   1  omitting scope entirely is the same as FULL -- absent means full, not empty
+#   1  an EMPTY InScopeCrates array is FULL too, not "select nothing"
+#   1  an empty POPULATION (no gated targets at all) is a successful check of zero, not a thrown error
+#   1  a scope naming the gating crate checks it and excludes nothing
+#   1  a scope that omits the gating crate excludes it and checks nothing
+#   1  and the excluded row still carries its package/target/features, for the caller's record
+#   1  REAL TREE: a scope excluding graphhelm-postgres-event-store excludes both known gated targets
+#   1  REAL TREE: and a scope naming it checks both, excluding neither
+$ExpectedAssertionCount = 23
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -130,6 +139,54 @@ $realTranscript = @'
 '@
 Assert-Equal 'ran' (Test-RequiredFeatureTargetsRan -Targets $real -Transcript $realTranscript).Reason `
     'and a real gate transcript satisfies both of them'
+
+Write-Host ''
+Write-Host '-- #207 follow-up: a SCOPED run is judged against what it selected, not against everyone --' -ForegroundColor Cyan
+
+$scopeSplit = Split-RequiredFeatureTargetsByScope -Targets $targets -Full
+Assert-Equal '1|0' "$(@($scopeSplit.Checked).Count)|$(@($scopeSplit.Excluded).Count)" `
+    'FULL checks the whole population and excludes nothing, unchanged from before scope existed'
+
+$omittedSplit = Split-RequiredFeatureTargetsByScope -Targets $targets
+Assert-Equal '1|0' "$(@($omittedSplit.Checked).Count)|$(@($omittedSplit.Excluded).Count)" `
+    'omitting scope entirely is the same as FULL -- absent means full, not empty'
+
+$emptySplit = Split-RequiredFeatureTargetsByScope -Targets $targets -InScopeCrates @()
+Assert-Equal '1|0' "$(@($emptySplit.Checked).Count)|$(@($emptySplit.Excluded).Count)" `
+    'an EMPTY InScopeCrates array is FULL too, not "select nothing" -- the same rule Read-ScopeSelection uses one layer up'
+
+# AN EMPTY *POPULATION*, not an empty scope (Codex, review of #1019): a workspace with no
+# `required-features`-gated targets at all makes `Get-RequiredFeatureTargets` return `@()`
+# legitimately -- read successfully, and there is nothing -- distinct from `$null` (unreadable). A
+# mandatory `[object[]]` parameter without `[AllowEmptyCollection()]` rejects `@()` even though it
+# accepts `$null` under `[AllowNull()]`, so this call used to throw on exactly the input it exists to
+# report a clean zero-target check for.
+$emptyPopulationSplit = Split-RequiredFeatureTargetsByScope -Targets @() -Full
+Assert-Equal '0|0' "$(@($emptyPopulationSplit.Checked).Count)|$(@($emptyPopulationSplit.Excluded).Count)" `
+    'an empty POPULATION (no gated targets at all) is a successful check of zero, not a thrown error'
+
+$namedSplit = Split-RequiredFeatureTargetsByScope -Targets $targets -InScopeCrates @('gated-crate')
+Assert-Equal '1|0' "$(@($namedSplit.Checked).Count)|$(@($namedSplit.Excluded).Count)" `
+    'a scope naming the gating crate checks it and excludes nothing'
+
+$omittedFromSplit = Split-RequiredFeatureTargetsByScope -Targets $targets -InScopeCrates @('some-other-crate')
+Assert-Equal '0|1' "$(@($omittedFromSplit.Checked).Count)|$(@($omittedFromSplit.Excluded).Count)" `
+    'a scope that omits the gating crate excludes it and checks nothing'
+
+Assert-Equal 'gated-crate|concurrency|test-support' `
+    "$($omittedFromSplit.Excluded[0].Package)|$($omittedFromSplit.Excluded[0].Target)|$($omittedFromSplit.Excluded[0].Features)" `
+    'and the excluded row still carries its package/target/features, for the caller''s record'
+
+Write-Host ''
+Write-Host '-- and the real tree, so the split is not measured only against a fixture --' -ForegroundColor Cyan
+
+$realExcludingPostgres = Split-RequiredFeatureTargetsByScope -Targets $real -InScopeCrates @('graphhelm-cli')
+Assert-Equal '0|2' "$(@($realExcludingPostgres.Checked).Count)|$(@($realExcludingPostgres.Excluded).Count)" `
+    'a scope excluding graphhelm-postgres-event-store excludes both of the two known gated targets'
+
+$realIncludingPostgres = Split-RequiredFeatureTargetsByScope -Targets $real -InScopeCrates @('graphhelm-cli', 'graphhelm-postgres-event-store')
+Assert-Equal '2|0' "$(@($realIncludingPostgres.Checked).Count)|$(@($realIncludingPostgres.Excluded).Count)" `
+    'and a scope naming it checks both, excluding neither'
 
 Write-Host ''
 if ($script:total -ne $ExpectedAssertionCount) {

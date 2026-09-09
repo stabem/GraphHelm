@@ -82,7 +82,12 @@ param(
     # every selection this gate cannot read: the default is the whole gate until a runner decides
     # otherwise, because a scoped run that narrows on a bad selection runs fewer stages and reports
     # the same green.
-    [string] $ScopeSelection
+    [string] $ScopeSelection,
+    # #883: permits a detached-HEAD run to proceed past the startup refusal below, to measure
+    # without publishing. Off by default -- the refusal exists because a detached run's manifest
+    # can never be committed, and that must stay the loud default, not something a flag quietly
+    # opts out of by omission.
+    [switch] $AllowDetachedHead
 )
 
 Set-StrictMode -Version 2.0
@@ -3139,6 +3144,30 @@ $gatedHeadOutput = @(& git rev-parse HEAD 2>$null)
 $gatedHeadExit = $LASTEXITCODE
 $gatedHeadAtStart = $gatedHeadOutput | Select-Object -First 1
 $gatedHeadAtStart = if ($gatedHeadExit -eq 0 -and $gatedHeadAtStart) { ([string]$gatedHeadAtStart).Trim() } else { $null }
+
+# #883: A DETACHED HEAD IS REFUSED HERE, not discovered 40 minutes later at publish. The
+# capture above already answers the question -- $gatedBranchAtStart is $null exactly when
+# there is no branch -- so this reads nothing new; it only acts on what was just read. Before
+# this, a detached run passed every one of the 56 stages, reached Write-RunManifest, and only
+# THEN printed a WARNING that the manifest could not be committed (H, measured: run 1
+# `4107363f`, 40 minutes from launch to that discovery). The fix moves the same fact to the
+# only place it can still save the 40 minutes: before the first stage runs.
+# -AllowDetachedHead is the escape hatch the acceptance criterion asks for -- a detached
+# checkout is still useful to MEASURE without publishing -- and it must be explicit and
+# overridable, not silent: passing it prints the same fact as a warning and continues: nothing
+# below this block changes, and Write-RunManifest's own detached-HEAD warning (unchanged)
+# still fires at publish time either way.
+if (-not $gatedBranchAtStart) {
+    if (-not $AllowDetachedHead) {
+        Write-Host '[gate] REFUSED: HEAD is detached.' -ForegroundColor Red
+        Write-Host ('[gate] There is no branch to publish the run manifest onto, so every stage would run and ' +
+            'the manifest would still not be committed at the end (#883).') -ForegroundColor Red
+        Write-Host '[gate] Check out a branch and re-run, or pass -AllowDetachedHead to measure without publishing.' -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ('[gate] HEAD is detached and -AllowDetachedHead was passed: this run will measure but the run ' +
+        'manifest will not be committed (#883).') -ForegroundColor Yellow
+}
 
 if ($gatedBranchAtStart -and $gatedHeadAtStart) {
     $branchValueOutput = @(& git rev-parse --verify --quiet $gatedBranchAtStart 2>$null)

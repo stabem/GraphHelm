@@ -32,6 +32,7 @@ $PinnedSuites = @(
     'gate-abort-rules.tests.ps1',
     'gate-background-stage-evidence.tests.ps1',
     'gate-canary-outcome.tests.ps1',
+    'gate-detached-head.tests.ps1',
     'gate-evidence.tests.ps1',
     'gate-manifest-provenance.tests.ps1',
     'gate-postgres-count.tests.ps1',

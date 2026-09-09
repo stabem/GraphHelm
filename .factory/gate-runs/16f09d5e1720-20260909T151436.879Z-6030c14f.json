@@ -1,0 +1,82 @@
+{
+    "status":  "HARNESS-BROKE",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "16f09d5e1720ffba01b665ef6610f74bd3c56f61",
+    "pullRequest":  1029,
+    "pullRequestReason":  null,
+    "pushed":  null,
+    "pushedReason":  "the upstream of refs/heads/issue-883-name-all-refusal-causes could not be resolved (git rev-parse issue-883-name-all-refusal-causes@{upstream} exited 128 and said: fatal: no upstream configured for branch \u0027issue-883-name-all-refusal-causes\u0027), so there was no server to ask (a local ref, refs/remotes/origin/issue-883-name-all-refusal-causes, names it, but that is memory from the last fetch)",
+    "upstreamSha":  null,
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "included",
+                     "complete":  true
+                 },
+    "requiredFeaturesExcluded":  null,
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "E:\\orch-runner-targets\\pr1029",
+    "queuedUtc":  "2026-09-09T15:14:29.8701808Z",
+    "runStartUtc":  "2026-09-09T15:14:29.8975849Z",
+    "slotWaitSecs":  0.027,
+    "runEndUtc":  "2026-09-09T15:14:36.8396958Z",
+    "canaryPassed":  false,
+    "psSuitesStartedEarly":  false,
+    "psSuitesOverlapped":  false,
+    "studioScopeIncluded":  true,
+    "studioNodePresent":  false,
+    "studioStartedEarly":  false,
+    "studioOverlapped":  false,
+    "stages":  [
+
+               ],
+    "artifactBuildExit":  null,
+    "testArtifacts":  [
+
+                      ],
+    "staleArtifactCount":  0,
+    "postgresExecution":  {
+
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "E:/graphhelm-slot/SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-09T15:14:29Z | gate cwd=D:\\orch-runner-benches-ssd\\pr1029 head=16f09d5e1720ffba01b665ef6610f74bd3c56f61 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=64224 start=2026-09-09T15:14:29.2815124Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-09T15:14:29.9768527Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "present",
+                          "path":  "E:/graphhelm-slot/SLOT.lock",
+                          "content":  "HELD by gate | 2026-09-09T15:14:29Z | gate cwd=D:\\orch-runner-benches-ssd\\pr1029 head=16f09d5e1720ffba01b665ef6610f74bd3c56f61 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=64224 start=2026-09-09T15:14:29.2815124Z\n",
+                          "holderVerdict":  "live",
+                          "observedAtUtc":  "2026-09-09T15:14:30.3904417Z"
+                      },
+    "slotLockStartEndIdentical":  true,
+    "scope":  {
+                  "full":  true,
+                  "reason":  "FULL: the selector escalated (ci/)",
+                  "crates":  [
+
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "the PostgreSQL matrix runs: this is a FULL run"
+              },
+    "instrumentSuspect":  true,
+    "targetBuildState":  {
+                             "contaminated":  true,
+                             "suspect":  true,
+                             "state":  "interrupted",
+                             "reason":  "the build owned by process 108512 never finished and that process is gone, so cargo\u0027s fingerprints may claim freshness for binaries whose source has moved"
+                         },
+    "overallPassed":  false
+}

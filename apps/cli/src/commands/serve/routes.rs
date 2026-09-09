@@ -581,8 +581,10 @@ pub(super) async fn start(
                         fixtures.as_deref(),
                         &mode,
                         Some(drive_execution_id.as_str()),
-                        actor,
-                        key,
+                        execution::start::Attribution { actor, key },
+                        // The HTTP start always drives; `--held` is the CLI spelling and its own
+                        // route is the follow-up this PR names. #90.
+                        false,
                     )?;
                     drive(&drive_state, &drive_execution_id, prepared, setup).await
                 } else {

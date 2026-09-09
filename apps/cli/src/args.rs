@@ -330,6 +330,29 @@ pub enum ExecutionCommand {
         mode: String,
         #[arg(long)]
         execution: Option<String>,
+        /// Publish the graph and record `execution_started` WITHOUT entering the drive loop, so
+        /// every node stays `Draft` until an explicit `execution resume` (#90).
+        ///
+        /// `resume` WORKS on the result, which is the half that makes this sentence a promise
+        /// rather than a description: the hold is recorded as `ExecutionPaused`, because
+        /// `resume_preconditions` gates on `simulation_status == Paused` and would otherwise
+        /// answer `NotPaused` to every held execution.
+        ///
+        /// WHERE `Draft` LIVES, since the reply does not show it: `node_states` holds only nodes
+        /// that have ALREADY changed state, so a node still to be dispatched is ABSENT, and the
+        /// driver reads that absence as `Draft` (`.get(node).copied().unwrap_or(NodeState::Draft)`
+        /// -- core/execution/src/attention.rs). A held execution therefore reports
+        /// `nodeStateCounts.draft` as 0 with both nodes staged. That is the projection's
+        /// documented encoding for every execution before its first dispatch, not something this
+        /// flag introduces.
+        ///
+        /// This is the axis `mode` is NOT: `mode` governs graph-MUTATION autonomy and the driver
+        /// never reads it, so before this flag the only way to stage work without running it was
+        /// to start (which dispatches) and then pause -- a reaction racing the driver rather than
+        /// a precondition. Holding dispatch and holding mutation stay orthogonal, which is the
+        /// reasoning #79 was closed on.
+        #[arg(long)]
+        held: bool,
     },
     /// Lists the execution streams the event store holds: one summary row per stream, ordered
     /// by execution id, sliced by `--after` (exclusive) and `--limit`.

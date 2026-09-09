@@ -178,12 +178,14 @@ pub fn run(command: TopLevel) -> Outcome {
                 fixtures,
                 mode,
                 execution,
+                held,
             } => execution::start::run(
                 &file,
                 &events,
                 fixtures.as_deref(),
                 &mode,
                 execution.as_deref(),
+                held,
             ),
             ExecutionCommand::List {
                 events,

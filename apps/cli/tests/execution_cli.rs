@@ -166,6 +166,217 @@ fn all_success_fixtures(directory: &Path) -> PathBuf {
     path
 }
 
+/// #90: `start --held` publishes and records `execution_started` WITHOUT entering the drive loop.
+///
+/// The operator need #79 surfaced: today the only way to stage work without running it is to
+/// `start` (which dispatches) and then `pause` — a reaction racing the driver, not a precondition.
+/// `mode` does not hold dispatch (`core/runtime/src/driver.rs` never reads it), so the hold has to
+/// be its own axis.
+///
+/// The assertion that matters is the SECOND one. The first is arrangement: without it, a run that
+/// failed to start at all would satisfy "nothing was dispatched" for the wrong reason.
+/// #90, J reviewing: the flag's own documentation promises "every node stays `Draft` until an
+/// explicit `execution resume`". THAT SENTENCE IS THE CLAIM UNDER TEST HERE, and until this cell
+/// existed nothing checked it -- a flag may not document a next step that its own output cannot
+/// reach. `resume_preconditions` (core/execution/src/recovery.rs) refuses with `NotPaused` unless
+/// `simulation_status == Paused`, and a held start recorded no status at all.
+///
+/// This is the cell I owed and did not write. The previous one asserted what a held start does
+/// NOT do; nothing asserted that the operator can then do the one thing the flag exists for.
+#[test]
+fn a_held_start_can_be_resumed_because_that_is_what_the_flag_promises() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+
+    let start = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_resume",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "ARRANGEMENT: the held start must succeed, or the resume below fails for the wrong reason: {}",
+        String::from_utf8_lossy(&start.stdout)
+    );
+
+    // THE PROPERTY: the documented next step is reachable from the state the flag produces.
+    let resume = command()
+        .args([
+            "execution",
+            "resume",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--execution",
+            "exec_resume",
+        ])
+        .output()
+        .unwrap();
+    // Asserted on the PROCESS, not on parsed JSON: a refusal may not print a JSON object at all,
+    // and a cell that panics in its own parser reports "something went wrong" without saying what.
+    // The raw streams go in the message so the failure NAMES the refusal.
+    assert!(
+        resume.status.success(),
+        "a held start must be resumable: the flag documents `execution resume` as the way out of the hold, so a refusal means it documents a step its own output cannot reach. stdout: {} stderr: {}",
+        String::from_utf8_lossy(&resume.stdout),
+        String::from_utf8_lossy(&resume.stderr)
+    );
+}
+
+#[test]
+fn start_held_publishes_without_dispatching_any_node() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+
+    let start = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_held",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "ARRANGEMENT: the held start must SUCCEED, or the emptiness below proves nothing about dispatch: {}",
+        String::from_utf8_lossy(&start.stdout)
+    );
+    let value = json(&start.stdout);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["command"], "execution.start");
+    assert_eq!(value["data"]["executionId"], "exec_held");
+
+    // THE PROPERTY, asserted where dispatch leaves a trace (M, reviewing this: assert the property,
+    // not a consequence). Dispatch is what APPENDS -- so "no node was dispatched" is exactly "the
+    // stream holds no node event", and that is checked here rather than in the projection.
+    //
+    // WHY NOT THE PROJECTION, since it is right there in the reply: a held execution has no node
+    // events, so the projection materialises NO nodes at all -- `nodeStates` is `{}` and EVERY
+    // count including `draft` is 0. So `draft == 2` is false here, and `succeeded == 0` and
+    // `status != "completed"` are true of that empty projection for a reason that has nothing to do
+    // with holding: they would hold just as well if the events were never written at all. Each has
+    // a second cause. The stream does not.
+    //
+    // NO NAMED EVENT, A PREFIX. A driven run of this graph writes `node_outcome_recorded`
+    // (measured -- the kinds are exactly `execution_started`, `execution_form_declared`,
+    // `node_outcome_recorded`, `execution_completed`), and matching that ONE name would go quietly
+    // vacuous the day dispatch starts writing something else first. The claim is that nothing about
+    // any node happened, so the assertion is over the whole `node_` family and a new member breaks
+    // it -- which is the direction a "nothing happened" guard should fail in.
+    //
+    // THE ZERO NEEDS A CONTROL FROM THE SAME READ: `execution_started` must be PRESENT in this very
+    // list. Without it a wrong `--events` path, an unwritten journal or a renamed kind all produce
+    // the same zero, and the cell would pass by reading nothing.
+    let journal = journal_events(&events);
+    assert_eq!(
+        journal
+            .iter()
+            .filter(|(_, kind, _)| kind == "execution_started")
+            .count(),
+        1,
+        "CONTROL: the publish half must be IN this stream, or the absence below is 'nothing was read' rather than 'nothing was dispatched': {journal:?}"
+    );
+    // ATOMICITY, which is the property a second append could not have (Codex P1 on this PR).
+    // `journal_events` returns the BATCH INDEX: the store writes one line per atomic append, so
+    // two events sharing an index were committed together or not at all. Adjacency would only
+    // show they landed in order.
+    //
+    // The state this forbids is worse than either endpoint: a start with no hold shuts BOTH exits
+    // -- `start --held` refuses ("an execution has already started on this stream") and the
+    // `resume` this flag documents refuses (`not_paused`) -- so the operator must diagnose a
+    // partial write and repair it with a `pause` nobody told them to run.
+    let batch_of = |wanted: &str| {
+        journal
+            .iter()
+            .find(|(_, kind, _)| kind == wanted)
+            .map(|(batch, _, _)| *batch)
+    };
+    assert_eq!(
+        batch_of("execution_started"),
+        batch_of("execution_paused"),
+        "the hold must commit in the SAME atomic batch as the start, or a crash between them leaves an execution that can be neither started nor resumed: {journal:?}"
+    );
+    assert!(
+        batch_of("execution_paused").is_some(),
+        "CONTROL: the hold must exist at all -- two `None`s would satisfy the equality above: {journal:?}"
+    );
+
+    let node_events: Vec<_> = journal
+        .iter()
+        .filter(|(_, kind, _)| kind.starts_with("node_"))
+        .collect();
+    assert!(
+        node_events.is_empty(),
+        "a held start must dispatch NO node, but the stream records node events: {node_events:?}"
+    );
+
+    // The projection agrees, and is kept for what it adds: the reply a caller actually reads.
+    assert_ne!(
+        value["data"]["status"], "completed",
+        "a held start must not drive to quiescence: {value}"
+    );
+    assert_eq!(
+        value["data"]["nodeStateCounts"]["succeeded"],
+        serde_json::json!(0),
+        "no node may succeed when dispatch was never entered: {value}"
+    );
+
+    // AND INDEPENDENTLY, from a separate replay of the same stream: a reader who was not told what
+    // the command claimed sees the same absence.
+    let status = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let status_value = json(&status.stdout);
+    assert_eq!(
+        status_value["data"]["nodeStateCounts"]["succeeded"],
+        serde_json::json!(0),
+        "an independent replay must agree that nothing was dispatched: {status_value}"
+    );
+}
+
 /// The plan's Step 1 test: `execution start` on a small graph publishes, starts and drives to
 /// quiescence, reporting the final aggregate status and per-state node counts; a following
 /// `execution status` replays the same stream independently and must report identical data.
@@ -2763,4 +2974,125 @@ fn every_stream_the_shipped_verbs_create_is_scoped_by_its_own_id() {
             stream.stream_id
         );
     }
+}
+
+/// Every event's kind label paired with the actor id that wrote it, in stream order.
+///
+/// `raw_outcomes` above reads only `NodeOutcomeRecorded`, so reusing it for an `ExecutionPaused`
+/// question would filter to an empty set and assert nothing — a green with no subject in it. This
+/// reads every envelope and labels it, so one call answers about two different kinds and the two
+/// halves below cannot drift apart between reads.
+fn event_actors(events: &Path) -> Vec<(String, String)> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // FIXED, not `Utc::now()`. This reader inspects only actor ids, so a wall clock would not
+    // change today's assertions -- and that is exactly the argument that lets a nondeterministic
+    // dependency sit in a test until something later starts consulting it. `AGENTS.md`: "Use fixed
+    // clock and ID implementations in tests." The three sibling readers in this file still take
+    // `Utc::now()`; copying one of them is how this got here, and copying a violation propagates
+    // it. (Codex P1 on this PR, and it is right.)
+    struct TestClock;
+    impl graphhelm_protocols::Clock for TestClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("constant timestamp is valid")
+        }
+    }
+    #[derive(Default)]
+    struct TestIds(AtomicU64);
+    impl graphhelm_protocols::IdGenerator for TestIds {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+        }
+    }
+
+    let repository = graphhelm_events::LocalEventRepository::open(
+        events,
+        Arc::new(TestClock),
+        Arc::new(TestIds::default()),
+    )
+    .unwrap();
+    let (_stream, history) = repository.read_unique_replay_stream().unwrap();
+    history
+        .iter()
+        .filter_map(|envelope| {
+            let kind = match &envelope.kind {
+                graphhelm_protocols::EventKind::ExecutionPaused(_) => "ExecutionPaused",
+                graphhelm_protocols::EventKind::ExecutionStarted(_) => "ExecutionStarted",
+                _ => return None,
+            };
+            Some((kind.to_string(), envelope.actor.id().to_string()))
+        })
+        .collect()
+}
+
+/// #90: the hold that `--held` writes is attributed to the operator who asked for it, and the
+/// `start` it rides in is not.
+///
+/// `start --held` emits an `ExecutionPaused` — the same kind `pause` emits, which `pause.rs` writes
+/// as `owner_actor()`. `owner_actor`'s doc draws the line ("every explicit decision is recorded as
+/// the owner's") and lists `pause` among owner-initiated commands. Before the fix this event
+/// carried `system_actor()` on the CLI path, so the log could not tell an operator's hold from the
+/// driver's own bookkeeping — and an event log is append-only, so a wrong actor is not repaired
+/// later, only regretted.
+///
+/// BOTH HALVES ARE IN ONE ASSERTION SET, AND THE SECOND IS THE ONE THAT DOES THE WORK. Asserting
+/// only that the hold is the owner's would be satisfied by a "fix" that attributed EVERY event in
+/// this start to the owner — which would make the whole log wrong while turning this cell green.
+/// `ExecutionStarted` staying `system-cli` is what excludes that, and it is the same shape as the
+/// release/ordinary-hop pair asserted for `NodeOutcomeRecorded` further down this file.
+#[test]
+fn a_held_start_records_the_hold_as_the_operators_decision_and_the_start_as_the_systems() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+
+    let start = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_hold_actor",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "ARRANGEMENT: the held start must succeed, or both assertions below hold vacuously: {}",
+        String::from_utf8_lossy(&start.stdout)
+    );
+
+    let actors = event_actors(&events);
+
+    // HALF ONE: the hold is the operator's act — nobody reached it by a driver hop, someone typed
+    // `--held`.
+    let hold = actors
+        .iter()
+        .find(|(kind, _)| kind == "ExecutionPaused")
+        .unwrap_or_else(|| panic!("a held start must record an ExecutionPaused: {actors:?}"));
+    assert_eq!(
+        hold.1, "owner-cli",
+        "holding an execution is the operator's decision and the log must say so: {actors:?}"
+    );
+
+    // HALF TWO, in the same set so the split is tested rather than assumed: the `start` this hold
+    // rides in stays the system's, exactly as `start.rs`'s own doc argues.
+    let started = actors
+        .iter()
+        .find(|(kind, _)| kind == "ExecutionStarted")
+        .unwrap_or_else(|| panic!("a start must record an ExecutionStarted: {actors:?}"));
+    assert_eq!(
+        started.1, "system-cli",
+        "the start itself is not an owner-initiated command: {actors:?}"
+    );
 }

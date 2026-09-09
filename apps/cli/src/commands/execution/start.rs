@@ -3,14 +3,14 @@ use std::{collections::BTreeMap, path::Path};
 use graphhelm_events::PreparedAppend;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionStarted, NewEvent, OpaqueId,
-    PersistedActor, Sensitivity, WireHash,
+    EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionPaused, ExecutionStarted, NewEvent,
+    OpaqueId, PersistedActor, PersistedActorType, Sensitivity, WireHash,
 };
 
 use super::driver::{Release, drive_to_quiescence};
 use super::{
     Failure, PreparedDrive, argument, execution_state, finish, idempotency_key, load_fixtures,
-    render, replay_failure, repository_failure,
+    load_projection, render, replay_failure, repository_failure,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -31,6 +31,7 @@ pub fn run(
     fixtures: Option<&Path>,
     mode: &str,
     execution: Option<&str>,
+    held: bool,
 ) -> Outcome {
     let loaded = match graphhelm_schema::load_graph(file) {
         Ok(loaded) => loaded,
@@ -50,8 +51,17 @@ pub fn run(
         Ok(version) => version,
         Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
     };
-    finish(
-        COMMAND,
+    let started = if held {
+        execute_held(
+            &version,
+            events,
+            fixtures,
+            mode,
+            execution,
+            super::system_actor(),
+            idempotency_key("execution-started"),
+        )
+    } else {
         execute(
             &version,
             events,
@@ -60,10 +70,9 @@ pub fn run(
             execution,
             super::system_actor(),
             idempotency_key("execution-started"),
-        ),
-        |value| value,
-    )
-    .with_warnings(warnings)
+        )
+    };
+    finish(COMMAND, started, |value| value).with_warnings(warnings)
 }
 
 /// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as
@@ -98,7 +107,15 @@ pub(crate) fn execute(
     actor: PersistedActor,
     key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
-    let prepared = execute_prepared(version, events, fixtures, mode, execution, actor, key)?;
+    let prepared = execute_prepared(
+        version,
+        events,
+        fixtures,
+        mode,
+        execution,
+        Attribution { actor, key },
+        false,
+    )?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let projection = drive_to_quiescence(
         &store,
@@ -125,13 +142,20 @@ pub(crate) fn execute(
     ))
 }
 
-/// The decision half of `execute` (Milestone 05d Task 9's `execute_prepared` split): everything
-/// through the `ExecutionStarted` append. Returns the [`PreparedDrive`] handoff the drive half —
-/// sync (`execute`, above) or async (`serve::routes::start`) — needs to run
-/// `drive_to_quiescence`/`drive_to_quiescence_async` afterward. `execute` is exactly
-/// `execute_prepared` plus the same sync drive and render as before this split: CLI behavior is
-/// byte-identical.
-pub(crate) fn execute_prepared(
+/// #90: a start that publishes and records `execution_started` and stops there.
+///
+/// THE HOLD IS THE ABSENCE OF THE DRIVE, so this is a separate function rather than an eighth
+/// parameter on `execute`. `execute_prepared` is already "everything through the `ExecutionStarted`
+/// append" -- the split Milestone 05d made so the async route could drive separately -- and a held
+/// start is that half and no second half. A boolean would have said the same thing while making the
+/// caller read a flag to find out which of two behaviours it gets; two names say it at the call
+/// site. (`clippy::too_many_arguments` asked the question at 8/7; the answer it wanted was not an
+/// `allow`.)
+///
+/// The projection is read BACK from the store rather than carried forward: the reply then describes
+/// what a separate reader would see, which is what `execution status` reports and what the cell
+/// asserts independently.
+pub(crate) fn execute_held(
     version: &GraphVersion,
     events: &Path,
     fixtures: Option<&Path>,
@@ -139,7 +163,52 @@ pub(crate) fn execute_prepared(
     execution: Option<&str>,
     actor: PersistedActor,
     key: OpaqueId,
+) -> Result<serde_json::Value, Failure> {
+    let prepared = execute_prepared(
+        version,
+        events,
+        fixtures,
+        mode,
+        execution,
+        Attribution { actor, key },
+        true,
+    )?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let (_, _, projection) = load_projection(&store, Some(prepared.execution_id.as_str()))?;
+    Ok(render(
+        &projection,
+        &graphhelm_execution::AttentionInputs::default(),
+        &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
+    ))
+}
+
+/// The decision half of `execute` (Milestone 05d Task 9's `execute_prepared` split): everything
+/// through the `ExecutionStarted` append. Returns the [`PreparedDrive`] handoff the drive half —
+/// sync (`execute`, above) or async (`serve::routes::start`) — needs to run
+/// `drive_to_quiescence`/`drive_to_quiescence_async` afterward. `execute` is exactly
+/// `execute_prepared` plus the same sync drive and render as before this split: CLI behavior is
+/// byte-identical.
+/// Who performed the act, and the key that makes performing it twice one act.
+///
+/// These two travel together at every call site and are handed to every event this function
+/// appends, so they are one argument rather than two. Bundling them is also what leaves room for
+/// `hold` below WITHOUT reaching for `#[allow(clippy::too_many_arguments)]` -- the lint was asking
+/// a fair question and an allow would have answered it by silencing it.
+pub(crate) struct Attribution {
+    pub actor: PersistedActor,
+    pub key: OpaqueId,
+}
+
+pub(crate) fn execute_prepared(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    mode: &str,
+    execution: Option<&str>,
+    attribution: Attribution,
+    hold: bool,
 ) -> Result<PreparedDrive, Failure> {
+    let Attribution { actor, key } = attribution;
     let mode = parse_mode(mode)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
@@ -197,6 +266,12 @@ pub(crate) fn execute_prepared(
         node_ids,
         node_timeout_seconds,
     };
+    let hold_key = OpaqueId::parse(format!("{}-held", key.as_str())).map_err(|_| {
+        execution_state(
+            "the hold key could not be represented on the wire",
+            "/execution",
+        )
+    })?;
     let declaration_key = OpaqueId::parse(format!("{}-form", key.as_str())).map_err(|_| {
         execution_state(
             "the declaration key could not be represented on the wire",
@@ -237,13 +312,61 @@ pub(crate) fn execute_prepared(
             // the shape demand a credential it has no use for.
             NewEvent::new(
                 declaration_key,
-                actor,
+                actor.clone(),
                 Sensitivity::Internal,
                 EventKind::ExecutionFormDeclared(declared_form),
                 vec![],
                 vec![],
             ),
-        ],
+        ]
+        .into_iter()
+        // #90: THE HOLD RIDES IN THE SAME ATOMIC REQUEST, for the reason written two comments up
+        // about the declared shape -- the argument is identical and so is the failure it prevents.
+        //
+        // Appending it separately left a window (Codex P1 on this PR, and it is right): a process
+        // that dies between the two appends leaves `ExecutionStarted` + `ExecutionFormDeclared`
+        // with no `ExecutionPaused`. That state is worse than either endpoint, because BOTH exits
+        // are shut -- `start --held` refuses with "an execution has already started on this
+        // stream", and the `resume` this flag documents refuses with `not_paused`. The operator
+        // must first diagnose a partial write and then repair it with a `pause` nobody told them
+        // to run. One request has no window: the reader sees a held execution or no execution.
+        .chain(hold.then(|| {
+            // #90: THE HOLD IS AN EXPLICIT DECISION, so it is attributed to whoever made it.
+            //
+            // `owner_actor`'s own doc (`execution/mod.rs`) draws the line: "The driver's automatic
+            // hops stay under the system actor; every explicit decision is recorded as the owner's",
+            // and its list of owner-initiated commands names `pause`. This event is an
+            // `ExecutionPaused` -- the same kind `pause` emits, and `pause.rs` writes it as
+            // `owner_actor()`. Nobody reached it by a driver hop: an operator typed `--held`.
+            //
+            // The defence at the top of this file -- that `start` keeps `system_actor()` because it
+            // is not on that list -- is about `start`'s OWN events. It does not reach an
+            // `ExecutionPaused` that this flag newly emits (A, blocking on this PR).
+            //
+            // THE CONDITION IS NOT A SPECIAL CASE, IT IS THE RULE: a constant is the fallback for an
+            // ABSENT identity, never the substitute for a PRESENT one. `actor` is `system_actor()`
+            // on the CLI path -- a placeholder, no caller in it -- but over the API it is the
+            // caller's real owner/agent identity from the request headers (see this function's doc).
+            // Overwriting that with the `owner-cli` constant would DESTROY an attribution in an
+            // append-only log, which is worse than the gap it was meant to close. So: substitute
+            // only where there is nothing to lose.
+            let hold_actor = if actor.actor_type() == PersistedActorType::System {
+                super::owner_actor()
+            } else {
+                actor
+            };
+            NewEvent::new(
+                hold_key,
+                hold_actor,
+                Sensitivity::Internal,
+                EventKind::ExecutionPaused(ExecutionPaused {
+                    execution_id: stream_id.clone(),
+                }),
+                vec![],
+                vec![],
+            )
+        }))
+        .collect(),
         vec![],
         vec![],
     )

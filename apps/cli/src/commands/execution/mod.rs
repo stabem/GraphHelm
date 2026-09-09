@@ -254,7 +254,6 @@ pub(super) fn replay_projection(
     graphhelm_events::replay(scope, stream, &history).map_err(|error| replay_failure(&error))
 }
 
-/// The system actor every `execution` command writes as, identically to `graph simulate`'s.
 /// The actor for owner-initiated commands: approve, pause, resume, cancel, signal.
 ///
 /// D-019 makes owner sovereignty the point of these commands, and an event log that cannot tell
@@ -267,6 +266,11 @@ pub(super) fn owner_actor() -> PersistedActor {
     )
 }
 
+/// The system actor every `execution` command writes as, identically to `graph simulate`'s.
+///
+/// This sentence used to sit at the top of `owner_actor`'s doc block, directly above a line saying
+/// the opposite about the same signature — left behind when the two were split. Moved here, where
+/// it is true.
 pub(super) fn system_actor() -> PersistedActor {
     PersistedActor::new(
         PersistedActorType::System,

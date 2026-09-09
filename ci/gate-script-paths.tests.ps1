@@ -10,7 +10,7 @@
 # The population is DERIVED from the file, never a hand list: a hand list is born correct and rots
 # on the next site somebody adds, which is the same defect one generation later.
 
-$ExpectedAssertionCount = 14
+$ExpectedAssertionCount = 21
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -198,14 +198,130 @@ Assert-True -Condition ($unflagged.Count -eq 0) `
 # written without -NoProfile would leave the population above and be governed by nothing. Splatted
 # invocations are followed to the array they splat: `& powershell.exe @arguments` carries its flags
 # in an assignment several lines up, and that assignment is itself one of the sites checked above.
-$spawnsMissingNoProfile = New-Object System.Collections.Generic.List[string]
-foreach ($file in $productionScripts) {
+#
+# #963: `Start-Process` IS one of those spawns, and the complement skipped every one of them.
+# `GetCommandName()` returns `Start-Process`, never the host it launches, so a name filter alone
+# never saw `ci/gate.ps1`'s stage spawn -- the single most important spawn in this repository -- nor
+# `ci/gate-runner.ps1`'s hidden gate. Both carry `-NoProfile` today, so the RULE above governs them;
+# take that token away and, before this widening, nothing did. Measured, with a seventh spawn site
+# present so the vacuity floor kept its count of six:
+#
+#   scan 1 (keys on the -NoProfile token)   0 sites    -> not in the population
+#   scan 2 (keys on GetCommandName)         0 matched  -> not seen
+#   the suite                               14/14 GREEN, stage spawn ungoverned
+#
+# THE TARGET IS RESOLVED, NOT ASSUMED, and that is the half that keeps this from swallowing the
+# tree. `ci/` legitimately starts non-PowerShell processes -- `ci/postgres.ps1` spawns `pg_ctl` in
+# this exact shape -- and a widening that counted every `Start-Process` would end up demanding
+# `-NoProfile` from `pg_ctl`. So a `Start-Process` is a spawn only when its target RESOLVES to a
+# PowerShell host, and all three shapes in this tree resolve:
+#
+#   -FilePath 'powershell.exe'    a literal
+#   Start-Process powershell      the first positional argument -- ci/gate-runner.ps1:335
+#   -FilePath $hostExe            a variable, followed to its assignment, which in ci/gate.ps1 is
+#                                 `if (...) { 'pwsh' } else { 'powershell' }`: two constants, and
+#                                 one branch naming a host is enough
+#
+# A target that resolves to NOTHING is not a spawn. That is the conservative direction deliberately:
+# an unresolvable variable is unknown, and a cell that fired on unknown would fire on `$pgCtl`.
+#
+# The positional shape is read only at element 1, immediately after the command name.
+# `Start-Process -Verb runas powershell` is therefore MISSED rather than mis-resolved to `runas`.
+# That shape is not in this tree, and a narrow answer is better than a wrong one here, because the
+# wrong one is what gets an exclusion list written for it.
+
+function Resolve-TargetNames {
+    param($Expression, $Ast)
+    $names = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Expression) { return $names.ToArray() }
+    if (($Expression -is [System.Management.Automation.Language.StringConstantExpressionAst]) -or
+        ($Expression -is [System.Management.Automation.Language.ExpandableStringExpressionAst])) {
+        $names.Add([string] $Expression.Value)
+    } elseif ($Expression -is [System.Management.Automation.Language.VariableExpressionAst]) {
+        # Every assignment to that name, and every string constant anywhere inside it. A conditional
+        # assignment yields one constant per branch, which is exactly ci/gate.ps1's `$hostExe`, and
+        # one branch naming a host is enough -- the run takes one of them.
+        $wanted = '$' + $Expression.VariablePath.UserPath
+        foreach ($assignment in $Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            if ($assignment.Left.Extent.Text -ne $wanted) { continue }
+            foreach ($constant in $assignment.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+                $names.Add([string] $constant.Value)
+            }
+        }
+    }
+    return $names.ToArray()
+}
+
+function Test-TargetIsPowerShellHost {
+    param([string[]] $Names)
+    foreach ($name in @($Names)) {
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        # The LEAF, so a fully qualified path to the host still counts and a bare name is its own
+        # leaf. GetFileName throws on invalid path characters, and an argument that cannot be a path
+        # is not a host either.
+        $leaf = $name
+        try { $leaf = [System.IO.Path]::GetFileName($name) } catch { $leaf = $name }
+        if ($leaf -match '^(powershell|pwsh)(\.exe)?$') { return $true }
+    }
+    return $false
+}
+
+function Get-StartProcessTargetExpression {
+    param($Command)
+    $elements = @($Command.CommandElements)
+    for ($i = 1; $i -lt $elements.Count; $i++) {
+        $element = $elements[$i]
+        if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+            # PowerShell binds parameters by unambiguous prefix and `-File` is one for Start-Process,
+            # so the name is matched as a prefix rather than spelled out in full.
+            $parameterName = [string] $element.ParameterName
+            if (($parameterName.Length -ge 2) -and
+                ('FilePath'.StartsWith($parameterName, [System.StringComparison]::OrdinalIgnoreCase))) {
+                if ($null -ne $element.Argument) { return $element.Argument }
+                if (($i + 1) -lt $elements.Count) { return $elements[$i + 1] }
+            }
+            continue
+        }
+        if ($i -eq 1) { return $element }
+    }
+    return $null
+}
+
+<#
+.SYNOPSIS
+    Every command in one script that starts a PowerShell host, and whether it carries -NoProfile.
+
+.DESCRIPTION
+    Takes TEXT rather than a path so a fixture can drive it. The real-tree cells below are the only
+    ones that read this checkout: without them the widening would be measured only against strings
+    written in this file, and without the fixtures an empty result would be indistinguishable from a
+    matcher that can no longer find anything.
+#>
+function Get-HostSpawnCommands {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Text,
+        [Parameter(Mandatory)] [string] $Name
+    )
     $tokens = $null
     $errors = $null
-    $fileAst = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+    $fileAst = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errors)
+    $found = New-Object System.Collections.Generic.List[object]
+
     foreach ($command in $fileAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
         $commandName = $command.GetCommandName()
-        if (-not $commandName -or $commandName -notmatch '^(powershell|pwsh)(\.exe)?$') { continue }
+        if (-not $commandName) { continue }
+
+        $kind = $null
+        if ($commandName -match '^(powershell|pwsh)(\.exe)?$') {
+            $kind = 'named'
+        } elseif ($commandName -match '^Start-Process$') {
+            $target = Get-StartProcessTargetExpression -Command $command
+            if (Test-TargetIsPowerShellHost -Names (Resolve-TargetNames -Expression $target -Ast $fileAst)) {
+                $kind = 'start-process'
+            }
+        }
+        if (-not $kind) { continue }
+
         $argumentText = $command.Extent.Text
         foreach ($element in $command.CommandElements) {
             if (($element -is [System.Management.Automation.Language.VariableExpressionAst]) -and $element.Splatted) {
@@ -216,13 +332,86 @@ foreach ($file in $productionScripts) {
                 }
             }
         }
-        if ($argumentText -notmatch '(?<![A-Za-z])-NoProfile(?![A-Za-z])') {
-            $spawnsMissingNoProfile.Add("$($file.Name):$($command.Extent.StartLineNumber)")
-        }
+
+        $found.Add([pscustomobject]@{
+            Name         = $Name
+            Line         = $command.Extent.StartLineNumber
+            Kind         = $kind
+            HasNoProfile = ($argumentText -match '(?<![A-Za-z])-NoProfile(?![A-Za-z])')
+        })
+    }
+    # `.ToArray()`, NOT the usual `return , ([object[]] $found)`. The comma idiom stops a
+    # ONE-element result being unwrapped, and it is correct where the caller ASSIGNS the result --
+    # `ci/required-features.ps1` does exactly that and reads 0 for an empty population, measured.
+    # It breaks where the caller wraps in `@()`, which is how every cell below calls this: `@()`
+    # enumerates the pipeline, the pipeline emits the wrapped array as one object, and the count is
+    # 1. An empty result becomes one row that does not exist.
+    #
+    #   comma idiom, empty    $x = f  -> 0     @(f).Count = 1   <- the row it invents
+    #   .ToArray(), empty     $x = g  -> 0     @(g).Count = 0
+    #   either one, ONE element                @(f).Count = 1   <- why the idiom looks correct
+    #
+    # The row it invented was the negative control's: a Start-Process that targets no host must
+    # produce NOTHING, and it produced one empty something instead. `.ToArray()` is right under
+    # both call shapes, so the collector does not depend on how it is read.
+    return $found.ToArray()
+}
+
+# THE MATCHER FIRST, against fixtures, because once this lands the real tree is clean and a clean
+# result proves nothing about whether the matcher can still find anything.
+
+$literalSpawn = @(Get-HostSpawnCommands -Name 'fixture.ps1' -Text "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-File', `$x) -PassThru")
+Assert-True -Condition (($literalSpawn.Count -eq 1) -and (-not $literalSpawn[0].HasNoProfile)) `
+    -Message 'a Start-Process spawning a literal powershell.exe with no -NoProfile is REPORTED (this is #963)'
+
+# THE NEGATIVE CONTROL, and it is the half that would bite: ci/ starts real non-PowerShell
+# processes, and a widening that caught them would demand -NoProfile from pg_ctl.
+$foreignSpawn = @(Get-HostSpawnCommands -Name 'fixture.ps1' -Text "Start-Process -FilePath 'robocopy.exe' -ArgumentList @('a', 'b') -Wait")
+Assert-True -Condition ($foreignSpawn.Count -eq 0) `
+    -Message 'and a Start-Process whose target is not a host is not in the population at all'
+
+$positionalSpawn = @(Get-HostSpawnCommands -Name 'fixture.ps1' -Text "`$proc = Start-Process powershell -ArgumentList '-ExecutionPolicy', 'Bypass', '-Command', `$inner -PassThru")
+Assert-True -Condition (($positionalSpawn.Count -eq 1) -and (-not $positionalSpawn[0].HasNoProfile)) `
+    -Message 'the host given POSITIONALLY resolves too -- that is ci/gate-runner.ps1 shape, and -FilePath alone would miss it'
+
+# ci/gate.ps1's own shape, reduced: the target is a variable whose assignment is a conditional, so
+# resolving it means reading both branches.
+$variableSpawnText = @(
+    "`$hostExe = if (`$PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }",
+    "`$process = Start-Process -FilePath `$hostExe -PassThru -NoNewWindow -ArgumentList @('-File', `$ScriptPath)"
+) -join [System.Environment]::NewLine
+$variableSpawn = @(Get-HostSpawnCommands -Name 'fixture.ps1' -Text $variableSpawnText)
+Assert-True -Condition (($variableSpawn.Count -eq 1) -and (-not $variableSpawn[0].HasNoProfile)) `
+    -Message 'a target reached through a variable and a conditional resolves -- this is ci/gate.ps1:448 with the flag taken out'
+
+# AND THE CONTROL FOR THE FLAG ITSELF. Without it, a widening that reported every resolved spawn as
+# unflagged would satisfy all four cells above.
+$compliantSpawn = @(Get-HostSpawnCommands -Name 'fixture.ps1' -Text "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive', '-File', `$x)")
+Assert-True -Condition (($compliantSpawn.Count -eq 1) -and $compliantSpawn[0].HasNoProfile) `
+    -Message 'a compliant Start-Process is in the population AND reads as flagged -- the cells above are about the flag, not about Start-Process'
+
+# ---- and only now the real tree.
+
+$hostSpawns = New-Object System.Collections.Generic.List[object]
+foreach ($file in $productionScripts) {
+    foreach ($row in (Get-HostSpawnCommands -Name $file.Name -Text ([System.IO.File]::ReadAllText($file.FullName)))) {
+        $hostSpawns.Add($row)
     }
 }
+
+# THE JUNCTION. The fixtures prove the matcher can see this shape; the rule below proves the tree is
+# clean. Neither says the matcher is pointed AT the two spawns #963 is about. This does.
+$startProcessSpawns = @($hostSpawns | Where-Object { $_.Kind -eq 'start-process' })
+$startProcessFiles = @($startProcessSpawns | ForEach-Object { $_.Name } | Sort-Object -Unique)
+Assert-True -Condition (($startProcessFiles -contains 'gate.ps1') -and ($startProcessFiles -contains 'gate-runner.ps1')) `
+    -Message "the gate's own stage spawn and the runner's hidden gate are IN the complement now (found: $($startProcessFiles -join ', '))"
+
+Assert-True -Condition (@($startProcessSpawns | Where-Object { $_.Name -eq 'postgres.ps1' }).Count -eq 0) `
+    -Message 'and pg_ctl is not: ci/postgres.ps1 starts a non-PowerShell process in the same shape and must stay out'
+
+$spawnsMissingNoProfile = @($hostSpawns | Where-Object { -not $_.HasNoProfile } | ForEach-Object { "$($_.Name):$($_.Line)" })
 Assert-True -Condition ($spawnsMissingNoProfile.Count -eq 0) `
-    -Message "every named powershell/pwsh invocation carries -NoProfile, so none escapes the rule above (bare at: $($spawnsMissingNoProfile -join ', '))"
+    -Message "every invocation that starts a PowerShell host carries -NoProfile, so none escapes the rule above (bare at: $($spawnsMissingNoProfile -join ', '))"
 
 # ---------------------------------------------------------------------------------------------
 # AND THE FLAG HAS TO EARN ITS PLACE. The five assertions above are a spelling rule; on their own

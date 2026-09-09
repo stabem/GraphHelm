@@ -1543,6 +1543,55 @@ fn resume_does_not_run_held_work_whose_predecessor_never_finished() {
     );
 }
 
+/// #158, and the reason it is not a display quirk. `resume` published `"lastEventAt": null` and an
+/// empty `"nodeLastEventAt"` on a run that had just re-dispatched four nodes and appended events,
+/// while `execution status` read the same store correctly a second later.
+///
+/// The cause is not a stale snapshot: `resume` passed `Liveness::default()`, so those two fields
+/// were never measured on this path and could not have been non-null on any run. `status`, `list`,
+/// `amend` measure with `Liveness::measured`, and `start` -- which also mutates -- reads the store.
+///
+/// The line this pins is the one written on `Liveness::from_store`: the silence BUDGET stays
+/// unmeasured on a mutation reply, because judging it needs a clock reading and a declared bound,
+/// but the INSTANT is "a fact already sitting in the log", and *a command that appended to the
+/// store can honestly report when the store last moved*.
+///
+/// **The `status` read is a CONTROL, not decoration.** A null `lastEventAt` is equally well
+/// explained by a store holding no content events at all, so without it these assertions would
+/// pass for the wrong reason on the day the arrangement stops appending.
+#[test]
+fn resume_reports_when_the_store_last_moved() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure", "deploy": "success"}),
+    );
+    start(&events, &fixtures, "supervised", "exec_resume_liveness");
+    pause(&events, "exec_resume_liveness");
+
+    let resume_data = resume(&events, &fixtures, "exec_resume_liveness");
+    let status_data = status(&events, "exec_resume_liveness");
+
+    assert!(
+        status_data["lastEventAt"].is_string(),
+        "CONTROL FAILED: the command that measures sees no content events either, so this fixture cannot say anything about resume's reply: {status_data}"
+    );
+
+    assert!(
+        resume_data["lastEventAt"].is_string(),
+        "resume appended to this store, so it can report when the store last moved: it published {} while status read {} from the same store",
+        resume_data["lastEventAt"],
+        status_data["lastEventAt"]
+    );
+    assert!(
+        resume_data["nodeLastEventAt"]
+            .as_object()
+            .is_some_and(|per_node| !per_node.is_empty()),
+        "the per-node instants are empty on a reply whose own nodeStateCounts report nodes that moved: {resume_data}"
+    );
+}
+
 /// `pause` states its own precondition before the fold would call a second pause corrupt: refused
 /// unless the aggregate status is `None` or `Running`.
 #[test]

@@ -108,9 +108,16 @@ pub(crate) fn execute(
         // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
         // rather than into calm, so the omission is stated instead of implied.
         &graphhelm_execution::AttentionInputs::default(),
-        // Same posture for the instants: a mutation reply publishes null rather than a
-        // stillness it never looked for.
-        &super::Liveness::default(),
+        // NOT the same posture as the budget above, and #158 is the lived reason for the
+        // split. Judging silence needs a clock reading and a declared bound, which this
+        // command has not got. An INSTANT is a fact already sitting in the log, and a
+        // command that has just appended to the store can honestly report when the store
+        // last moved -- which is what the doc on `Liveness::from_store` says, and what
+        // `start`, also a mutation, has always done. Publishing null here made an operator's
+        // timestamps depend on WHICH VERB they typed: on the first real operator run resume
+        // reported `lastEventAt: null` and an empty `nodeLastEventAt` immediately after
+        // re-dispatching four nodes, while `status` read the same store correctly.
+        &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
     );
 
     // #123's REQUIRED MITIGATION, and it is what pays for overloading `Paused` with a second

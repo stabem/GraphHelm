@@ -3441,6 +3441,19 @@ fn run_story_over_api(events: &Path, directory: &Path) -> (Value, Value) {
     );
     assert_eq!(status, 200, "{reply}");
     assert_eq!(reply["data"]["status"], "completed", "{reply}");
+    // #158, asserted on the surface that is NOT the CLI. The parity guard below compares the
+    // final `status` READ, so what a MUTATION reply itself publishes is outside what it
+    // watches -- this is the only place in this suite holding an HTTP resume reply.
+    //
+    // It is load-bearing, and that was measured rather than assumed: reverting the one-line
+    // fix in `commands/execution/resume.rs` turns this assertion red, which is also the proof
+    // that the HTTP route runs the CLI's own resume rather than a second implementation of it
+    // (D-039). Sabotaging `serve/routes.rs`'s `drive` helper, by contrast, reddens nothing
+    // here -- that path is not the one this reply comes from.
+    assert!(
+        reply["data"]["lastEventAt"].is_string(),
+        "resume over HTTP appended to this store, so it can report when the store last moved: {reply}"
+    );
 
     (
         api_blocked,

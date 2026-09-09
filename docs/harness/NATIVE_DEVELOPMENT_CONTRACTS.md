@@ -81,7 +81,7 @@ detect the defect is absent, optional, or unlinked.
 
 **S1b was a third-site finding, not a missing check.** The discipline *"independence is compared by
 identity, never by count"* is applied twice with the reasoning written down —
-`core/governor/src/memory.rs:764` (a validator roster may not be the producer) and
+`core/governor/src/memory.rs:930` (`validate_candidate`: a validator roster may not be the producer) and
 `apps/cli/tests/jpd_plugin.rs:1560` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
 was absent on the promise-to-observer pair. `JourneyContractGate` now binds the validated contract,
 its validated observation obligations, and its verification result by `contractId` and trusted
@@ -690,7 +690,9 @@ protection's location.**
 core/governor/src/memory.rs:254   if content_is_secret_shaped(content) { ... }
 core/governor/src/memory.rs:259   code: MemoryRefusalCode::SecretDetected
 core/governor/src/memory.rs:299   fn content_is_secret_shaped -> content.contains("ghp_")
-core/governor/tests/memory.rs:63, 858, 1001
+core/governor/tests/memory.rs:58    fn refusal_names_the_code_and_location_but_never_the_secret_value
+core/governor/tests/memory.rs:1026  fn capture_refuses_secret_bearing_content_before_touching_any_boundary
+core/governor/tests/memory.rs:1063  fn the_secret_detector_covers_the_shape_it_declares_and_no_other
 ```
 
 **Trigger it would catch.** Remove the screen call at :240, or widen `content_is_secret_shaped` to

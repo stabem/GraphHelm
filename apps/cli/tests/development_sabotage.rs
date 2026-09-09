@@ -1521,8 +1521,8 @@ fn count_coordinates_in_line(line: &str) -> usize {
 /// verified candidate set to have exactly one member; two or more refuses, same as zero. Proved by
 /// `a_gap_does_not_close_when_its_section_verifies_more_than_one_candidate`.
 ///
-/// The five left below have no donor of either shape, or an ambiguous one -- each comment says
-/// which -- and none of the kinds of blindness that remain is the one #610 already fixed (a token
+/// Five entries lived below until #688 named their symbols (the list is empty since; its own
+/// comment says how each was paid), and none of the kinds of blindness that remain is the one #610 already fixed (a token
 /// search that reaches too far and borrows the WRONG citation's symbol, `memory.rs:512` borrowing
 /// `jpd_plugin.rs`'s, Codex P2 on #606). Neither mechanism can reopen that: `backfill_same_line_gaps`
 /// only reuses a donor pinned at the identical `path:line`, and the section-scoped pass never
@@ -1531,67 +1531,14 @@ fn count_coordinates_in_line(line: &str) -> usize {
 /// `a_gap_does_not_backfill_across_a_section_boundary_even_if_verify_would_allow_it`, which uses a
 /// `verify` that says yes to everything and still stays pinned.
 fn pinned_unreachable_citations() -> Vec<UnreachedCitation> {
-    vec![
-        // No sibling citation anywhere names `memory.rs:764`, and its own `## 4. What was
-        // measured` section has no word that lands on line 764 either (it is a lone closing
-        // brace). The nearest resolved token in that section (`identityDistinctValidation`)
-        // belongs to the very next line's OWN citation, `jpd_plugin.rs:1560` -- borrowing it
-        // across the path boundary is the #610 regression by name, not a gap either widening may
-        // close.
-        UnreachedCitation {
-            path: "core/governor/src/memory.rs".to_owned(),
-            first_line: 764,
-            last_line: 764,
-            context: "` (a validator roster may not be the producer) and".to_owned(),
-        },
-        // THREE entries for one citation, because `tests/memory.rs:63, 858, 1001` names three
-        // lines. `:63`'s section verifies TWO candidates (`MemoryRefusalCode`, `SecretDetected`)
-        // against its line -- ambiguous, refused rather than picked, see the doc comment above.
-        // `:858` and `:1001` verify ZERO: line 858 is a `///` doc-comment line, line 1001 is
-        // `#[test]`, and neither word from the same fence is on either line.
-        //
-        // `:1001` was `:887` until #220 slice 4's later cells (cell 2, the ceiling test, the
-        // supersession-boundary test) added content to this file ahead of it, shifting the same
-        // `#[test]` line -- the one immediately above
-        // `a_record_built_against_a_moved_dependency_is_refused` -- down by 114 lines. Mechanical
-        // only: the citation still names the identical physical line, which is still `#[test]` and
-        // still unreachable for the same reason. Same class `9cf7b17b` already fixed for three
-        // `memory.rs` (src) citations; this is the fourth, in the tests file, caught by this guard
-        // rather than by inspection.
-        UnreachedCitation {
-            path: "core/governor/tests/memory.rs".to_owned(),
-            first_line: 63,
-            last_line: 63,
-            context: "```".to_owned(),
-        },
-        UnreachedCitation {
-            path: "core/governor/tests/memory.rs".to_owned(),
-            first_line: 858,
-            last_line: 858,
-            context: "```".to_owned(),
-        },
-        UnreachedCitation {
-            path: "core/governor/tests/memory.rs".to_owned(),
-            first_line: 1001,
-            last_line: 1001,
-            context: "```".to_owned(),
-        },
-        // The only source that cites this range at all is `producer-record.json`'s own trailing
-        // `_shape` string, and it has no next line WITHIN that source -- `identifier_in` never had
-        // text to search, and the section-scoped pass skips ranges by design (a range's own rot
-        // check only proves a token sits SOMEWHERE across it, never on one line within it, so
-        // trusting a range-donor for a narrower point is the false-positive trap
-        // `a_range_donor_does_not_backfill_a_narrower_point_inside_it` guards against; this gap has
-        // no point-donor either). `citation_lookahead_does_not_cross_a_source_boundary` pins the
-        // same property from the other direction: this exact citation must stay unreached rather
-        // than borrow a neighbouring source's token.
-        UnreachedCitation {
-            path: "core/runtime/src/retrieval.rs".to_owned(),
-            first_line: 12,
-            last_line: 26,
-            context: "<no usable next line>".to_owned(),
-        },
-    ]
+    // EMPTY since #688, and the emptiness is the claim: every citation the harness doc and the
+    // sabotage corpus make now sits next to a symbol the real file confirms on that line. The five
+    // entries that lived here were paid by naming the symbol at the coordinate (or moving the
+    // coordinate to the symbol the sentence was about, where the line had drifted onto a comment,
+    // an assertion or a bare `#[test]`), never by widening the search. A list that GROWS again is
+    // a citation rotting unwatched; add it here with its context and the reason no widening may
+    // reach it, or name the symbol in the doc.
+    Vec::new()
 }
 
 /// The first word long enough to be a symbol rather than prose punctuation.

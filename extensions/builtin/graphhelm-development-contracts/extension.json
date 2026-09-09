@@ -787,7 +787,7 @@
           "id": "fixture/sabotage-s2-false-structural-absence-producer-record",
           "kind": "fixture",
           "path": "fixtures/sabotage/s2-false-structural-absence/producer-record.json",
-          "sha256": "sha256:5eea3ba8a5ef4459a8c5c65c3a14eb963a2c2b3fec63ccda34019c2ab915aac1",
+          "sha256": "sha256:74ffad5a184349906fecb1c94c955ff181a7e8f0bdeb0839d2d343e72dfb687e",
           "effects": [],
           "permissions": [],
           "requires": {

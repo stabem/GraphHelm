@@ -260,6 +260,13 @@ pub(crate) fn run_supervised(
                 rule: match error {
                     graphhelm_process_tree::ProcessTreeError::JobSetup => "job_setup",
                     graphhelm_process_tree::ProcessTreeError::ProcessResume => "process_resume",
+                    // #878: the child reached `create` unsuspended, so it ran before the job
+                    // could contain it and anything it started is outside. The funnel here DOES
+                    // call `configure`, so this arm exists to keep the compiler forcing the
+                    // decision at every call site rather than because this one can reach it.
+                    graphhelm_process_tree::ProcessTreeError::ChildNotSuspended => {
+                        "child_not_suspended"
+                    }
                 },
             });
         }
@@ -1394,6 +1401,13 @@ pub fn run_in_workspace(
                 rule: match error {
                     graphhelm_process_tree::ProcessTreeError::JobSetup => "job_setup",
                     graphhelm_process_tree::ProcessTreeError::ProcessResume => "process_resume",
+                    // #878: the child reached `create` unsuspended, so it ran before the job
+                    // could contain it and anything it started is outside. The funnel here DOES
+                    // call `configure`, so this arm exists to keep the compiler forcing the
+                    // decision at every call site rather than because this one can reach it.
+                    graphhelm_process_tree::ProcessTreeError::ChildNotSuspended => {
+                        "child_not_suspended"
+                    }
                 },
             });
         }

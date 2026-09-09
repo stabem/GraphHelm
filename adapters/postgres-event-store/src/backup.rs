@@ -4319,6 +4319,12 @@ fn create_process_group(child: &std::process::Child) -> Result<ProcessGroup, Bac
     graphhelm_process_tree::create(child).map_err(|error| match error {
         ProcessTreeError::JobSetup => unavailable(UnavailableStage::JobSetup),
         ProcessTreeError::ProcessResume => unavailable(UnavailableStage::ProcessResume),
+        // #878: a child that reached `create` unsuspended. Mapped to `JobSetup` deliberately
+        // rather than given a stage of its own -- the stage is a wire-visible code
+        // (`process.job.setup`), and the condition IS a job that cannot contain this child. A new
+        // stage would widen a published vocabulary for a case this call site cannot reach,
+        // because the spawn above configures.
+        ProcessTreeError::ChildNotSuspended => unavailable(UnavailableStage::JobSetup),
     })
 }
 

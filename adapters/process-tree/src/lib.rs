@@ -45,6 +45,27 @@
 //! [`configure`] is load-bearing rather than tidiness, and why `adapters/tool-host`'s funnel calls it.
 //! The Windows advantage is real and it is conditional on that call.
 //!
+//! **#878 asked whether a grandchild can escape through that interval. Along the documented path
+//! the interval carries no running child.** [`configure`] sets `CREATE_SUSPENDED` and
+//! [`create`] resumes only after the assignment succeeds, so the child executes no instruction
+//! before it is contained and has nothing to spawn a descendant with.
+//!
+//! **And the caller who skips [`configure`] is now REFUSED rather than documented.**
+//! `ResumeThread` returns the thread's previous suspend count, which this crate was
+//! discarding; zero means nothing ever suspended it, so the child has been running since the
+//! spawn and the group [`create`] would return promises a containment it cannot deliver.
+//! [`create`] answers [`ProcessTreeError::ChildNotSuspended`] instead. That is #878's second
+//! question -- whether the ordering can be tightened rather than mitigated -- answered by
+//! eliminating the window instead of shrinking it, and it costs one comparison on a value the
+//! OS was already returning.
+//!
+//! `tests/suspended_window.rs` holds the pair: a configured child is accepted, an
+//! otherwise-identical unconfigured one is refused, and a third cell pins that the refusal is
+//! that specific error rather than a job that failed to build. They ask the operating system
+//! rather than the clock -- an earlier version slept and looked for a marker file, and a
+//! reviewer showed that two cells in separate tests meet different scheduler load, so neither
+//! established the other's interval.
+//!
 //! **The Unix hole fails toward a false GREEN, which is the worse direction.** A descendant that
 //! leaves the group survives `terminate`, and if it also redirects its streams the reader backstop
 //! sees a clean EOF — so the capture looks normal and the record says a tree is gone while it is
@@ -87,6 +108,32 @@ pub enum ProcessTreeError {
     JobSetup,
     /// The suspended child could not be resumed after assignment (Windows only).
     ProcessResume,
+    /// The child was NOT suspended, so [`configure`] was never called on its command and it has
+    /// been running since the spawn (Windows only).
+    ///
+    /// This is #878's window, detected instead of documented. `ResumeThread` returns the
+    /// thread's PREVIOUS suspend count, and zero means nothing ever suspended it -- so between
+    /// the spawn and this assignment the child was free to start descendants, and every one of
+    /// them is outside the job. The group this call would return promises containment it cannot
+    /// deliver, which is worse than no group at all: a caller that believes it can kill the tree
+    /// stops looking. Refusing is the only answer that does not lie.
+    ///
+    /// **WHAT THE COUNT CANNOT SEE, because it is a state and not a provenance.** It says every
+    /// thread is suspended NOW; it does not say when or why. A hostile executable spawned
+    /// without [`configure`] could start a descendant and then suspend all of its own threads,
+    /// and this check would accept it. So the refusal catches the ACCIDENT -- a caller who
+    /// forgot -- and not an adversary, and the crate's containment claim for an untrusted
+    /// executable rests on the funnel calling [`configure`], not on this. Closing that would
+    /// need the spawn and the assignment to be one operation the caller cannot separate, which
+    /// is a different API and a different change (Codex P2 on #1027).
+    ///
+    /// **THIS ERROR IS DESTRUCTIVE: the child is DEAD when it is returned.** The suspend count
+    /// is only knowable after the job has taken the process, the job carries
+    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and a process cannot leave a job -- so releasing
+    /// the handle on the refusal path terminates it. A caller must not treat this as a
+    /// non-destructive rejection it can retry; the child is gone, and any descendants it
+    /// started before the assignment are NOT, which is the whole point of the refusal.
+    ChildNotSuspended,
 }
 
 impl std::fmt::Display for ProcessTreeError {
@@ -96,6 +143,9 @@ impl std::fmt::Display for ProcessTreeError {
             Self::ProcessResume => {
                 formatter.write_str("the suspended process could not be resumed")
             }
+            Self::ChildNotSuspended => formatter.write_str(
+                "the child was not suspended, so it ran before the job could contain it",
+            ),
         }
     }
 }
@@ -619,15 +669,46 @@ pub fn create(child: &std::process::Child) -> Result<ProcessGroup, ProcessTreeEr
         unsafe { CloseHandle(job) };
         return Err(ProcessTreeError::JobSetup);
     }
-    if let Err(error) = resume_suspended_process(child.id()) {
+    let previous_suspend_count = match resume_suspended_process(child.id()) {
+        Ok(count) => count,
+        Err(error) => {
+            unsafe { CloseHandle(job) };
+            return Err(error);
+        }
+    };
+    // #878, DETECTED RATHER THAN DOCUMENTED. Zero means nothing had suspended this thread, so
+    // [`configure`] was never called and the child has been running since the spawn -- free, for
+    // that whole interval, to start descendants that this job will never contain. Returning a
+    // group here would promise a containment it cannot deliver, and a caller that believes it
+    // can kill the tree stops looking.
+    //
+    // THIS REFUSAL KILLS THE CHILD, and an earlier version of this comment claimed the opposite.
+    // By the time the suspend count is known the child is ALREADY a member of a job carrying
+    // `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and a process cannot leave a job -- Windows offers no
+    // removal, which is the same property that makes the container worth having. So closing the
+    // handle on this path terminates it. Leaving the handle open to spare the child would leak
+    // it and keep the kill pending on a value nobody holds, which is worse (Codex P2 on #1027).
+    //
+    // Refusing destructively is also the right direction on its merits: this child has been
+    // running unconfined since the spawn and may already have started descendants outside the
+    // job. Killing it does not reach those -- nothing here can -- but leaving it running would
+    // add a process nobody is tracking to a hole nobody knew about. The contract is stated on
+    // the error and asserted by a cell, so a caller reads it rather than discovers it.
+    if previous_suspend_count == 0 {
         unsafe { CloseHandle(job) };
-        return Err(error);
+        return Err(ProcessTreeError::ChildNotSuspended);
     }
     Ok(ProcessGroup(job as usize))
 }
 
 #[cfg(windows)]
-fn resume_suspended_process(process_id: u32) -> Result<(), ProcessTreeError> {
+/// Resume the child and report its thread's PREVIOUS suspend count.
+///
+/// The count is the whole of #878's answer and it was being discarded. `ResumeThread` returns
+/// how many times the thread had been suspended BEFORE this call: one for a child spawned with
+/// `CREATE_SUSPENDED`, and ZERO for a child that has been running since the spawn -- which is
+/// exactly the condition under which descendants can be started outside the job.
+fn resume_suspended_process(process_id: u32) -> Result<u32, ProcessTreeError> {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
         System::{
@@ -646,27 +727,40 @@ fn resume_suspended_process(process_id: u32) -> Result<(), ProcessTreeError> {
         dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).unwrap(),
         ..THREADENTRY32::default()
     };
+    // EVERY THREAD, and the MINIMUM of their counts. The first version resumed the first thread
+    // it could open and stopped: for a `CREATE_SUSPENDED` child that is the only thread and the
+    // answer is exact, but for a child that was never configured the snapshot can hand back a
+    // suspended WORKER while the primary runs, and a non-zero count from it would report a
+    // containment that never held (Codex P2 on #1027). A process is suspended only if all of its
+    // threads are, so the minimum is the honest reading. Resuming a thread that was not
+    // suspended is a no-op that returns 0, which is exactly the value that must refuse.
+    //
+    // NOT COVERED BY A CELL, and said so rather than covered by one that cannot discriminate.
+    // Telling MINIMUM from FIRST needs a child with a suspended non-primary thread, and nothing
+    // this suite can spawn arranges that: a cooperative process has no suspended threads, so a
+    // cell built from one passes under both readings and would be evidence of nothing. The
+    // existing pair still covers the property that matters -- configured is accepted,
+    // unconfigured is refused -- and this line is the narrower claim it does not reach.
     let mut found = unsafe { Thread32First(snapshot, std::ptr::addr_of_mut!(entry)) } != 0;
-    let mut resumed = false;
+    let mut previous_suspend_count: Option<u32> = None;
     while found {
         if entry.th32OwnerProcessID == process_id {
             let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
             if !thread.is_null() {
-                resumed = unsafe { ResumeThread(thread) } != u32::MAX;
+                let count = unsafe { ResumeThread(thread) };
                 unsafe { CloseHandle(thread) };
-                if resumed {
-                    break;
+                if count != u32::MAX {
+                    previous_suspend_count = Some(match previous_suspend_count {
+                        Some(lowest) => lowest.min(count),
+                        None => count,
+                    });
                 }
             }
         }
         found = unsafe { Thread32Next(snapshot, std::ptr::addr_of_mut!(entry)) } != 0;
     }
     unsafe { CloseHandle(snapshot) };
-    if resumed {
-        Ok(())
-    } else {
-        Err(ProcessTreeError::ProcessResume)
-    }
+    previous_suspend_count.ok_or(ProcessTreeError::ProcessResume)
 }
 
 /// Release the job handle — **which KILLS the job's remaining members**.

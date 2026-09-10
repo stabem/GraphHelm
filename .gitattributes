@@ -80,6 +80,47 @@ docs/acceptance/demos/** -text
 *.ps1 text eol=lf
 *.py text eol=lf
 
+# `.factory/*.md` and `AGENTS.md` are read by every lane, and `ci/liveness-rule.tests.ps1`
+# asserts that each document's line endings are UNIFORM. Uniformity had to be the assertion
+# because nothing declared these paths: what landed on disk was decided by the cloner's
+# `core.autocrlf`, so the SAME COMMIT read LF on a clean Linux checkout and CRLF on a Windows
+# one, and a strict CRLF check went red over two perfectly consistent files while naming the
+# wrong cause (#1010).
+#
+# THE GLOB GOVERNS 131 FILES, not the two the guard names, and `*` is NOT recursive. Measured
+# on `origin/main`: `.factory/*.md` matches 131 paths while 132 `.md` files exist under
+# `.factory/`, so exactly one -- `.factory/a-storm-controls/README.md` -- stays unspecified.
+# Every matched path is `i/lf` in the index (`git ls-files --eol`, zero `i/crlf`), so no blob
+# is rewritten and nothing reads as modified; what changes is the bytes on disk at the next
+# checkout.
+#
+# The glob rather than the two names, deliberately: declaring only the guarded pair would
+# leave 130 documents governed by the cloner's `core.autocrlf` -- the exact condition that
+# produced #1010's defect -- and would have to be reopened the moment the guard's list grows.
+#
+# NOT COVERED, named so it reads as a decision rather than an oversight:
+# `docs/DECISION_REGISTER.md` is read by lanes AND by code
+# (`tools/acceptance-map/tests/grounded.rs:154` reads it with `read_to_string`), and nothing
+# here declares `docs/*.md`. It is the natural next candidate; it is left out because
+# widening scope after a change has been read is how a reviewed diff stops matching what was
+# reviewed.
+#
+# WHAT THIS DOES NOT DO, corrected after it was claimed wrongly here: it does NOT heal existing
+# clones. An attributes-only change leaves every blob untouched, so git never re-materialises
+# the files, and a working copy already sitting on disk as CRLF stays CRLF with a CLEAN status
+# -- status normalises the working file before comparing, so git genuinely sees no difference.
+# Measured on a Windows bench at `core.autocrlf=true`: 535 CRLF endings before the rule, 535
+# after, `0` modified, and 535 still after an explicit `git checkout HEAD -- <path>`, which is
+# a no-op on a file git considers up to date. Lines 61-64 above already say this for the script
+# rules, and #676 owns the tested migration; nothing here is a substitute for it.
+#
+# So what this buys is FRESH checkouts: every new clone materialises these documents the same
+# way instead of asking the cloner's `core.autocrlf`. Existing benches keep whatever they have,
+# which is why #1010's guard asserts UNIFORMITY rather than one convention -- each bench stays
+# internally consistent and passes, while the fleet converges only as benches are recreated.
+.factory/*.md text eol=lf
+AGENTS.md text eol=lf
+
 # The demo exemption is RESTATED here, after the rules above, because in .gitattributes the LAST
 # matching line wins per attribute. `docs/acceptance/demos/** -text` sits earlier in this file, so
 # without this restatement a `.sh`, `.ps1` or `.py` recorded inside a demo would resolve to

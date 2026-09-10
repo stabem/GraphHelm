@@ -63,6 +63,43 @@ prompt
 - export/replay;
 - public API/CLI.
 
+### 3.2.1 The MVP bar inside that scope (owner decision, 2026-08-24)
+
+Section 3.2 lists twenty-two items and orders none of them, which is how a scope becomes a
+wish: every item is in Phase 1, so no item is next. The owner's decision on PR #62, recorded
+as issue #302, cuts an MVP bar through it — **four promises, and a release is the MVP when all
+four hold**. That decision was taken on 2026-08-24 and this paragraph is the amendment #302
+asked for as its first task; it arrives late, and the sixteen days are themselves the finding:
+a decision that never reaches the document that governs the work does not govern it.
+
+| # | Promise | What is measured | State at this PR baseline |
+|---|---|---|---|
+| 1 | **Installable by a stranger** | `init` first use, then the acceptance rehearsal of §3.4 performed on a genuinely clean VPS by someone following only the written instructions | pieces exist (#106 closed); **the rehearsal has never been run** |
+| 2 | **Retrieval that scales** | the validated recipe — lexical, entity RRF, graph-neighbour RRF, optional vector, authority — carrying an execution's lifetime | **partial** — snapshot-bound plan and coverage validation are in the tree (`core/runtime/src/retrieval.rs`) from #219's open slice; the full recipe remains open under #302, and the shipped `UnavailableStructuralCodeIndex` returns `Unavailable` |
+| 3 | **Continuity across harnesses** | the event store consumed as a resume briefing: a second harness picks up an execution from the stream alone | **not built** — no surface in the tree answers to it |
+| 4 | **Provider-less mode as a declared guarantee** | the fixture route stated as a promise and held by a test, so the product runs with no credentials at all | **not declared**; the route exists, the guarantee does not |
+
+**Order of work remains: 1, 3, 4, then #107.** Promise 2 is partial and remains open under #302:
+the snapshot-bound retrieval guard is shipped in #219's slice, but the full validated recipe is not. Promises 1, 3 and 4 are what a stranger
+meets first, and #107 — nothing in the tree turns a prompt into a graph — is the largest single
+gap in the map and the first move §3.1 promises. It follows the three because a harness that
+synthesises a graph nobody can install or resume is a demonstration, not a product.
+
+**The rule this sets for everything else, and the measurement behind it.** On 2026-09-08 the
+current wave held four issues (#901-#904) and all four were about the gate; in the same four
+days the repository merged 116 pull requests. The capacity is real and it was pointed at the
+factory. So: **new gate, runner or CI work is taken only when a gate is actually broken** — a
+red that blocks work, a runner that has stopped, a false green. Everything else queues behind
+the promises above. Gate work that improves throughput without unblocking anything is exactly
+the work this rule defers.
+
+**Debt gets a date, not a permanent exception.** A quality bar that can only be met or blocked
+turns every honest gap into a stalled pull request, and the fleet has paid for that repeatedly.
+The mechanism to adopt is a ratchet: violations frozen by key with a `review_by` date and a note,
+in one file, so adding a key is a visible act in review rather than a silent widening. Until that
+file exists, a declared gap in a pull request body is its stand-in, and the two carry the same
+obligation — a gap with no date is a gap nobody will close.
+
 ### 3.3 Out of Phase 1
 
 - multiuser UI;

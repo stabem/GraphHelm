@@ -399,7 +399,7 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    # reword (or squash locally) before pressing. `allow_merge_commit` is ON in this repo (measured): a merge-commit
    # press carries every commit message verbatim — the board squashes; a non-squash press is a checklist violation.
    gh pr view N --json body    --jq .body
-   gh pr view N --json commits --jq '.commits[].messageBody'      # what a SQUASH carries
+   gh pr view N --json commits --jq '.commits[]|[.messageHeadline,.messageBody]|.[]' # what a SQUASH carries
    # PowerShell eats the quotes of an inline query; a JSON file works from both shells (measured):
    # q.json = {"query":"{repository(owner:\"stabem\",name:\"GraphHelm\"){pullRequest(number:N){closingIssuesReferences(first:10){nodes{number}}}}}"}
    gh api graphql --input q.json --jq '[.data.repository.pullRequest.closingIssuesReferences.nodes[].number] | @csv'
@@ -466,6 +466,41 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    match, nine that must not -- before it is written down.
    the PR means to close. A keyword next to a number you do not want closed — even inside a
    negation, even in a commit body — must be reworded (`Refs #N`, "#N stays open").
+   **AND WHILE THE BODY IS OPEN: read what the SQUASH carries (#974).** In this repository the
+   squash message is built from the COMMIT bodies, not from the PR body — item 5 above measures that
+   and `squash_merge_commit_title: COMMIT_OR_PR_TITLE` is why. The PR body feeds
+   `closingIssuesReferences` and is what a reader sees on the page; the commit bodies are what lands
+   in `main` forever. **So this reading is over `gh pr view N --json commits --jq '.commits[]|[.messageHeadline,.messageBody]|.[]'`
+   FIRST, and over the PR body second.** Correcting the body alone leaves the stale claim in the
+   permanent record — which is the defect this item exists for, arriving through the door the item
+   originally left open. Read both against the
+   branch it now describes. Every **unscoped** claim it makes — a measurement, sample output, file
+   reference or branch name presented as the current state — must still be true at THIS head.
+   **EVIDENCE THAT NAMES ITS OWN HEAD OR TIME IS HISTORY AND IS KEPT, NEVER REFRESHED.** A body
+   recording "RED at `<sha>`, 11:29Z" beside "GREEN at `<sha>`, 19:36Z" is the retry lineage
+   `AGENTS.md` requires, and a later green must not erase an earlier red — so the repair for a stale
+   scoped measurement is to add the head it was taken at, not to replace it with a newer number.
+   **WHICH TEST GOVERNS, decided as adopter (K, 2026-09-08): the SEMANTIC one above.** Naming a head
+   or a time is a SUFFICIENT marker of history, never a necessary one. Evidence presented as what a
+   named run produced — a red-first receipt, a sabotage result, a before-and-after — is history
+   whether or not the author happened to stamp it, and is kept. Measured on this very PR by
+   ISSUES 1: **2 of 37 result lines carry a sha or a time**, so reading the syntactic line as the
+   test would leave 35 of 37 red-first receipts refreshable, which is the retry lineage this rule
+   exists to protect. The question to ask a line is *"is this offered as the state of the tree
+   NOW?"* — not *"does it carry a sha?"*
+   A body is written on the first commit; review then changes
+   the branch, and the body is the one text nobody re-reads — so a claim the review retracted lands in
+   `main` as the permanent commit message, beside a diff whose point may be that the sentence is
+   wrong. Sample output is the common case: where it is presented as what the file says now,
+   regenerate it from the file rather than retyping it; where it is quoted as what a named run
+   produced, leave it alone.
+   Three instances in one day, three lanes: #958's body said "no wall-clock number is claimed" beside
+   four of them; #967's cited a branch that was no longer reachable; #964's quoted a report line its
+   own later commit retracted. **This is a reading, not a rule that a body must be rewritten** — most
+   reviews change nothing a body claims, and a step that fires on every PR is skipped by the third
+   one. The presser is the actor because they are the last reader and see the final head; the author
+   should do it at re-push time. Nothing here can be a cell: the body is not in the tree, and a guard
+   would have to call `gh` from inside a test.
 6. **Read the CARRY BODIES, not the count.** `reviewThreads` unresolved = 0 was true on #758 with
    a soundness finding sitting in a review body, and on #754 with a section titled "One thing I
    did NOT verify" in plain sight. Grep each carry and review for: `did not`, `not verified`,

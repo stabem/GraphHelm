@@ -1,6 +1,8 @@
 pub(super) mod amend;
 pub(super) mod approve;
 pub(super) mod cancel;
+pub(super) mod claim;
+pub(super) mod clear;
 mod driver;
 pub(super) mod list;
 pub(super) mod pause;
@@ -20,10 +22,12 @@ use graphhelm_events::{
 use graphhelm_execution::{
     Attention, AttentionInputs, AttentionReason, TransitionRequest, apply_transition, attention,
 };
+use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EventEnvelope, EventKind, ExecutionId, GraphSpec, IdGenerator, NewEvent,
-    NodeOutcome, NodeOutcomeReason, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor,
-    PersistedActorType, ProjectId, RepositoryScope, Sensitivity, SimulationStatus, WorkspaceId,
+    ActorId, ClaimEvidence, Diagnostic, EventEnvelope, EventKind, ExecutionId, GraphSpec,
+    IdGenerator, NewEvent, NodeOutcome, NodeOutcomeReason, NodeOutcomeRecorded, NodeState,
+    OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity,
+    SimulationStatus, WireHash, WorkspaceId,
 };
 use graphhelm_simulation::SimulationFixtures;
 
@@ -227,6 +231,84 @@ pub(crate) fn resolve_stream(
             Ok((selection.scope, selection.stream_id, history))
         }
     }
+}
+
+/// The file-trust seam `resume` established (05d Task 7) and `claim`/`clear` share (#159 D2):
+/// the supplied graph's content hash must equal the hash this execution recorded, checked BEFORE
+/// any append so a refused verb leaves the store untouched. One function rather than three
+/// copies, because a second mechanism to carry the graph's facts would be a second trust seam.
+///
+/// `current_graph` is populated by the M03-era graph-publication event class, which the CLI's
+/// own `execution start` never appends — "refuse None" would refuse every CLI verb. The CLI
+/// path's published identity is the `graph_hash` the `execution_started` payload records, so the
+/// check honors `current_graph` when a publication event exists and otherwise falls back to the
+/// LAST recorded graph hash in the stream's own history. Only an execution with neither — no
+/// publication and no recorded start — refuses outright.
+pub(super) fn verify_graph_matches_execution(
+    version: &GraphVersion,
+    initial: &ExecutionProjection,
+    history: &[EventEnvelope],
+    verb: &'static str,
+) -> Result<(), Failure> {
+    let supplied_hash = WireHash::parse(version.content_hash().as_str()).map_err(|_| {
+        execution_state(
+            "the supplied graph's hash is not wire-safe",
+            "/execution/graph",
+        )
+    })?;
+    let recorded_hash = initial
+        .current_graph
+        .as_ref()
+        .map(|published| published.semantic_hash().clone())
+        .or_else(|| {
+            history.iter().rev().find_map(|event| match &event.kind {
+                EventKind::ExecutionStarted(payload) => Some(payload.graph_hash.clone()),
+                _ => None,
+            })
+        });
+    match recorded_hash {
+        None => Err(execution_state(
+            &format!("{verb} refused: the execution has no recorded graph to check against"),
+            "/execution/graph",
+        )),
+        Some(recorded) if recorded != supplied_hash => Err(execution_state(
+            &format!(
+                "{verb} refused: the supplied graph file does not match the graph this execution started from"
+            ),
+            "/execution/graph",
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
+/// A `ClaimEvidence` bundle from its wire shape: a JSON array of `{kind, contentHash, size}`.
+/// Shared by the CLI's file loader below and the HTTP body reader, so both doors accept exactly
+/// the same shape and refuse exactly the same way.
+pub(super) fn parse_claim_evidence(
+    value: &serde_json::Value,
+) -> Result<Vec<ClaimEvidence>, Failure> {
+    serde_json::from_value(value.clone()).map_err(|_| {
+        argument(
+            "evidence must be a JSON array of {kind, contentHash, size}",
+            "/evidence",
+        )
+    })
+}
+
+/// The most an evidence bundle file may weigh before it is read as JSON.
+const MAX_EVIDENCE_BYTES: usize = 1 << 20;
+
+/// `--evidence <file>`: the bundle, bounded before it is parsed (AGENTS.md: bound file size
+/// before expensive work; a bundle is a list of digests and has no business being large).
+pub(super) fn load_claim_evidence(path: &Path) -> Result<Vec<ClaimEvidence>, Failure> {
+    let bytes = std::fs::read(path)
+        .map_err(|_| argument("--evidence does not name a readable file", "/evidence"))?;
+    if bytes.len() > MAX_EVIDENCE_BYTES {
+        return Err(argument("--evidence exceeds 1 MiB", "/evidence"));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| argument("--evidence is not JSON", "/evidence"))?;
+    parse_claim_evidence(&value)
 }
 
 /// `resolve_stream` plus the replay every caller immediately needs from it.
@@ -806,6 +888,9 @@ pub(super) fn render(
         // map all along -- only the aggregate was rendered. Same labels as the counts, so the
         // two never disagree on vocabulary; kept OFF `execution list` rows (see list.rs).
         "nodeStates": node_states_map(&projection.node_states),
+        // #163: the scan history, ONE typed value shared by every door that calls render().
+        "customs": serde_json::to_value(graphhelm_execution::customs_view(projection))
+            .expect("a view built from already-serializable fold types serializes"),
         "signalsRecorded": projection.signals_recorded,
         "acceptedMutations": projection.accepted_mutations,
         "untriagedInterruptions": untriaged_interruptions(&answer),
@@ -901,5 +986,46 @@ mod tests {
     fn a_non_empty_history_reports_the_head_it_actually_read() {
         assert_eq!(at_sequence(&[event_at(1)]), Some(1));
         assert_eq!(at_sequence(&[event_at(1), event_at(7)]), Some(7));
+    }
+
+    /// #163: `render()` is the one door `execution status` and `GET /v1/executions/{id}` both
+    /// read through, so the scan history it embeds is the same value on both. An open claim is
+    /// the arrangement: the fixture's quarantine is non-empty so the cell cannot pass on a view
+    /// that answers empty unconditionally.
+    #[test]
+    fn render_embeds_the_customs_view_with_its_quarantine_and_its_nodes() {
+        let mut projection = ExecutionProjection::default();
+        projection.open_claims.insert(
+            5,
+            graphhelm_events::OpenClaim {
+                node: "implementation".to_owned(),
+                completes_wait_seq: 4,
+                stage_entered_at: 5,
+                deadline: None,
+                evidence_digest: graphhelm_protocols::WireHash::parse(format!(
+                    "sha256:{}",
+                    "c".repeat(64)
+                ))
+                .unwrap(),
+            },
+        );
+
+        let value = render(
+            &projection,
+            &AttentionInputs::default(),
+            &Liveness::measured(&[]),
+        );
+
+        let customs = value["customs"]
+            .as_object()
+            .expect("customs is an object on every render() reply");
+        assert_eq!(
+            customs["quarantinedNodes"],
+            serde_json::json!(["implementation"])
+        );
+        assert_eq!(
+            customs["nodes"]["implementation"]["openClaim"]["claimSeq"],
+            serde_json::json!(5)
+        );
     }
 }

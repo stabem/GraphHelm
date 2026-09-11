@@ -1,0 +1,82 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_customs_acting_v1
+  name: External work completed through customs
+  executionId: exec_customs_acting
+  version: 1
+  labels:
+    origin: user
+    mode: supervised
+spec:
+  entrypoints:
+    - implementation
+  nodes:
+    implementation:
+      type: agent
+      name: Implementation done outside the runtime
+      objective: Land the change in the repository and present the test report.
+      optionality: required
+      timeoutSeconds: 600
+      agent:
+        ephemeral:
+          purpose: Implement the change.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://ImplementationPlan@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Produce the patch and the test report.
+          completionContract:
+            requires:
+              - test_report
+          isolationMinimum: tier_1
+      completion:
+        requires:
+          - outputSchemaValid: true
+        customs:
+          proofKinds:
+            - test_report
+          budgets:
+            waitWithinSeconds: 86400
+            clearanceWithinSeconds: 3600
+    release_notes:
+      type: agent
+      name: Release notes
+      objective: Summarize the landed change for the changelog.
+      optionality: required
+      timeoutSeconds: 600
+      agent:
+        ephemeral:
+          purpose: Write the release note.
+          capabilities:
+            - docs.write
+          inputSchema: schema://ImplementationResult@1
+          outputSchema: schema://ReleaseNote@1
+          instructions: One paragraph, cite the test report.
+          completionContract:
+            requires:
+              - release_note
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+        customs:
+          proofKinds: []
+          budgets:
+            waitWithinSeconds: 86400
+            clearanceWithinSeconds: 3600
+  edges:
+    - id: implementation_to_release_notes
+      from: implementation
+      to: release_notes
+      type: control
+  budgets:
+    maxNodes: 4
+    maxDepth: 2
+    maxMutations: 1
+    maxRetriesPerNode: 1
+  policies: []
+  completion:
+    terminalNodes:
+      - release_notes
+    allowWaivers: false

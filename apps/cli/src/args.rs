@@ -519,6 +519,59 @@ pub enum ExecutionCommand {
         #[arg(long = "as-of")]
         as_of: Option<String>,
     },
+    /// Claim that a `waiting_input` node's external work is done, presenting evidence. Testimony
+    /// only: nothing is released until `execution clear` countersigns. A claim the pipeline
+    /// cannot accept is journaled as `completion_refused` with its registry code.
+    Claim {
+        /// The graph this execution started from — checked against the recorded hash, and the
+        /// source of the node's declared `completion.customs.proofKinds`.
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        node: String,
+        /// The envelope sequence of the exact open wait this answers. Absent: the node's open wait.
+        #[arg(long = "wait-seq")]
+        wait_seq: Option<u64>,
+        /// A JSON array of `{"kind","contentHash","size"}` — the wire shape of `ClaimEvidence`.
+        #[arg(long)]
+        evidence: PathBuf,
+        /// Who asserts the completion. Absent: the owner actor this command runs as.
+        #[arg(long)]
+        asserter: Option<String>,
+        /// `operator_attested` (default) or `machine_verified`.
+        #[arg(long, default_value = "operator_attested")]
+        mode: String,
+    },
+    /// Countersign a claim by machine replay: present the digest of the evidence bundle you hold.
+    /// A matching digest clears the node and drives its dependents; a mismatch is journaled as a
+    /// rejection and drives nothing.
+    Clear {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long = "claim-seq")]
+        claim_seq: u64,
+        /// `sha256:<64 hex>` — the bundle digest computed elsewhere. Exactly one of this and
+        /// `--evidence`.
+        #[arg(long = "manifest-hash", conflicts_with = "evidence")]
+        manifest_hash: Option<String>,
+        /// The bundle itself (same JSON shape as `claim --evidence`); its digest is computed here.
+        #[arg(long, conflicts_with = "manifest_hash")]
+        evidence: Option<PathBuf>,
+        /// Only `machine_replay` exists today; `countersign` is refused and names the decision that
+        /// will supply it.
+        #[arg(long, default_value = "machine_replay")]
+        verifier: String,
+    },
     /// Cancels every non-terminal node and completes the execution as `Cancelled`. Refuses when
     /// the execution is already terminal.
     Cancel {

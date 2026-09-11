@@ -145,7 +145,7 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 18] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 20] = [
     "start",
     "list",
     "topology",
@@ -167,6 +167,11 @@ const NON_DEVELOPMENT_TOOLS: [&str; 18] = [
     // sweep_performed and one overdue_exception per lapsed episode -- and has nothing to do with
     // the development contract. It sits beside pause and cancel, not beside resolve_contract.
     "sweep",
+    // #159. The customs claim and clear are RUNTIME verbs on an execution -- testimony that a
+    // parked node's external work is done, and the machine-replay countersignature that
+    // releases it -- and sit beside sweep, not beside resolve_contract.
+    "claim",
+    "clear",
 ];
 
 /// Where one operation family lives on each of the three surfaces.

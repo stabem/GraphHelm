@@ -12,6 +12,7 @@ use super::{
     Failure, PreparedDrive, RecordedOutcome, append_event, execution_state, finish,
     idempotency_key, load_fixtures, owner_actor, record_outcome, render, replay_failure,
     replay_projection, repository_failure, resolve_stream, system_actor,
+    verify_graph_matches_execution,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -171,46 +172,9 @@ pub(crate) fn execute_prepared(
     // wrong graph file and the driver will believe them" — closed here, 05d Task 7): the
     // supplied file's derived content hash must match the published graph this execution
     // started from, checked BEFORE any recovery append so a refused resume leaves the store
-    // untouched. An execution with no published graph cannot resume against any file.
-    let supplied_hash = graphhelm_protocols::WireHash::parse(version.content_hash().as_str())
-        .map_err(|_| {
-            execution_state(
-                "the supplied graph's hash is not wire-safe",
-                "/execution/graph",
-            )
-        })?;
-    // Discrepancy vs the plan, reported: `current_graph` is populated by the M03-era
-    // graph-publication event class, which the CLI's own `execution start` never appends —
-    // "refuse None" would refuse every CLI resume. The CLI path's published identity is the
-    // `graph_hash` the `execution_started`/`execution_resumed` payloads record, so the check
-    // honors `current_graph` when a publication event exists and otherwise falls back to the
-    // LAST recorded graph hash in the stream's own history. Only an execution with neither —
-    // no publication and no recorded start — refuses outright.
-    let recorded_hash = initial
-        .current_graph
-        .as_ref()
-        .map(|published| published.semantic_hash().clone())
-        .or_else(|| {
-            history.iter().rev().find_map(|event| match &event.kind {
-                EventKind::ExecutionStarted(payload) => Some(payload.graph_hash.clone()),
-                _ => None,
-            })
-        });
-    match recorded_hash {
-        None => {
-            return Err(execution_state(
-                "resume refused: the execution has no recorded graph to check against",
-                "/execution/graph",
-            ));
-        }
-        Some(recorded) if recorded != supplied_hash => {
-            return Err(execution_state(
-                "resume refused: the supplied graph file does not match the graph this execution started from",
-                "/execution/graph",
-            ));
-        }
-        Some(_) => {}
-    }
+    // untouched. The check itself moved to `verify_graph_matches_execution` (#159) when `claim`
+    // and `clear` started needing the same seam; its messages are unchanged.
+    verify_graph_matches_execution(version, &initial, &history, "resume")?;
 
     // Crash triage on entry (the pause-recover-approve order 04e settled): every node still
     // `Running` when the execution stopped has unknown effects. `recovery_plan` names them, and

@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 24] = [
+const TOOLS: [ToolSpec; 26] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -189,6 +189,28 @@ const TOOLS: [ToolSpec; 24] = [
                       REFUSED, because a future-dated answer is indistinguishable from a real one \
                       while permanently spending the episodes it touches.",
         schema: sweep_schema,
+    },
+    ToolSpec {
+        name: "claim",
+        description: "Claim that a waiting_input node's external work is done, presenting \
+                      evidence (POST /v1/executions/{executionId}/claim). Testimony only: nothing \
+                      is released until \"clear\" countersigns. A claim the pipeline cannot accept \
+                      is journaled as \"completion_refused\" with its registry code, and the reply \
+                      says so under \"claim\". Requires the graph the execution started from \
+                      (\"file\" or inline \"graph\"); \"evidence\" is an array of \
+                      {kind, contentHash, size}; \"waitSeq\" names the exact wait and defaults to \
+                      the node's open one; \"asserter\" defaults to the calling actor.",
+        schema: claim_schema,
+    },
+    ToolSpec {
+        name: "clear",
+        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear): \
+                      present \"manifestHash\" or the \"evidence\" bundle whose digest is computed \
+                      here. A match clears the node and drives its dependents; a mismatch is \
+                      journaled as a rejection and drives nothing. \"countersign\" is refused at \
+                      the door until the wire carries a signature (#529). Requires the graph \
+                      (\"file\" or \"graph\") and the \"claimSeq\" the claim reply named.",
+        schema: clear_schema,
     },
 ];
 
@@ -425,6 +447,39 @@ fn sweep_schema() -> serde_json::Value {
     )
 }
 
+fn claim_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "file": {"type": "string"},
+            "graph": {"type": "object"},
+            "node": {"type": "string"},
+            "waitSeq": {"type": "integer"},
+            "evidence": {"type": "array", "items": {"type": "object"}},
+            "asserter": {"type": "string"},
+            "mode": {"type": "string"},
+        }),
+        &["executionId", "node"],
+    )
+}
+
+fn clear_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "file": {"type": "string"},
+            "graph": {"type": "object"},
+            "fixtures": {"type": "string"},
+            "route": {"type": "string"},
+            "claimSeq": {"type": "integer"},
+            "manifestHash": {"type": "string"},
+            "evidence": {"type": "array", "items": {"type": "object"}},
+            "verifier": {"type": "string"},
+        }),
+        &["executionId", "claimSeq"],
+    )
+}
+
 fn routes_schema() -> serde_json::Value {
     object_schema(serde_json::json!({"manifest": {"type": "string"}}), &[])
 }
@@ -636,6 +691,13 @@ fn object_arg<'a>(arguments: &'a serde_json::Value, name: &str) -> Option<&'a se
     arguments.get(name).filter(|value| value.is_object())
 }
 
+/// An argument that is a JSON ARRAY, copied whole — the customs `evidence` bundle. The same
+/// posture as `object_arg`: a present-but-wrong-typed value is `None` here and refused by the
+/// server with a message naming the field.
+fn array_arg<'a>(arguments: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    arguments.get(name).filter(|value| value.is_array())
+}
+
 fn require<'a>(
     arguments: &'a serde_json::Value,
     name: &'static str,
@@ -808,6 +870,77 @@ pub(crate) fn call(
             api.request(
                 "POST",
                 &url::segment_path(&["v1", "executions", id, "sweep"]),
+                Some(&body),
+                Some(&key),
+                if_match,
+            )
+        }),
+        "claim" => require(arguments, "executionId").map(|id| {
+            // Every field is copied ONLY WHEN GIVEN (see `start`'s branch): a defaulted empty
+            // string is a PRESENT value the server would refuse for the wrong reason, and an
+            // absent `waitSeq` MEANS "the node's open wait".
+            let mut body = serde_json::json!({});
+            if let Some(file) = str_arg(arguments, "file") {
+                body["file"] = serde_json::json!(file);
+            }
+            if let Some(graph) = object_arg(arguments, "graph") {
+                body["graph"] = graph.clone();
+            }
+            if let Some(node) = str_arg(arguments, "node") {
+                body["node"] = serde_json::json!(node);
+            }
+            if let Some(wait_seq) = arguments.get("waitSeq").and_then(serde_json::Value::as_u64) {
+                body["waitSeq"] = serde_json::json!(wait_seq);
+            }
+            if let Some(evidence) = array_arg(arguments, "evidence") {
+                body["evidence"] = evidence.clone();
+            }
+            if let Some(asserter) = str_arg(arguments, "asserter") {
+                body["asserter"] = serde_json::json!(asserter);
+            }
+            if let Some(mode) = str_arg(arguments, "mode") {
+                body["mode"] = serde_json::json!(mode);
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "executions", id, "claim"]),
+                Some(&body),
+                Some(&key),
+                if_match,
+            )
+        }),
+        "clear" => require(arguments, "executionId").map(|id| {
+            let mut body = serde_json::json!({});
+            if let Some(file) = str_arg(arguments, "file") {
+                body["file"] = serde_json::json!(file);
+            }
+            if let Some(graph) = object_arg(arguments, "graph") {
+                body["graph"] = graph.clone();
+            }
+            if let Some(fixtures) = str_arg(arguments, "fixtures") {
+                body["fixtures"] = serde_json::json!(fixtures);
+            }
+            if let Some(route) = str_arg(arguments, "route") {
+                body["route"] = serde_json::json!(route);
+            }
+            if let Some(claim_seq) = arguments
+                .get("claimSeq")
+                .and_then(serde_json::Value::as_u64)
+            {
+                body["claimSeq"] = serde_json::json!(claim_seq);
+            }
+            if let Some(manifest_hash) = str_arg(arguments, "manifestHash") {
+                body["manifestHash"] = serde_json::json!(manifest_hash);
+            }
+            if let Some(evidence) = array_arg(arguments, "evidence") {
+                body["evidence"] = evidence.clone();
+            }
+            if let Some(verifier) = str_arg(arguments, "verifier") {
+                body["verifier"] = serde_json::json!(verifier);
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "executions", id, "clear"]),
                 Some(&body),
                 Some(&key),
                 if_match,

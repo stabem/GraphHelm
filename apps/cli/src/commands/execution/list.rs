@@ -203,6 +203,7 @@ mod tests {
             "attentionReasons": [{"kind": "blocked", "node": "implementation"}],
             "nodeStateCounts": {"blocked": 1},
             "nodeStates": {"implementation": "blocked"},
+            "customs": {"quarantinedNodes": [], "nodes": {}, "clearances": {}},
             "startedAt": "2026-08-27T00:00:00+00:00",
             "lastEventAt": "2026-08-27T00:01:00+00:00",
         })
@@ -239,6 +240,9 @@ mod tests {
             // #133: the per-node map is heavier than the counts and just as much the status
             // reply's to own; the fixture above carries it so this cell is not vacuous.
             "nodeStates",
+            // #163: the scan history is the heaviest field of all and just as much the status
+            // reply's to own; carried by the fixture above for the same reason as `nodeStates`.
+            "customs",
             "untriagedInterruptions",
         ] {
             assert!(

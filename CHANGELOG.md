@@ -1,5 +1,76 @@
 # Specification Changelog
 
+## The acting half: claim, clear, and the scan history, #159 - 2026-09-11
+
+- **A parked node could be described and never finished.** The customs event family, the fold
+  that keeps every node's scan history, the clearance verdicts and the sweep all existed, and no
+  verb on any surface appended `completion_claimed` or `completion_cleared`: #132 measured
+  informing 4/4, acting 0/4. Two verbs land - `execution claim` and `execution clear` on the
+  CLI, `POST /v1/executions/{id}/claim` and `/clear` on HTTP, `claim` and `clear` as MCP tools -
+  and every one of them replies with the same `render()` envelope every other mutation replies
+  with, plus a `claim` or `clearance` object naming the outcome and the sequence it landed at.
+- **A claim is decided against the replayed fold, first match wins, and a refusal is itself a
+  journal event.** `not_waiting` (the node is not at `waiting_input`), `stale_rendezvous` (a
+  named wait that is a `parked` scan of this node but no longer the open one), `unknown_wait` (a
+  named sequence no scan of this node ever parked at), `duplicate_completion` (an open claim
+  already names the node), `evidence_budget_unmet` (a declared `proofKinds` entry is missing
+  from the presented bundle; extra kinds are never stronger proof). Each code is produced by
+  exactly one arrangement and the arrangement is asserted before the refusal is demanded, so a
+  decision that reaches the wrong code first goes red on the cell that names the right one. A
+  refused claim appends `completion_refused` with the registry code and touches no state.
+- **Countersign is refused at the door.** The wire carries no signature to verify until D-047 /
+  #529, and the `#527` trap goes red the moment a production surface appends a `Countersign`
+  clearance. `--verifier countersign` is a `GHCLI005_EXECUTION_STATE` diagnostic that names #529
+  and opens no store: the journal's head sequence is unchanged, and the cell holds it by
+  reading the journal before and after.
+- **A clearance that clears drives; a rejection drives nothing.** After `completion_cleared`
+  folds to `Cleared` the node is `succeeded` and its dependents are dispatchable, but nothing in
+  the tree dispatches them: `resume_preconditions` refuses a non-paused execution
+  (`core/execution/src/recovery.rs`), and `start` refuses a started stream. So `clear` runs the
+  same drive `resume` runs, with an empty release set, and the graph reaches `completed` in the
+  same reply. A wrong digest folds as `rejected`/`hash_mismatch`, spends the claim, and leaves
+  the downstream exactly where it was.
+- **The scan history is one typed value, rendered by the one `render()`.**
+  `graphhelm_execution::CustomsView` is built from the fold's own maps - `customs_scans`,
+  `open_waits`, `open_claims`, `clearances` - with no second derivation; `quarantinedNodes` is
+  the deduplicated set of the NODES `open_claims` names (that map is keyed by claim
+  sequence). `execution status`, `GET /v1/executions/{id}`, and every
+  mutation's reply carry it as `data.customs`, and the parity cells hold the CLI and HTTP
+  readings byte-identical to the verb's own reply.
+- **Both verbs take the graph the execution started from, through the seam `resume` already
+  has.** The projection cannot supply a node's declared `proofKinds` on the start path, and the
+  drive after a clearance needs the spec; a second way to carry those facts would be a second
+  trust seam. The supplied file's content hash must equal the recorded `graph_hash`, and a
+  foreign graph is refused before any APPEND - the store is opened and the history replayed
+  first, which is what that check reads.
+- **The append is pinned to the sequence the deciding read saw.** The verb replays, decides,
+  and appends with `PreparedAppend` at `next_after(&history)` - `1` for an empty stream, last +
+  `1` otherwise - so a stream that moved between the read and the write answers
+  `SequenceConflict` instead of accepting a decision made against a world that no longer exists.
+  The first version derived the position from a second store read (`next_sequence`) taken after
+  the history it decided against; the reviewer found it, and the guard now reads
+  `core/events/src/customs.rs` at run time and refuses any `next_sequence(` call, with
+  `append_atomic(` as the positive control so an empty read cannot pass.
+- **Declared gap: deadlines are `null` on every stream `execution start` creates**, so
+  `clearance_expired` has no producer and the sweep raises no `overdue_exception` on those
+  streams. Cause, measured: `current_graph` is set only by `GraphVersionPublished`, which only
+  the governor's draft publication emits; `execution start` publishes a `GraphVersion`, never a
+  `PersistedGraphVersion`. The clearance-sweep mechanism is proven at fold level
+  (`core/events/tests/sweep_verb.rs`); putting a `PersistedGraphVersion` on the start path is the
+  D-036 externalizer's own lane and is not attempted here. Rejection, DLQ redrive and return,
+  and the identity registry verbs ride the same deferral as countersign; the Studio does not yet
+  read `data.customs`; #153 stays open.
+- **The lanes were subagents, and the mapping is now in the file that sequences lanes.** The
+  arrangement this change was built under, stated as an arrangement rather than as a finished
+  event: implementer subagents author, reviewer subagents with no implementation context read,
+  the registered runner gates, and a lane that wrote no line of the diff presses. What the
+  reviews found, and who pressed, is on the pull request rather than here; a changelog that
+  narrates its own review as already done is the tense defect this entry would otherwise ship. `.factory/lane-loop.md` section 0 carries the clause and the
+  identity-line shape (`Lane: <letter> · Session: subagent-<name> of <ListAgents name> [ref] ·
+  Head: <sha8>`), because a rule that lives only in chat is the defect that file exists to end.
+  Acceptance record: `docs/acceptance/m11-acting-2026-09-11.md`; milestone note:
+  `docs/milestones/acting-half.md`.
+
 ## A registered gate runs the gate it was registered as, #668 - 2026-09-03
 
 - **Certification said yes and the consumer path could only say no.** `quality certify` stamped

@@ -937,7 +937,7 @@ impl ProjectionRebuilder {
     }
 }
 
-fn map_replay_error(error: ReplayError) -> EventRepositoryError {
+pub(crate) fn map_replay_error(error: ReplayError) -> EventRepositoryError {
     match error {
         ReplayError::LimitExceeded => EventRepositoryError::LimitExceeded,
         ReplayError::Corrupt => EventRepositoryError::Integrity,

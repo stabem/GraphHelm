@@ -10,7 +10,7 @@ use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use graphhelm_events::{EventRepositoryError, EvidenceRead, EvidenceSealer};
+use graphhelm_events::{ClearanceOutcome, EventRepositoryError, EvidenceRead, EvidenceSealer};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
@@ -45,6 +45,8 @@ const RESUME_COMMAND: &str = "execution.resume";
 const EVIDENCE_COMMAND: &str = "execution.evidence";
 const CANCEL_COMMAND: &str = "execution.cancel";
 const SWEEP_COMMAND: &str = "execution.sweep";
+const CLAIM_COMMAND: &str = "execution.claim";
+const CLEAR_COMMAND: &str = "execution.clear";
 const SOURCE: &str = "serve-cli";
 
 /// The events tail's default page size when `limit` is absent.
@@ -1305,6 +1307,254 @@ pub(super) async fn sweep(
                     actor,
                     Some(key),
                 )?)
+            })
+        },
+    )
+    .await
+}
+
+/// `POST /v1/executions/{id}/claim` (#159): testimony that a `waiting_input` node's external
+/// work is done. Body `{"file" | "graph", "node", "waitSeq"?, "evidence"?, "asserter"?, "mode"?}`,
+/// mirroring the CLI's `execution claim`; `asserter` defaults to the `X-GraphHelm-Actor` header.
+///
+/// The decision is the verb's (`core/events`), the door is `execution::claim::execute` — the
+/// same one the CLI calls — and a refusal is a JOURNAL EVENT with a registry code, so the reply
+/// is 200 with `data.claim.outcome == "refused"`, never a 4xx. The graph travels through the
+/// same file-trust seam `resume` uses (D2): the node's declared `proofKinds` are read from it.
+///
+/// One decision event per request, key suffix `claim` (`completion_claimed` OR
+/// `completion_refused` — both are the one event this command appends, and the retry proof in
+/// `serve/mod.rs` recognizes either).
+#[allow(clippy::result_large_err)] // see `start`'s doc comment
+pub(super) async fn claim(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(CLAIM_COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        CLAIM_COMMAND,
+        &execution_id,
+        &payload,
+        &["claim"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    let source = match graph_source(&payload, CLAIM_COMMAND) {
+        Ok(source) => source,
+        Err(response) => return response,
+    };
+    let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            CLAIM_COMMAND,
+            "the request body must carry \"node\"",
+            "/node",
+        );
+    };
+    let node = node.to_owned();
+    let wait_seq = match payload.get("waitSeq") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(sequence) => Some(sequence),
+            None => {
+                return bad_request(
+                    CLAIM_COMMAND,
+                    "\"waitSeq\" must be a non-negative integer",
+                    "/waitSeq",
+                );
+            }
+        },
+    };
+    // The same parser the CLI's `--evidence` file goes through, so both doors accept exactly the
+    // same shape and refuse exactly the same way.
+    let evidence = match payload.get("evidence") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(value) => match execution::parse_claim_evidence(value) {
+            Ok(evidence) => evidence,
+            Err(failure) => return respond_failure(CLAIM_COMMAND, failure),
+        },
+    };
+    let asserter = payload
+        .get("asserter")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let mode = payload
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("operator_attested")
+        .to_owned();
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
+
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        CLAIM_COMMAND,
+        identity,
+        ExecutorWiring::from_state(&state),
+        |actor, key| {
+            Box::pin(async move {
+                let version =
+                    load_and_publish(&source, CLAIM_COMMAND).map_err(MutationError::Prepared)?;
+                let attestation =
+                    execution::claim::attestation(asserter.as_deref(), &mode, &actor)?;
+                Ok(execution::claim::execute(
+                    &version,
+                    &events,
+                    Some(drive_execution_id.as_str()),
+                    &node,
+                    wait_seq,
+                    evidence,
+                    attestation,
+                    actor,
+                    key,
+                )?)
+            })
+        },
+    )
+    .await
+}
+
+/// `POST /v1/executions/{id}/clear` (#159): countersign an open claim by machine replay. Body
+/// `{"file" | "graph", "claimSeq", "manifestHash" | "evidence", "fixtures"?, "route"?,
+/// "verifier"?}`, mirroring the CLI's `execution clear`.
+///
+/// `countersign` is refused AT THE DOOR (D1) — before `run_idempotent_mutation` opens the store,
+/// so nothing is appended and no retry marker exists — because the wire carries no signature to
+/// verify until D-047 / #529. The verifier is built from what the caller presented BEFORE the
+/// store is touched for the same reason; `execution::clear::verifier` is the one place that
+/// rule lives, on both doors.
+///
+/// A CLEARANCE THAT CLEARS DRIVES (D3): after `completion_cleared` folds to `Cleared` the
+/// node's dependents are dispatchable and nothing else dispatches them, so this runs the same
+/// drive `resume` runs — the async driver when it can run this graph, the CLI's sync drive
+/// otherwise — with an EMPTY release set. A rejected clearance drives nothing and replies with
+/// the status render plus the `clearance` verdict.
+#[allow(clippy::result_large_err)] // see `start`'s doc comment
+pub(super) async fn clear(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(CLEAR_COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        CLEAR_COMMAND,
+        &execution_id,
+        &payload,
+        &["clear"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    let source = match graph_source(&payload, CLEAR_COMMAND) {
+        Ok(source) => source,
+        Err(response) => return response,
+    };
+    let Some(claim_seq) = payload.get("claimSeq").and_then(serde_json::Value::as_u64) else {
+        return bad_request(
+            CLEAR_COMMAND,
+            "the request body must carry \"claimSeq\" as a non-negative integer",
+            "/claimSeq",
+        );
+    };
+    let manifest_hash = match payload.get("manifestHash") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(hash)) => Some(hash.clone()),
+        Some(_) => {
+            return bad_request(
+                CLEAR_COMMAND,
+                "\"manifestHash\" must be a string",
+                "/manifestHash",
+            );
+        }
+    };
+    let evidence = match payload.get("evidence") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match execution::parse_claim_evidence(value) {
+            Ok(evidence) => Some(evidence),
+            Err(failure) => return respond_failure(CLEAR_COMMAND, failure),
+        },
+    };
+    let verifier_kind = payload
+        .get("verifier")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("machine_replay");
+    // AT THE DOOR: built before any store access, so a `countersign` request appends nothing.
+    let verifier = match execution::clear::verifier(
+        verifier_kind,
+        manifest_hash.as_deref(),
+        evidence.as_deref(),
+    ) {
+        Ok(verifier) => verifier,
+        Err(failure) => return respond_failure(CLEAR_COMMAND, failure),
+    };
+    let fixtures = payload
+        .get("fixtures")
+        .and_then(serde_json::Value::as_str)
+        .map(PathBuf::from);
+    let drive_state = state.clone();
+    let drive_execution_id = execution_id.clone();
+
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        CLEAR_COMMAND,
+        identity,
+        ExecutorWiring::from_state(&state),
+        |actor, key| {
+            Box::pin(async move {
+                let version =
+                    load_and_publish(&source, CLEAR_COMMAND).map_err(MutationError::Prepared)?;
+                // See `start`'s matching branch for why the async drive is conditional.
+                if drive_is_viable_for(&drive_state, &version.graph().spec) {
+                    // #83: the drive's fallible setup runs FIRST, so the clearance is the last
+                    // thing that can fail rather than the first thing that commits.
+                    let setup = prepare_drive(&drive_state, CLEAR_COMMAND, &payload).await?;
+                    let (outcome, prepared) = execution::clear::decide(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        Some(drive_execution_id.as_str()),
+                        claim_seq,
+                        &verifier,
+                        actor,
+                        key,
+                    )?;
+                    let mut value = if outcome == ClearanceOutcome::Cleared {
+                        drive(&drive_state, &drive_execution_id, prepared, setup).await?
+                    } else {
+                        // Rejected: nothing to drive. The reply is the same status render every
+                        // other mutation replies with, plus the verdict.
+                        execution::status::execute(
+                            &drive_state.events,
+                            Some(drive_execution_id.as_str()),
+                        )?
+                    };
+                    execution::clear::annotate(&mut value, &outcome, claim_seq);
+                    Ok(value)
+                } else {
+                    Ok(execution::clear::execute(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        Some(drive_execution_id.as_str()),
+                        claim_seq,
+                        &verifier,
+                        actor,
+                        key,
+                    )?)
+                }
             })
         },
     )

@@ -429,6 +429,8 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/resume", post(routes::resume))
         .route("/v1/executions/{id}/cancel", post(routes::cancel))
         .route("/v1/executions/{id}/sweep", post(routes::sweep))
+        .route("/v1/executions/{id}/claim", post(routes::claim))
+        .route("/v1/executions/{id}/clear", post(routes::clear))
         .route(
             "/v1/executions/{id}/wake-lease",
             post(routes::wake_lease).get(routes::wake_lease_status),
@@ -636,6 +638,11 @@ enum MutationDecisionKind {
     ExecutionCompleted,
     SweepPerformed,
     WakeLease,
+    /// #159: the ONE event `claim` appends is `completion_claimed` OR `completion_refused` — a
+    /// refusal is the journaled outcome of the same command, so a retry of a refused claim is
+    /// recognized as the retry it is rather than re-run to a second refusal.
+    CompletionClaim,
+    CompletionCleared,
     Unrecognized,
 }
 
@@ -651,6 +658,8 @@ impl MutationDecisionKind {
             "execution.cancel" => Self::ExecutionCompleted,
             "execution.sweep" => Self::SweepPerformed,
             "execution.wake_lease" => Self::WakeLease,
+            "execution.claim" => Self::CompletionClaim,
+            "execution.clear" => Self::CompletionCleared,
             _ => Self::Unrecognized,
         }
     }
@@ -758,6 +767,34 @@ impl MutationDecisionKind {
                         .get("maturesInSeconds")
                         .and_then(serde_json::Value::as_u64)
                         == payload.matures_in_seconds
+            }
+            // Bound to the node the request named and, when it named one, the wait: the body
+            // digest inside the derived key already covers the evidence bundle, so these are the
+            // fields a same-key event of the right kind could still differ on.
+            (Self::CompletionClaim, EventKind::CompletionClaimed(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body.get("node").and_then(serde_json::Value::as_str)
+                        == Some(payload.node.as_str())
+                    && request_body
+                        .get("waitSeq")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_none_or(|wait_seq| wait_seq == payload.completes_wait_seq)
+            }
+            (Self::CompletionClaim, EventKind::CompletionRefused(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body.get("node").and_then(serde_json::Value::as_str)
+                        == Some(payload.node.as_str())
+                    && request_body
+                        .get("waitSeq")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_none_or(|wait_seq| wait_seq == payload.claimed_wait_seq)
+            }
+            (Self::CompletionCleared, EventKind::CompletionCleared(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body
+                        .get("claimSeq")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(payload.claim_seq)
             }
             _ => false,
         }
@@ -2196,6 +2233,60 @@ mod tests {
             }),
             wake("session-requested"),
             wake("session-poisoned"),
+        );
+
+        // #159: the claim command's one decision event is claimed OR refused; both are bound to
+        // the node the request named, and a clearance is bound to the claim it judged.
+        use graphhelm_protocols::{
+            ClaimAttestation, ClaimAttestationMode, ClearanceVerifier, CompletionClaimed,
+            CompletionCleared, CompletionRefused, SafeCode,
+        };
+        let claimed = |node: &str| {
+            EventKind::CompletionClaimed(CompletionClaimed {
+                execution_id: execution_id.clone(),
+                node: OpaqueId::parse(node).unwrap(),
+                completes_wait_seq: 4,
+                evidence: Vec::new(),
+                attestation: ClaimAttestation {
+                    asserter: OpaqueId::parse("agent-claimer").unwrap(),
+                    mode: ClaimAttestationMode::OperatorAttested,
+                },
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::CompletionClaim,
+            serde_json::json!({"file": "graph.yaml", "node": "implementation"}),
+            claimed("implementation"),
+            claimed("deploy"),
+        );
+        let refused = |wait_seq: u64| {
+            EventKind::CompletionRefused(CompletionRefused {
+                execution_id: execution_id.clone(),
+                node: OpaqueId::parse("implementation").unwrap(),
+                claimed_wait_seq: wait_seq,
+                reason_code: SafeCode::parse("unknown_wait").unwrap(),
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::CompletionClaim,
+            serde_json::json!({"file": "graph.yaml", "node": "implementation", "waitSeq": 1}),
+            refused(1),
+            refused(4),
+        );
+        let cleared = |claim_seq: u64| {
+            EventKind::CompletionCleared(CompletionCleared {
+                execution_id: execution_id.clone(),
+                claim_seq,
+                verifier: ClearanceVerifier::MachineReplay {
+                    manifest_hash: WireHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
+                },
+            })
+        };
+        assert_bound(
+            MutationDecisionKind::CompletionCleared,
+            serde_json::json!({"file": "graph.yaml", "claimSeq": 5}),
+            cleared(5),
+            cleared(6),
         );
     }
 

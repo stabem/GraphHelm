@@ -538,7 +538,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 24] = [
+const MCP_TOOL_NAMES: [&str; 26] = [
     "start",
     "list",
     "topology",
@@ -563,10 +563,12 @@ const MCP_TOOL_NAMES: [&str; 24] = [
     "memory_propose",
     "accounting",
     "sweep",
+    "claim",
+    "clear",
 ];
 
 #[test]
-fn tools_list_names_exactly_the_twenty_four_tools_with_closed_schemas() {
+fn tools_list_names_exactly_the_registered_tools_with_closed_schemas() {
     let session = mcp_session(&[
         initialize_request(1, "2025-06-18"),
         initialized_notification(),

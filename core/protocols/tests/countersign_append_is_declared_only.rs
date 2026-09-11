@@ -127,6 +127,23 @@ fn allowed_sites() -> BTreeMap<&'static str, usize> {
         // The fold READING a clearance. A match arm is not an append -- naming the kind in order to
         // interpret one already in the journal is the opposite of putting one there.
         ("core/events/src/projection.rs", 1),
+        // MACHINE REPLAY (#159): the customs verb `clear` appends a clearance, and this is the
+        // case the module doc says to record rather than to narrow the needle around. One line is
+        // the import of the payload type, the other the append itself, and the verifier on that
+        // append is `ClearanceVerifier::MachineReplay` and nothing else: the verb's signature
+        // accepts only a `WireHash`, and the CLI/HTTP door
+        // (`apps/cli/src/commands/execution/clear.rs::verifier`) refuses `countersign` before the
+        // store is opened. No countersignature can travel through this site; a change that
+        // widened the signature to carry one would have to come back here and say so.
+        ("core/events/src/customs.rs", 2),
+        // NAMED (#159): `MutationDecisionKind::CompletionCleared` is the serve router's name for
+        // the decision event `execution.clear` produces, and the match arm that carries it READS
+        // a clearance already in the journal to recognise an idempotent retry -- the same shape
+        // as projection.rs, one crate over. Three of the six lines are the inline `#[cfg(test)]`
+        // fixture that builds a clearance to exercise that recognition: the walk covers `src/`
+        // whole, test blocks included, so the fixture counts here even though tests are the
+        // population this guard means to leave alone.
+        ("apps/cli/src/commands/serve/mod.rs", 6),
     ])
 }
 

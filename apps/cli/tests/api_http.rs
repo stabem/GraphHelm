@@ -5854,3 +5854,363 @@ fn eof_arriving_after_the_deadline_is_not_silently_accepted() {
 // straight through to `started = Instant::now()`) and re-injected the ORIGINAL 260ms delay Codex
 // named -- reproduced the exact old failure again, `panicked ... after 0 bytes received`. Both
 // temporary edits reverted immediately after.
+
+// ---------------------------------------------------------------------------------------------
+// #159: the customs acting surface over HTTP. `POST /v1/executions/{id}/claim` and
+// `POST /v1/executions/{id}/clear` are the SAME `execution::claim::execute` /
+// `execution::clear::{decide, execute}` the CLI runs (D-039's "never a second path"), so the
+// journal a chain leaves behind is the same list of events whichever door appended it, and the
+// scan history `render()` publishes under `customs` is byte-identical on both.
+// ---------------------------------------------------------------------------------------------
+
+fn customs_graph() -> PathBuf {
+    root().join("examples/graphs/customs-acting.yaml")
+}
+
+/// `execution start` on the customs graph, through the CLI: `implementation` answers `unknown`
+/// (the fixture executor's `NeedsInput`) and parks at `waiting_input`; `release_notes` is
+/// scripted to succeed the moment a drive lets it run. Returns the fixtures path the `clear`
+/// requests below hand back to the server for that drive.
+fn cli_start_customs(events: &Path, directory: &Path, execution: &str) -> PathBuf {
+    let fixtures = fixtures_file(
+        directory,
+        serde_json::json!({ "implementation": "unknown", "release_notes": "success" }),
+    );
+    let graph = customs_graph();
+    let data = cli(&[
+        "execution",
+        "start",
+        "--file",
+        graph.to_str().unwrap(),
+        "--events",
+        events.to_str().unwrap(),
+        "--fixtures",
+        fixtures.to_str().unwrap(),
+        "--mode",
+        "supervised",
+        "--execution",
+        execution,
+    ])["data"]
+        .clone();
+    assert_eq!(
+        data["nodeStates"]["implementation"], "waiting_input",
+        "PRECONDITION: the node parked: {data}"
+    );
+    fixtures
+}
+
+/// An evidence bundle in `ClaimEvidence`'s exact wire shape, one entry per kind.
+fn customs_evidence(kinds: &[&str]) -> Value {
+    Value::Array(
+        kinds
+            .iter()
+            .map(|kind| {
+                serde_json::json!({
+                    "kind": kind,
+                    "contentHash": format!("sha256:{}", "d".repeat(64)),
+                    "size": 42,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn customs_headers(key: &'static str) -> [(&'static str, &'static str); 3] {
+    [
+        ("Idempotency-Key", key),
+        ("X-GraphHelm-Actor", "agent-claimer"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ]
+}
+
+/// The `completion_*` kinds in journal order, read through the events tail.
+fn customs_kinds_over_http(base: &str, token: &str, execution: &str) -> Vec<String> {
+    all_events(base, token, execution)
+        .iter()
+        .filter_map(|event| event["kind"]["type"].as_str())
+        .filter(|kind| kind.starts_with("completion_"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// THE SEALED ACCEPTANCE over HTTP (#159): the same acting 4/4 chain
+/// `customs_cli.rs::a_parked_node_is_claimed_cleared_and_the_graph_finishes` drives through the
+/// CLI, and the journal it leaves is the SAME list of `completion_*` kinds that cell asserts —
+/// a surface that appended a different event, or in a different order, fails on the list.
+#[test]
+fn the_acting_chain_over_http_appends_the_same_journal_the_cli_does() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-acting";
+    let fixtures = cli_start_customs(&events, directory.path(), execution);
+    let graph = customs_graph();
+
+    let (_guard, base, token) = serve(&events);
+    let claim_url = format!("{base}/v1/executions/{execution}/claim");
+    let clear_url = format!("{base}/v1/executions/{execution}/clear");
+
+    // 1. Refused when the budget is unmet — named code, node untouched.
+    let (status, refused) = post_json(
+        &claim_url,
+        &token,
+        &customs_headers("claim-short"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "node": "implementation",
+            "evidence": customs_evidence(&["diff"]),
+        }),
+    );
+    assert_eq!(status, 200, "{refused}");
+    assert_eq!(refused["data"]["claim"]["outcome"], "refused", "{refused}");
+    assert_eq!(
+        refused["data"]["claim"]["reasonCode"],
+        "evidence_budget_unmet"
+    );
+    assert_eq!(refused["data"]["claim"]["claimSeq"], Value::Null);
+    assert_eq!(
+        refused["data"]["nodeStates"]["implementation"],
+        "waiting_input"
+    );
+
+    // 2. Claimed — quarantine visible, the node still parked, downstream not released.
+    let (status, claimed) = post_json(
+        &claim_url,
+        &token,
+        &customs_headers("claim-full"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "node": "implementation",
+            "evidence": customs_evidence(&["test_report"]),
+        }),
+    );
+    assert_eq!(status, 200, "{claimed}");
+    assert_eq!(claimed["data"]["claim"]["outcome"], "claimed", "{claimed}");
+    let claim_seq = claimed["data"]["claim"]["claimSeq"].as_u64().unwrap();
+    assert_eq!(
+        claimed["data"]["customs"]["quarantinedNodes"],
+        serde_json::json!(["implementation"])
+    );
+    assert_eq!(
+        claimed["data"]["nodeStates"]["implementation"],
+        "waiting_input"
+    );
+    assert_ne!(claimed["data"]["nodeStates"]["release_notes"], "succeeded");
+    // The claim is attributed to the calling agent, exactly as every other mutation is.
+    let recorded = last_event_of_kind(&base, &token, execution, "completion_claimed");
+    assert_eq!(recorded["actor"]["type"], "agent");
+    assert_eq!(recorded["actor"]["id"], "agent-claimer");
+
+    // 3. A wrong digest is REJECTED, spends the claim, releases nothing.
+    let (status, rejected) = post_json(
+        &clear_url,
+        &token,
+        &customs_headers("clear-wrong"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "claimSeq": claim_seq,
+            "manifestHash": format!("sha256:{}", "0".repeat(64)),
+        }),
+    );
+    assert_eq!(status, 200, "{rejected}");
+    assert_eq!(
+        rejected["data"]["clearance"]["outcome"], "rejected",
+        "{rejected}"
+    );
+    assert_eq!(rejected["data"]["clearance"]["reasonCode"], "hash_mismatch");
+    assert_eq!(
+        rejected["data"]["clearance"]["claimSeq"],
+        serde_json::json!(claim_seq)
+    );
+    assert_ne!(rejected["data"]["nodeStates"]["release_notes"], "succeeded");
+    assert_eq!(
+        rejected["data"]["nodeStates"]["implementation"],
+        "waiting_input"
+    );
+    assert_eq!(
+        rejected["data"]["customs"]["quarantinedNodes"],
+        serde_json::json!([])
+    );
+
+    // 4. Claim again (the wait survived), clear with the bundle → the drive finishes the graph.
+    let (status, claimed_again) = post_json(
+        &claim_url,
+        &token,
+        &customs_headers("claim-again"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "node": "implementation",
+            "evidence": customs_evidence(&["test_report"]),
+        }),
+    );
+    assert_eq!(status, 200, "{claimed_again}");
+    assert_eq!(
+        claimed_again["data"]["claim"]["outcome"], "claimed",
+        "{claimed_again}"
+    );
+    let claim_seq = claimed_again["data"]["claim"]["claimSeq"].as_u64().unwrap();
+    let (status, cleared) = post_json(
+        &clear_url,
+        &token,
+        &customs_headers("clear-right"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "claimSeq": claim_seq,
+            "evidence": customs_evidence(&["test_report"]),
+        }),
+    );
+    assert_eq!(status, 200, "{cleared}");
+    assert_eq!(
+        cleared["data"]["clearance"]["outcome"], "cleared",
+        "{cleared}"
+    );
+    assert_eq!(cleared["data"]["clearance"]["reasonCode"], Value::Null);
+    assert_eq!(cleared["data"]["nodeStates"]["implementation"], "succeeded");
+    assert_eq!(cleared["data"]["nodeStates"]["release_notes"], "succeeded");
+    assert_eq!(cleared["data"]["status"], "completed");
+    assert_eq!(
+        cleared["data"]["customs"]["quarantinedNodes"],
+        serde_json::json!([])
+    );
+
+    // The journal, read through the tail: the same family in the same order the CLI cell
+    // `customs_cli.rs::a_parked_node_is_claimed_cleared_and_the_graph_finishes` asserts.
+    assert_eq!(
+        customs_kinds_over_http(&base, &token, execution),
+        [
+            "completion_refused",
+            "completion_claimed",
+            "completion_cleared",
+            "completion_claimed",
+            "completion_cleared",
+        ]
+    );
+    // And what `status` reads afterwards is what the verb replied with — one `render()`.
+    let after = get_json(&format!("{base}/v1/executions/{execution}"), Some(&token));
+    assert_eq!(after["data"]["customs"], cleared["data"]["customs"]);
+}
+
+/// A claim is idempotent under the surface's own contract (a full retry is success, not
+/// conflict, and appends nothing), and THE TRAP GUARD on this surface: a claim naming a wait
+/// other than the node's open one is refused for the wait it named, never redirected to
+/// "whichever wait is open now". Sequence 1 is the `execution_started` envelope — a sequence no
+/// scan of this node ever parked at (`unknown_wait`); the superseded-wait arm
+/// (`stale_rendezvous`) is arranged at the verb level in
+/// `core/events/tests/customs_verbs.rs`, for the reason `customs_cli.rs` states.
+#[test]
+fn a_claim_retry_appends_nothing_and_a_stale_wait_is_refused_over_http() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-claim-retry";
+    let _fixtures = cli_start_customs(&events, directory.path(), execution);
+    let graph = customs_graph();
+
+    let (_guard, base, token) = serve(&events);
+    let claim_url = format!("{base}/v1/executions/{execution}/claim");
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(),
+        "node": "implementation",
+        "evidence": customs_evidence(&["test_report"]),
+    });
+    let headers = customs_headers("claim-retry-1");
+
+    let (status, first) = post_json(&claim_url, &token, &headers, &body);
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["data"]["claim"]["outcome"], "claimed", "{first}");
+    let head_after_first = head_sequence(&base, &token, execution);
+
+    let (retry_status, retry) = post_json(&claim_url, &token, &headers, &body);
+    assert_eq!(
+        retry_status, 200,
+        "a full retry is success, not conflict: {retry}"
+    );
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        head_after_first,
+        "and appends nothing"
+    );
+
+    let open_wait = first["data"]["customs"]["nodes"]["implementation"]["openWait"]["atSequence"]
+        .as_u64()
+        .unwrap();
+    assert_ne!(
+        open_wait, 1,
+        "PRECONDITION: sequence 1 is not the open wait"
+    );
+    let (status, stale) = post_json(
+        &claim_url,
+        &token,
+        &customs_headers("claim-stale"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "node": "implementation",
+            "waitSeq": 1,
+            "evidence": customs_evidence(&["test_report"]),
+        }),
+    );
+    assert_eq!(status, 200, "{stale}");
+    assert_eq!(stale["data"]["claim"]["outcome"], "refused", "{stale}");
+    assert_eq!(stale["data"]["claim"]["reasonCode"], "unknown_wait");
+    assert_eq!(stale["data"]["claim"]["waitSeq"], serde_json::json!(1));
+    assert_eq!(
+        stale["data"]["nodeStates"]["implementation"],
+        "waiting_input"
+    );
+    let recorded = last_event_of_kind(&base, &token, execution, "completion_refused");
+    assert_eq!(recorded["kind"]["data"]["reasonCode"], "unknown_wait");
+    assert_eq!(
+        recorded["kind"]["data"]["claimedWaitSeq"],
+        serde_json::json!(1)
+    );
+}
+
+/// #163: `data.customs` is ONE typed value rendered by the one `render()` both doors call, so the
+/// CLI's `execution status` and `GET /v1/executions/{id}` publish it byte for byte. The
+/// quarantine is asserted non-empty first, so an empty view on both sides cannot pass as parity.
+#[test]
+fn the_scan_history_is_byte_identical_on_the_cli_and_the_api() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-customs-parity";
+    let _fixtures = cli_start_customs(&events, directory.path(), execution);
+    let graph = customs_graph();
+
+    let (_guard, base, token) = serve(&events);
+    let (status, claimed) = post_json(
+        &format!("{base}/v1/executions/{execution}/claim"),
+        &token,
+        &customs_headers("claim-parity"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "node": "implementation",
+            "evidence": customs_evidence(&["test_report"]),
+        }),
+    );
+    assert_eq!(status, 200, "{claimed}");
+    assert_eq!(claimed["data"]["claim"]["outcome"], "claimed", "{claimed}");
+
+    let cli = cli_envelope(&[
+        "execution",
+        "status",
+        "--events",
+        events.to_str().unwrap(),
+        "--execution",
+        execution,
+    ])["data"]["customs"]
+        .clone();
+    let api =
+        get_json(&format!("{base}/v1/executions/{execution}"), Some(&token))["data"]["customs"]
+            .clone();
+
+    assert_eq!(
+        cli["quarantinedNodes"],
+        serde_json::json!(["implementation"]),
+        "non-empty-is-the-control: an empty view on both doors would agree for the wrong reason"
+    );
+    assert_eq!(
+        serde_json::to_vec(&cli).unwrap(),
+        serde_json::to_vec(&api).unwrap(),
+        "cli: {cli}\napi: {api}"
+    );
+}

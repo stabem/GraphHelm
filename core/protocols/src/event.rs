@@ -367,6 +367,14 @@ pub struct CompletionRefused {
     pub execution_id: OpaqueId,
     pub node: OpaqueId,
     /// The wait the refused claim NAMED — frequently stale, which is frequently the reason.
+    ///
+    /// SENTINEL CONVENTION: when the claim named no wait and the node had none open, this equals
+    /// the refusal's own envelope sequence. No wait can carry that number, because a wait's
+    /// identity is the sequence of the envelope that MINTED it — a park (`node_outcome_recorded`
+    /// into `waiting_input`) or a `dlq_returned`, which opens a new episode keyed by its own
+    /// sequence — and this envelope is a `completion_refused`, which mints none. So a reader
+    /// cannot mistake the record for a rendezvous. The field stays a positive sequence either way
+    /// (#159, D7: no schema change).
     pub claimed_wait_seq: u64,
     /// The registry code naming WHY the command layer would not accept the claim. `SafeCode` for
     /// the same reason as on `CompletionRejected`: house grammar, bounded, and the spelling every

@@ -1,5 +1,62 @@
 # Specification Changelog
 
+## The first compile: the Graph Architect, #107 - 2026-09-11
+
+- **Something in the tree now turns a prompt into a graph.** `core/architect` is a compiler
+  with a model in the middle: `synthesize(profile, catalog, model)` assembles a deterministic
+  prompt, asks for ONE draft, wraps the model's `spec` in the compiler's own metadata, and
+  validates through the SAME chain every authored graph takes -- `load_graph_json` -> `lint` ->
+  executor viability. One road: the document it emits enters the system through
+  `execution start --file` exactly as an authored file does. It never publishes and never
+  starts.
+- **K=2 repairs, then a refusal with the diagnostics attached.** A draft that fails schema,
+  lint or viability is fed back with its diagnostics verbatim (`code`, pointer, message) for at
+  most two more rounds; a third invalid draft is `invalid { rounds: 3, diagnostics }`. The
+  compiler adds four repairable codes of its own -- `GHA001_NOT_JSON`,
+  `GHA002_NODE_TYPE_NOT_EXECUTABLE`, `GHA003_TOOL_CALL_MISSING`,
+  `GHA004_BUDGET_EXCEEDS_PROFILE` -- each at the pointer the model must correct.
+- **Every synthesized graph is born completable (issue #183, D-051).** The compiler stamps
+  `completion.customs` (`proofKinds: []`, the profile's two budgets) onto every node the
+  runtime dispatches as work that can park, reports the stamped ids as `stampedCustoms`, and
+  treats a `GHG102_UNBOUNDED_CUSTOMS` that survives the stamp as `notCompletable` -- a failure
+  of synthesis, never a warning. The stamp set is derived from `classify::work_kind`, and a
+  cross-crate witness holds it against the lint's park set for every `NodeType` variant.
+- **The catalog is the runtime's, and a goal outside it is refused (issue #184, D-052).**
+  `CapabilityCatalog::from_runtime(programs)` lists the node types `work_kind` executes, the
+  three tool families, and the operator's program allowlist -- the same surface
+  `serve --allow-program` feeds the tool lease, with no default. A draft naming a program
+  outside it is `capabilityMissing { node, program }`: not repaired, never widened, naming what
+  the operator would have to authorize.
+- **Metadata is the compiler's.** The model is asked for `spec` only; `apiVersion`, `kind` and
+  `metadata { id: arch_<sha8 of goal>_v1, executionId, version: 1, labels { origin, template } }`
+  are written by the compiler, so two runs on one goal produce one identity and the golden is
+  byte-stable.
+- **A content-hashed template and a keyless door.** The prompt template is versioned by its
+  own sha256, substituted into every prompt, so editing it moves every recorded reply's key at
+  once and the suite fails with `fixtureMissing { promptSha256 }` naming the hash to record --
+  a named event, never drift. `RecordedDraftModel` (`--fixture`) is the model in every test and
+  is available to operators; the gateway door (`--manifest --route`, or the Runtime's wiring on
+  `serve`) reuses `gateway probe`'s lease construction and `serve`'s adapters. No new credential
+  path; a gateway error surfaces as the taxonomy's static text, never a path or a key.
+- **Three surfaces, one JSON.** `graphhelm graph synthesize --goal --out [--allow-program P]*`,
+  `POST /v1/graphs/synthesize`, and the MCP tool `synthesize` return the same
+  `{ document, rationale, stampedCustoms, templateSha256, rounds, promptSha256s, usage? }`;
+  the CLI additionally writes `--out` and refuses to overwrite. A compiler refusal is ONE
+  diagnostic, `GHCLI026_ARCHITECT_REFUSED` at `/goal`, carrying the `kind`-tagged refusal.
+- **The reviewer's findings landed with the slice.** Every `tool.call` is parsed at the trust
+  boundary by the tool broker's own checked parser (`ToolCall::from_json`), so a call the
+  compiler accepts is a call the driver will assemble and a stray field is a diagnostic at
+  compile time rather than a refusal mid-run; the repository writes the template never offered
+  are refused there too. The park set has a witness (`tests/park_witness.rs`). The node count is
+  read off the parsed reply and refused as `tooManyNodes` BEFORE the schema walk and the lint,
+  so a thousand-node draft costs one map length. The goal and the previous draft are fenced in
+  the prompt and declared data, not instructions.
+- **Declared gaps, on record.** Tier B (semantic quality by a paid judge) is unmeasured; the
+  golden suite proves determinism and validity, not usefulness. The Task Profiler and
+  Capability Discovery are not built -- the profile is caller-supplied and the catalog is
+  code-derived. Synthesized `agent` nodes are ephemeral; the registry seam (#110) is untouched.
+  The run, its hashes and the cell-to-test map: `docs/acceptance/m11-first-compile-2026-09-11.md`;
+  the harness note: `docs/harness/GRAPH_ARCHITECT.md`.
 ## The acting half: claim, clear, and the scan history, #159 - 2026-09-11
 
 - **A parked node could be described and never finished.** The customs event family, the fold

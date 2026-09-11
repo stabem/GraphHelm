@@ -1,3 +1,4 @@
+pub(crate) mod architect;
 mod development;
 mod draft;
 mod events;
@@ -65,6 +66,31 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution.as_deref(),
                 stream.as_deref(),
             ),
+            GraphCommand::Synthesize {
+                goal,
+                out,
+                mode,
+                max_nodes,
+                allow_programs,
+                fixture,
+                manifest,
+                route,
+                broker,
+                keyring,
+                key_id,
+            } => architect::run(&architect::SynthesizeArguments {
+                goal,
+                out,
+                mode,
+                max_nodes,
+                allow_programs,
+                fixture,
+                manifest,
+                route,
+                broker,
+                keyring,
+                key_id,
+            }),
         },
         TopLevel::Schema(schema) => match schema.command {
             SchemaCommand::Catalog { catalog } => schema::catalog::run(&catalog),

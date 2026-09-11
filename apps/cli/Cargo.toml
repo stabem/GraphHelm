@@ -14,6 +14,7 @@ axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
 getrandom.workspace = true
+graphhelm-architect = { path = "../../core/architect" }
 graphhelm-events = { path = "../../core/events" }
 graphhelm-execution = { path = "../../core/execution" }
 graphhelm-extension-host = { path = "../../core/extension-host" }

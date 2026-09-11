@@ -436,6 +436,7 @@ fn build_router(state: ServeState) -> Router {
             post(routes::wake_lease).get(routes::wake_lease_status),
         )
         .route("/v1/graph/topology", post(routes::graph_topology))
+        .route("/v1/graphs/synthesize", post(routes::synthesize))
         .route("/v1/gateway/routes", get(routes::gateway_routes))
         .route("/v1/gateway/probe", get(routes::gateway_probe))
         .route(

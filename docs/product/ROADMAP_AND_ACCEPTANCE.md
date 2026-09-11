@@ -80,6 +80,7 @@ a decision that never reaches the document that governs the work does not govern
 | 4 | **Provider-less mode as a declared guarantee** | the fixture route stated as a promise and held by a test, so the product runs with no credentials at all | **not declared**; the route exists, the guarantee does not |
 
 The acting half (#159) landed 2026-09-11; see `docs/milestones/acting-half.md`.
+The first compile (#107) landed 2026-09-11 as `graph synthesize`; the Task Profiler and Capability Discovery remain unbuilt — see `docs/harness/GRAPH_ARCHITECT.md`.
 
 **Order of work remains: 1, 3, 4, then #107.** Promise 2 is partial and remains open under #302:
 the snapshot-bound retrieval guard is shipped in #219's slice, but the full validated recipe is not. Promises 1, 3 and 4 are what a stranger

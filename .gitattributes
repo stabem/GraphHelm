@@ -17,6 +17,7 @@ extensions/builtin/graphhelm-development-contracts/**/*.md text eol=lf
 # path, so the next Windows checkout rewrote every corpus file to CRLF and the oracle freeze
 # broke on main. A digest over raw bytes needs its eol rule pinned to WHERE THE BYTES LIVE.
 tools/development-benchmark/corpus/**/*.json text eol=lf
+core/architect/fixtures/** text eol=lf
 tools/development-benchmark/corpus/**/*.md text eol=lf
 # schemas/*.json is DELIBERATELY ABSENT from this file, and the absence is load-bearing.
 #

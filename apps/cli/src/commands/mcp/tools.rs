@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 26] = [
+const TOOLS: [ToolSpec; 27] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -211,6 +211,20 @@ const TOOLS: [ToolSpec; 26] = [
                       the door until the wire carries a signature (#529). Requires the graph \
                       (\"file\" or \"graph\") and the \"claimSeq\" the claim reply named.",
         schema: clear_schema,
+    },
+    ToolSpec {
+        name: "synthesize",
+        description: "Compile a goal into a graph document (POST /v1/graphs/synthesize): the \
+                      Graph Architect asks a model for ONE draft, validates it through the \
+                      same schema, lint and executor checks an authored file takes, repairs at \
+                      most twice, and returns the document with the compiler's rationale - or \
+                      refuses with the diagnostics. It publishes nothing and starts nothing: \
+                      the document is what \"start\" takes as an inline \"graph\". \
+                      \"allowPrograms\" is the allowlist a shell node may name; it defaults to \
+                      the server's own and is never widened by the compiler. \"fixture\" is a \
+                      recorded-replies file on the RUNTIME's host (the keyless door); without \
+                      it the server's model route, or \"route\", answers.",
+        schema: synthesize_schema,
     },
 ];
 
@@ -535,6 +549,41 @@ fn wake_wait_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({"executionId": {"type": "string"}}),
         &["executionId"],
+    )
+}
+
+/// Closed like every other schema here. `fixture` and `route` are both optional and the route
+/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
+/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
+/// same reason `start_schema` does not encode file-or-graph.
+fn synthesize_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "goal": {
+                "type": "string",
+                "minLength": 1,
+                "description": "What the graph must achieve, in the operator's words.",
+            },
+            "mode": {"type": "string", "enum": ["autopilot", "supervised", "manual"]},
+            "maxNodes": {"type": "integer", "minimum": 1, "maximum": 50},
+            "allowPrograms": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Programs a shell node may name; defaults to the server's own \
+                                allowlist and is never widened by the compiler.",
+            },
+            "fixture": {
+                "type": "string",
+                "description": "Recorded-replies file path on the Runtime host: the keyless \
+                                model door.",
+            },
+            "route": {
+                "type": "string",
+                "description": "A route id of the server's manifest; the deployer's default \
+                                when absent.",
+            },
+        }),
+        &["goal"],
     )
 }
 
@@ -1137,6 +1186,34 @@ pub(crate) fn call(
             None,
             None,
         )),
+        // A READ-SHAPED POST like topology: no idempotency key, no If-Match -- synthesis
+        // publishes, starts and appends nothing. Optional fields travel only when given, so
+        // the route's own defaults (the profile's mode, the server's allowlist) apply exactly
+        // as they do to a raw HTTP caller.
+        "synthesize" => require(arguments, "goal").map(|goal| {
+            let mut body = serde_json::json!({ "goal": goal });
+            for field in ["mode", "fixture", "route"] {
+                if let Some(value) = str_arg(arguments, field) {
+                    body[field] = serde_json::Value::String(value.to_owned());
+                }
+            }
+            if let Some(max_nodes) = arguments
+                .get("maxNodes")
+                .and_then(serde_json::Value::as_u64)
+            {
+                body["maxNodes"] = serde_json::json!(max_nodes);
+            }
+            if let Some(programs) = arguments.get("allowPrograms") {
+                body["allowPrograms"] = programs.clone();
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "graphs", "synthesize"]),
+                Some(&body),
+                None,
+                None,
+            )
+        }),
         _ => unreachable!("the closed-list check above already refused unknown names"),
     };
 

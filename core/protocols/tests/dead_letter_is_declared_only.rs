@@ -103,6 +103,13 @@ fn allowed_sites() -> BTreeMap<&'static str, usize> {
         // a new site naming the variant is a decision somebody makes on purpose rather than a line
         // that arrives unread.
         ("core/graph/src/lint/mod.rs", 1),
+        // The architect's exhaustive walk over `NodeType::EVERY_VARIANT` (#107). The same category
+        // as the two arms above, and the same event as #547: an exhaustive match in another crate
+        // went red here on the way in. The arm is `=> {}` -- it exists so that a NEW variant fails
+        // to compile until its catalog decision is read and confirmed, and the catalog itself
+        // derives executability from `work_kind`; nothing in `core/architect` dispatches, offers,
+        // or emits a dead-letter node.
+        ("core/architect/tests/catalog.rs", 1),
         // The whole-table pin: the variant import, and its row.
         ("core/runtime/tests/gate_nodes.rs", 2),
         // This file. It scans itself deliberately, exactly as

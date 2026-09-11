@@ -145,7 +145,7 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 20] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 21] = [
     "start",
     "list",
     "topology",
@@ -172,6 +172,9 @@ const NON_DEVELOPMENT_TOOLS: [&str; 20] = [
     // releases it -- and sit beside sweep, not beside resolve_contract.
     "claim",
     "clear",
+    // #107. The Graph Architect compiles a goal into a graph document: a RUNTIME verb over the
+    // graph surface (it sits beside topology), not a development operation family.
+    "synthesize",
 ];
 
 /// Where one operation family lives on each of the three surfaces.

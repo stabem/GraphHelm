@@ -6214,3 +6214,138 @@ fn the_scan_history_is_byte_identical_on_the_cli_and_the_api() {
         "cli: {cli}\napi: {api}"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// #107: `POST /v1/graphs/synthesize`, the Graph Architect over HTTP.
+// -------------------------------------------------------------------------------------------
+
+/// The goal the first-compile fixture was recorded with, read from the one file the crate test
+/// and the CLI test read, so exactly one copy of the string exists.
+fn first_compile_goal() -> String {
+    std::fs::read_to_string(root().join("core/architect/fixtures/first-compile/GOAL.txt"))
+        .unwrap()
+        .trim_end()
+        .to_owned()
+}
+
+/// Spec D8, made falsifiable: the API and the CLI answer the same fixture with the same
+/// document, byte for byte, under the same template hash — one reply, not a second
+/// serialization. The API's `data` is the CLI's `data` minus the `out` path the CLI alone writes.
+#[test]
+fn the_api_and_the_cli_compile_the_same_goal_to_the_same_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let goal = first_compile_goal();
+
+    let out = directory.path().join("cli.json");
+    let cli = cli_envelope(&[
+        "graph",
+        "synthesize",
+        "--goal",
+        &goal,
+        "--out",
+        out.to_str().unwrap(),
+        "--allow-program",
+        "cargo",
+        "--fixture",
+        fixture.to_str().unwrap(),
+    ]);
+    assert_eq!(cli["ok"], true, "{cli}");
+
+    let url = format!("{base}/v1/graphs/synthesize");
+    let body = serde_json::json!({
+        "goal": goal,
+        "allowPrograms": ["cargo"],
+        "fixture": fixture.to_str().unwrap(),
+    });
+    let unauthenticated = post_request(&url, "not-the-token", &[], &body);
+    assert_eq!(
+        unauthenticated.status, 401,
+        "the architect route must refuse a wrong token: {}",
+        unauthenticated.body
+    );
+
+    let (status, reply) = post_json(&url, &token, &[], &body);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["command"], serde_json::json!("graph.synthesize"));
+
+    let written: Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&reply["data"]["document"]).unwrap(),
+        serde_json::to_vec(&written).unwrap(),
+        "the API's document is the CLI's --out file, byte for byte"
+    );
+    assert_eq!(
+        reply["data"]["templateSha256"],
+        cli["data"]["templateSha256"]
+    );
+    assert_eq!(reply["data"]["rounds"], 1);
+    let mut cli_data = cli["data"].clone();
+    cli_data.as_object_mut().unwrap().remove("out");
+    assert_eq!(
+        reply["data"], cli_data,
+        "one reply on every door: the API's data is the CLI's minus the file it wrote"
+    );
+}
+
+/// The route's refusals are argument-shaped 400s carrying the CLI's own codes: a fixture-only
+/// server asked without a fixture names both doors; a compiler refusal is `GHCLI026` at `/goal`
+/// with the refusal as compact JSON, exactly as the CLI prints it; an unknown body field is
+/// refused rather than defaulted.
+#[test]
+fn the_architect_route_refuses_with_the_cli_codes_and_names_both_model_doors() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let url = format!("{base}/v1/graphs/synthesize");
+
+    let (status, reply) = post_json(&url, &token, &[], &serde_json::json!({ "goal": "g" }));
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["ok"], false);
+    assert_eq!(reply["command"], "graph.synthesize");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
+    assert_eq!(reply["diagnostics"][0]["path"], "/fixture");
+    let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("\"fixture\"")
+            && message.contains("--manifest")
+            && message.contains("--route"),
+        "both doors are named: {message}"
+    );
+
+    let fixture = root().join("core/architect/fixtures/sabotage/program-outside-catalog.json");
+    let (status, reply) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({
+            "goal": first_compile_goal(),
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"],
+        "GHCLI026_ARCHITECT_REFUSED"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], "/goal");
+    let refusal: Value =
+        serde_json::from_str(reply["diagnostics"][0]["message"].as_str().unwrap()).unwrap();
+    assert_eq!(refusal["kind"], "capabilityMissing");
+    assert_eq!(refusal["node"], "build_check");
+    assert_eq!(refusal["program"], "python");
+
+    let (status, reply) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({ "goal": "g", "fixture": fixture.to_str().unwrap(), "maxNode": 3 }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
+    assert_eq!(reply["diagnostics"][0]["path"], "/maxNode");
+}

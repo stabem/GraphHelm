@@ -10,12 +10,15 @@ use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use graphhelm_architect::{ArchitectRefusal, DraftModel, DraftReply, RecordedDraftModel};
 use graphhelm_events::{ClearanceOutcome, EventRepositoryError, EvidenceRead, EvidenceSealer};
+use graphhelm_gateway::call::ModelCall;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{AsyncNodeExecutor, PortExecutor};
 use graphhelm_runtime::fixture::FixtureAsyncExecutor;
+use graphhelm_runtime::ports::ModelPort;
 use graphhelm_simulation::FixtureExecutor;
 use graphhelm_tool_broker::lease::{Capability, ToolLease};
 
@@ -28,12 +31,14 @@ use super::{
     ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
     parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
 };
+use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
 use crate::commands::{event_store, execution, owner, publish_loaded, topology};
 use crate::output::Outcome;
 
 const LIST_COMMAND: &str = "execution.list";
 const TOPOLOGY_COMMAND: &str = "graph.topology";
+const SYNTHESIZE_COMMAND: &str = "graph.synthesize";
 const STATUS_COMMAND: &str = "execution.status";
 const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
@@ -156,6 +161,259 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR,
             Outcome::internal(TOPOLOGY_COMMAND, message).output,
         ),
+    }
+}
+
+/// `POST /v1/graphs/synthesize` with `{goal, mode?, maxNodes?, allowPrograms?, fixture?,
+/// route?}`: the Graph Architect over HTTP (#107), replying `graph.synthesize`'s own `data` —
+/// the exact `architect::execute` the CLI's `graph synthesize` runs, so the document, the
+/// rationale and the template hash are one reply on every door (spec D8), minus only the `out`
+/// path the CLI alone writes.
+///
+/// A READ-SHAPED POST like `graph_topology`: it publishes nothing, starts nothing and appends
+/// nothing, so it carries no `Idempotency-Key` and names no execution. The body is CLOSED — an
+/// unknown field is refused at its own pointer rather than defaulted — for the reason
+/// `TaskProfile` is `deny_unknown_fields`: a misspelled `maxNodes` that quietly became the
+/// default would be a ceiling nobody asked for.
+///
+/// THE MODEL DOOR. `fixture` names a recorded-replies file on the RUNTIME's host — the keyless
+/// door every test uses, and the same trust seam as `start`'s `file` (the caller already holds
+/// a bearer token that can make this Runtime read a graph by path). Without it, the server's
+/// own wiring answers: `route` (or the deployer's default) is resolved against the FRESH
+/// manifest by `resolve_requested_route`, and `ServeModelPort::build` leases the credential
+/// exactly as a drive does — no new credential path. A server with neither is a fixture-only
+/// deployment, and the 400 names both options. `allowPrograms` defaults to the server's own
+/// `--allow-program` list when wiring exists, else to nothing: the compiler never invents a
+/// program, and the request can narrow the allowlist but a wider one reaches only the
+/// compiler's catalog check, never the tool lease.
+///
+/// The synthesis itself is synchronous compiler work plus, on the gateway door, a blocking
+/// model call, so it runs OFF the reactor (#559) through `off_reactor`; the port's async `call`
+/// is driven from inside that blocking task (see `ServeDraftModel`).
+pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> Response {
+    const FIELDS: [&str; 6] = [
+        "goal",
+        "mode",
+        "maxNodes",
+        "allowPrograms",
+        "fixture",
+        "route",
+    ];
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "the request body is not valid JSON",
+                "/",
+            );
+        }
+    };
+    let Some(object) = payload.as_object() else {
+        return bad_request(
+            SYNTHESIZE_COMMAND,
+            "the request body must be a JSON object",
+            "/",
+        );
+    };
+    if let Some(unknown) = object.keys().find(|key| !FIELDS.contains(&key.as_str())) {
+        return bad_request(
+            SYNTHESIZE_COMMAND,
+            &format!("the request body carries a field this route does not read: {unknown}"),
+            &format!("/{unknown}"),
+        );
+    }
+    let Some(goal) = object.get("goal").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            SYNTHESIZE_COMMAND,
+            "the request body must carry \"goal\" as a string",
+            "/goal",
+        );
+    };
+    let mode = match object.get("mode") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(mode)) => Some(mode.clone()),
+        Some(_) => {
+            return bad_request(SYNTHESIZE_COMMAND, "\"mode\" must be a string", "/mode");
+        }
+    };
+    let max_nodes = match object.get("maxNodes") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64().and_then(|count| usize::try_from(count).ok()) {
+            Some(count) => Some(count),
+            None => {
+                return bad_request(
+                    SYNTHESIZE_COMMAND,
+                    "\"maxNodes\" must be a non-negative integer",
+                    "/maxNodes",
+                );
+            }
+        },
+    };
+    let allow_programs: Option<Vec<String>> = match object.get("allowPrograms") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Array(items)) => {
+            let mut programs = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(program) = item.as_str() else {
+                    return bad_request(
+                        SYNTHESIZE_COMMAND,
+                        "\"allowPrograms\" must be an array of strings",
+                        "/allowPrograms",
+                    );
+                };
+                programs.push(program.to_owned());
+            }
+            Some(programs)
+        }
+        Some(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "\"allowPrograms\" must be an array of strings",
+                "/allowPrograms",
+            );
+        }
+    };
+    let fixture = match object.get("fixture") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(path)) => Some(PathBuf::from(path)),
+        Some(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "\"fixture\" must be a string naming a recorded-replies file on the Runtime host",
+                "/fixture",
+            );
+        }
+    };
+    if fixture.is_some() && object.get("route").is_some_and(|route| !route.is_null()) {
+        return bad_request(
+            SYNTHESIZE_COMMAND,
+            "\"fixture\" and \"route\" are mutually exclusive: one model door per request",
+            "/fixture",
+        );
+    }
+
+    let model: Box<dyn DraftModel + Send> = match fixture {
+        Some(path) => {
+            // A bounded, regular-file-only read (the adapter's own `from_file`), off the reactor.
+            let Some(loaded) = off_reactor(move || RecordedDraftModel::from_file(&path)).await
+            else {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(SYNTHESIZE_COMMAND, "the fixture read task failed").output,
+                );
+            };
+            match loaded {
+                Ok(model) => Box::new(model),
+                // The refusal names the failure class and never the path: the same
+                // `GHCLI026` the CLI prints for the same file.
+                Err(refusal) => {
+                    return respond_outcome(
+                        architect::refused(&refusal).into_outcome(SYNTHESIZE_COMMAND),
+                    );
+                }
+            }
+        }
+        None => match state.runtime.as_ref() {
+            None => {
+                return bad_request(
+                    SYNTHESIZE_COMMAND,
+                    "this server has no runtime wiring (fixture-only mode): pass \"fixture\" \
+                     naming a recorded-replies file, or start serve with --manifest/--route so \
+                     a model route can answer",
+                    "/fixture",
+                );
+            }
+            Some(wiring) => {
+                let route =
+                    match resolve_requested_route(wiring, SYNTHESIZE_COMMAND, &payload).await {
+                        Ok(route) => route,
+                        Err(MutationError::Prepared(response)) => return response,
+                        Err(MutationError::Command(failure)) => {
+                            return respond_failure(SYNTHESIZE_COMMAND, failure);
+                        }
+                    };
+                match ServeModelPort::build(wiring, &route).await {
+                    Ok(port) => Box::new(ServeDraftModel {
+                        route_id: route.id().to_owned(),
+                        port,
+                    }),
+                    Err(message) => {
+                        return respond_failure(SYNTHESIZE_COMMAND, setup_failure(&message));
+                    }
+                }
+            }
+        },
+    };
+    let allow_programs = allow_programs.unwrap_or_else(|| {
+        state
+            .runtime
+            .as_ref()
+            .map(|wiring| wiring.allow_programs.clone())
+            .unwrap_or_default()
+    });
+
+    let goal = goal.to_owned();
+    let outcome = off_reactor(move || {
+        let request = SynthesizeRequest {
+            goal: &goal,
+            mode: mode.as_deref(),
+            max_nodes,
+            allow_programs: &allow_programs,
+            wait_within_seconds: None,
+            clearance_within_seconds: None,
+        };
+        architect::execute(&request, model.as_ref())
+            .map_err(|failure| failure.into_outcome(SYNTHESIZE_COMMAND))
+    })
+    .await;
+    match outcome {
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(SYNTHESIZE_COMMAND, "the synthesis task failed").output,
+        ),
+        Some(Ok(value)) => respond(
+            StatusCode::OK,
+            Outcome::success(SYNTHESIZE_COMMAND, value).output,
+        ),
+        // `GHCLI026` is a domain refusal (exit 2): the caller's goal did not compile, a 400.
+        Some(Err(outcome)) => respond_outcome(outcome),
+    }
+}
+
+/// The serve-side [`DraftModel`]: the [`ServeModelPort`] built for the resolved route (the same
+/// port a drive's executor uses, credential leased the same way), driven from inside the
+/// blocking task the synthesis runs in. `synthesize` is synchronous and the port's `call` is
+/// async, so `draft` bridges with `Handle::current().block_on`: legal on a blocking-pool
+/// thread, which holds the runtime's handle but is not a task of the reactor, and — because
+/// `serve` runs on a current-thread runtime (`commands::events::runtime`) — driven by the
+/// reactor thread sitting in `Runtime::block_on`, which is what `Handle::block_on`'s own
+/// contract requires there. No `block_in_place`: tokio ships it only under `rt-multi-thread`,
+/// which this workspace does not enable, and on a current-thread runtime it would be a
+/// no-op off the reactor and a panic on it. Calling `draft` ON the reactor is the one thing
+/// this type must never do, and `synthesize` reaches it only through `off_reactor`.
+struct ServeDraftModel {
+    route_id: String,
+    port: ServeModelPort,
+}
+
+impl DraftModel for ServeDraftModel {
+    fn draft(&self, prompt: &str) -> Result<DraftReply, ArchitectRefusal> {
+        let call = ModelCall {
+            prompt: prompt.to_owned(),
+            max_tokens: architect::MAX_TOKENS,
+        };
+        let reply =
+            tokio::runtime::Handle::current().block_on(self.port.call(&self.route_id, &call));
+        reply
+            .map(|reply| DraftReply {
+                text: reply.text,
+                usage: Some(reply.usage),
+            })
+            // The taxonomy's `Display` is fixed static prose: never a path, never a key.
+            .map_err(|error| ArchitectRefusal::ModelUnavailable {
+                message: error.to_string(),
+            })
     }
 }
 

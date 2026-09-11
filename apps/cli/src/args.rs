@@ -885,6 +885,44 @@ pub enum GraphCommand {
         #[arg(long)]
         stream: Option<String>,
     },
+    /// Compiles a goal into a graph document through a model (#107): one draft, a bounded
+    /// repair loop, the same validation chain an authored graph takes, and `completion.customs`
+    /// stamped on every node that can park. Writes the document to `--out` and never publishes
+    /// or starts it: the file enters the system through `execution start --file` like any other.
+    ///
+    /// The model is either the recorded door (`--fixture`, keyless) or a gateway route
+    /// (`--manifest --route`, with `--broker --keyring --key-id` for a `direct_api` route);
+    /// exactly one of the two.
+    Synthesize {
+        #[arg(long)]
+        goal: String,
+        /// Where the document is written. Must end in `.json` and must not exist yet.
+        #[arg(long)]
+        out: PathBuf,
+        /// `autopilot`, `supervised` or `manual`; the profile's default (`supervised`) when
+        /// absent.
+        #[arg(long)]
+        mode: Option<String>,
+        #[arg(long = "max-nodes")]
+        max_nodes: Option<usize>,
+        /// Repeatable; the programs a synthesized shell call may name. There is no default: a
+        /// draft naming any other program is refused, and the architect never widens the list.
+        #[arg(long = "allow-program")]
+        allow_programs: Vec<String>,
+        /// A `{"replies": {"<prompt sha256>": "<text>"}}` recording (`core/architect/fixtures`).
+        #[arg(long)]
+        fixture: Option<PathBuf>,
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        #[arg(long)]
+        route: Option<String>,
+        #[arg(long)]
+        broker: Option<PathBuf>,
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]

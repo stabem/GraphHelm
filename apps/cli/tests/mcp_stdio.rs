@@ -538,7 +538,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 26] = [
+const MCP_TOOL_NAMES: [&str; 27] = [
     "start",
     "list",
     "topology",
@@ -565,6 +565,7 @@ const MCP_TOOL_NAMES: [&str; 26] = [
     "sweep",
     "claim",
     "clear",
+    "synthesize",
 ];
 
 #[test]
@@ -589,7 +590,8 @@ fn tools_list_names_exactly_the_registered_tools_with_closed_schemas() {
          design (omission is the enforcement); #223 added resolve_contract, memory_status, \
          present, compile_context, memory_propose, then accounting, each after the one before \
          it; #288 added sweep after those; #105 added list beside start, the read a caller \
-         reaches for before it knows an execution id. This pin is a LIST and not a count, so a tool added \
+         reaches for before it knows an execution id; #107 added synthesize, the Graph Architect, \
+         last. This pin is a LIST and not a count, so a tool added \
          to TOOLS without a line here fails on the NAME rather than on a number -- which is what \
          happened to present (#357 moved TOOLS and not this list, and the gate that PR chose did \
          not run this file)."
@@ -1781,5 +1783,51 @@ fn the_list_tool_relays_the_routes_refusal_rather_than_clamping() {
         envelope["diagnostics"][0]["code"],
         serde_json::json!("GHCLI001_ARGUMENT_INVALID"),
         "{envelope}"
+    );
+}
+
+/// #107: the `synthesize` tool reaches `POST /v1/graphs/synthesize` and relays the route's own
+/// reply verbatim — the same `data` the HTTP door returns for the same fixture, which is the
+/// same document the CLI writes (`api_http.rs` holds that half).
+#[test]
+fn the_synthesize_tool_reaches_the_architect_route_and_relays_its_document() {
+    let harness = wired("exec-mcp-synthesize");
+    let fixture = root_dir().join("core/architect/fixtures/first-compile/replies.json");
+    let goal =
+        std::fs::read_to_string(root_dir().join("core/architect/fixtures/first-compile/GOAL.txt"))
+            .unwrap()
+            .trim_end()
+            .to_owned();
+    let arguments = serde_json::json!({
+        "goal": goal,
+        "allowPrograms": ["cargo"],
+        "fixture": fixture.to_str().unwrap(),
+    });
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(serde_json::json!(2), "synthesize", arguments.clone()),
+    ]);
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "{envelope}");
+    assert_eq!(envelope["command"], "graph.synthesize");
+    assert_eq!(
+        envelope["data"]["stampedCustoms"],
+        serde_json::json!(["build_check", "summarize"])
+    );
+    assert_eq!(envelope["data"]["rounds"], 1);
+
+    let (status, direct) = post_json(
+        &harness.base,
+        &harness.token,
+        "/v1/graphs/synthesize",
+        &[],
+        &arguments,
+    );
+    assert_eq!(status, 200, "{direct}");
+    assert_eq!(
+        envelope["data"], direct["data"],
+        "the tool must relay the route's own answer, not compose a second one"
     );
 }

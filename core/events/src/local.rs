@@ -697,11 +697,11 @@ impl LocalEventRepository {
                     .cloned()
                     .collect::<Vec<_>>();
                 repository.reconcile_orphans(&state)?;
-                return repository.publish_active_marker(&published, false);
+                return repository.publish_active_marker(&published);
             }
             repository.sync_loaded_journal(&state)?;
             repository.reconcile_orphans(&state)?;
-            repository.publish_active_marker(&published, false)
+            repository.publish_active_marker(&published)
         })();
         let named_unlock = {
             let lock = repository
@@ -1055,7 +1055,7 @@ impl LocalEventRepository {
                 .collect::<BTreeSet<_>>();
             if !requested_keys.is_disjoint(&batch_keys) {
                 if batch.request_digest == request_digest && batch_keys == requested_keys {
-                    self.publish_active_marker(&batch.events, false)?;
+                    self.publish_active_marker(&batch.events)?;
                     return Ok(batch.events.clone());
                 }
                 return Err(EventRepositoryError::IdempotencyConflict);
@@ -1219,7 +1219,7 @@ impl LocalEventRepository {
                 os: None,
             });
         }
-        self.publish_active_marker(&envelopes, true)?;
+        self.publish_active_marker(&envelopes)?;
         Ok(envelopes)
     }
 
@@ -1463,14 +1463,7 @@ impl LocalEventRepository {
     fn publish_active_marker(
         &self,
         envelopes: &[EventEnvelope],
-        fail_if_injected: bool,
     ) -> Result<(), EventRepositoryError> {
-        if fail_if_injected && self.failpoint == Some(LocalFailpoint::ActiveMarker) {
-            return Err(EventRepositoryError::StorageAt {
-                site: "failpoint:active-marker@publish-active-marker",
-                os: None,
-            });
-        }
         let mut marker_indexes = BTreeMap::<String, BTreeMap<String, String>>::new();
         let mut marker_budget =
             DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
@@ -8189,7 +8182,7 @@ mod limit_tests {
         // Population 1: present under its own name -- both say "published".
         assert!(repository.active_markers_clean(&published).unwrap());
         let before = listing(&active);
-        repository.publish_active_marker(&published, false).unwrap();
+        repository.publish_active_marker(&published).unwrap();
         assert_eq!(
             listing(&active),
             before,
@@ -8206,7 +8199,7 @@ mod limit_tests {
             "clean must find the marker through the index, as publish does"
         );
         let before = listing(&active);
-        repository.publish_active_marker(&published, false).unwrap();
+        repository.publish_active_marker(&published).unwrap();
         assert_eq!(
             listing(&active),
             before,
@@ -8219,7 +8212,7 @@ mod limit_tests {
             !repository.active_markers_clean(&published).unwrap(),
             "clean must not accept a marker whose bytes differ"
         );
-        repository.publish_active_marker(&published, false).unwrap();
+        repository.publish_active_marker(&published).unwrap();
         assert!(
             canonical.exists(),
             "publish must republish the marker under its sequence name when only corrupt bytes exist"

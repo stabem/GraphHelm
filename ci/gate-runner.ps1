@@ -411,6 +411,20 @@ function Invoke-OneEntry {
         Set-EntryStatus -EntryPath $entryPath -State "waiting: bench could not be prepared -- $why"
         return 'stalled'
     }
+    # THE BENCH BRANCH MUST TRACK ORIGIN, or the gate has no server to ask (#1040). `worktree add -B`
+    # creates the branch with no upstream; `ci/gate.ps1` answers `pushed` by asking the server named
+    # by `<branch>@{upstream}`, so without this line every runner receipt carries `pushed: null` and
+    # `ci/merge-proof.ps1` refuses it. The remote ref exists: the head was resolved through `gh pr
+    # view` after a fetch. Refuse the entry if the upstream cannot be set, the way a detached bench
+    # is refused below -- a run that cannot publish a readable receipt is not worth spending.
+    $track = Invoke-External 'git' @('-C', $bench, 'branch', '--set-upstream-to', "origin/$branch", $branch) -CaptureError
+    if ($track.Code -ne 0) {
+        $why = (@($track.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
+        if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($track.Code) and said nothing" }
+        Write-Note "entry $($Candidate.File.Name): the bench branch cannot track origin/$branch -- $why"
+        Set-EntryStatus -EntryPath $entryPath -State "refused: bench branch has no upstream -- $why"
+        return 'stalled'
+    }
     $symbolic = Invoke-External 'git' @('-C', $bench, 'symbolic-ref', '--quiet', 'HEAD')
     if ($symbolic.Code -ne 0 -or $symbolic.Output.Count -eq 0) {
         # A DETACHED BENCH RUNS EVERYTHING AND PUBLISHES NOTHING. Refuse before spending the run,

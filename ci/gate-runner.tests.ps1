@@ -30,13 +30,15 @@
 #   1  HEAD OF LINE: a stalled entry is skipped and the next one is processed in the SAME -Once run
 #   1  and the stalled entry itself is still queued afterwards
 #   1  the bench-failure status names git's own reason, not just "could not be prepared"
+#   1  #1040: after a successful worktree add the bench branch is set to track origin/<branch>
+#   1  and a refusal there is the entry status, with git's words   1  and the entry stays queued
 #   1  ARRANGEMENT: the selection really does pass the skip list, so removing it is a sabotage
 #   1  THE FAILURE MODE IS A FAILURE: with the exclusion removed, the run EXITS rather than spins
 #   1  and it exits 3, the code that says the skip list stopped excluding
 #   1  #943 arrangement: the target assignment and the launch are both found, in order
 #   1  the target is removed between them          1  and the runner says so in the log
 #   1  a traversing `pr` is refused as malformed    1  and the directory it aimed at survives
-$ExpectedAssertionCount = 25
+$ExpectedAssertionCount = 28
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -281,6 +283,79 @@ try {
     Assert-True -Condition ($benchStatus -match 'bench could not be prepared --' -and $benchStatus -notmatch 'said nothing') `
         "the bench failure carries git's own words, so a reader knows which of the three causes it was (status: '$($benchStatus.Trim())')"
 
+
+    # ---------------------------------------------------------------------------------------------
+    # #1040: THE BENCH BRANCH TRACKS ORIGIN, and a branch that cannot is refused before the run.
+    #
+    # `git worktree add -B` creates the branch with NO upstream. `ci/gate.ps1` answers `pushed` by
+    # asking the server named by `<branch>@{upstream}`, so a bench prepared that way publishes
+    # `pushed: null` on every receipt and `ci/merge-proof.ps1` refuses all of them. The fix is one
+    # `git branch --set-upstream-to origin/<branch> <branch>` after the add; this cell observes the
+    # ARGUMENT VECTOR the callee receives, the same way the `gh` cases above do, because the property
+    # is "which command, with which arguments, in which order".
+    #
+    # WHY A FAKE `git` AND NOT THE REAL ONE. A real add would check the whole tree out into the
+    # bench, and a real success would carry on into a gate launch -- half an hour of cargo per
+    # assertion. The fake answers `worktree add` with success WITHOUT creating anything, refuses
+    # `--set-upstream-to` with the sentence the real git uses for a missing remote ref, and delegates
+    # every other vector to the real binary. The refusal is what stops the runner before the launch,
+    # so the success path (the add is followed by the tracking call) and the failure path (the
+    # tracking call's refusal is the entry's status, and the entry stays queued) are both observable
+    # from ONE run that spends nothing.
+    # ---------------------------------------------------------------------------------------------
+    Set-Content -LiteralPath $shimPath -Value $perPrShim.Replace('BBBBBBBB', ('c' * 40)) -Encoding ASCII
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force
+    # FIRST, not all: this machine has two git.exe on PATH and Get-Command returns both.
+    $realGit = @(Get-Command -Name 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1)[0].Source
+    $vectorLog = Join-Path $root 'git-vectors.log'
+    $gitShimPath = Join-Path $shimDirectory 'git.cmd'
+    $gitShim = @"
+@echo off
+>>"$vectorLog" echo %*
+if "%~3"=="fetch" exit /b 0
+if "%~3"=="worktree" if "%~4"=="add" exit /b 0
+if "%~3"=="branch" if "%~4"=="--set-upstream-to" (
+  echo fatal: the requested upstream branch '%~5' does not exist 1>&2
+  exit /b 128
+)
+"$realGit" %*
+exit /b %ERRORLEVEL%
+"@
+    Set-Content -LiteralPath $gitShimPath -Value $gitShim -Encoding ASCII
+    $trackEntryPath = Join-Path $queue '200-aaaaaaaa.json'
+    Set-Content -LiteralPath $trackEntryPath -Value (ConvertTo-Json ([ordered]@{
+        pr = 200; head = $serverHead; lane = 'TESTS'; timestamp = (Get-Date).ToUniversalTime().ToString('o') })) -Encoding UTF8
+    $trackBenches = Join-Path $root 'track-benches'
+    $trackTargets = Join-Path $root 'track-targets'
+    try {
+        $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+            -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+            -TargetRoot $trackTargets -BenchRoot $trackBenches 2>&1
+    } finally {
+        # Removed HERE, not in the outer finally: every cell below must run against the real git.
+        Remove-Item -LiteralPath $gitShimPath -Force -ErrorAction SilentlyContinue
+    }
+    $vectors = @(if (Test-Path -LiteralPath $vectorLog) { Get-Content -LiteralPath $vectorLog } else { @() })
+    $addAt = -1; $trackAt = -1; $symbolicAt = -1
+    for ($i = 0; $i -lt $vectors.Count; $i++) {
+        if ($addAt -lt 0 -and $vectors[$i] -match "worktree add -B $serverBranch ") { $addAt = $i }
+        if ($trackAt -lt 0 -and $vectors[$i] -match "branch --set-upstream-to origin/$serverBranch $serverBranch$") { $trackAt = $i }
+        if ($symbolicAt -lt 0 -and $vectors[$i] -match 'symbolic-ref') { $symbolicAt = $i }
+    }
+    # ORDER, from the callee's own log: the tracking call comes AFTER a successful add (it names the
+    # bench, which does not exist before the add) and, when refused, NOTHING follows it -- the
+    # detached-bench probe is the next call on the path, and it was never made.
+    Assert-True -Condition ($addAt -ge 0 -and $trackAt -gt $addAt -and $symbolicAt -lt 0) `
+        -Message "after a successful worktree add the runner calls git branch --set-upstream-to origin/$serverBranch $serverBranch, and a refusal there stops it before the next probe (add=$addAt, track=$trackAt, symbolic-ref=$symbolicAt)"
+    $trackStatus = $(
+        $sp = [System.IO.Path]::ChangeExtension($trackEntryPath, '.status')
+        if (Test-Path -LiteralPath $sp) { Get-Content -LiteralPath $sp -Raw } else { '' })
+    # git's OWN words, for the same reason the bench-failure cell demands them: a status that only
+    # says "refused" would also be written by a runner that ran the command and discarded the answer.
+    Assert-True -Condition ($trackStatus -match 'refused: bench branch has no upstream -- ' -and $trackStatus -match 'does not exist' -and $trackStatus -notmatch 'said nothing') `
+        -Message "and the entry's status is the upstream refusal, carrying git's words (status: '$($trackStatus.Trim())')"
+    Assert-True -Condition (Test-Path -LiteralPath $trackEntryPath) `
+        -Message 'and the entry is STALLED -- still queued for the next pass, not dropped'
 
     # ---------------------------------------------------------------------------------------------
     # #951: THE FAILURE MODE OF THE HEAD-OF-LINE FIX MUST BE A FAILURE, NOT A HANG.

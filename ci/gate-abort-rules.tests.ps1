@@ -53,13 +53,35 @@
 #   1  and it no longer emits an explicit-value -Full: token
 #   1  a FULL-scope run reaches required-features.ps1 and writes its scope report
 #   1  a SCOPED run (excluding the gating crate) reaches required-features.ps1 and writes it too
-$ExpectedAssertionCount = 30
+#   1  NEGATIVE CONTROL: the finally-detector names the variable the shipped cleanup threw on
+#   1  DECOY: one added init silences it, so it measures the init and not the name
+#   1  no finally in this suite reads a variable its try may never have assigned
+$ExpectedAssertionCount = 37
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $script:total = 0
 $script:failures = 0
+
+function Read-PidFile {
+    <#
+    .SYNOPSIS
+        The pid written in a file, or $null while there is not one yet.
+    .DESCRIPTION
+        A PRESENT FILE IS NOT A WRITTEN FILE. The distinction is the whole point: waiting on
+        `Test-Path` returns the instant the path appears, which for `Out-File` is before the bytes
+        land. Everything this returns is a pid a caller can use; every other state -- absent,
+        empty, half-written, not a number -- is $null, so one wait loop covers all of them.
+    #>
+    param([Parameter(Mandatory)] [string] $Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $raw = try { Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } catch { return $null }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $parsed = 0
+    if ([int]::TryParse($raw.Trim(), [ref] $parsed) -and $parsed -gt 0) { return $parsed }
+    return $null
+}
 
 function Assert-True {
     param([Parameter(Mandatory)] [bool] $Condition, [Parameter(Mandatory)] [string] $Message)
@@ -215,17 +237,35 @@ if ($reapBlock) {
 `$child.Id | Out-File -LiteralPath '$pidFile'
 Start-Sleep -Seconds 120
 "@)
+    # BOTH OF THESE ARE READ BY THE `finally` BELOW, SO BOTH MUST EXIST BEFORE THE `try` CAN FAIL.
+    # Under StrictMode reading an unassigned variable is a TERMINATING error, so a `finally` that
+    # touches a variable the `try` had not reached yet throws a SECOND error over the first -- and
+    # the second one is what reaches the log. On 2026-09-11 that turned a missed 10-second
+    # arrangement deadline into `The variable '$childProcessId' cannot be retrieved`, and the
+    # sentence naming the real cause was never printed at all (#1043). The `if ($leftover)` guard
+    # below already treats $null correctly, so initialising costs nothing and buys the message.
+    $wrapper = $null
+    $childProcessId = $null
     try {
         $wrapper = Start-Process -FilePath 'powershell.exe' `
             -ArgumentList '-NoProfile', '-File', $wrapperScript -PassThru
         $null = $wrapper.Handle
+        # WAIT FOR A PID, NOT FOR A PATH. `Out-File` creates the file and then writes it, so
+        # `Test-Path` goes true while the contents are still empty -- and the next line's `[int]`
+        # cast on an empty string THROWS. `Assert-True` records and returns rather than halting, so
+        # execution reached that cast every time; what the log then showed was the ARRANGEMENT cell
+        # PASSING (the path really did exist) immediately followed by the cleanup complaining that
+        # `$childProcessId` was never set. Both true, and together they are the signature of this
+        # race. Measured on #1042: the identical blob 769195eb went GREEN on one head and RED on the
+        # next with nothing under `ci/` changed between them.
         $deadline = (Get-Date).AddSeconds(10)
-        while (-not (Test-Path -LiteralPath $pidFile) -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Milliseconds 100
+        $childProcessId = $null
+        while ($null -eq $childProcessId -and (Get-Date) -lt $deadline) {
+            $childProcessId = Read-PidFile -Path $pidFile
+            if ($null -eq $childProcessId) { Start-Sleep -Milliseconds 100 }
         }
-        Assert-True -Condition (Test-Path -LiteralPath $pidFile) `
-            'ARRANGEMENT: the synthetic wrapper spawned its own child and recorded its pid'
-        $childProcessId = [int](Get-Content -LiteralPath $pidFile -Raw).Trim()
+        Assert-True -Condition ($null -ne $childProcessId) `
+            'ARRANGEMENT: the synthetic wrapper spawned its own child and recorded a READABLE pid'
         Assert-True -Condition ($null -ne (Get-Process -Id $childProcessId -ErrorAction SilentlyContinue)) `
             "ARRANGEMENT: the child ($childProcessId) is alive before the reap runs, or the cells below prove nothing"
 
@@ -456,6 +496,121 @@ if ($argsBlock) {
     $scopedResult = Invoke-RequiredFeaturesArgsBlock -Full $false -Crates @('some-other-crate')
     Assert-True -Condition $scopedResult.ReportWritten `
         "a SCOPED run (excluding the gating crate) reaches required-features.ps1 and writes its scope report too (exit $($scopedResult.ExitCode))"
+}
+
+Write-Host ''
+Write-Host '-- a `finally` must not read a variable the `try` may never have reached (#1043) --' -ForegroundColor Cyan
+
+# THE DETECTOR IS STRUCTURAL, NOT LEXICAL. Grepping for a name would answer a question about this
+# one defect; the class is "any variable a finally reads that the try had not assigned yet", and it
+# arrives under a different name each time. This walks the AST: for every try/finally, every
+# variable READ in the finally must have an assignment somewhere BEFORE the try begins -- unless the
+# finally assigns it itself (its own foreach variable, for instance).
+#
+# DECLARED LIMIT: assignment is matched by name across the whole file, not by scope, so a same-named
+# assignment inside an unrelated function would satisfy this check. That is the direction that fails
+# SAFE for a guard whose job is to catch an omission, and narrowing it would cost more than it buys.
+function Get-FinallyVariablesNotPreInitialised {
+    param([Parameter(Mandatory)] [string] $Source)
+
+    $errors = $null
+    $tokens = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors -and $errors.Count -gt 0) {
+        throw "the subject does not parse, so a clean result would mean nothing: $($errors[0].Message)"
+    }
+
+    # $_ and friends are always bound; naming them would make every finally an offender.
+    $automatic = @('_', 'PSItem', 'null', 'true', 'false', 'args', 'this', 'PSCmdlet', 'PSBoundParameters',
+                   'ErrorActionPreference', 'LASTEXITCODE', 'PWD', 'Host', 'MyInvocation')
+
+    $offenders = New-Object System.Collections.Generic.List[string]
+    $tries = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $n.Finally }, $true)
+    foreach ($try in $tries) {
+        $tryStart = $try.Extent.StartOffset
+
+        $assignedHere = @()
+        $assignedHere += @($try.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true) |
+            ForEach-Object { $_.Left } |
+            Where-Object { $_ -is [System.Management.Automation.Language.VariableExpressionAst] } |
+            ForEach-Object { $_.VariablePath.UserPath })
+        $assignedHere += @($try.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true) |
+            ForEach-Object { $_.Variable.VariablePath.UserPath })
+
+        $preInit = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true) |
+            Where-Object { $_.Extent.StartOffset -lt $tryStart } |
+            ForEach-Object { $_.Left } |
+            Where-Object { $_ -is [System.Management.Automation.Language.VariableExpressionAst] } |
+            ForEach-Object { $_.VariablePath.UserPath })
+
+        foreach ($use in $try.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+            $name = $use.VariablePath.UserPath
+            if ($automatic -contains $name) { continue }
+            if ($assignedHere -contains $name) { continue }
+            if ($preInit -contains $name) { continue }
+            if (-not $offenders.Contains($name)) { $offenders.Add($name) }
+        }
+    }
+    return @($offenders.ToArray())
+}
+
+# NEGATIVE CONTROL FIRST, and it carries the full payload: this is the shape that shipped, reduced
+# to the two statements that matter. If the detector cannot name `childProcessId` here, its silence
+# on the real file below proves nothing.
+$sick = @'
+try {
+    $wrapper = Start-Process -FilePath 'powershell.exe' -PassThru
+    Assert-True -Condition $false 'ARRANGEMENT: the wrapper recorded its pid'
+    $childProcessId = 42
+} finally {
+    foreach ($leftover in @($wrapper.Id, $childProcessId)) {
+        if ($leftover) { taskkill /T /F /PID $leftover }
+    }
+}
+'@
+$sickOffenders = Get-FinallyVariablesNotPreInitialised -Source $sick
+Assert-True -Condition ($sickOffenders -contains 'childProcessId') `
+    "NEGATIVE CONTROL: the detector names the variable the cleanup would have thrown on (got: $($sickOffenders -join ', '))"
+
+# `.Count` is read through @() on purpose: under StrictMode an empty result unrolls to $null and
+# `$null.Count` is a terminating error -- the same family of trap as the defect this cell guards,
+# met while writing the guard for it.
+# THE DECOY: the same source, one line added. A detector that still complains is measuring the
+# presence of the name rather than the presence of the initialisation.
+$cured = "`$wrapper = `$null`n`$childProcessId = `$null`n" + $sick
+$curedOffenders = Get-FinallyVariablesNotPreInitialised -Source $cured
+Assert-True -Condition (@($curedOffenders).Count -eq 0) `
+    "DECOY: initialising both before the try silences it, so it measures the init and not the name (got: $($curedOffenders -join ', '))"
+
+# THE SUBJECT.
+$selfOffenders = Get-FinallyVariablesNotPreInitialised -Source ([System.IO.File]::ReadAllText($PSCommandPath))
+Assert-True -Condition (@($selfOffenders).Count -eq 0) `
+    "no finally in this suite reads a variable its try may never have assigned (got: $($selfOffenders -join ', '))"
+
+Write-Host ''
+Write-Host '-- a PRESENT pid file is not a WRITTEN one (#1043, measured on #1042) --' -ForegroundColor Cyan
+
+# THE DISCRIMINATING CASE IS THE EMPTY-BUT-PRESENT FILE. That is the state `Out-File` passes
+# through, it is what `Test-Path` could not tell apart, and it is the one an assertion on the path
+# reports as a healthy arrangement one line before the cast on its contents throws.
+$pidProbe = Join-Path ([System.IO.Path]::GetTempPath()) ("gar-pidprobe-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+try {
+    Assert-True -Condition ($null -eq (Read-PidFile -Path $pidProbe)) `
+        'an ABSENT pid file reads as no pid yet, so the wait keeps waiting'
+
+    Set-Content -LiteralPath $pidProbe -Value '' -Encoding ASCII
+    Assert-True -Condition ((Test-Path -LiteralPath $pidProbe) -and $null -eq (Read-PidFile -Path $pidProbe)) `
+        'THE RACE: a file that EXISTS but is empty still reads as no pid -- the state Test-Path called ready'
+
+    Set-Content -LiteralPath $pidProbe -Value 'not-a-pid' -Encoding ASCII
+    Assert-True -Condition ($null -eq (Read-PidFile -Path $pidProbe)) `
+        'and a half-written or garbage value is no pid either, rather than an exception one line later'
+
+    Set-Content -LiteralPath $pidProbe -Value '4321' -Encoding ASCII
+    Assert-True -Condition ((Read-PidFile -Path $pidProbe) -eq 4321) `
+        'CONTROL: a written pid IS returned, so the three cells above are not passing on a reader that never succeeds'
+} finally {
+    Remove-Item -LiteralPath $pidProbe -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ''

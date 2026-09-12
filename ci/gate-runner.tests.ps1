@@ -38,7 +38,7 @@
 #   1  #943 arrangement: the target assignment and the launch are both found, in order
 #   1  the target is removed between them          1  and the runner says so in the log
 #   1  a traversing `pr` is refused as malformed    1  and the directory it aimed at survives
-$ExpectedAssertionCount = 28
+$ExpectedAssertionCount = 35
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -581,6 +581,86 @@ owhere head=$serverHead | STATUS: gate run",
     Assert-True -Condition ($vagueText -match 'is held \(indeterminate\); waiting' -and $vagueCode -eq 1 -and $vagueText -notmatch 'names a dead holder') `
         -Message "a lock whose holder the reader cannot judge is waited on as indeterminate, never reclaimed as dead (rc=$vagueCode)"
     Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+    # -------------------------------------------------------------------------------------------------
+    # #1045: AN UNREGISTERED BENCH IS RECLAIMED, AND A REGISTERED ONE IS NEVER TOUCHED.
+    # -------------------------------------------------------------------------------------------------
+    Write-Host ""
+    Write-Host '-- #1045: the bench remove is checked, and the fallback asks before it deletes --' -ForegroundColor Cyan
+
+    # THE SUBJECT IS AN UNREGISTERED DIRECTORY AT THE BENCH PATH -- the ordinary state of every bench a
+    # previous runner instance created from a different repo root. `git worktree remove` fails on it,
+    # and with that code discarded the stall was reported against `worktree add` one line later.
+    #
+    # The entry names a head this repository does not have, so `add` fails EITHER WAY and the run stalls
+    # in both worlds. That is deliberate: it makes the DIRECTORY the only thing that differs, so the
+    # cell cannot pass because the run happened to get further for an unrelated reason.
+    # THE CELL ABOVE DELIBERATELY LEAVES AN INDETERMINATE LOCK, and the runner is right to wait on
+    # it forever. Left in place, this cell's run never happens and both assertions below fail for a
+    # reason that has nothing to do with their subject -- which is how they failed the first time.
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+
+    $benchRoot = Join-Path $root 'benches'
+    New-Item -ItemType Directory -Path $benchRoot -Force | Out-Null
+    $squatter = Join-Path $benchRoot 'pr200'
+    New-Item -ItemType Directory -Path $squatter -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $squatter '.git') -Value 'gitdir: nowhere-this-clone-knows' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $squatter 'occupant.txt') -Value 'left by a runner that is gone' -Encoding ASCII
+
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force
+    $reclaimPath = Join-Path $queue '200-dddddddd.json'
+    Set-Content -LiteralPath $reclaimPath -Value (ConvertTo-Json ([ordered]@{
+        pr = 200; head = $serverHead; lane = 'TESTS'; timestamp = (Get-Date).ToUniversalTime().ToString('o') })) -Encoding UTF8
+
+    $reclaimLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state -BenchRoot $benchRoot 2>&1
+
+    Assert-True -Condition (-not (Test-Path -LiteralPath $squatter)) `
+        'an unregistered bench directory is RECLAIMED rather than left to stall every future run'
+    Assert-True -Condition (($reclaimLog -join "`n") -match 'not registered by this clone') `
+        'and the log names the REMOVE that failed, not only the add that inherited the blame'
+
+    # THE GUARD, DRIVEN ON ITS OWN. This is where the danger lives: the fallback deletes a directory, and
+    # a guard that answered "not registered" for everything would turn it into an unconditional delete --
+    # worse than the defect it repairs. Lifted from the file, never retyped, so an edit there moves this.
+    $runnerText = Get-Content -LiteralPath $runner -Raw
+    $guardMatch = [regex]::Match($runnerText, '(?ms)^function Test-BenchIsRegistered \{.*?^\}')
+    Assert-True -Condition $guardMatch.Success `
+        'ARRANGEMENT: the registration guard is locatable in gate-runner.ps1, so the cells below drive the real one'
+
+    $script:listOutput = @()
+    $script:listCode = 0
+    function Invoke-External {
+        param([string] $File, [string[]] $Arguments, [switch] $CaptureError)
+        return [pscustomobject]@{ Code = $script:listCode; Output = $script:listOutput }
+    }
+    . ([scriptblock]::Create($guardMatch.Value))
+
+    # git prints forward slashes; the bench path is built with Join-Path and carries backslashes; and
+    # Windows is case-insensitive. A raw string compare answers "not registered" for every real bench.
+    $script:listOutput = @('worktree D:/benches/pr200', 'HEAD 1111111111111111111111111111111111111111')
+    $script:listCode = 0
+    Assert-True -Condition (Test-BenchIsRegistered -RepositoryRoot 'X' -BenchPath 'D:\Benches\PR200') `
+        'a REGISTERED bench is recognised across slash and case differences, so the fallback leaves it alone'
+
+    $script:listOutput = @('worktree D:/benches/pr999')
+    Assert-True -Condition (-not (Test-BenchIsRegistered -RepositoryRoot 'X' -BenchPath 'D:\benches\pr200')) `
+        'CONTROL: a bench genuinely absent from the list reads as unregistered, or the cell above proves nothing'
+
+    # AND AN EMPTY LIST THAT SUCCEEDED IS UNANSWERABLE TOO. Without its own counter the loop fell
+    # through to "not registered" here, which authorises the delete -- a recursive force-delete
+    # resting on git always printing a line. Unreachable today; the cell exists because the
+    # reachability, not the safety, is what would change.
+    $script:listOutput = @()
+    $script:listCode = 0
+    Assert-True -Condition (Test-BenchIsRegistered -RepositoryRoot 'X' -BenchPath 'D:\benches\pr200') `
+        'a list that exits 0 with NO worktree lines answers registered too, so the fail-safe is total and not conditional on git printing something'
+
+    # UNREADABLE IS NOT UNREGISTERED: if the question cannot be answered, the safe answer deletes nothing.
+    $script:listCode = 128
+    $script:listOutput = @()
+    Assert-True -Condition (Test-BenchIsRegistered -RepositoryRoot 'X' -BenchPath 'D:\benches\pr200') `
+        'a worktree list that FAILS answers registered, so an unanswerable question never authorises a delete'
+
 } finally {
     $ErrorActionPreference = $previousPreference
     $env:PATH = $previousPath

@@ -269,6 +269,46 @@ function Get-SlotHolderLiveness {
     return Test-SlotHolderLiveness -HolderPid ([string]$pair.pid) -HolderStartUtc ([string]$pair.startUtc)
 }
 
+function Test-BenchIsRegistered {
+    <#
+    .SYNOPSIS
+        Is this path a worktree THIS clone knows about?
+    .DESCRIPTION
+        Compared on normalised text, because the two sides disagree about spelling: `worktree list
+        --porcelain` prints forward slashes, the bench path is built with `Join-Path` and carries
+        backslashes, and Windows is case-insensitive. Comparing the raw strings answers "not
+        registered" for every bench, which would turn the reclaim below into an unconditional
+        delete -- the one outcome worse than the defect it repairs.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $RepositoryRoot,
+        [Parameter(Mandatory)] [string] $BenchPath
+    )
+    $listed = Invoke-External 'git' @('-C', $RepositoryRoot, 'worktree', 'list', '--porcelain')
+    if ($listed.Code -ne 0) {
+        # UNREADABLE IS NOT UNREGISTERED. If the question cannot be answered, the safe answer is
+        # the one that deletes nothing.
+        return $true
+    }
+    $normalise = { param($p) ($p.Replace([char]92, [char]47)).TrimEnd('/').ToLowerInvariant() }
+    $wanted = & $normalise $BenchPath
+    # AN EMPTY LIST THAT EXITED 0 IS ALSO AN UNANSWERABLE QUESTION, and without this counter it
+    # answered "not registered" for every bench on the machine -- authorising the delete below on
+    # the strength of an external tool always printing a line. `git worktree list --porcelain` does
+    # print the main worktree today, so it is not reachable; that is INCIDENTAL, NOT STRUCTURAL, and
+    # it is the same objection this file already makes twenty lines up about `$pr`: the safety of a
+    # recursive force-delete must not rest on the output behaviour of a tool three checks away.
+    $sawAnyWorktree = $false
+    foreach ($line in @($listed.Output)) {
+        if ($line -match '^worktree (.+)$') {
+            $sawAnyWorktree = $true
+            if ((& $normalise $Matches[1].Trim()) -eq $wanted) { return $true }
+        }
+    }
+    if (-not $sawAnyWorktree) { return $true }
+    return $false
+}
+
 function Invoke-OneEntry {
     param([Parameter(Mandatory)] $Candidate)
 
@@ -395,7 +435,34 @@ function Invoke-OneEntry {
     Set-EntryStatus -EntryPath $entryPath -State 'preparing bench'
     $null = Invoke-External 'git' @('-C', $repoRoot, 'fetch', '-q', 'origin', "$branch")
     if (Test-Path -LiteralPath $bench) {
-        $null = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'remove', '--force', $bench)
+        # THE REMOVE'S EXIT CODE IS THE ANSWER, AND IT USED TO BE DISCARDED (#1045).
+        #
+        # `git worktree remove` fails when the bench is not registered IN THIS CLONE, which is the
+        # ordinary state of every bench a previous runner instance created from a different repo
+        # root -- registration lives in the clone that made it. With the code thrown away that
+        # failure surfaced one line later as `worktree add`'s `already exists`, so the operator was
+        # handed the WRONG STEP: the remove that quietly did nothing was never mentioned, and the
+        # block below -- whose entire purpose is to say which of three causes fired -- named a
+        # cause created two lines above it. `pr997` sat in `waiting: bench could not be prepared`
+        # for three days that way, retrying every poll against something that never heals.
+        #
+        # THE FALLBACK ASKS `worktree list` BEFORE IT DELETES, and that guard is not ceremony: a
+        # remove can also fail because something HOLDS a live bench, and deleting a bench out from
+        # under a running gate is far worse than the stall this repairs. Unregistered is the only
+        # case with an action attached.
+        $remove = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'remove', '--force', $bench) -CaptureError
+        if ($remove.Code -ne 0 -and (Test-Path -LiteralPath $bench)) {
+            if (Test-BenchIsRegistered -RepositoryRoot $repoRoot -BenchPath $bench) {
+                Write-Note "entry $($Candidate.File.Name): $bench is a REGISTERED worktree that would not remove; leaving it alone"
+            }
+            else {
+                $why = @($remove.Output) | Where-Object { $_ } | Select-Object -First 1
+                if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($remove.Code) and said nothing" }
+                Write-Note "entry $($Candidate.File.Name): $bench is not registered by this clone -- $why; reclaiming the directory"
+                Remove-Item -LiteralPath $bench -Recurse -Force -ErrorAction SilentlyContinue
+                $null = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'prune')
+            }
+        }
     }
     $add = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'add', '-B', $branch, $bench, $head) -CaptureError
     if ($add.Code -ne 0) {

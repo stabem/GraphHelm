@@ -69,44 +69,166 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Every `.rs` under a `src/` directory in the workspace — the sources the binary embodies.
-/// Derived by walking, never a hand-written list: a roster guards the roster, and the next
-/// file added would escape it silently (the M08 Task 0 lesson, applied here).
+/// `..` resolved lexically, WITHOUT `canonicalize`.
+///
+/// `Path::canonicalize` on Windows returns a VERBATIM path (`\?\C:\...`), and verbatim paths are
+/// taken literally by the OS: a `..` inside one is never resolved. So canonicalising
+/// `<root>/apps/cli` and then joining `../../core/events` produces a path that cannot be opened,
+/// every dependency edge fails, and the closure silently collapses to the one crate it started
+/// from -- measured here as a population of 62 files, all of them `apps/cli`'s own. That collapse
+/// is invisible to an absence assertion, which is why the population cells assert presence too.
+fn normalised(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// The workspace crates the `graphhelm` binary actually embodies, as crate directories.
+///
+/// WHY THIS IS NOT "EVERY CRATE IN THE WORKSPACE": the staleness question is whether the binary
+/// contains today's sources, and a crate the binary never links cannot make it stale. Comparing
+/// against the whole workspace answers a wider question than the one asked, and the wider question
+/// has a standing false positive in this repository: `ci/gate.ps1`'s canary REWRITES
+/// `tools/ci-canary/src/nonce.rs` at the start of every run, and `ci-canary` is not a dependency of
+/// `apps/cli`. In a cold run every artifact is rebuilt after that write, so the binary is newer and
+/// nothing is noticed. With content-addressed artifact reuse the binary is not rebuilt -- its inputs
+/// did not change -- so it keeps the previous run's mtime and the instrument refuses to measure a
+/// product that is perfectly current (#1044).
+///
+/// The same mistake, one level out, is already recorded below: the first draft collected every
+/// `.rs` in the workspace, so writing a TEST aged the instrument against itself. `src/` of a crate
+/// the binary does not link is that mistake one level further in.
+///
+/// DERIVED BY WALKING THE MANIFESTS, never a hand-written roster -- a roster guards the roster, and
+/// the crate added tomorrow would escape it silently. Dev-dependencies are excluded because they are
+/// not linked into the binary; build-dependencies are INCLUDED because a build script's output is.
+fn embodied_crate_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut queue: Vec<PathBuf> = vec![root.join("apps").join("cli")];
+    while let Some(candidate) = queue.pop() {
+        let dir = normalised(&candidate);
+        if seen.contains(&dir) {
+            continue;
+        }
+        seen.push(dir.clone());
+        let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml")) else {
+            continue;
+        };
+        for relative in linked_path_dependencies(&text) {
+            queue.push(dir.join(relative));
+        }
+    }
+    seen
+}
+
+/// The `path = "..."` values of every LINKED dependency declared in a manifest.
+///
+/// SCANNED, NOT PARSED, AND THAT IS A DELIBERATE CONSTRAINT (#1044, M06 decision 5). `pathogens`
+/// is gate machinery: the freeze forbids a change here travelling with anything outside the frozen
+/// set, and adding a dependency necessarily moves `Cargo.lock`, which is gated code. The receipt
+/// exemption does not cover it -- a receipt is unavoidable for ANY change, while a lockfile line
+/// is unavoidable only GIVEN the choice to take a dependency, and that choice is avoidable. Taking
+/// `toml` would also have pulled four third-party crates into the judge's surface, reviewed in no
+/// pull request. So this reads the manifest itself.
+///
+/// It is section-aware rather than line-global, which is the whole difficulty: a bare search for
+/// `path =` would collect `[dev-dependencies]` too, and dev-dependencies are NOT linked into the
+/// binary -- widening the population is the exact defect this module is being changed to fix.
+fn linked_path_dependencies(manifest: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut linked_section = false;
+    for raw in manifest.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            linked_section = is_linked_dependency_header(line);
+            continue;
+        }
+        if linked_section && let Some(value) = path_value(line) {
+            found.push(value);
+        }
+    }
+    found
+}
+
+/// Does this table header introduce dependencies that are LINKED into the binary?
+///
+/// `[dependencies]`, `[build-dependencies]`, `[dependencies.foo]` and the
+/// `[target.'cfg(...)'.dependencies]` forms all qualify. `dev-dependencies` is tested FIRST and
+/// rejected, because it contains the substring `dependencies` and a careless order would admit
+/// exactly the table this function exists to exclude.
+fn is_linked_dependency_header(header: &str) -> bool {
+    let header = header.trim_start_matches('[').trim_end_matches(']');
+    if header.contains("dev-dependencies") {
+        return false;
+    }
+    header.contains("dependencies")
+}
+
+/// The quoted value of a `path` KEY on this line, or None.
+///
+/// The character before `path` must not be alphanumeric or `-`/`_`, so `paths`, `xpath` and
+/// `search-path` do not match. Both shapes are covered: `foo = { path = "../bar" }` inline, and a
+/// bare `path = "../bar"` under `[dependencies.foo]`.
+fn path_value(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut from = 0usize;
+    while let Some(offset) = line[from..].find("path") {
+        let at = from + offset;
+        let before_ok = at == 0
+            || !matches!(bytes[at - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_');
+        let rest = &line[at + 4..];
+        let after = rest.trim_start();
+        if before_ok && after.starts_with('=') {
+            let value = after[1..].trim_start();
+            if let Some(stripped) = value.strip_prefix('"')
+                && let Some(close) = stripped.find('"')
+            {
+                return Some(stripped[..close].to_owned());
+            }
+        }
+        from = at + 4;
+    }
+    None
+}
+
+/// Every `.rs` under `src/` of a crate the binary embodies -- the sources it actually contains.
 fn workspace_sources(root: &Path, into: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(root) else {
+    for dir in embodied_crate_dirs(root) {
+        collect_rs_files(&dir.join("src"), into);
+    }
+}
+
+fn collect_rs_files(directory: &Path, into: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
         if path.is_dir() {
-            if name == "target" || name == ".git" || name.starts_with('.') {
-                continue;
-            }
-            workspace_sources(&path, into);
-        } else if path.extension().is_some_and(|extension| extension == "rs")
-            && path
-                .components()
-                .any(|component| component.as_os_str() == "src")
-        {
-            // Only `src/` is embodied by the binary. The first draft collected every `.rs`
-            // in the workspace, which meant writing a TEST aged the instrument against
-            // itself and it refused forever — a guard that always refuses. The doc comment
-            // above already said `src/`; the code did not, and the freshness test caught
-            // the disagreement between them.
+            collect_rs_files(&path, into);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
             into.push(path);
         }
     }
 }
 
-/// Where cargo put the build, not where it puts it by default.
-///
-/// The subject used to be `<root>/target/debug` unconditionally, while the build location is
-/// configurable — so the two could point at different files with nothing noticing (#349). Under
-/// this repository's own slot discipline every lane builds into an isolated `CARGO_TARGET_DIR`,
-/// which means the hardcoded path was the ONE binary the run had certainly not refreshed.
-///
+/// The crate directories the binary embodies, for tests that need to reason about the population
+/// itself rather than about one file's freshness.
+#[must_use]
+pub fn embodied_sources() -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    workspace_sources(&workspace_root(), &mut sources);
+    sources
+}
+
 /// The measured failure was a refusal: a stale default-path binary against today's sources. **The
 /// quiet direction is the same defect and matters more** — with a *fresh* binary sitting at the
 /// default path, the instrument reports a confident green about a product this run never built.

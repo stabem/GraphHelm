@@ -85,4 +85,45 @@ fn fresh_measures_stale_refuses_and_the_refusal_is_not_unconditional() {
         measurable_binary().is_ok(),
         "after restoring the timeline the instrument must measure again"
     );
+
+    // PHASE 5 — a source OUTSIDE the binary's dependency closure must not age it (#1044).
+    //
+    // This is the mirror of phase 2 and it has to live in this test rather than beside the
+    // population cells, for the reason the module doc gives: two tests that both age the shared
+    // timeline fabricate each other's state, so the phases share one thread. Phase 2 proves the
+    // refusal still fires for a source the binary contains; this proves it does NOT fire for one
+    // it does not. Together they say the predicate discriminates, which neither says alone.
+    //
+    // `ci-canary` is the real subject, not a stand-in: `ci/gate.ps1` rewrites this exact file at
+    // the start of every run, and `apps/cli` does not depend on the crate. Cold that was invisible
+    // because everything was rebuilt after the write; with artifact reuse the binary keeps its
+    // mtime and every warm run refused.
+    let outsider = root
+        .join("tools")
+        .join("ci-canary")
+        .join("src")
+        .join("nonce.rs");
+    assert!(
+        outsider.is_file(),
+        "the outsider must exist, or ageing it proves nothing: {}",
+        outsider.display()
+    );
+    let outsider_restore = std::fs::metadata(&outsider)
+        .and_then(|meta| meta.modified())
+        .expect("the outsider is readable");
+    filetime::set_file_mtime(&outsider, filetime::FileTime::from_system_time(future))
+        .expect("the outsider mtime is settable");
+
+    let with_outsider_aged = measurable_binary();
+
+    filetime::set_file_mtime(
+        &outsider,
+        filetime::FileTime::from_system_time(outsider_restore),
+    )
+    .expect("the outsider mtime is restorable");
+
+    assert!(
+        with_outsider_aged.is_ok(),
+        "a source the binary does not link must not make it stale: {with_outsider_aged:?}"
+    );
 }

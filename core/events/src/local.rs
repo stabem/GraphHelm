@@ -8223,6 +8223,98 @@ mod limit_tests {
         );
     }
 
+    /// #147 residual 1: the directory BUDGET is a guard, and #922 changed when it is spent.
+    ///
+    /// Before #922 the writer spent it on every stream ahead of the name check and the reader spent
+    /// it once per envelope; now `derived_marker_index` runs only on a by-name MISS, once per
+    /// stream. That is less work and it MOVED WHEN THE REPOSITORY REFUSES: a store that previously
+    /// tripped `MAX_REPOSITORY_ENTRIES` can now pass. Nothing in the suite contained a population
+    /// over the limit, so the new laziness was unmeasured in both directions (K, on #922).
+    ///
+    /// A directory of 100_000 entries is not a test. The limits are a PARAMETER of
+    /// `DirectoryBudget::with_limits`, so an exhausted budget is the instrument: it makes any walk
+    /// refuse, which turns "did the walk happen?" into an observable. Both directions are asserted
+    /// because either alone is satisfied by a broken implementation -- one by never walking, the
+    /// other by always walking.
+    #[test]
+    fn the_marker_budget_still_refuses_a_by_name_miss_and_is_not_spent_on_a_hit() {
+        let directory = tempfile::tempdir().unwrap();
+        let scope = wake_scope();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let published = repository
+            .load_state("test")
+            .unwrap()
+            .batches
+            .iter()
+            .flat_map(|batch| batch.events.clone())
+            .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(published.len(), 1, "one publication to check");
+        let stream_name = object_key(&scope, "stream-1").unwrap();
+        let active = directory.path().join("active").join(&stream_name);
+        let canonical = active.join("1.json");
+        assert!(
+            canonical.exists(),
+            "the publish left a marker under its sequence name"
+        );
+
+        // ARM 1 -- THE LAZINESS. The marker is present under its sequence name, so the by-name
+        // check hits and the index must never be built. A budget that refuses ANY entry proves it:
+        // if the walk happened, this is an Err.
+        let mut indexes = BTreeMap::new();
+        let mut exhausted = DirectoryBudget::with_limits(0, 0);
+        let hit = repository
+            .plan_active_marker(&published[0], &mut indexes, &mut exhausted, false)
+            .expect("a by-name hit must not walk the directory, so an exhausted budget cannot refuse it");
+        assert!(
+            matches!(hit, Some(None)),
+            "the marker is present under its own name, so the plan is 'already published'"
+        );
+        assert!(
+            indexes.is_empty(),
+            "and no index was built for the stream: the budget was never reached"
+        );
+
+        // ARM 2 -- THE GUARD SURVIVES. Rename so the by-name check MISSES; the walk is now
+        // required, and an over-budget directory must still REFUSE rather than answer 'missing'.
+        // Answering 'missing' would republish over a store nobody was allowed to enumerate.
+        let repair = active
+            .join("repair-0000000000000000000000000000000000000000000000000000000000000147.json");
+        std::fs::rename(&canonical, &repair).unwrap();
+        let mut indexes = BTreeMap::new();
+        let mut exhausted = DirectoryBudget::with_limits(0, 0);
+        let refused =
+            repository.plan_active_marker(&published[0], &mut indexes, &mut exhausted, false);
+        // Described by SHAPE rather than by `{:?}`: `ActiveMarkerPlan` derives no Debug, and adding
+        // one to production so a test can format a failure message is the tail wagging the dog.
+        // Naming the four outcomes also makes the failure readable without the reader inferring
+        // what an `Ok(Some(Some(_)))` meant.
+        let shape = match &refused {
+            Err(error) => format!("Err({error})"),
+            Ok(None) => "Ok(not a publication)".to_owned(),
+            Ok(Some(None)) => "Ok(already published)".to_owned(),
+            Ok(Some(Some(_))) => "Ok(missing -- it answered without walking)".to_owned(),
+        };
+        assert!(
+            matches!(refused, Err(EventRepositoryError::LimitExceeded)),
+            "a by-name miss must walk, and an over-budget directory must refuse rather than report the marker missing: got {shape}"
+        );
+
+        // CONTROL -- the same miss with a budget that FITS resolves normally. Without this, ARM 2
+        // passes for any reason that makes the call fail, including a broken fixture.
+        let mut indexes = BTreeMap::new();
+        let mut roomy =
+            DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
+        let found = repository
+            .plan_active_marker(&published[0], &mut indexes, &mut roomy, false)
+            .expect("with a budget that fits, the same by-name miss resolves through the index");
+        assert!(
+            matches!(found, Some(None)),
+            "and it finds the marker under the repair name, so ARM 2's refusal was the BUDGET and not the fixture"
+        );
+    }
+
     #[test]
     fn a_missing_marker_forces_the_exclusive_upgrade_and_is_republished() {
         let directory = tempfile::tempdir().unwrap();

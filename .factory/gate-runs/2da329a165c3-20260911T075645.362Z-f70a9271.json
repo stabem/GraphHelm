@@ -1,0 +1,2485 @@
+{
+    "status":  "RED",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "2da329a165c3e26f0e40d034506c64e77109c517",
+    "pullRequest":  997,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-147-over-budget-refusal on origin IS this commit, read from the server",
+    "upstreamSha":  "2da329a165c3e26f0e40d034506c64e77109c517",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "included",
+                     "complete":  true
+                 },
+    "requiredFeaturesExcluded":  [
+
+                                 ],
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "D:/graphhelm-target-gate997",
+    "queuedUtc":  "2026-09-11T07:29:10.9358233Z",
+    "runStartUtc":  "2026-09-11T07:29:10.9598433Z",
+    "slotWaitSecs":  0.024,
+    "runEndUtc":  "2026-09-11T07:56:45.3396912Z",
+    "canaryPassed":  true,
+    "psSuitesStartedEarly":  true,
+    "psSuitesOverlapped":  true,
+    "studioScopeIncluded":  true,
+    "studioNodePresent":  true,
+    "studioStartedEarly":  true,
+    "studioOverlapped":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.133,
+                       "startedUtc":  "2026-09-11T07:29:11.0689449Z",
+                       "endedUtc":  "2026-09-11T07:29:14.2084246Z"
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.668,
+                       "startedUtc":  "2026-09-11T07:34:41.9227163Z",
+                       "endedUtc":  "2026-09-11T07:34:44.5907062Z"
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  25.491,
+                       "startedUtc":  "2026-09-11T07:34:44.5927069Z",
+                       "endedUtc":  "2026-09-11T07:35:10.0838594Z"
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  356.94,
+                       "startedUtc":  "2026-09-11T07:35:10.0853628Z",
+                       "endedUtc":  "2026-09-11T07:41:07.0274511Z",
+                       "outputTail":  [
+                                          "test authored_strings_carry_no_collapsed_indentation ... FAILED",
+                                          "",
+                                          "failures:",
+                                          "",
+                                          "---- authored_strings_carry_no_collapsed_indentation stdout ----",
+                                          "",
+                                          "thread \u0027authored_strings_carry_no_collapsed_indentation\u0027 (9560) panicked at core\\events\\tests\\source_invariants.rs:252:5:",
+                                          "these string literals carry runs of whitespace, which a reader of the failure gets verbatim. A continued literal keeps the next line indentation inside it: end the line with a backslash so Rust drops the newline and the indentation, or put the string on one line.",
+                                          "src/local.rs:8308: \"a by-name miss must walk, and an over-budget directory must refuse rather than              report the marker missing: got {shape}\"",
+                                          "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+                                          "",
+                                          "",
+                                          "failures:",
+                                          "    authored_strings_carry_no_collapsed_indentation",
+                                          "",
+                                          "test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+                                          "",
+                                          "error: test failed, to rerun pass `-p graphhelm-events --test source_invariants`",
+                                          "     Running tests\\sweep_verb.rs (D:/graphhelm-target-gate997\\debug\\deps\\sweep_verb-832785868e6262de.exe)",
+                                          "",
+                                          "running 9 tests",
+                                          "test a_wait_that_was_never_claimed_is_swept_like_any_other_lapsed_stage ... ok",
+                                          "test a_node_with_no_declared_budget_is_never_overdue ... ok",
+                                          "test a_sweep_asked_about_the_future_is_refused_and_spends_nothing ... ok",
+                                          "test a_claim_past_its_clearance_instant_raises_exactly_one_exception_naming_its_episode ... ok",
+                                          "test a_dlq_return_reopens_the_wait_as_a_new_episode_and_the_sweep_names_that_one ... ok",
+                                          "test a_second_sweep_at_the_same_instant_records_again_but_raises_no_second_exception ... ok",
+                                          "test the_asked_instant_is_journalled_and_is_not_the_instant_the_sweep_ran ... ok",
+                                          "test a_rebuilt_projection_names_the_same_episodes_the_journal_recorded ... ok",
+                                          "test a_redrive_starts_a_new_episode_that_can_lapse_and_be_raised_again ... ok",
+                                          "",
+                                          "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s",
+                                          "",
+                                          "     Running unittests src\\lib.rs (D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe)",
+                                          "[gate] ... 2452 lines omitted between the first named failure above and the end of the stage, INCLUDING 1 further failing test(s): no_authored_string_in_the_workspace_carries_a_collapsed_run, and 6 further line(s) MATCHING THE FAILURE MARKER (marker lines, not distinct failures) -- this excerpt is NOT the whole story ...",
+                                          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+                                          "",
+                                          "error: 2 targets failed:",
+                                          "    `-p graphhelm-events --test source_invariants`",
+                                          "    `-p graphhelm-protocols --test authored_strings_across_the_workspace`"
+                                      ]
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  34.847,
+                       "startedUtc":  "2026-09-11T07:41:07.1025331Z",
+                       "endedUtc":  "2026-09-11T07:41:41.9500518Z"
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  16.781,
+                       "startedUtc":  "2026-09-11T07:41:41.9515518Z",
+                       "endedUtc":  "2026-09-11T07:41:58.7324370Z"
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.812,
+                       "startedUtc":  "2026-09-11T07:41:58.7339372Z",
+                       "endedUtc":  "2026-09-11T07:41:59.5461603Z"
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.257,
+                       "startedUtc":  "2026-09-11T07:41:59.5476604Z",
+                       "endedUtc":  "2026-09-11T07:42:01.8047015Z"
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.549,
+                       "startedUtc":  "2026-09-11T07:42:01.8057017Z",
+                       "endedUtc":  "2026-09-11T07:42:03.3546389Z"
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.357,
+                       "startedUtc":  "2026-09-11T07:42:03.3566496Z",
+                       "endedUtc":  "2026-09-11T07:42:04.7134221Z"
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.33,
+                       "startedUtc":  "2026-09-11T07:42:04.7149217Z",
+                       "endedUtc":  "2026-09-11T07:42:06.0455590Z"
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.975,
+                       "startedUtc":  "2026-09-11T07:42:06.0465588Z",
+                       "endedUtc":  "2026-09-11T07:42:07.0220418Z"
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.328,
+                       "startedUtc":  "2026-09-11T07:42:07.0235417Z",
+                       "endedUtc":  "2026-09-11T07:42:08.3513686Z"
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.375,
+                       "startedUtc":  "2026-09-11T07:42:08.3528713Z",
+                       "endedUtc":  "2026-09-11T07:42:10.7278169Z"
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.543,
+                       "startedUtc":  "2026-09-11T07:42:10.7288180Z",
+                       "endedUtc":  "2026-09-11T07:42:12.2724021Z"
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.524,
+                       "startedUtc":  "2026-09-11T07:42:12.2739020Z",
+                       "endedUtc":  "2026-09-11T07:42:13.7980303Z"
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.226,
+                       "startedUtc":  "2026-09-11T07:42:13.8000299Z",
+                       "endedUtc":  "2026-09-11T07:42:16.0254569Z"
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.441,
+                       "startedUtc":  "2026-09-11T07:42:16.0269572Z",
+                       "endedUtc":  "2026-09-11T07:42:17.4679348Z"
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.035,
+                       "startedUtc":  "2026-09-11T07:42:17.4694374Z",
+                       "endedUtc":  "2026-09-11T07:42:19.5047010Z"
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.157,
+                       "startedUtc":  "2026-09-11T07:42:19.5062015Z",
+                       "endedUtc":  "2026-09-11T07:42:20.6637904Z"
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.296,
+                       "startedUtc":  "2026-09-11T07:42:20.6652899Z",
+                       "endedUtc":  "2026-09-11T07:42:21.9621169Z"
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.811,
+                       "startedUtc":  "2026-09-11T07:42:21.9636231Z",
+                       "endedUtc":  "2026-09-11T07:42:23.7740634Z"
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.177,
+                       "startedUtc":  "2026-09-11T07:42:23.7755625Z",
+                       "endedUtc":  "2026-09-11T07:42:30.9523808Z"
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.809,
+                       "startedUtc":  "2026-09-11T07:42:30.9538804Z",
+                       "endedUtc":  "2026-09-11T07:42:35.7634940Z"
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.073,
+                       "startedUtc":  "2026-09-11T07:42:35.7649930Z",
+                       "endedUtc":  "2026-09-11T07:42:37.8380868Z"
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.624,
+                       "startedUtc":  "2026-09-11T07:42:37.8395895Z",
+                       "endedUtc":  "2026-09-11T07:42:40.4637613Z"
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.187,
+                       "startedUtc":  "2026-09-11T07:42:40.4652612Z",
+                       "endedUtc":  "2026-09-11T07:42:41.6517160Z"
+                   },
+                   {
+                       "name":  "cli: http_helper_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.11,
+                       "startedUtc":  "2026-09-11T07:42:41.6537160Z",
+                       "endedUtc":  "2026-09-11T07:42:42.7632858Z"
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.659,
+                       "startedUtc":  "2026-09-11T07:42:42.7642857Z",
+                       "endedUtc":  "2026-09-11T07:42:44.4234869Z"
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.233,
+                       "startedUtc":  "2026-09-11T07:42:44.4249869Z",
+                       "endedUtc":  "2026-09-11T07:42:45.6582200Z"
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.707,
+                       "startedUtc":  "2026-09-11T07:42:45.6602287Z",
+                       "endedUtc":  "2026-09-11T07:42:47.3670892Z"
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.492,
+                       "startedUtc":  "2026-09-11T07:42:47.3680914Z",
+                       "endedUtc":  "2026-09-11T07:42:49.8603199Z"
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.42,
+                       "startedUtc":  "2026-09-11T07:42:49.8618198Z",
+                       "endedUtc":  "2026-09-11T07:42:51.2814315Z"
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.63,
+                       "startedUtc":  "2026-09-11T07:42:51.2839301Z",
+                       "endedUtc":  "2026-09-11T07:42:52.9137978Z"
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.05,
+                       "startedUtc":  "2026-09-11T07:42:52.9153003Z",
+                       "endedUtc":  "2026-09-11T07:42:56.9642594Z"
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.828,
+                       "startedUtc":  "2026-09-11T07:42:56.9662655Z",
+                       "endedUtc":  "2026-09-11T07:43:01.7943990Z"
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.348,
+                       "startedUtc":  "2026-09-11T07:43:01.7959019Z",
+                       "endedUtc":  "2026-09-11T07:43:03.1441309Z"
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.313,
+                       "startedUtc":  "2026-09-11T07:43:03.1451311Z",
+                       "endedUtc":  "2026-09-11T07:43:06.4589270Z"
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.939,
+                       "startedUtc":  "2026-09-11T07:43:06.4604266Z",
+                       "endedUtc":  "2026-09-11T07:43:09.4000008Z"
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.829,
+                       "startedUtc":  "2026-09-11T07:43:09.4014977Z",
+                       "endedUtc":  "2026-09-11T07:43:11.2308372Z"
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  18.882,
+                       "startedUtc":  "2026-09-11T07:43:11.2323363Z",
+                       "endedUtc":  "2026-09-11T07:43:30.1148179Z"
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.87,
+                       "startedUtc":  "2026-09-11T07:43:30.1163179Z",
+                       "endedUtc":  "2026-09-11T07:43:34.9859828Z"
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.242,
+                       "startedUtc":  "2026-09-11T07:43:34.9879825Z",
+                       "endedUtc":  "2026-09-11T07:43:37.2299338Z"
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.658,
+                       "startedUtc":  "2026-09-11T07:43:37.2314338Z",
+                       "endedUtc":  "2026-09-11T07:43:38.8897718Z"
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.95,
+                       "startedUtc":  "2026-09-11T07:43:38.8902755Z",
+                       "endedUtc":  "2026-09-11T07:43:39.8411298Z"
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.458,
+                       "startedUtc":  "2026-09-11T07:43:39.8421298Z",
+                       "endedUtc":  "2026-09-11T07:43:42.3009376Z"
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.631,
+                       "startedUtc":  "2026-09-11T07:43:42.3024369Z",
+                       "endedUtc":  "2026-09-11T07:43:44.9333918Z"
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.988,
+                       "startedUtc":  "2026-09-11T07:43:44.9348981Z",
+                       "endedUtc":  "2026-09-11T07:43:46.9230587Z"
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  64.197,
+                       "startedUtc":  "2026-09-11T07:43:46.9250596Z",
+                       "endedUtc":  "2026-09-11T07:44:51.1227355Z"
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  64.754,
+                       "startedUtc":  "2026-09-11T07:44:51.1237348Z",
+                       "endedUtc":  "2026-09-11T07:45:55.8778274Z"
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.57,
+                       "startedUtc":  "2026-09-11T07:45:55.8793275Z",
+                       "endedUtc":  "2026-09-11T07:45:56.4499100Z"
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.481,
+                       "startedUtc":  "2026-09-11T07:45:56.4519108Z",
+                       "endedUtc":  "2026-09-11T07:45:56.9323324Z"
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.074,
+                       "startedUtc":  "2026-09-11T07:45:56.9338386Z",
+                       "endedUtc":  "2026-09-11T07:45:57.0083941Z"
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.212,
+                       "startedUtc":  "2026-09-11T07:45:57.0103942Z",
+                       "endedUtc":  "2026-09-11T07:45:57.2223105Z"
+                   },
+                   {
+                       "name":  "frozen release guard",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.646,
+                       "startedUtc":  "2026-09-11T07:45:57.2238102Z",
+                       "endedUtc":  "2026-09-11T07:45:57.8702657Z"
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  524.711,
+                       "startedUtc":  "2026-09-11T07:29:14.2247972Z",
+                       "endedUtc":  "2026-09-11T07:37:58.9355973Z"
+                   },
+                   {
+                       "name":  "apps/studio (npm)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  80.418,
+                       "startedUtc":  "2026-09-11T07:29:14.3104636Z",
+                       "endedUtc":  "2026-09-11T07:30:34.7286829Z"
+                   },
+                   {
+                       "name":  "PostgreSQL ignored matrix",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  364.938,
+                       "startedUtc":  "2026-09-11T07:45:59.9586432Z",
+                       "endedUtc":  "2026-09-11T07:52:04.8972881Z"
+                   },
+                   {
+                       "name":  "PostgreSQL matrix under a non-C collation",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  274.619,
+                       "startedUtc":  "2026-09-11T07:52:04.9077915Z",
+                       "endedUtc":  "2026-09-11T07:56:39.5275027Z"
+                   },
+                   {
+                       "name":  "required-features coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.531,
+                       "startedUtc":  "2026-09-11T07:56:39.5340023Z",
+                       "endedUtc":  "2026-09-11T07:56:40.0653383Z"
+                   }
+               ],
+    "artifactBuildExit":  0,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "suspended_window",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\suspended_window-697d0ee3e72240d1.exe",
+                              "sha256":  "46360A4EBD6E99457A1B4F776F81917EC80484C41A55CA800731CDD9A6C11D6D",
+                              "mtimeUtc":  "2026-09-11T07:29:27.2619608Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "CFD18C6A97883F6B41DBF2E64144FB89F2F1059942F6057A954A61FE9AB91000",
+                              "mtimeUtc":  "2026-09-11T07:29:27.9868348Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "FDB406BAE47B9CF8DF0EA48A7180257AEC8A01B4E21583CD3B6510BC2A2F5518",
+                              "mtimeUtc":  "2026-09-11T07:29:33.0080100Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "C66E4B5F72E90D52EC590DF7B9AD942D3B97B0669337FEE4F5EEA185478BDC62",
+                              "mtimeUtc":  "2026-09-11T07:29:33.4573601Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "DD2BC9E2C1DF28CB8BA78C1E8F15732189603642072B0C1A6308AE193B9F918D",
+                              "mtimeUtc":  "2026-09-11T07:29:35.8772333Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "42A15EC4B3FC39E595CBFAA756C0B6D63042379A0E79AFB84D190473F179DEAA",
+                              "mtimeUtc":  "2026-09-11T07:29:35.9494980Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "53E64B1C4E3AB61E2F08749394F9480C65FD8414DE0D6FEDD40F0CCC88651A56",
+                              "mtimeUtc":  "2026-09-11T07:29:35.9830149Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "77D8C5EDF50E3262C44B9468EA5971496012F33B10DC9D125A6ADCC443432043",
+                              "mtimeUtc":  "2026-09-11T07:29:36.3203521Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "497D0272C4A7A3B412F5F1AA50CFED6EFC0BFA930B3D43E2B44161EFCFFA6964",
+                              "mtimeUtc":  "2026-09-11T07:29:36.5950493Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "1121F545403D5C81B1997DB22C3CE41B3C6ABB038968A7A68546CA9E0B656C90",
+                              "mtimeUtc":  "2026-09-11T07:29:36.7123085Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "888E5D29C744B7E03AA55CF6088AEEF8F3307069CAB26A43F104AEAE60B14213",
+                              "mtimeUtc":  "2026-09-11T07:29:36.8303921Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "801E05EDBDB45FEEF48B315A3F45F6BFE68930C60239E8AC87CB2683687EC817",
+                              "mtimeUtc":  "2026-09-11T07:29:36.9223338Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "761F7515D5607B78CA21D237459DAF55BD30330242627FE0DEA1DF2BB7E8F9D2",
+                              "mtimeUtc":  "2026-09-11T07:29:36.9004216Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "DFD28BE3725D5F738D71F588B443E3FCA84E45CD7D64F6545A3461785F133519",
+                              "mtimeUtc":  "2026-09-11T07:29:40.4513655Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "1425825DCFA5C6B16C75E1A773D0BA09DE3CBA0F8CC8D9A4AFA4D2C1D04348EE",
+                              "mtimeUtc":  "2026-09-11T07:29:40.4802757Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "D796E38D6CFC829796ABD7FF26190750AF035208584AE790699340539BD9E8C0",
+                              "mtimeUtc":  "2026-09-11T07:29:40.4927960Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "91EED2DDE130BA3B422B55CE8D964CB17AEF944B887960CF1481BE135799AC29",
+                              "mtimeUtc":  "2026-09-11T07:29:40.9158930Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "F4FD8F8D3F40AB9092A34C7AAE42E88DFACD4735366CB123F9C5669B7267E520",
+                              "mtimeUtc":  "2026-09-11T07:29:40.5093142Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "B98CDDFA017459482AE2B54956E43B92B885FFE94B943F72E20C29C1CAFD0133",
+                              "mtimeUtc":  "2026-09-11T07:29:40.9892450Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "3BAD844E4F9B9EFB3BA05333071C9A1E592C48EC81AE23EC1BF9CACE6C61C46C",
+                              "mtimeUtc":  "2026-09-11T07:29:40.9857461Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "432A6194A4166C589355A6236EB8C2B4D1081490E413286C7720E0EAEFE1DCD5",
+                              "mtimeUtc":  "2026-09-11T07:29:41.2161043Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "13BDF5D491275EC2EADB261F3843FB477250A0795BF1E0FA9BA3CC2221B9BF26",
+                              "mtimeUtc":  "2026-09-11T07:29:41.2050921Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "B7D814F93F4E41F06A61EED0925BB419C4D0F809AC100FFD8B4F5AE8D5F13664",
+                              "mtimeUtc":  "2026-09-11T07:29:45.9632866Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "node_type_vocabularies_agree",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\node_type_vocabularies_agree-5f955cea1aeafc7b.exe",
+                              "sha256":  "1746C484DBAA3D662C8B189555C2DF5CD47B1E47785499A40521FF97899C1E8F",
+                              "mtimeUtc":  "2026-09-11T07:29:48.0103443Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "AC61FC6D302D3CB215C3CDC7F380EC901C3E0035173EC55B3314928C173116CA",
+                              "mtimeUtc":  "2026-09-11T07:29:49.1055558Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "0147086D5548895AC89D6CBE68B9A121E74FA0EC743E77E4484EE0083138103A",
+                              "mtimeUtc":  "2026-09-11T07:29:49.6482237Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-2c09319e77d6c715.exe",
+                              "sha256":  "A45873816E275ABFC2AA4058D9946D8F6E749A5F63B14F231195A2FC1A839C5F",
+                              "mtimeUtc":  "2026-09-11T07:29:49.7112956Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "countersign_append_is_declared_only",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\countersign_append_is_declared_only-fe8f10eb3bf551f2.exe",
+                              "sha256":  "3D9EB3F5FB022EC9251459D47EDBA763AD7B60CABEC08F3B5EC07BC01BAA3CB8",
+                              "mtimeUtc":  "2026-09-11T07:29:50.9946419Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "62140DE5AB335C7C34C87217D60AB00FE6926D26AEF1700395679F467DA6C5AF",
+                              "mtimeUtc":  "2026-09-11T07:29:50.2322588Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "dead_letter_is_declared_only",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\dead_letter_is_declared_only-76a4b315a835a5e0.exe",
+                              "sha256":  "5739B476D0ABC3AD83227F1A0D6C8734FF0D49CE4B09731FA62516B49DFD8BE4",
+                              "mtimeUtc":  "2026-09-11T07:29:51.8070941Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "mcp_capability_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\mcp_capability_contract-b701f4fb345d7382.exe",
+                              "sha256":  "399A0AD786C7E93FB3CA710B2FBDC170A30FFD88D3D6DFEE796C3C17C96C58B7",
+                              "mtimeUtc":  "2026-09-11T07:29:52.1760327Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "AE7B977291F81D21F76920AADD5DA1B0831BD8389661DEE7D5BB89EF8380F8CC",
+                              "mtimeUtc":  "2026-09-11T07:29:52.3034968Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "only_declared_crates_write_the_repository",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\only_declared_crates_write_the_repository-23344476ee16cb9c.exe",
+                              "sha256":  "8B7E111990A88269C18184078CD2A36A902ADE2F93513F9F3321D67FDF3221E8",
+                              "mtimeUtc":  "2026-09-11T07:29:52.1730280Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "authored_strings_across_the_workspace",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\authored_strings_across_the_workspace-54f127c13b4393fb.exe",
+                              "sha256":  "401F8DD4990B059BC896F9B1C3FEEEA512AFEF5C0CB4E969FC15BAC54ABA91B2",
+                              "mtimeUtc":  "2026-09-11T07:29:52.3039961Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_policy-c8e4dc4c07225c77.exe",
+                              "sha256":  "533C8E04CD9C54BE8C5BC84FC633835CB320CFC5CC2775BF325D78F25CC030B6",
+                              "mtimeUtc":  "2026-09-11T07:30:02.2284677Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\determinism-b4ef1ff5b98abd0b.exe",
+                              "sha256":  "431FDBFA4B2F743343E8B9057DCD99B8AC1D205B6F3C479A5EFE0EB6B7ECE28A",
+                              "mtimeUtc":  "2026-09-11T07:30:02.5887851Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_schema_evolution-7a31b58337ac09d8.exe",
+                              "sha256":  "DFE443173402B03F0CC6BC8BAFF6C6271927C73DE73026F6CDD1E3BD948B4244",
+                              "mtimeUtc":  "2026-09-11T07:30:03.2349672Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "366C6CA9D62730F7A190C0301940BBF78D12A1D7E35F0F909C9EB41BAF095C68",
+                              "mtimeUtc":  "2026-09-11T07:30:03.3771846Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "D2890EFFF80647D9280D7E719BA0B555F88E02B8489C8A6AA22A27DD0DF1A527",
+                              "mtimeUtc":  "2026-09-11T07:30:03.1747377Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "waivers",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\waivers-cbb39a2c850ac39d.exe",
+                              "sha256":  "9D78737D35CE3433056DCEF7A552CC2B232BFFEB271107E4D32ADCCF83484802",
+                              "mtimeUtc":  "2026-09-11T07:30:11.8325714Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "precedence",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\precedence-9acd4764e95463cc.exe",
+                              "sha256":  "FCBA5E716AF7E46A8C4500876860B1328144951A57346A03EDAB2DFBF421B13A",
+                              "mtimeUtc":  "2026-09-11T07:30:12.4608639Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\wire_roundtrip-8742b077772ce03f.exe",
+                              "sha256":  "81FA630C226E66BFB95CB8CC35232CF7EE17E8C8C16B54DD62C858971D43BF9D",
+                              "mtimeUtc":  "2026-09-11T07:30:12.6977258Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "uninstall",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\uninstall-ee5868f99cb11131.exe",
+                              "sha256":  "E9E9F5F0ED6938ACEB94011A468FD7C10A94464E5390184E395B16B32B5F4917",
+                              "mtimeUtc":  "2026-09-11T07:30:13.3330212Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "staging",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\staging-059fd7c3bdebfefa.exe",
+                              "sha256":  "C675930D263BDDDA95E490DDDBCBD30CBBB05445F2AD058AFD9FDEF323D99929",
+                              "mtimeUtc":  "2026-09-11T07:30:13.2990201Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\obligations-0dddb8a8246f33aa.exe",
+                              "sha256":  "864C986630CD8B585E5E9ED80F32DF7232C229FAC4DB8641DF619BAC676A9F7F",
+                              "mtimeUtc":  "2026-09-11T07:30:13.3210203Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_protocols-8ab75a56c0d22bed.exe",
+                              "sha256":  "4B6BD0159171B20EC708CA6C9133F328498F34C5DB152E07E65E2DB018525744",
+                              "mtimeUtc":  "2026-09-11T07:30:13.3370328Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\canonical_examples-ccc8943dc2022713.exe",
+                              "sha256":  "93A31110FD684D74E9E65881C07DA2E685B8C9AB22DEC477ACA0A3826C3CFDD3",
+                              "mtimeUtc":  "2026-09-11T07:30:14.6377617Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "discovery",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\discovery-1efadc049bd94c59.exe",
+                              "sha256":  "D0F7EF56D8ACCC0AD0CC4D8181AA1240F26684B53F116C6445C11C333FABDCE1",
+                              "mtimeUtc":  "2026-09-11T07:30:15.4910054Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-1ccabf37030f08df.exe",
+                              "sha256":  "BA50805E94FAF323951EA026172810068E9B6FF327318218A7EEC280D45E4F4F",
+                              "mtimeUtc":  "2026-09-11T07:30:15.9297304Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\offline_registry-ea42ba19b11ac336.exe",
+                              "sha256":  "B686B6AABADA1801878B83C426C8F2BF0C904FBA4B793F3D317A98F950C2CC19",
+                              "mtimeUtc":  "2026-09-11T07:30:15.5762659Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "claim_binding",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\claim_binding-2ccd5d23309cf407.exe",
+                              "sha256":  "7C3CD8783817FA0E3A934F9F0BDD58B291C1059B592648498EDA461A2C2DC074",
+                              "mtimeUtc":  "2026-09-11T07:30:15.6032852Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "union_provability",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\union_provability-8d512724d92cac32.exe",
+                              "sha256":  "06DCFCCBA92B76C04854570D2183D81D79A50AA6890E78DBC721AE024087F392",
+                              "mtimeUtc":  "2026-09-11T07:30:16.4656616Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "activation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\activation-c84433336266f7f3.exe",
+                              "sha256":  "C37F10D4C14F64EC61FAD9B90C0398F5154139C92FFB0BB7D2CAD47504EEE579",
+                              "mtimeUtc":  "2026-09-11T07:30:16.7589647Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "links",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\links-f3752a1522032326.exe",
+                              "sha256":  "0C301A1D926A70B41275E07C4CFEBDFCD77C67772103D768CDCEB96F0ED5F5EF",
+                              "mtimeUtc":  "2026-09-11T07:30:15.5967852Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "install",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\install-9b2df37189a74b0b.exe",
+                              "sha256":  "627569DCB405120AF1C3105BC92951BDA74E9E4753946EA81DA9272643FD6ADF",
+                              "mtimeUtc":  "2026-09-11T07:30:17.0936730Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\catalog_integrity-df4cdb690dc800dc.exe",
+                              "sha256":  "825464FF8BC7C5C3C0B25CA8540FACF96AC1542C8BED27016B6284D02C961145",
+                              "mtimeUtc":  "2026-09-11T07:30:17.4529269Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "resolve_once",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\resolve_once-fcea40ea492ac6a3.exe",
+                              "sha256":  "94A13D22A457690C72D5E1AA480A15838DA0F1DB6DF9458BFA265A0488C83C3D",
+                              "mtimeUtc":  "2026-09-11T07:30:18.8797853Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "sources",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\sources-34d13b120430073c.exe",
+                              "sha256":  "F26B086EFE51414269B6A17D9CA33BF00A5384FBD34DFB79A869108D70083078",
+                              "mtimeUtc":  "2026-09-11T07:30:19.8059229Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\release_gate-afc6476bec06067f.exe",
+                              "sha256":  "7D51D1AD8C5891862CAD840BB8E3A22CFBC08CBE2E6CD58713F6806B9FB2A9E3",
+                              "mtimeUtc":  "2026-09-11T07:30:20.3323787Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-2be709cd77865655.exe",
+                              "sha256":  "6FD9FDA9C318859D26D876E4FFFD1014B017BC8D59E62B4D975EA38D6351ABA6",
+                              "mtimeUtc":  "2026-09-11T07:30:31.4973295Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "pin_defence",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\pin_defence-6ead11b2846af5fd.exe",
+                              "sha256":  "5C37D2B1C52CD11B5F65236D73E3BD8A9A5A15137CB5EA3A84D886152BECE348",
+                              "mtimeUtc":  "2026-09-11T07:30:32.2902126Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\migration-4403d5b377d7338a.exe",
+                              "sha256":  "A91F13613A20CA183F81C4462B83DC0D03E6AAB790C7FC549C522683EEAF7A28",
+                              "mtimeUtc":  "2026-09-11T07:30:31.4694689Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\determinism-26fefe07d08fbd7d.exe",
+                              "sha256":  "82CBAF2C9F2BFE8AACD4D043AD482164C417858D218110CB874773E43B2CF2D2",
+                              "mtimeUtc":  "2026-09-11T07:30:32.5929317Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\compatibility-7c7c1eac5aa68118.exe",
+                              "sha256":  "7A50B09430D822F17E12D397575170C52B8766BE36CFA4D09B3C85DA1CA92DCF",
+                              "mtimeUtc":  "2026-09-11T07:30:33.2612733Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\immutability-a5da5cd8d4d2dccf.exe",
+                              "sha256":  "F61C54A997392F4422CF1050288A525AB0C9F926CB1D54BD4E5B8A17943BC85A",
+                              "mtimeUtc":  "2026-09-11T07:30:34.9998459Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "baseline_origin",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\baseline_origin-d4ed2ce391470b68.exe",
+                              "sha256":  "A17846F54940145E55A2E175C7E11E7C612A17FBE3FD06FFA5DD85CD80B7B685",
+                              "mtimeUtc":  "2026-09-11T07:30:33.8106739Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "graphhelm_extension_host",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_extension_host-aa0dffd89be0ef5e.exe",
+                              "sha256":  "5759C59692C1DB0572C7ED9B0537B0A5AC93FCE050DB7DA94BDE6DBE3804882E",
+                              "mtimeUtc":  "2026-09-11T07:30:33.8337096Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_graph-ffeaf7778401df45.exe",
+                              "sha256":  "B8801856EF23ED2FF397764F95F6D2628D8E51D43979855A3648304126B95BD4",
+                              "mtimeUtc":  "2026-09-11T07:30:34.1579092Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\lint_rules-1ac0c1eca4c1ab0f.exe",
+                              "sha256":  "A1D89590C52651A3D9D3D385D63A877497C555365493E1B3A5D993F93CBD7BF0",
+                              "mtimeUtc":  "2026-09-11T07:30:35.0333785Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\canonical_hash-2721c3c9f71b749f.exe",
+                              "sha256":  "D540C12D2A4B0F75BB2396FB81641E8A717B4E5765A0C7DCFB6BD102314BC5D8",
+                              "mtimeUtc":  "2026-09-11T07:30:35.0333785Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\persistence_projection-b40819e83414e2c3.exe",
+                              "sha256":  "0ADDAF5BFA10F541E406662A3A8626D4B819064B0AE4A6ED4D1C8EC93152F279",
+                              "mtimeUtc":  "2026-09-11T07:30:36.8897435Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\persistence_wire-6db9814264c30e6e.exe",
+                              "sha256":  "A61101E198087968D2BD864B00D661A5C1763FBF366B67A68BD882FCFC7A37EB",
+                              "mtimeUtc":  "2026-09-11T07:30:37.0379193Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\conformance-0da39bf4da031a1b.exe",
+                              "sha256":  "154D42C1DF0A3DE57730BFF740F1B7B247A694A55A26B69E7BF32B5957A297B3",
+                              "mtimeUtc":  "2026-09-11T07:30:40.0522647Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_schema-446c571838924ac8.exe",
+                              "sha256":  "A65F855A78B2095AA609637DBB88D856EF2C2F5F10627D88E53E5F464F82A05C",
+                              "mtimeUtc":  "2026-09-11T07:30:40.0389104Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\fake_tool-15d2f75bb1caa99f.exe",
+                              "sha256":  "B66EFCE5FF784693D13CD0D0EA0EB4B71647EFCACC024174DC744211E2DA3F2D",
+                              "mtimeUtc":  "2026-09-11T07:30:42.4625404Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "fake_mcp_server",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\fake_mcp_server-dae52e3fec616bc2.exe",
+                              "sha256":  "5C461A54D2C114115A52DAA8B6288231064E3E7911114DA1DCF3988AED9E775D",
+                              "mtimeUtc":  "2026-09-11T07:30:42.4625404Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance-map",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\acceptance_map-321f003458e6b752.exe",
+                              "sha256":  "4847586168533B9E812395C7DE51E96BD221217701B86AEA0E0EFA8435AEAA4B",
+                              "mtimeUtc":  "2026-09-11T07:30:47.9800524Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "prompt_assembly",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\prompt_assembly-8c1106951e447d67.exe",
+                              "sha256":  "8B7C7D91467B7BCC18BFB36DE9E926554CED1D00DC7010CA9032D3D62544F0E4",
+                              "mtimeUtc":  "2026-09-11T07:30:49.3752238Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "ceiling_reproduction",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\ceiling_reproduction-dd3336a37a135bbc.exe",
+                              "sha256":  "F78EE01448ACF644C50416FEAB0D5EF1D74D085C8052985AF4ACEA5DD11487AF",
+                              "mtimeUtc":  "2026-09-11T07:30:49.3987590Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/acceptance-map#0.1.0",
+                              "target":  "committed_journals",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\committed_journals-2cc055246fad6504.exe",
+                              "sha256":  "93A109EAF937423835D040851AD2B62CFA8A9E3370533C9F661B08C36B2604E1",
+                              "mtimeUtc":  "2026-09-11T07:30:50.4217054Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "apply_overflow",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\apply_overflow-1c6105c3ef74988d.exe",
+                              "sha256":  "327FD475E34430047645A6F145F1530658EA9C5D0F497DF539D0BAC02F26BF3F",
+                              "mtimeUtc":  "2026-09-11T07:30:49.3157074Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_channel",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\workspace_source_channel-d7df63e736233a22.exe",
+                              "sha256":  "0B7FE44DB8B09A0BC269BF22587953C715121DBD5C8D5D792A644620137240BA",
+                              "mtimeUtc":  "2026-09-11T07:30:51.2548366Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "contained_provider",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\contained_provider-a520f67c7d5ad561.exe",
+                              "sha256":  "8F9BBB467F7AB33C2600EDDBAF4D59DB7DDF4963DFFDF47D8A25DEC18C669559",
+                              "mtimeUtc":  "2026-09-11T07:30:57.0153269Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "recoverable_layout",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\recoverable_layout-d56a562edc0d9572.exe",
+                              "sha256":  "FD8CFAF0A6EF6670AE60B3320EF3402938F76602208306486F7CCF12B6BF6B87",
+                              "mtimeUtc":  "2026-09-11T07:30:57.0138265Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "runner_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\runner_cli-e1ee72bf765acdbd.exe",
+                              "sha256":  "58DA21D923FD7FF55FCB06A301C4EA622A5D94E2891049F390846A9C12F8C207",
+                              "mtimeUtc":  "2026-09-11T07:31:10.7095838Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_stage_vocabularies_agree",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\customs_stage_vocabularies_agree-badb5dfa7a6a3a54.exe",
+                              "sha256":  "EACF0AEB53C99CA92A0EAEFF10F3052EF858BD3E24F327F20D8565D9D77D3A5B",
+                              "mtimeUtc":  "2026-09-11T07:30:56.9494004Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "declared_gap_delta_application",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\declared_gap_delta_application-5ac11931613f219f.exe",
+                              "sha256":  "B760B9B6D69FFE024C8BE67068717D797028144A96B67F1C94F362E3360A7357",
+                              "mtimeUtc":  "2026-09-11T07:31:11.2229643Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "attention_tag_domain",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\attention_tag_domain-79fc723095252462.exe",
+                              "sha256":  "429170AA492338036C825AECD20394B3ED6D93D739174A66C71B6537224D5B00",
+                              "mtimeUtc":  "2026-09-11T07:31:14.1020597Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-08838b3e9550c37b.exe",
+                              "sha256":  "7C91DC603B04C568784E7408139B06D51A857FFD45438D2A740EF06DF31EA158",
+                              "mtimeUtc":  "2026-09-11T07:31:14.2511388Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "graphhelm_governor",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_governor-c62b833bbf5e7def.exe",
+                              "sha256":  "9B93486187B9DD6C925410BF9ADE3E765535B0925954395FB8AF4C30F26611FD",
+                              "mtimeUtc":  "2026-09-11T07:31:15.0102012Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "retention",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\retention-58fab46cc1cfa7bc.exe",
+                              "sha256":  "3B2C49EC75DD76245725E05675522B3A1229D0C7EB6792C5413DA67EE63D3327",
+                              "mtimeUtc":  "2026-09-11T07:31:14.9646784Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "transition_properties",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\transition_properties-629d673df7741e98.exe",
+                              "sha256":  "F386656AAE044D71E4A485ED5A8753C78CDAF30B7512A7EC4B9C256AB78622DA",
+                              "mtimeUtc":  "2026-09-11T07:31:14.9731785Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "scheduling_properties",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\scheduling_properties-cbc5e0edb658ccdc.exe",
+                              "sha256":  "5656918F76392D060EF8FC9D8EF20557C987BBB063A013A6EBBEFE3A119A96C7",
+                              "mtimeUtc":  "2026-09-11T07:31:16.2114252Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "sealed_provider",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\sealed_provider-c70b1891a5c142ab.exe",
+                              "sha256":  "5EBC52C0A9EC47B2247E1D74847C272123C2B8E04A47A63A72342255A1982F21",
+                              "mtimeUtc":  "2026-09-11T07:31:16.1418870Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "evidence_crypto",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\evidence_crypto-fc3878dda7e94bee.exe",
+                              "sha256":  "D77445C4B1B1D8FD17043A9DE17EF8DDEE3B79CC007604F97624BD164AB42485",
+                              "mtimeUtc":  "2026-09-11T07:31:16.1694078Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_retry_semantics",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_retry_semantics-a8abfe496a148e9f.exe",
+                              "sha256":  "CA0431B4BC38DE4ACACF7B3734E4C49E8D99A122C4B0FB2B27FF8056803C1815",
+                              "mtimeUtc":  "2026-09-11T07:31:23.6497968Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "byok_adapters",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\byok_adapters-1f281ba02c4805ed.exe",
+                              "sha256":  "6BC873C4312CBC5C109F0C3CB48CD7D628C12031B810F550498579EEECC935C5",
+                              "mtimeUtc":  "2026-09-11T07:31:23.6497968Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "execution_lifecycle",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\execution_lifecycle-05778634293f70de.exe",
+                              "sha256":  "1D3D3110E94D1EBC52F8987138EE40103B9EB9B3B2EA3DB0E815D40A9D4FFFFB",
+                              "mtimeUtc":  "2026-09-11T07:31:23.6558123Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "tool_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\tool_cli-f430c8534c735b53.exe",
+                              "sha256":  "8A082E62F9B27DF6A9E0C17ADF37EC4591C3962789505326268D352CBC6A4414",
+                              "mtimeUtc":  "2026-09-11T07:31:38.3746916Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "test_support_has_no_dead_helpers",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\test_support_has_no_dead_helpers-52d23a93142698dd.exe",
+                              "sha256":  "77AEA4582D81190C7096C51057BEFBA25E578DBC55A04573312B32DC75CD8416",
+                              "mtimeUtc":  "2026-09-11T07:31:38.4467742Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "shipped_package_coverage",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\shipped_package_coverage-360cc463b88cb0d4.exe",
+                              "sha256":  "E46072FD0C875F85665AC6DBC79FDC22DD4445E509EE3F5304338EA500BB3589",
+                              "mtimeUtc":  "2026-09-11T07:31:38.5399033Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_project_default",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\resume_project_default-24de34b224dc0993.exe",
+                              "sha256":  "F5F12D63F6940335093C8D169FC1D21D3341046FA7C28E312D73661D6D48852C",
+                              "mtimeUtc":  "2026-09-11T07:31:38.7176950Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_capsule_authority",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_capsule_authority-d896902fab488445.exe",
+                              "sha256":  "D9B011566BE0666843F4DB7CFBF0C0FDA447D1DEEB95291CAD573EFD58B0EEE3",
+                              "mtimeUtc":  "2026-09-11T07:31:39.0375535Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_graph_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_graph_contract-14c41a991090f02f.exe",
+                              "sha256":  "8E0C1144C90592D1BDF37A00AC23CA741ECA15DA197774432DAFC17CDB705173",
+                              "mtimeUtc":  "2026-09-11T07:31:39.1186034Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_context_budget",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_context_budget-ce9dab4b56b9ed3b.exe",
+                              "sha256":  "DBDDE192E634CB1FCE3F5E869D8BDAB9F94279BFEF5DA05C0E97DEDA969731BF",
+                              "mtimeUtc":  "2026-09-11T07:31:39.1576334Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "http_helper_inventory",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\http_helper_inventory-2375f06e909f1d8a.exe",
+                              "sha256":  "0691485C18B9AE8A222D58FB108DFCDF81D0555EB22E5665ADE93E199506B3F8",
+                              "mtimeUtc":  "2026-09-11T07:31:39.1656355Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\event_store_cli-c016aeb55f12c899.exe",
+                              "sha256":  "9B00A5F0E8C6B471DCEEC5CEF0FEE393862CE396CB31B6C7864CD8C819BB3227",
+                              "mtimeUtc":  "2026-09-11T07:31:39.2176739Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\extension_cli-f4e8ef2a93959ba5.exe",
+                              "sha256":  "AA95CBC69C3067E784AC07AE00CDCA475C9F61B5419B1357FD71CA2E1CE1B515",
+                              "mtimeUtc":  "2026-09-11T07:31:41.3397451Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_surface_parity",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_surface_parity-cfeede303f50dad3.exe",
+                              "sha256":  "3065EB4EFFBC5110694B309E68F93D2DF6596533899C562E94E656680B743069",
+                              "mtimeUtc":  "2026-09-11T07:31:41.3367445Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "graphhelm_sealed_key_provider",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_sealed_key_provider-de71c3c2c569e26b.exe",
+                              "sha256":  "246C2DA3B6062F1B88A647A09B452719BBE2B91A4ACF1ABA1D9AA84B30521B19",
+                              "mtimeUtc":  "2026-09-11T07:31:41.3502551Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "local_atomicity",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\local_atomicity-e89d0a3f6e53c87d.exe",
+                              "sha256":  "873188755F8AB872C328B9B5F1F50F850E4370007F0625E5383E99258EB01740",
+                              "mtimeUtc":  "2026-09-11T07:31:43.3506824Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "gate_nodes",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\gate_nodes-e10fa6c0c71f52e3.exe",
+                              "sha256":  "DD8218CC529D942B7AE8C6858B7E6205EF96EB431CBF74C6122E67D156732EDF",
+                              "mtimeUtc":  "2026-09-11T07:31:41.7524581Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "draft_application",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\draft_application-ab87e56c93c286fd.exe",
+                              "sha256":  "5DFBDF1D534665AC5C4C7D74AE38B1E5D20CB6F0201FBCAE073BAEE229FCDC2F",
+                              "mtimeUtc":  "2026-09-11T07:31:42.0962401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "graphhelm_execution",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe",
+                              "sha256":  "12871D131D6A762217D34DCCA7307E6DF2028D928A977D4D53F0D2519B89A1C3",
+                              "mtimeUtc":  "2026-09-11T07:31:41.7008912Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "runtime_http",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\runtime_http-13ba53a86f14ba81.exe",
+                              "sha256":  "3DDDB2E923BB3CE2B3EC916DF58D567843790C5E8BFC964A26A5236B16F65EC4",
+                              "mtimeUtc":  "2026-09-11T07:31:42.0962401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_citation_fixtures",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\context_citation_fixtures-8e98a101334888c1.exe",
+                              "sha256":  "B51BEF58B83425CF68B33E51604215EF61AAC19480B262C59975D233D1779F5F",
+                              "mtimeUtc":  "2026-09-11T07:31:45.1119153Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_url",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\mcp_url-cc4f770703a40f86.exe",
+                              "sha256":  "44D4A5F5E1B42B2D278FA3380C9CD738086CA2AAE5F7C81C9761314EDAAC25DF",
+                              "mtimeUtc":  "2026-09-11T07:31:45.5791241Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gateway_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\gateway_cli-f658f5c1003ec060.exe",
+                              "sha256":  "27CCAF27F7FECA5ED20A284CAD1B1300EAF8E3A2FABB4B34CC2AA3290E97D594",
+                              "mtimeUtc":  "2026-09-11T07:31:45.6645038Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "surface_completeness",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\surface_completeness-c4471ff647377b9e.exe",
+                              "sha256":  "445BF5D5999A39D8171AE8F1C24D65F17B114C4B5E65FCF4A69726C5CEF0FB20",
+                              "mtimeUtc":  "2026-09-11T07:31:46.1466221Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_concurrency",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_concurrency-672c75a918c8c917.exe",
+                              "sha256":  "930BAE0AD65335A961B126942B74BE2AAC6E87E057A36C638FEEC3D14F3D8B52",
+                              "mtimeUtc":  "2026-09-11T07:31:46.1436226Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_redaction",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_redaction-73c82091c1015beb.exe",
+                              "sha256":  "730341032E361186EEA5B6C6BE612280932A1C67A023B23CEE6E92D1E51568FF",
+                              "mtimeUtc":  "2026-09-11T07:31:46.1371213Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_journey",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_journey-19afcf4c10a2a74d.exe",
+                              "sha256":  "8AFC9C25D52E8BAB9C786CA0424C34AD2074684E7A7160A22914711E3A98B2B1",
+                              "mtimeUtc":  "2026-09-11T07:31:54.6294727Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\repository_conformance-a200d4f89cbb9858.exe",
+                              "sha256":  "7A12C3D48E35EF73AEF713FA4CBD79BF5AF81C5428331C87FA3D18277389603E",
+                              "mtimeUtc":  "2026-09-11T07:31:55.8888436Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "monitor_http",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\monitor_http-cef5d90885c52356.exe",
+                              "sha256":  "633EF8A3F62AD5323BCB832C7F0A1C1CFF61E2CE3F63F78508F4057CB295DD7A",
+                              "mtimeUtc":  "2026-09-11T07:31:57.5840076Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_stdio",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\mcp_stdio-37397deaa14afa67.exe",
+                              "sha256":  "98B7EF70B8D4B05C8696168A69BEB142A5816E4E04B65D75CF18D1553378CC83",
+                              "mtimeUtc":  "2026-09-11T07:31:57.9062753Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_local_backup",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\event_store_local_backup-9c90da3553c7a192.exe",
+                              "sha256":  "AFDAB86A7DFAB538F387B097DE158D0DE97422948D65E9149EF062D586ED4AFA",
+                              "mtimeUtc":  "2026-09-11T07:31:57.9042739Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_promotion_policy",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_promotion_policy-7a818e5df18c2318.exe",
+                              "sha256":  "6D6B5854484159EEF45F35CB9EAFFA50B4A58453F94AD947583A6302EC400F76",
+                              "mtimeUtc":  "2026-09-11T07:31:59.1348439Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "graphhelm_postgres_event_store",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_postgres_event_store-770e541e474cc054.exe",
+                              "sha256":  "92AD30B8F5D0922090A66CD10BBBF14244AA720E8235894BADE957DD56FA16D6",
+                              "mtimeUtc":  "2026-09-11T07:31:59.3024078Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_plugin",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_plugin-3c1afe9276b694ad.exe",
+                              "sha256":  "AE47C18B6BE1EDE8FA49A3FC562884330C54D5467BA6A4E4F5B120C1F2364750",
+                              "mtimeUtc":  "2026-09-11T07:32:00.6700509Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\migration-2a7492210acdabcf.exe",
+                              "sha256":  "8637C7C712CCA74465C7EA2272A90CF19CE945CED63EB022A2C54E2B0C5B8AAC",
+                              "mtimeUtc":  "2026-09-11T07:32:00.0549644Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_observer_trust",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\jpd_observer_trust-92a5bb68cb2f3409.exe",
+                              "sha256":  "FDE6B781DD53E924D32815DFB5C119FC3860DFBAD70FF3C39617557D8A4A09DC",
+                              "mtimeUtc":  "2026-09-11T07:32:00.6700509Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "concurrency",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\concurrency-c85147712552c1af.exe",
+                              "sha256":  "5F4A507CD84F71A7C17A140E5BE3F9CF6BCFB3AF6E6C33FD9F00396BAD4B2C6D",
+                              "mtimeUtc":  "2026-09-11T07:31:59.6355746Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_cli-42c55c7045de074f.exe",
+                              "sha256":  "FFF73ADF94E686D73D5C2E72BA7C4104596931971CA71C6152393453B3DD9228",
+                              "mtimeUtc":  "2026-09-11T07:32:00.4346662Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "isolation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\isolation-cdb592d70fbea044.exe",
+                              "sha256":  "DEC575A16EE9D843CEB74C6957EC3CE1E323E6C81B50AB696CF82D1BB70F093C",
+                              "mtimeUtc":  "2026-09-11T07:32:06.7033438Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_contract_schemas",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_contract_schemas-61744cc742acd52a.exe",
+                              "sha256":  "30E9A579643CB5888914EE177F24713E519133BB7F28B44BD3EE27B4209584DB",
+                              "mtimeUtc":  "2026-09-11T07:32:06.3536623Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "cli_smoke",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\cli_smoke-a4fd29d998bf3a3d.exe",
+                              "sha256":  "7BDEDA1A22EB34EB7405FC0EAB1320318D0F31B265C666055652BB313B5D534A",
+                              "mtimeUtc":  "2026-09-11T07:32:06.3196306Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_benchmark",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_benchmark-1671c0fc334cb0a7.exe",
+                              "sha256":  "D0A940B9B691C607E79B4E0BAE8710807A60A69E2812517757FCEC37C357DFD8",
+                              "mtimeUtc":  "2026-09-11T07:32:06.5887416Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "schema_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\schema_cli-bbf201145a9f30bb.exe",
+                              "sha256":  "90C0ED30D52EC4469BCBDA1FB6DE5DE35635FBB99CA0F7A5488E72AD15C9DB38",
+                              "mtimeUtc":  "2026-09-11T07:32:06.4371009Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_package_inventory",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_package_inventory-23d128af5616503a.exe",
+                              "sha256":  "D759E3CD29B473043AFEE2B2465E3874E6B388061BECC86A8E3D8ECC935AA401",
+                              "mtimeUtc":  "2026-09-11T07:32:20.1205878Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gate_http",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\gate_http-1384b8f3e29dd61c.exe",
+                              "sha256":  "D533D2F74F8C1B4754D1FB5E2CB8E29F1810B8B720B950BB42A312945B0691C2",
+                              "mtimeUtc":  "2026-09-11T07:32:20.1772436Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "sweep_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\sweep_cli-90b5daba1c1af316.exe",
+                              "sha256":  "5FC1AB0460A49D9495EA6F9FFC8475424ED8E7A0C772B179ED1CC2E9D637CE4A",
+                              "mtimeUtc":  "2026-09-11T07:32:22.4357399Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_lifecycle",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\extension_lifecycle-3681d9a3c7dfa2f7.exe",
+                              "sha256":  "D01A7263CB3214CD5BD21043AF0D8A52A740C2CFB6C42E9C1FB9361BB91700A6",
+                              "mtimeUtc":  "2026-09-11T07:32:24.3380996Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "api_http",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\api_http-05df56fb754c8f60.exe",
+                              "sha256":  "3FB6602FE94E395B8837E00118418967423D9552CA74C801150DA554F9E2E5E4",
+                              "mtimeUtc":  "2026-09-11T07:32:22.4422401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "wake_http",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\wake_http-ef84d05489a5e2da.exe",
+                              "sha256":  "23B1AED2BC58CC6227693E70C1C44B4CE108EBD2B6C4FD54315E327CD20DA339",
+                              "mtimeUtc":  "2026-09-11T07:32:23.9773920Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "execution_cli",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\execution_cli-3b1c4a04b60c6ba8.exe",
+                              "sha256":  "7B518ECDAA2816AF1B1AEBD3E63EF4831D1330132D60EFEE60743E9B4947C3AF",
+                              "mtimeUtc":  "2026-09-11T07:32:22.4352407Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "projection",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\projection-f31c71b2e7fc0eaa.exe",
+                              "sha256":  "7CE57DE125D2CE595F8CE3481A3F335048260336105CCFE6782AA7FE79DA7030",
+                              "mtimeUtc":  "2026-09-11T07:32:24.3010919Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "amend_budget",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\amend_budget-c1471a912b86adcc.exe",
+                              "sha256":  "13977274664D6B8206006A661BE9A99AF1A5DF4D9284D44498B7280EB846DB38",
+                              "mtimeUtc":  "2026-09-11T07:32:36.1677305Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "manifest_freeze",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\manifest_freeze-da8473f16b600c44.exe",
+                              "sha256":  "6683C86DA6E060E5D4D26A99E030EC2B4569F8AA6026D7C97F2FC460A6473217",
+                              "mtimeUtc":  "2026-09-11T07:32:36.5178244Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_atomicity",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\resume_atomicity-10dab9eb2aa34ef8.exe",
+                              "sha256":  "231576AEB7A77EA224B56C3E123DF475B348D2DAB0FB3BCBE423743901AD7C46",
+                              "mtimeUtc":  "2026-09-11T07:32:36.5098167Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_plugin",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_plugin-213f81c2c91b5702.exe",
+                              "sha256":  "16D7A27B424D4853C51881F8FCE643D2693846B359336EA329C14CDA4197CDB9",
+                              "mtimeUtc":  "2026-09-11T07:32:36.6443870Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_capability",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\mcp_capability-5e6aab289c4cc5b5.exe",
+                              "sha256":  "852A4C64E718643BA298D1CCAD7F45EF3B26970B153A1DC404720189C44B3919",
+                              "mtimeUtc":  "2026-09-11T07:32:36.6578927Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "fake_runtime",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\fake_runtime-a2ef77a3e3ee68ac.exe",
+                              "sha256":  "BA84A61548D3BDF09B1CC0D44D54131906623CC92F2389E40931B3AE95D9EAAD",
+                              "mtimeUtc":  "2026-09-11T07:32:37.7411600Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-006ff097572e307a.exe",
+                              "sha256":  "DF06B490B880C0ADF431659696994550EB2E9F7B55CBF617426E2816C6F202ED",
+                              "mtimeUtc":  "2026-09-11T07:32:37.8923165Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\authored_string_invariants-23e77cee14a7a152.exe",
+                              "sha256":  "2D7558DCB762F0C3CFC6A6D6F5AE0BACBC2CB612B00FC00346B9FEE66FE291EA",
+                              "mtimeUtc":  "2026-09-11T07:32:38.7562786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-3d50a7ec65d3b728.exe",
+                              "sha256":  "B64668722650D5DBC4ACBC72397E6DBD12A1771C67CD1D4A2E428230DD827E4D",
+                              "mtimeUtc":  "2026-09-11T07:32:38.6671541Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance_map",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\acceptance_map-243ed95c375b4d83.exe",
+                              "sha256":  "1350AEE62A45C757BD58823DB34D5D5D20DF74808533DD5BBBC0D23E1B30486D",
+                              "mtimeUtc":  "2026-09-11T07:32:38.6341023Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "blind_judge",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\blind_judge-3c503af61e4ef0e4.exe",
+                              "sha256":  "0520A1A852697B8E3B25DEE782D5E99070D4457CD7BF773455DDD6A9C75AF5C0",
+                              "mtimeUtc":  "2026-09-11T07:32:40.9786858Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "amendment_replay",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\amendment_replay-f07b0d5fcd1e3a51.exe",
+                              "sha256":  "28353FF358CFE1EC8386425C6CE49030A7711459F1E98B8CDD5873232B728752",
+                              "mtimeUtc":  "2026-09-11T07:32:40.9977101Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "verified_executable",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\verified_executable-e1cbd61bd5f0c17b.exe",
+                              "sha256":  "96EEBC66F283CD26EB72DD3AB500071697E373FDD1033172FF9218A78D64F119",
+                              "mtimeUtc":  "2026-09-11T07:32:41.0232100Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\repository_conformance-0c3020abfa5d2a90.exe",
+                              "sha256":  "1E45757D310BE64A9FE3FFD996FA8EE8FF2EFBA3EB20B4EFA305130FCF6A0A4B",
+                              "mtimeUtc":  "2026-09-11T07:32:41.4368362Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_sabotage",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\development_sabotage-120d83213d9f9791.exe",
+                              "sha256":  "AD51158AD24E56F3F9EA8D9C3A3D56CA48B020D8A1AD3457EB60C8EE0D39F0AE",
+                              "mtimeUtc":  "2026-09-11T07:32:41.2874112Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm_development_benchmark",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_development_benchmark-f69af754a7a421bc.exe",
+                              "sha256":  "1BDC86CBE9603FFA730FF97A2E881C765E4FC989CEB50F764720CD5C27F8CB3E",
+                              "mtimeUtc":  "2026-09-11T07:32:43.0233768Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "owner_output",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\owner_output-d13189f5cf460acb.exe",
+                              "sha256":  "072FC4D8E299BFD65B8D970FA64F864E345AA1BB653871AD5AB9E8754AFE5F57",
+                              "mtimeUtc":  "2026-09-11T07:32:42.5365053Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "arm_symmetry",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\arm_symmetry-17ed96fc8d878c46.exe",
+                              "sha256":  "956AECBECED73E263E63644D9CEB62C498F66C2EC2AA6053392D4E5524F78AA8",
+                              "mtimeUtc":  "2026-09-11T07:32:42.9888363Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired_contexts",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\paired_contexts-1b1d2b8d4f58a482.exe",
+                              "sha256":  "0572E44B7D5344FE185F4244E7BC2E3ECA619A14908202869C24691A32CF6D8D",
+                              "mtimeUtc":  "2026-09-11T07:32:42.4469250Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "fake-index-provider",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\fake_index_provider-632907ad49ab8e40.exe",
+                              "sha256":  "227AE1A544C7E23BBE4050F30758C8E180A9EAF046A332C696CEAA3053D193E2",
+                              "mtimeUtc":  "2026-09-11T07:32:43.3186922Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "cost_provenance",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\cost_provenance-cfab38d0fc807a2b.exe",
+                              "sha256":  "F709B6D504635D51F28BE2D8AD4442F069421A167E79DE49B098015A3CE46781",
+                              "mtimeUtc":  "2026-09-11T07:32:43.2192908Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "retention",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\retention-1cbaa4229c9bf304.exe",
+                              "sha256":  "5C360729A83AEDB10011A0C923B8CD84763E00D79A9F77B7B80A16A132CD8B3D",
+                              "mtimeUtc":  "2026-09-11T07:32:43.2232921Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_cancellation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\workspace_cancellation-501b668fb22ba7b4.exe",
+                              "sha256":  "3F24EEF51635FBA05EE479313B089501D04200A714D6C0365133F46CFE24A92A",
+                              "mtimeUtc":  "2026-09-11T07:32:45.7792099Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "zero_bar",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\zero_bar-f6fe8d737cbbdb97.exe",
+                              "sha256":  "F6A61AF319A29DC5846AD121AD689B38F091774B44B949F74120EA40511D533A",
+                              "mtimeUtc":  "2026-09-11T07:32:45.8657217Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "critical_miss",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\critical_miss-25619816af2fd454.exe",
+                              "sha256":  "D6CA3AEC581B280AF87D63176358F0FB373004EA36EA57DB1C2207898067D0C1",
+                              "mtimeUtc":  "2026-09-11T07:32:46.7899934Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_reader",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\workspace_source_reader-0926e94bdbcffb91.exe",
+                              "sha256":  "95C48612049EF146B5B869C150EDD6A1EF674C90C0A36744709852B16C7985E9",
+                              "mtimeUtc":  "2026-09-11T07:32:45.8657217Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "retrieval",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\retrieval-0a7bd1ea7e274e07.exe",
+                              "sha256":  "4507E4C9E4CFFB18E5849EEF258EB0D01029ECF084962777DCAFD28C0D9DA4E0",
+                              "mtimeUtc":  "2026-09-11T07:32:46.7624699Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "run_directory",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\run_directory-f59fe0d643cd830b.exe",
+                              "sha256":  "D8CD83771B7B077F2E7B1E03C57DE566D69ED47432B3849D5064420A3B861C54",
+                              "mtimeUtc":  "2026-09-11T07:32:46.7609580Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "failure_causes",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\failure_causes-8334a46c9bc4f1a4.exe",
+                              "sha256":  "B2103EB559D89E3D26739D0BE8D98FFFAC69A155E0ACC398602F9B8EA6AB3124",
+                              "mtimeUtc":  "2026-09-11T07:32:46.7609580Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm-development-benchmark",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_development_benchmark-d210324186000576.exe",
+                              "sha256":  "2DE8BE47A47619382953D2CF08F15B8CBB9CF81202E1DAD3B0A8FA9F974DAA53",
+                              "mtimeUtc":  "2026-09-11T07:32:47.2334852Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "graphhelm_model_gateway",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_model_gateway-a343aba2fe39a51e.exe",
+                              "sha256":  "3FAEB991E15F4681500A37E452B2D1D9619CB97DF71E854E31DAB8D3BF9AED80",
+                              "mtimeUtc":  "2026-09-11T07:32:54.8896926Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "runtime_adapters",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\runtime_adapters-0474f886cb92197f.exe",
+                              "sha256":  "7AB0F93BFB62A2A57F4C9FFC14C8A5EC84FF2F4EB313301D46588925E43A6D49",
+                              "mtimeUtc":  "2026-09-11T07:32:54.9910842Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "backup_restore",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\backup_restore-d6f24369dc915821.exe",
+                              "sha256":  "403DC9C48779A9175801DEA688EBCED2416DAD3668E7472CB175D514006BF6D1",
+                              "mtimeUtc":  "2026-09-11T07:32:55.7522921Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "inflight_governance",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\inflight_governance-1f730f32bb17e655.exe",
+                              "sha256":  "93C7380B60C2F0D486A2CDBDD4BACF67AA9043ADD25F660053FEE95FDF8C0CE4",
+                              "mtimeUtc":  "2026-09-11T07:32:56.7241337Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "async_repository_contracts",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\async_repository_contracts-cdce2517298f5fe4.exe",
+                              "sha256":  "5E35C48DD195E6B11C6B2A54A61DD2A8AD708DEE0E0BEA8BB5532BA02B0CAAF7",
+                              "mtimeUtc":  "2026-09-11T07:32:56.7236346Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "attention",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\attention-a51521956919f1d6.exe",
+                              "sha256":  "290F0C8EFE62DF951323786E286496DF1299BC421457757AD5927223C86D8E91",
+                              "mtimeUtc":  "2026-09-11T07:32:57.6154840Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\workspace_containment-51c45dc87d3533b6.exe",
+                              "sha256":  "AEDEFE6E0008279239DD0AC3C32BC2354C2D733F71A19EC563FF7F3394619510",
+                              "mtimeUtc":  "2026-09-11T07:32:58.3346070Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_compiler",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\context_compiler-d32f304273b14b27.exe",
+                              "sha256":  "7D9EA64AB35B01E8DB36CDED5A9F35D0500CFF04EB1B22F315F57B64BF745D61",
+                              "mtimeUtc":  "2026-09-11T07:32:59.1414932Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "axis_completeness",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\axis_completeness-958a5c4b3e6e6090.exe",
+                              "sha256":  "036648EAEE357F7091DC5A27877293A1AF93FD5FDCE6586BA8B57F45830D5786",
+                              "mtimeUtc":  "2026-09-11T07:32:58.7181457Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "append_only",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\append_only-d3b04e4de346911f.exe",
+                              "sha256":  "405FD5861F4B8379C74C23E7808A45E043382A5F312D86F170C5A23812030CCE",
+                              "mtimeUtc":  "2026-09-11T07:32:58.7236477Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generate-retrieval",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\generate_retrieval-56681f8075163323.exe",
+                              "sha256":  "8D4C0BF278721E5B61803508E019F6530A8B5B5DD17BEE0DB3C8BB86C47BE114",
+                              "mtimeUtc":  "2026-09-11T07:32:59.1615141Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "dry_run_pipeline",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\dry_run_pipeline-b3e806f73e6bccf5.exe",
+                              "sha256":  "3A5B9D4B3662F32ABF485C932EC48DF54241E4DBFDE2C299F4708E6A2111AC2A",
+                              "mtimeUtc":  "2026-09-11T07:32:59.1819398Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "contained_session",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\contained_session-96dfcea77ab493de.exe",
+                              "sha256":  "B53C76389E11DBB0921BF4416476DD75966A8657423D613156590C82273F53F4",
+                              "mtimeUtc":  "2026-09-11T07:32:59.1399894Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "broker",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\broker-9f6fe0b849cda787.exe",
+                              "sha256":  "BA6A91126124440C3E901EF381A8FB66AA10703CE297AB033781ACC66F7FEAD6",
+                              "mtimeUtc":  "2026-09-11T07:32:58.7631689Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "held_file_contention",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\held_file_contention-edbb7653b3d891cb.exe",
+                              "sha256":  "4F12CC18B2DDF14E4F142792D0B9E7D6DA4CAD435D1EBFBD2AEB7D87BCEBC487",
+                              "mtimeUtc":  "2026-09-11T07:32:59.1560045Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "graphhelm_codebase_memory_mcp",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_codebase_memory_mcp-0a3221b4d4470f6d.exe",
+                              "sha256":  "574036B0D628363462303806378DDFE9C50594F8986C49389954CAF3DB5445F9",
+                              "mtimeUtc":  "2026-09-11T07:33:00.7377795Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "sweep_verb",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\sweep_verb-832785868e6262de.exe",
+                              "sha256":  "783D35DD9DDBBF6B07C5192687CF80BB8E502CE9ADB62CE13C0D0D4E415A10CD",
+                              "mtimeUtc":  "2026-09-11T07:33:01.4508277Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired-driver",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\paired_driver-165db5e4e84a5c44.exe",
+                              "sha256":  "2BED3BD1BA2C414D2490F1D3D1F4006476EE9E01D51E357811751D209EAEB23A",
+                              "mtimeUtc":  "2026-09-11T07:33:02.5311871Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "request_set_ceiling",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\request_set_ceiling-1bf8f75f197df7e7.exe",
+                              "sha256":  "9AF0DEE7CB75752F0D6271B98D4BB9CDE91CC113FC897022AF88021204F87332",
+                              "mtimeUtc":  "2026-09-11T07:33:03.1286786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-90796774f267a234.exe",
+                              "sha256":  "23B5A9A54AD8F1096CFA4F685090887DB0D7273D7FA72CE53262C7C7CD884403",
+                              "mtimeUtc":  "2026-09-11T07:33:18.7729841Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "graphhelm_events",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe",
+                              "sha256":  "BFA2DBA1226F15BD1F15BE713D0011AD844CB7536E205E89013A213713794CF3",
+                              "mtimeUtc":  "2026-09-11T07:33:18.7023921Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/acceptance-map#0.1.0",
+                              "target":  "grounded",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\grounded-7c2a0af6de776b03.exe",
+                              "sha256":  "5BF0CF550B712F1E3D3635549B30AEA99C76CBC0E3E65C2C472A3CF1468A5E27",
+                              "mtimeUtc":  "2026-09-11T07:33:18.7284287Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generator_arming_site",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\generator_arming_site-20b0c4829849ebfa.exe",
+                              "sha256":  "C7EFE3EFA196D7A2E478E0BFA44B906FA6D94AEDEA9541B83AEEB496BE90F8AE",
+                              "mtimeUtc":  "2026-09-11T07:33:19.8823824Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "dlq_kinds_are_declared",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\dlq_kinds_are_declared-3de3e2d9d51dc4d3.exe",
+                              "sha256":  "3114E9CBD8279ABC72042172EC31D41D0C31DE542F347A0A3842B31881D45A44",
+                              "mtimeUtc":  "2026-09-11T07:33:20.1952135Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/acceptance-map#0.1.0",
+                              "target":  "committed_stores",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\committed_stores-a92a7ae4f5260e87.exe",
+                              "sha256":  "D8792106F76A60DEEDD8480CE43A1CABF95EE7BE646765CA587FBAC7742695AF",
+                              "mtimeUtc":  "2026-09-11T07:33:20.2127202Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "shared_lock_blocks_writers",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\shared_lock_blocks_writers-ebf5a7f12408b8f4.exe",
+                              "sha256":  "AC9C11599E4DC6E467E9DFAA2BC6454D4F2B8E49EED6E4E86F4A60437F11F859",
+                              "mtimeUtc":  "2026-09-11T07:33:20.2042191Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_accounting",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\context_accounting-732e1c9f0c45970f.exe",
+                              "sha256":  "16A96EA4BBD30CC04B12E09976EBAE66ADFC2E3D8A55DFCB7A663C4F4E215842",
+                              "mtimeUtc":  "2026-09-11T07:33:21.6356759Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "projection_rebuild",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\projection_rebuild-f084cdc5cf2ff2ec.exe",
+                              "sha256":  "E5D402EE24C6667CD9C62417ED8D37A54073DFD7170187733547E69E486DA474",
+                              "mtimeUtc":  "2026-09-11T07:33:20.2102193Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\process_isolation-4f6ce051933e47a8.exe",
+                              "sha256":  "44889F9CAF907FC30139F8552EB44F46C0B2905EF2A588F08BCCF37E390D5973",
+                              "mtimeUtc":  "2026-09-11T07:33:22.3433394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "memory",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\memory-07e4c3f0c6ae6a13.exe",
+                              "sha256":  "B2B7E1BCB3C06D8867323563238BA810F14134429527192585CC72EBBC54D71C",
+                              "mtimeUtc":  "2026-09-11T07:33:21.6386763Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "frozen_files",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\frozen_files-d7e8f6f04394950b.exe",
+                              "sha256":  "D1C660B8CB2778FCC1FACEA7B98DBD5C729561047877C168627481159E9EF4B9",
+                              "mtimeUtc":  "2026-09-11T07:33:22.3433394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "mcp_client_population",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\mcp_client_population-8bc58e2ce26d6928.exe",
+                              "sha256":  "E64EC63445001163A453ECE7A7DD4F3391D2C2D57A1A689F742AB9E9FD2073A7",
+                              "mtimeUtc":  "2026-09-11T07:33:23.8295345Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-814137ab5a1057c4.exe",
+                              "sha256":  "A119D4E5B4A44983A1D9EAA838122EEFE631AE4C826CB7283AF1733A50F3C810",
+                              "mtimeUtc":  "2026-09-11T07:33:23.4293045Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\authored_string_invariants-166056ee454f9353.exe",
+                              "sha256":  "E564D3C3AF4B5E19B07A66BC86039C614BE9646A72B92C373630D66DA6D0BE34",
+                              "mtimeUtc":  "2026-09-11T07:33:23.4858294Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "graphhelm_simulation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_simulation-0bf61f7ec30fc42a.exe",
+                              "sha256":  "1112793C24220860EED24FD702F20FB7B594F370DE0225E4A3C5D4959EFBEBA4",
+                              "mtimeUtc":  "2026-09-11T07:33:24.6017021Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "pinned_snapshot",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\pinned_snapshot-a82ea53321e88f5e.exe",
+                              "sha256":  "A20D2B3B5A6141E8910654EB32D53F284870AA338750AD43DC3E4E32376D2837",
+                              "mtimeUtc":  "2026-09-11T07:33:35.5177067Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\broker_end_to_end-bb725af4815855d2.exe",
+                              "sha256":  "061BA8E426A2BF89A1E25F0F171524E47AD1A5B011884290C7F8C3BA1A34E429",
+                              "mtimeUtc":  "2026-09-11T07:33:35.5207130Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/acceptance-map#0.1.0",
+                              "target":  "record_demonstration",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\record_demonstration-6307d9bd57d5344c.exe",
+                              "sha256":  "67FB8D2FB161054EE461DDC9401A6620FBDCC4DB1550C4BAFCD64ADBDBC471E7",
+                              "mtimeUtc":  "2026-09-11T07:33:35.9011889Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_concurrency",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\read_concurrency-9b10a993c1c5b668.exe",
+                              "sha256":  "6447E4138E2AD57DE450980F9F786EBF33953736ACDE58F71B5717CAC2DC382A",
+                              "mtimeUtc":  "2026-09-11T07:33:35.9152094Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "safe_publication",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\safe_publication-e3ba45ef37d7d8b6.exe",
+                              "sha256":  "120E32D839ECC630E309FFC552B330242993B98793A4C0F46F63D87F693ED5FE",
+                              "mtimeUtc":  "2026-09-11T07:33:35.9242136Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "batch_validation_bound",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\batch_validation_bound-b590b333fa6ff55f.exe",
+                              "sha256":  "B509A59DA438AE9ECA46EF698CE8BD4AF9538A497F7E873E7B20E9BFF9CD4213",
+                              "mtimeUtc":  "2026-09-11T07:33:35.7564776Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "oracle_isolation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\oracle_isolation-1fb9c48325e8081b.exe",
+                              "sha256":  "1EEE2FFD8670ECDF2BE020FC52094BF2BFCB26A41E72F5B984F92BD3A94C3B4D",
+                              "mtimeUtc":  "2026-09-11T07:33:35.7564776Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "evaluator_policy",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\evaluator_policy-bbc74c65eadd2bca.exe",
+                              "sha256":  "BED163FA44B6582D0911115B68F16AD596D09C5B434B676670C97D4C6494BAF1",
+                              "mtimeUtc":  "2026-09-11T07:33:37.8096944Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "deterministic_simulation",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\deterministic_simulation-99e24efdcf0830b8.exe",
+                              "sha256":  "8E8235C6645983085ACD02363DA1FBF76410E77D794602F0C6F42B5F3B1ADC90",
+                              "mtimeUtc":  "2026-09-11T07:33:38.4473304Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_tool_host-2877cb05147aec28.exe",
+                              "sha256":  "272F766C182A5F2DA8839645ADC10301378AB9B02361AE51ACBD8453DF2D275B",
+                              "mtimeUtc":  "2026-09-11T07:33:39.6874972Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "materialization",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\materialization-8d94fcaba91ba046.exe",
+                              "sha256":  "951E8423B347FC2F1F2088E69A2B22813AB2C6FB3C9D4498575C1FC3FBA926FC",
+                              "mtimeUtc":  "2026-09-11T07:33:38.9595792Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "graphhelm_runtime",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm_runtime-3b03c6bd06987145.exe",
+                              "sha256":  "5A5B12DC94B3F229186BE5701AECB12AB74AD7D61ADFA7F3B80FC7689D1009C5",
+                              "mtimeUtc":  "2026-09-11T07:33:39.6769292Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "memory",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\memory-81f73a9b3fde4f89.exe",
+                              "sha256":  "5B917BBF44CCBE8A95F2E81CF04A347A76934E3301092D02DFD359B71FC62D27",
+                              "mtimeUtc":  "2026-09-11T07:33:38.9595792Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "graphhelm",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\graphhelm-4b7ea5bf84762efa.exe",
+                              "sha256":  "BB1EAEE1FBF9102D47B42D50852B90B2018514C2BA1D9EC06BC306C1AB8544A3",
+                              "mtimeUtc":  "2026-09-11T07:33:38.9595792Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "artifact_from_rows",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\artifact_from_rows-c151f80148b7de47.exe",
+                              "sha256":  "41377FDCB53142AD8F21B2098955F25B073A4FBA11672AC79530E8073662B66D",
+                              "mtimeUtc":  "2026-09-11T07:33:41.0387343Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "driver_contract",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\driver_contract-9816306b08d1d116.exe",
+                              "sha256":  "24726257F4952CB6648567C0860D579ABF44059FB9BD056A20444C4211ACE724",
+                              "mtimeUtc":  "2026-09-11T07:33:40.2057683Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\source_invariants-664e14f765c25973.exe",
+                              "sha256":  "03726161F2FE763FF14A1699106D96E922AE12960F8FFCE2DE9B5F44C681453E",
+                              "mtimeUtc":  "2026-09-11T07:33:41.0932660Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "execution_projection",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\execution_projection-6304d0816eea1539.exe",
+                              "sha256":  "35A58223BE5867ED64622C8D374BFE2BAF571E66B16E5CD9BC2145ADED0D8A3A",
+                              "mtimeUtc":  "2026-09-11T07:33:41.0587327Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "live_provider",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\live_provider-1d6018512697742e.exe",
+                              "sha256":  "367F58C4607A4F4C7A76784F30C040B67DA1F6B4EC1A5EF28D9A4E9F7729D86D",
+                              "mtimeUtc":  "2026-09-11T07:33:41.0592354Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "decoder",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\decoder-73994c6ee76ada31.exe",
+                              "sha256":  "851893A2FE00E8C257C982BC3E6DDEB871C81C07803F93B6E0754227203DBA04",
+                              "mtimeUtc":  "2026-09-11T07:33:41.0447330Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "replay",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\replay-8fb0270f8cf6d943.exe",
+                              "sha256":  "E3D51FB761DE005506BE6C0CD1BF32AD23D4A5455C5E51DDEAA13772D6C2EB8E",
+                              "mtimeUtc":  "2026-09-11T07:33:45.0589913Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "persisted_node_bytes",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\persisted_node_bytes-adbd348bb95f7f4f.exe",
+                              "sha256":  "F4CDA569FA2DD1085A3AAB6D2BB77396C6DCA9B255B39104C084769379368DD3",
+                              "mtimeUtc":  "2026-09-11T07:33:45.0594902Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/gate-997-28d3bf/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_budget",
+                              "executable":  "D:/graphhelm-target-gate997\\debug\\deps\\read_budget-ca2527bd6f847f16.exe",
+                              "sha256":  "D12589928EF816232C95AE1AC10B3DF554F09FD242422D226177349A763E2408",
+                              "mtimeUtc":  "2026-09-11T07:33:45.0594902Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "postgresExecution":  {
+                              "PostgreSQL ignored matrix":  {
+                                                                "verdict":  "measured",
+                                                                "executed":  49,
+                                                                "groups":  258,
+                                                                "stdoutLines":  1339
+                                                            },
+                              "PostgreSQL matrix under a non-C collation":  {
+                                                                                "verdict":  "measured",
+                                                                                "executed":  49,
+                                                                                "groups":  258,
+                                                                                "stdoutLines":  1339
+                                                                            }
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "D:/graphhelm-slot\\SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-11T07:29:10Z | gate cwd=F:\\github\\GraphHelm\\.claude\\worktrees\\gate-997-28d3bf head=2da329a165c3e26f0e40d034506c64e77109c517 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=31504 start=2026-09-11T07:29:10.4142589Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-11T07:29:11.0234212Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "absent",
+                          "path":  "D:/graphhelm-slot\\SLOT.lock",
+                          "observedAtUtc":  "2026-09-11T07:56:40.1408907Z"
+                      },
+    "slotLockStartEndIdentical":  false,
+    "scope":  {
+                  "full":  true,
+                  "reason":  "FULL: no scope selection was given",
+                  "crates":  [
+
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "the PostgreSQL matrix runs: this is a FULL run"
+              },
+    "instrumentSuspect":  false,
+    "targetBuildState":  {
+                             "contaminated":  false,
+                             "suspect":  false,
+                             "state":  "fresh",
+                             "reason":  "the target directory holds no build output, so nothing is being reused"
+                         },
+    "overallPassed":  false
+}

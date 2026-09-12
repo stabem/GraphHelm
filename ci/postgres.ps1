@@ -7,8 +7,9 @@
     PostgreSQL on both windows-latest and ubuntu-latest), initialises a brand new cluster in a
     temporary directory on a random loopback-only TCP port, creates a random administrative role
     and database, exports GRAPHHELM_TEST_ADMIN_URL / GRAPHHELM_TEST_PG_DUMP / GRAPHHELM_TEST_PG_RESTORE
-    and runs the ignored tests serially. The cluster and its temporary directory are always stopped
-    and removed, including on failure or interruption. No Docker or service container is used.
+    and runs the ignored tests serially. Normal unwinding stops and removes the cluster. The early
+    Windows gate additionally contains detached server processes in its parent-owned job; forced
+    termination can leave temporary files. No Docker or service container is used.
 
     Compatible with Windows PowerShell 5.1 and PowerShell 7+ on Windows and Linux.
 
@@ -40,8 +41,82 @@ param(
         '--test-threads=1'
     ),
 
-    [string] $PostgresBin
+    [string] $PostgresBin,
+    [switch] $InitializeJobSupportOnly
 )
+
+# The early gate owns this job; the child only opens it long enough to join. Assignment happens
+# before any PostgreSQL executable starts. Detached pg_ctl descendants cannot escape the job.
+if ($InitializeJobSupportOnly) {
+    if (-not ('GraphHelmPostgresJob' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+public sealed class GraphHelmPostgresJob : IDisposable {
+    [StructLayout(LayoutKind.Sequential)] struct BasicLimit {
+        public long ProcessTime, JobTime; public uint Flags; public UIntPtr Min, Max;
+        public uint ActiveLimit; public UIntPtr Affinity; public uint Priority, Scheduling;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct IoCounters { public ulong A,B,C,D,E,F; }
+    [StructLayout(LayoutKind.Sequential)] struct ExtendedLimit {
+        public BasicLimit Basic; public IoCounters Io; public UIntPtr ProcessMemory, JobMemory, PeakProcess, PeakJob;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct Accounting {
+        public long A,B,C,D; public uint Faults, Total, Active, Terminated;
+    }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr OpenJobObject(uint access, bool inherit, string name);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int info, ref ExtendedLimit value, uint size);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job, int info, out Accounting value, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job, uint code);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    IntPtr handle;
+    public string Name { get; private set; }
+    public GraphHelmPostgresJob() {
+        Name = "Local\\GraphHelmPostgres-" + Guid.NewGuid().ToString("N");
+        handle = CreateJobObject(IntPtr.Zero, Name);
+        if (handle == IntPtr.Zero) throw new Win32Exception();
+        var limits = new ExtendedLimit(); limits.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE; no breakaway.
+        if (!SetInformationJobObject(handle, 9, ref limits, (uint)Marshal.SizeOf(limits))) {
+            var error = new Win32Exception(); Dispose(); throw error;
+        }
+    }
+    public static void Join(string name) {
+        IntPtr job = OpenJobObject(1, false, name); // ASSIGN_PROCESS only, non-inheritable.
+        if (job == IntPtr.Zero) throw new Win32Exception();
+        try { if (!AssignProcessToJobObject(job, GetCurrentProcess())) throw new Win32Exception(); }
+        finally { CloseHandle(job); }
+    }
+    public uint ActiveProcesses {
+        get {
+            if (handle == IntPtr.Zero) throw new ObjectDisposedException("GraphHelmPostgresJob");
+            Accounting value;
+            if (!QueryInformationJobObject(handle, 1, out value, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero)) throw new Win32Exception();
+            return value.Active;
+        }
+    }
+    // The deadline bounds polling, not kernel-call latency. The caller first observes wrapper exit,
+    // so it cannot join the job after the final empty observation. No child retains an assignment handle.
+    public void StopAndDrain(int milliseconds) {
+        if (!TerminateJobObject(handle, 1)) throw new Win32Exception();
+        var watch = Stopwatch.StartNew();
+        while (ActiveProcesses != 0) {
+            if (watch.ElapsedMilliseconds >= milliseconds) throw new TimeoutException("PostgreSQL job did not drain; slot must not be released.");
+            Thread.Sleep(10);
+        }
+    }
+    public void Dispose() { if (handle != IntPtr.Zero) { CloseHandle(handle); handle = IntPtr.Zero; } GC.SuppressFinalize(this); }
+    ~GraphHelmPostgresJob() { Dispose(); }
+}
+'@
+    }
+    return
+}
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'

@@ -340,6 +340,14 @@ $failed = @()
 # statement that the stage did not measure it. Populated from the count file postgres.ps1 writes;
 # empty means no PostgreSQL stage ran at all, which is a legal run (-SkipPostgres) and not a zero.
 $script:postgresExecution = [ordered]@{}
+# #956 step 2b: the two PostgreSQL matrices, started right after the workspace build and joined at
+# their old positions under their old names. $null means "not started early": the join then runs
+# the matrix in line, exactly as before. The two flags are a measurement of the optimisation's
+# saving, published as a note -- never a verdict (#989).
+$script:pgIgnoredEarly = $null
+$script:pgCollationEarly = $null
+$script:pgMatricesStartedEarly = $false
+$script:pgMatricesOverlapped = $false
 # #822: how many test binaries predated this run's start. Kept apart from $failed because it is
 # not a failure of the code under test: it says whether the other stages measured this tree at all.
 $staleBinaryCount = 0
@@ -439,6 +447,8 @@ $script:requiredFeaturesReportUnreadable = $true
 # process is a worse abort than the one it was cleaning up after.
 $script:psSuitesStarted = $null
 $script:studioStarted = $null
+$script:pgIgnoredEarly = $null
+$script:pgCollationEarly = $null
 # #1003 review (X): the SAME class, on `Write-RunManifest` rather than the reap `finally` --
 # `studioNodePresent`/`studioStartedEarly`/`studioOverlapped` are read into the manifest and are
 # not assigned until well after the canary can already have aborted and called that function. `$false`
@@ -533,13 +543,21 @@ function Protect-GateEvidenceLine {
 # stage ran nothing, and turning "I could not see" into "it ran nothing" is exactly the inference that
 # produced a false report on 2026-09-05. It is surfaced loudly and left to a human.
 function Invoke-PostgresStage {
-    param([Parameter(Mandatory)] [string] $Name)
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        # #956 step 2b: a matrix started early hands in the count file its child already wrote to and
+        # a body that JOINS that child instead of running one. The defaults are the in-line path,
+        # unchanged, which is also the path ci/gate-postgres-count.tests.ps1 drives.
+        [string] $CountFile = '',
+        [scriptblock] $Body = $null
+    )
 
-    $countFile = [System.IO.Path]::GetTempFileName()
+    $countFile = if ([string]::IsNullOrWhiteSpace($CountFile)) { [System.IO.Path]::GetTempFileName() } else { $CountFile }
+    if ($null -eq $Body) { $Body = { Invoke-Postgres } }
     $previousCountFile = $env:GRAPHHELM_PG_COUNT_FILE
     $env:GRAPHHELM_PG_COUNT_FILE = $countFile
     try {
-        Invoke-Stage $Name { Invoke-Postgres } | Out-Null
+        Invoke-Stage $Name $Body | Out-Null
     } finally {
         $env:GRAPHHELM_PG_COUNT_FILE = $previousCountFile
     }
@@ -573,6 +591,99 @@ function Invoke-PostgresStage {
     }
 }
 
+function Get-NonCLocale {
+    # $IsWindows exists only in PowerShell Core, and under Set-StrictMode referencing it on Windows
+    # PowerShell 5.1 is a terminating error. $env:OS is set on Windows in both.
+    if ($env:OS -eq 'Windows_NT') { return 'English_United States.1252' }
+    return 'en_US.UTF-8'
+}
+
+# #956 step 2b: START A MATRIX EARLY. postgres.ps1 is already a child process with its own random
+# loopback port and private data directory, so two of them beside each other are isolated by
+# construction; what they share is the cargo target, whose build lock serialises the compile step
+# and nothing after it. A child reads the gate's environment at the instant of the spawn, so the
+# count file and the locale are set around Start-BackgroundStage and restored after it; a start
+# that fails answers $null and the join runs the matrix in line.
+function New-PostgresStageJob {
+    param([string] $SupportScriptPath)
+    . $SupportScriptPath -InitializeJobSupportOnly
+    return [GraphHelmPostgresJob]::new()
+}
+
+function Start-PostgresStageEarly {
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        [string] $Locale = '',
+        # Same shape as Invoke-Postgres: the default is the real script, the parameter is what the
+        # suite hands in when the function is cut out and driven where $PSScriptRoot is empty.
+        [string] $ScriptPath = (Join-Path $PSScriptRoot 'postgres.ps1'),
+        [string] $SupportScriptPath = (Join-Path $PSScriptRoot 'postgres.ps1'),
+        [bool] $WindowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
+    )
+    # Only Windows has this containment mechanism. Other hosts keep the existing inline matrix.
+    if (-not $WindowsHost) { return $null }
+    $job = $null
+    try {
+        $job = New-PostgresStageJob -SupportScriptPath $SupportScriptPath
+        $countFile = [System.IO.Path]::GetTempFileName()
+    } catch {
+        if ($null -ne $job) { $job.Dispose() }
+        Write-Host "[gate] $Name job setup failed ($($_.Exception.Message)); it will run in line." -ForegroundColor Yellow
+        return $null
+    }
+    $previousCountFile = $env:GRAPHHELM_PG_COUNT_FILE
+    $previousLocale = $env:GRAPHHELM_PG_LOCALE
+    $env:GRAPHHELM_PG_COUNT_FILE = $countFile
+    if (-not [string]::IsNullOrWhiteSpace($Locale)) { $env:GRAPHHELM_PG_LOCALE = $Locale }
+    try {
+        # -File cannot bind a native argument list to a PowerShell array parameter. Encode the
+        # invocation so both locale axes receive the exact PostgreSQL-only Cargo vector.
+        $quotedPath = $ScriptPath.Replace("'", "''")
+        $supportPath = $SupportScriptPath.Replace("'", "''")
+        $command = "`$ErrorActionPreference='Stop'; . '$supportPath' -InitializeJobSupportOnly; [GraphHelmPostgresJob]::Join('$($job.Name)'); & '$quotedPath' -TestArgs @('+1.97.1','test','-p','graphhelm-postgres-event-store','--all-features','--locked','--','--ignored','--test-threads=1'); exit `$LASTEXITCODE"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $started = Start-BackgroundStage -Name $Name -FilePath 'powershell' -WorkingDirectory $repositoryRoot `
+            -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
+    } catch {
+        $job.Dispose()
+        Remove-Item -LiteralPath $countFile -Force -ErrorAction SilentlyContinue
+        throw
+    } finally {
+        $env:GRAPHHELM_PG_COUNT_FILE = $previousCountFile
+        $env:GRAPHHELM_PG_LOCALE = $previousLocale
+    }
+    if ($null -eq $started) {
+        $job.Dispose()
+        Remove-Item -LiteralPath $countFile -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    return [pscustomobject]@{ Name = $Name; Started = $started; CountFile = $countFile; Job = $job }
+}
+
+function Stop-PostgresStageEarly {
+    param([Parameter(Mandatory)] $Early)
+    # The retained Process handle pins the wrapper identity. Kill/wait it BEFORE draining the job:
+    # otherwise a child still compiling Add-Type could join after an empty-job observation.
+    $process = $Early.Started.Process
+    if (-not $process.HasExited) { $process.Kill() }
+    if (-not $process.WaitForExit(10000)) { throw 'PostgreSQL wrapper did not exit; retaining slot.' }
+    $Early.Job.StopAndDrain(10000)
+    $Early.Job.Dispose()
+    Remove-Item -LiteralPath $Early.CountFile -Force -ErrorAction SilentlyContinue
+}
+
+# THE JOIN, at the stage's old position and under its old name, so the manifest keeps one shape and
+# the count file is read by the same code either way. $null runs the matrix in line.
+function Complete-PostgresStage {
+    param([Parameter(Mandatory)] [string] $Name, [AllowNull()] $Early)
+    if ($null -eq $Early) {
+        Invoke-PostgresStage -Name $Name
+        return
+    }
+    $script:pgStageToJoin = $Early.Started
+    Invoke-PostgresStage -Name $Name -CountFile $Early.CountFile -Body { Complete-BackgroundStage -Started $script:pgStageToJoin }
+}
+
 function Invoke-Postgres {
     param(
         # Focused harness tests inject a deterministic child without starting PostgreSQL or the
@@ -584,10 +695,13 @@ function Invoke-Postgres {
     $outFile = [System.IO.Path]::GetTempFileName()
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
+        $quotedPath = $ScriptPath.Replace("'", "''")
+        $command = "& '$quotedPath' -TestArgs @('+1.97.1','test','-p','graphhelm-postgres-event-store','--all-features','--locked','--','--ignored','--test-threads=1'); exit `$LASTEXITCODE"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         $process = Start-Process -FilePath $hostExe -PassThru -NoNewWindow `
             -ArgumentList @(
                 '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                '-File', $ScriptPath
+                '-EncodedCommand', $encoded
             ) `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
         # Touching Handle caches it so ExitCode is readable after the wait. Without this the
@@ -2884,6 +2998,8 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed) -or 
         studioNodePresent   = [bool]$script:studioNodePresent
         studioStartedEarly  = [bool]$script:studioStartedEarly
         studioOverlapped    = [bool]$script:studioOverlapped
+        pgMatricesStartedEarly = $script:pgMatricesStartedEarly
+        pgMatricesOverlapped   = $script:pgMatricesOverlapped
         # [object[]] cast, NOT @() - caught live, reproduced in isolation before guessing: under
         # this machine's Windows PowerShell 5.1 (5.1.26100.9168), `@(<a System.Collections.
         # Generic.List[object] VARIABLE>)` throws "Argument types do not match" unconditionally
@@ -3465,6 +3581,17 @@ try {
         }
     } | Out-Null
 
+    # #956 step 2b: THE MATRICES START HERE, behind the one build that made their binaries. The
+    # `workspace tests --all-features` stage above compiled every test target, so each postgres.ps1
+    # child finds the cargo lock held only for a freshness check and then runs beside the `cli:`
+    # suites below. The records keep their old names and positions: the join is where the matrices
+    # used to run in line, after the PowerShell suites' join. Skipped matrices are not started.
+    if (-not $script:matrixSkipped) {
+        if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
+        $script:pgIgnoredEarly = Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'
+        $script:pgCollationEarly = Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale (Get-NonCLocale)
+    }
+
     # DERIVED, not hand-maintained (#98): a hardcoded allowlist under-gates every new suite by
     # DEFAULT and silently - a new tests/*.rs file still runs inside `workspace tests` above, but
     # misses the isolated `--test <suite>` pass this loop exists to give, which is exactly what
@@ -3587,20 +3714,15 @@ try {
         if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
         # postgres.ps1 ends in `exit`, which terminates the *calling* script in PowerShell, so it
         # must run as a child process or the gate dies here and never reports.
-        Invoke-PostgresStage -Name 'PostgreSQL ignored matrix'
+        Complete-PostgresStage -Name 'PostgreSQL ignored matrix' -Early $script:pgIgnoredEarly
         # The C locale makes text ordering identical to COLLATE "C", which is exactly the condition
         # under which collation-dependent ordering defects stay invisible. This second pass is the
         # regression guard for that class and is not optional.
         $previousLocale = $env:GRAPHHELM_PG_LOCALE
         try {
-            # $IsWindows exists only in PowerShell Core, and under Set-StrictMode referencing it
-            # on Windows PowerShell 5.1 is a terminating error. $env:OS is set on Windows in both.
-            $env:GRAPHHELM_PG_LOCALE = if ($env:OS -eq 'Windows_NT') {
-                'English_United States.1252'
-            } else {
-                'en_US.UTF-8'
-            }
-            Invoke-PostgresStage -Name 'PostgreSQL matrix under a non-C collation'
+            # The locale matters here only for the in-line fallback; the early child read it at its spawn.
+            $env:GRAPHHELM_PG_LOCALE = Get-NonCLocale
+            Complete-PostgresStage -Name 'PostgreSQL matrix under a non-C collation' -Early $script:pgCollationEarly
         } finally {
             $env:GRAPHHELM_PG_LOCALE = $previousLocale
         }
@@ -3771,6 +3893,35 @@ try {
             # session can no longer reach, is not a reason to fail the abort path itself.
         }
     }
+    $postgresCleanupErrors = @()
+    foreach ($early in @($script:pgIgnoredEarly, $script:pgCollationEarly)) {
+        if ($null -ne $early) {
+            try { Stop-PostgresStageEarly -Early $early }
+            catch { $postgresCleanupErrors += $_ }
+        }
+    }
+    if ($postgresCleanupErrors.Count -gt 0) {
+        # RECORDED, NOT THROWN (X's adversarial review of this PR). The first draft threw here, and
+        # a throw at this point in a `finally` costs more than it buys:
+        #
+        #   1. There is no `catch` between `} finally {` above and its close below, and
+        #      `Write-RunManifest` for the normal path is OUTSIDE this block. So a 10-second drain
+        #      timeout during any abort discarded the whole run's manifest -- every stage record,
+        #      every timing -- and replaced a real, nameable stage failure with a sentence about
+        #      PostgreSQL cleanup. That is the trap `Invoke-Stage`'s own #841 comment names:
+        #      replacing the cause with a complaint about the instrument that was recording it.
+        #   2. It also jumped over `Remove-SlotClaim` below, so the claim it said it was RETAINING
+        #      was left holding a PID that was about to die -- and `ci/slot-lock.ps1`'s reclaimer
+        #      keys on pure PID liveness with no clause for "a RUN-ABORT asked for this to be held".
+        #      The next gate takes the slot regardless. The sentence described a guarantee the
+        #      system does not provide.
+        #
+        # What actually contains the children is `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: the gate
+        # process exiting closes the job handle and the clusters die with it. That is the mechanism
+        # the throw made redundant while costing the receipt. So: say it on the ledger, let the
+        # `finally` finish, and let the manifest carry the real cause.
+        Write-RunAbort -Reason "PostgreSQL cleanup was not verified: $($postgresCleanupErrors -join '; ')"
+    }
     # #700: a run that leaves this block without completing its stages and without having written
     # RUN-END -- an exception, an `exit` inside a stage, Ctrl-C -- says so on the ledger. The canary
     # abort writes RUN-END before it exits, so it is not double-counted. A hard kill skips every
@@ -3830,6 +3981,14 @@ if ($artifactManifest -and $artifactManifest.artifacts) {
 # the arrangement's decay is still visible to anyone who reads them.
 $script:psSuitesStartedEarly = ($null -ne $script:psSuitesStarted)
 $script:psSuitesOverlapped = Test-StageOverlapped -Records $stageRecords -Name 'ci powershell suites'
+# #956 step 2b: the same measurement for the matrices, under the same rule -- a note, never a
+# verdict. The pair overlapping each other counts: that is the saving this step buys.
+$script:pgMatricesStartedEarly = ($null -ne $script:pgIgnoredEarly) -or ($null -ne $script:pgCollationEarly)
+$script:pgMatricesOverlapped = (Test-StageOverlapped -Records $stageRecords -Name 'PostgreSQL ignored matrix') -or
+    (Test-StageOverlapped -Records $stageRecords -Name 'PostgreSQL matrix under a non-C collation')
+if ($script:pgMatricesStartedEarly -and -not $script:pgMatricesOverlapped) {
+    Write-Host "[gate] NOTE: the PostgreSQL matrices started early but overlapped no other stage; the run went serial there and the status does not depend on it." -ForegroundColor Yellow
+}
 if ($script:psSuitesStartedEarly -and -not $script:psSuitesOverlapped) {
     Write-Host "[gate] NOTE: ci powershell suites started early but overlapped no other stage; the run went serial and the status does not depend on it." -ForegroundColor Yellow
 }

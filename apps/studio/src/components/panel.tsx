@@ -962,7 +962,7 @@ function SayBox({
       }}
     >
       {suggestions.length > 0 && recipient === null && (
-        <div className="reply-hints" aria-label={suggestionsClaim}>
+        <div className="reply-hints" role="group" aria-label={suggestionsClaim}>
           {suggestions.map((suggestion) => (
             <button
               key={suggestion.id}

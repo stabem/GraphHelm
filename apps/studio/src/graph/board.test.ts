@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   clearBoards,
+  defaultAgentPosition,
   defaultPosition,
   emptyBoard,
+  fitCamera,
   loadBoard,
   positionOf,
   saveBoard,
@@ -111,11 +113,44 @@ describe("where a card sits before anyone moves it", () => {
   it("gives the same node the same default place every time", () => {
     expect(defaultPosition(4)).toEqual(defaultPosition(4));
     expect(defaultPosition(0)).not.toEqual(defaultPosition(1));
+    expect(defaultPosition(0).x).toBeLessThan(1000);
   });
 
   it("prefers a moved position over the default", () => {
     const board = { ...emptyBoard(), positions: { a: { x: 500, y: 600 } } };
     expect(positionOf(board, "a", 0)).toEqual({ x: 500, y: 600 });
     expect(positionOf(board, "b", 0)).toEqual(defaultPosition(0));
+  });
+
+  it("places nodes in three rows before starting the next column", () => {
+    expect(defaultPosition(0)).toEqual({ x: 680, y: 100 });
+    expect(defaultPosition(2)).toEqual({ x: 680, y: 740 });
+    expect(defaultPosition(3)).toEqual({ x: 1060, y: 100 });
+  });
+
+  it("keeps agents in one vertical lane", () => {
+    expect(defaultAgentPosition(0)).toEqual({ x: 100, y: 140 });
+    expect(defaultAgentPosition(3)).toEqual({ x: 100, y: 560 });
+  });
+});
+
+describe("camera framing", () => {
+  it("fits content inside the viewport with bounded zoom", () => {
+    expect(fitCamera({ x: 100, y: 50, w: 600, h: 400 }, { w: 1000, h: 800 }, 40)).toEqual({
+      x: -113.33333333333337,
+      y: 16.66666666666663,
+      zoom: 1.5333333333333334,
+    });
+    const bounds = { x: -200, y: 100, w: 4000, h: 3000 };
+    const camera = fitCamera(bounds, { w: 1000, h: 800 }, 40);
+    expect(camera.zoom).toBeLessThan(0.3);
+    expect(camera.x + bounds.x * camera.zoom).toBeGreaterThanOrEqual(40);
+    expect(camera.y + bounds.y * camera.zoom).toBeGreaterThanOrEqual(40);
+    expect(camera.x + (bounds.x + bounds.w) * camera.zoom).toBeLessThanOrEqual(960);
+    expect(camera.y + (bounds.y + bounds.h) * camera.zoom).toBeLessThanOrEqual(760);
+  });
+
+  it("accepts a tighter maximum zoom for dense layouts", () => {
+    expect(fitCamera({ x: 0, y: 0, w: 100, h: 100 }, { w: 1000, h: 800 }, 40, 1).zoom).toBe(1);
   });
 });

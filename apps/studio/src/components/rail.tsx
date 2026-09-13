@@ -20,7 +20,8 @@
  * and calling it a link would promise a URL that does not exist.
  */
 
-import { Activity, Folder, FolderPlus, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Activity, Check, Folder, FolderPlus, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 
 import type { ExecutionSummary } from "../runtime/types";
 import { clock, hueOf, initialOf, readable, verdictOf } from "./format";
@@ -42,6 +43,11 @@ export function ProjectRail({
   onLoadMore,
   onNewTask,
   onAddProject,
+  projectName,
+  onRenameProject,
+  removedRuns = [],
+  onRemoveRun,
+  onRestoreRun,
 }: {
   projects: Project[];
   selected: string;
@@ -55,9 +61,25 @@ export function ProjectRail({
   onLoadMore: () => void;
   onNewTask: () => void;
   onAddProject: () => void;
+  projectName?: string;
+  onRenameProject?: (name: string) => boolean;
+  removedRuns?: string[];
+  onRemoveRun?: (id: string) => void;
+  onRestoreRun?: (id: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(projectName ?? "");
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  useEffect(() => setDraftName(projectName ?? ""), [projectName]);
+  const saveName = () => {
+    if (onRenameProject?.(draftName) !== false) setEditing(false);
+  };
+  const cancelName = () => {
+    setDraftName(projectName ?? "");
+    setEditing(false);
+  };
   return (
-    <nav className="rail" aria-label="Projects">
+    <nav id="projects-rail" className="rail" aria-label="Projects">
       <div className="rail-head">
         {/* A tile, not a glyph in a line of text: the one solid block of colour in the interface,
             which is what lets the rail have a header without a rule under it. */}
@@ -78,7 +100,31 @@ export function ProjectRail({
           <div key={project.name}>
             <div className="project-head">
               <Folder aria-hidden="true" />
-              <span className="project-name">{project.name}</span>
+              {editing ? (
+                <input
+                  className="project-name-input"
+                  value={draftName}
+                  aria-label="Project name"
+                  maxLength={120}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") saveName();
+                    if (event.key === "Escape") cancelName();
+                  }}
+                  autoFocus
+                />
+              ) : <span className="project-name">{project.name}</span>}
+              {onRenameProject && !editing && (
+                <button type="button" className="icon-action" onClick={() => setEditing(true)} aria-label={`Rename ${project.name}`} title="Rename project">
+                  <Pencil aria-hidden="true" />
+                </button>
+              )}
+              {editing && (
+                <>
+                  <button type="button" className="icon-action" onClick={saveName} aria-label="Save project name" title="Save"><Check aria-hidden="true" /></button>
+                  <button type="button" className="icon-action" onClick={cancelName} aria-label="Cancel rename" title="Cancel"><X aria-hidden="true" /></button>
+                </>
+              )}
               {/* Icon only, and on the folder row: a task belongs to the PROJECT, and a labelled
                   button here is exactly what did not fit. The label lives in the accessible name
                   and the tooltip, where it costs no width. */}
@@ -99,14 +145,8 @@ export function ProjectRail({
                 const verdict = verdictOf(run.attention);
                 const on = run.executionId === selected;
                 return (
-                  <button
-                    type="button"
-                    key={run.executionId}
-                    className={`run ${verdict.key} ${on ? "on" : ""}`}
-                    aria-current={on ? "true" : undefined}
-                    onClick={() => onSelect(run.executionId)}
-                    title={readable(run.attention)}
-                  >
+                  <div key={run.executionId} className={`run-row ${verdict.key} ${on ? "on" : ""}`}>
+                  <button type="button" className={`run ${verdict.key} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} onClick={() => onSelect(run.executionId)} title={readable(run.attention)}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}
@@ -128,6 +168,8 @@ export function ProjectRail({
                         as a colour, which is not a name for anything. */}
                     <span className="sr-only">{readable(run.attention)}</span>
                   </button>
+                  {onRemoveRun && (confirmRemove === run.executionId ? <span className="run-remove-confirm"><span>Remove from this browser’s list; history stays intact and execution continues.</span><button type="button" onClick={() => { onRemoveRun(run.executionId); setConfirmRemove(null); }}>Remove</button><button type="button" onClick={() => setConfirmRemove(null)} aria-label="Cancel remove">Cancel</button></span> : <button type="button" className="icon-action run-remove" onClick={() => setConfirmRemove(run.executionId)} aria-label={`Remove ${run.executionId} from this browser's list`} title="Remove from this browser’s list"><Trash2 aria-hidden="true" /></button>)}
+                  </div>
                 );
               })}
 
@@ -145,6 +187,12 @@ export function ProjectRail({
             </div>
           </div>
         ))}
+        {removedRuns.length > 0 && (
+          <div className="removed-runs" aria-label="Removed tasks">
+            <p className="lbl">Removed from this browser</p>
+            {removedRuns.map((id) => <button type="button" className="show-more" key={id} onClick={() => onRestoreRun?.(id)}><RotateCcw aria-hidden="true" /> restore {id}</button>)}
+          </div>
+        )}
       </div>
 
       {/* Closing the list rather than heading it: this acts on the LIST, not on any one folder. */}

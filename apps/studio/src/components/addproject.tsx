@@ -70,6 +70,8 @@ export function AddProject({ onClose }: { onClose: () => void }) {
         </label>
         <input
           id="add-project-folder"
+          name="project-folder"
+          autoFocus
           value={folder}
           autoComplete="off"
           spellCheck={false}
@@ -88,6 +90,7 @@ export function AddProject({ onClose }: { onClose: () => void }) {
           {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           {copied ? "copied" : "copy the command"}
         </button>
+        <span className="sr-only" role="status">{copied ? "Command copied" : ""}</span>
       </div>
 
       <p className="panel-foot">

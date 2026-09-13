@@ -13,6 +13,20 @@ and the MCP surface can also take.
 
 ## What it does
 
+- **Project display names and reversible run removal.** The project pencil renames the display
+  label in this browser; it does not rename a folder or Runtime. A run's trash button removes it
+  from the list after confirmation. It does not cancel execution or erase the event history.
+  Removed runs remain available under **Removed from this browser** and can be restored. These
+  preferences are scoped to the browser origin and configured project name. An unnamed/manual
+  connection supports view-only changes and says so; failed storage writes also report view-only
+  status. Disconnect resets the active view; named-project preferences survive reconnection.
+- **Readable, navigable work.** The initial canvas frames the current nodes, agents and conversations.
+  `fit` restores the overview; `fit selected` frames a node. **Find on board** opens and frames an
+  exact node, agent or conversation, including on small screens. Node state, most recent actor and
+  event sequence come from the log. An observed actor is not a claim of current task ownership.
+  Conversation lines and verified dependencies have different styles. Project and conversation
+  toggles free canvas space; hiding a draft composer preserves its text.
+
 - **A messenger over the log.** The run's thread IS the event log — every line is composed from
   the event's own fields, with no model in the path and nothing paraphrased. Humans and agents
   talk by posting signals; personas can be chartered inside the log itself and appear on the
@@ -166,6 +180,14 @@ for the tool surface). `docs/ux/STUDIO_SPEC.md` is the larger product it grows t
 
 ## Troubleshooting
 
+The Studio now opens in **Overview**, a normal scrolling workspace with grouped agents,
+conversations and node cards. Text stays at its reading size as the graph grows; there is no
+automatic zoom in this view. Recorded agent activity and verified dependencies link to the
+existing detail panels. Incomplete rosters and event-log disagreements remain visible.
+**Free canvas** retains the existing draggable graph, drawings and saved positions. Switching
+views does not rewrite those positions or mutate the operational graph. On narrow screens,
+project and conversation drawers start closed so the workspace is immediately visible.
+
 | Symptom | Cause and fix |
 |---|---|
 | Connect gate with "Runtime replied 502" | The dev proxy points at the wrong port. Set `GRAPHHELM_RUNTIME_URL` to the Runtime's real address and restart the dev server. |
@@ -180,3 +202,19 @@ for the tool surface). `docs/ux/STUDIO_SPEC.md` is the larger product it grows t
 ## License
 
 MIT, the same as the rest of the repository. See [`LICENSE`](../../LICENSE).
+
+
+Free canvas starts with compact agent, conversation, and work-node lanes. Saved manual positions
+still take precedence. **Organize** restores the default arrangement; **Undo layout** restores
+the previous positions in the current view without deleting notes or drawings. Whole-board fit
+never enlarges the map above 100%; selecting an item can zoom closer. Conversation links remain
+separate from verified Runtime dependencies. Log disagreements expand on demand.
+
+
+The execution map separates people, conversation previews, and work into labeled regions.
+Previews reuse already-opened signal envelopes; they do not add Runtime calls. Empty node cards
+show one honest waiting state; active cards show the last observed actor, update, and event
+receipt. An observed actor is not an assignment. Initial framing keeps dense maps at a readable
+scale; explicit Fit can show the whole map. Mobile opens one readable node and provides People,
+Chats, Work, and graph-verification shortcuts. Run actions open separately from canvas tools.
+Visual validation used fresh-context screenshot judges for idle, active, and mobile states.

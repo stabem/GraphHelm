@@ -23,6 +23,40 @@ export interface Point {
   y: number;
 }
 
+export interface BoardBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Camera {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+/** Return a camera that centers a board-space rectangle in a viewport. */
+export function fitCamera(
+  bounds: BoardBounds,
+  viewport: { w: number; h: number },
+  padding = 48,
+  maxZoom = 2.5,
+): Camera {
+  const width = Math.max(1, bounds.w);
+  const height = Math.max(1, bounds.h);
+  const availableWidth = Math.max(1, viewport.w - padding * 2);
+  const availableHeight = Math.max(1, viewport.h - padding * 2);
+  // Whole-map fitting must include every item, even below the manual zoom floor.
+  // Automatic framing applies its separate readability floor in the component.
+  const zoom = Math.min(maxZoom, availableWidth / width, availableHeight / height);
+  return {
+    x: viewport.w / 2 - (bounds.x + width / 2) * zoom,
+    y: viewport.h / 2 - (bounds.y + height / 2) * zoom,
+    zoom,
+  };
+}
+
 export interface Stroke {
   id: string;
   /** The pen's colour, chosen from the board's own small set - never free-form input. */
@@ -66,43 +100,21 @@ export function defaultPosition(index: number): Point {
   // Wider than the block (254px) by a clear margin, so an edge has somewhere to BE. At the old
   // spacing two blocks in a row were six pixels apart and the connection between them had no
   // room to read as a connection.
-  const COLUMNS = 2;
-  const COLUMN_WIDTH = 310;
-  const ROW_HEIGHT = 180;
-  const column = index % COLUMNS;
-  const row = Math.floor(index / COLUMNS);
-  // The END of the funnel, which empties to the RIGHT: the work stands past the web, where
-  // the owner drew it.
-  return { x: 1560 + column * COLUMN_WIDTH, y: 180 + row * ROW_HEIGHT };
+  const ROWS = 3;
+  const COLUMN_WIDTH = 380;
+  const ROW_HEIGHT = 320;
+  const column = Math.floor(index / ROWS);
+  const row = index % ROWS;
+  return { x: 680 + column * COLUMN_WIDTH, y: 100 + row * ROW_HEIGHT };
 }
 
 export function positionOf(board: BoardState, nodeId: string, index: number): Point {
   return board.positions[nodeId] ?? defaultPosition(index);
 }
 
-/** Where an agent stands before anyone moves it. `index` is a RANK, not a roster position: the
- * Board ranks the crew by conversation traffic and the busiest agent takes the centre slot; the
- * rest alternate outward - right, left, further right - on two staggered rows. Between two
- * staggered agents there is always clear air, which is exactly where their conversation's
- * bubble will stand: the layout itself draws who talks to whom. */
+/** Where an agent stands before anyone moves it. `index` is a rank in the left lane. */
 export function defaultAgentPosition(index: number): Point {
-  // Two rows far apart, hub at the bottom centre, the rest fanning out - modelled on the
-  // arrangement the owner drew by hand (2026-08-30). The distances are the point: with this
-  // much air between agents, every conversation's midpoint is clear ground, so bubbles land
-  // where the relationship IS instead of being shoved into a collision stack.
-  // The quiet agents take the EDGES and the centre of the top row stays open - that gap is
-  // where a top-row pair's own bubble sits inline, exactly as the owner drew it.
-  const SLOTS: Point[] = [
-    { x: 1040, y: 560 },
-    { x: 480, y: 150 },
-    { x: 1060, y: 150 },
-    { x: 380, y: 560 },
-    { x: 180, y: 150 },
-    { x: 1460, y: 560 },
-    { x: 1480, y: 150 },
-    { x: 1900, y: 560 },
-  ];
-  return SLOTS[index] ?? { x: 220 + (index - SLOTS.length) * 280, y: 920 };
+  return { x: 100, y: 140 + index * 140 };
 }
 
 export function agentPositionOf(board: BoardState, agentId: string, index: number): Point {

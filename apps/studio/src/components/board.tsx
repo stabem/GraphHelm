@@ -17,18 +17,20 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileCode2, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote, Waypoints } from "lucide-react";
+import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote, Waypoints } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf } from "../graph/model";
 import { isAlarming } from "./format";
-import { agentPositionOf, markId, positionOf, type BoardState, type Point, type Stroke } from "../graph/board";
+import { agentPositionOf, fitCamera, markId, tidyBoard, type BoardBounds, type BoardState, type Point, type Stroke } from "../graph/board";
 import { ago, hueOf, initialOf, readable } from "./format";
+import { WorkOverview } from "./work-overview";
 
 /** The node block's own size, needed to anchor an edge to its sides rather than its corner. Kept
  * beside the CSS that sets it; a drift here misses by a few pixels rather than breaking anything. */
-const CARD_WIDTH = 254;
-const CARD_HEIGHT = 96;
+const CARD_WIDTH = 320;
+const CARD_HEIGHT = 288;
+const nodeHeight = (node: GraphNode) => node.touches === 0 && node.reopened === null ? 164 : CARD_HEIGHT;
 
 type Tool = "select" | "pen" | "note" | "hand";
 
@@ -38,13 +40,6 @@ function minutesSince(value?: string | null): number | null {
   const then = new Date(value).valueOf();
   if (Number.isNaN(then)) return null;
   return (Date.now() - then) / 60000;
-}
-
-/** A conversation's ink decays with real silence: full when fresh, drifting to a floor of
- * 0.55 across twelve quiet hours. Continuous, so two bubbles ten minutes apart differ. */
-function fadeOf(minutes: number | null): number {
-  if (minutes === null) return 1;
-  return Math.max(0.55, 1 - minutes / 720);
 }
 
 /** How present a face looks: full within 5 minutes, dimmed to 30, faded past that. Driven only
@@ -91,10 +86,19 @@ function pathOf(points: Point[]): string {
  * entering left then swings the run far past both blocks — measured on the real board before this
  * was fixed. Which side each end uses is decided per edge, from where the blocks actually are.
  */
-function edgePath(from: Point, to: Point): string {
+function edgePath(from: Point, to: Point, fromHeight = CARD_HEIGHT, toHeight = CARD_HEIGHT): string {
+  if (Math.abs(from.x - to.x) < CARD_WIDTH && Math.abs(from.y - to.y) >= CARD_HEIGHT) {
+    const down = to.y > from.y;
+    const x1 = from.x + CARD_WIDTH / 2;
+    const x2 = to.x + CARD_WIDTH / 2;
+    const y1 = from.y + (down ? fromHeight : 0);
+    const y2 = to.y + (down ? 0 : toHeight);
+    const middle = (y1 + y2) / 2;
+    return `M ${x1} ${y1} C ${x1} ${middle}, ${x2} ${middle}, ${x2} ${y2}`;
+  }
   const forwards = to.x >= from.x;
-  const start = { x: forwards ? from.x + CARD_WIDTH : from.x, y: from.y + CARD_HEIGHT / 2 };
-  const end = { x: forwards ? to.x : to.x + CARD_WIDTH, y: to.y + CARD_HEIGHT / 2 };
+  const start = { x: forwards ? from.x + CARD_WIDTH : from.x, y: from.y + fromHeight / 2 };
+  const end = { x: forwards ? to.x : to.x + CARD_WIDTH, y: to.y + toHeight / 2 };
   // A single gentle curve, not an elbow: the board reads as a whiteboard now, and a whiteboard
   // arrow is one stroke of the wrist. The reach scales with the gap so short hops stay shallow
   // and long ones do not flatten into straight lines. Direction is still decided per edge.
@@ -122,6 +126,8 @@ export function Board({
   onSelectTalk,
   focusGraphFile = 0,
   runId,
+  initialLayout = "canvas",
+  onCanvasChange,
 }: {
   model: GraphModel;
   board: BoardState;
@@ -146,7 +152,7 @@ export function Board({
   onSelectAgent?: (agentId: string | null) => void;
   /** The room's conversations, each one a bubble standing on the board. Derived by App from
    * the envelopes; this component only places and moves them. */
-  talks?: Array<{ key: string; label: string; participants: string[]; count: number; lastAt: string | null }>;
+  talks?: Array<{ key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null }>;
   selectedTalk?: string | null;
   onSelectTalk?: (talkKey: string | null) => void;
   /** Bumped when another control (the dock's resume) needs the person AT the graph-file box:
@@ -154,7 +160,13 @@ export function Board({
   focusGraphFile?: number;
   /** The selected run's id, for the HUD capsule. Absent (a draft, no selection) renders none. */
   runId?: string;
+  initialLayout?: "overview" | "canvas";
+  onCanvasChange?: (canvas: boolean) => void;
 }) {
+  const [organized, setOrganized] = useState(initialLayout === "overview");
+  useEffect(() => { onCanvasChange?.(!organized); }, [organized, onCanvasChange]);
+  const [layoutUndo, setLayoutUndo] = useState<{ run: string | undefined; positions: BoardState["positions"]; agents: BoardState["agents"] } | null>(null);
+  const arrangePending = useRef(false);
   const surface = useRef<HTMLDivElement | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [tone, setTone] = useState<Tone>("ink");
@@ -181,7 +193,7 @@ export function Board({
   // The dock's resume button walks the person here when the path is missing: a control that
   // names its own missing ingredient should go fetch it, not sit as a labelled excuse.
   useEffect(() => {
-    if ((focusGraphFile ?? 0) > 0) setConnectOpen(true);
+    if ((focusGraphFile ?? 0) > 0) { setOrganized(false); setConnectOpen(true); }
   }, [focusGraphFile]);
   useEffect(() => {
     if (connectOpen && (focusGraphFile ?? 0) > 0) fileRef.current?.focus();
@@ -340,14 +352,19 @@ export function Board({
     };
   }, [pointAt]);
 
+  const layoutRows = model.nodes.length <= 3 ? 2 : 3;
+  const nodePosition = (nodeId: string, index: number): Point => board.positions[nodeId] ?? {
+    x: 680 + Math.floor(index / layoutRows) * 380,
+    y: 100 + model.nodes.slice(Math.floor(index / layoutRows) * layoutRows, index).reduce((height, node) => height + nodeHeight(node) + 32, 0),
+  };
   const places = new Map<string, Point>(
-    model.nodes.map((node, index) => [node.id, positionOf(board, node.id, index)]),
+    model.nodes.map((node, index) => [node.id, nodePosition(node.id, index)]),
   );
   const edgeGeometry = model.edges.flatMap((edge) => {
     const from = places.get(edge.from);
     const to = places.get(edge.to);
     if (!from || !to) return [];
-    return [{ id: edge.id, type: edge.type, d: edgePath(from, to) }];
+    return [{ id: edge.id, type: edge.type, d: edgePath(from, to, nodeHeight(model.nodes.find(node => node.id === edge.from)!), nodeHeight(model.nodes.find(node => node.id === edge.to)!)) }];
   });
 
   // The crew is placed by RANK, not roster order: total pair-talk traffic decides who holds
@@ -408,90 +425,113 @@ export function Board({
       };
     });
 
-  // A bubble stands where it was dragged; before that, a pair's bubble stands between its two
-  // speakers and the room's bubble heads the talk column on the right. Dragged positions live in
-  // the same operator-owned map as the agents', under a "talk:" key.
-  const BUBBLE_W = 200;
-  const BUBBLE_H = 74;
-  const CLEAR = 18;
-  const occupied: Array<{ x: number; y: number; w: number; h: number }> = [
-    ...model.nodes.map((node, index) => {
-      const at = positionOf(board, node.id, index);
-      return { x: at.x, y: at.y, w: CARD_WIDTH, h: CARD_HEIGHT };
+  // Separate lanes keep conversation links short and leave the work graph unobstructed.
+  // Stored positions always win; only an explicit Organize resets the operator's placement.
+  const BUBBLE_W = 280;
+  const BUBBLE_H = 148;
+  const occupied: BoardBounds[] = [
+    ...model.nodes.map((node, index) => ({ ...nodePosition(node.id, index), w: CARD_WIDTH, h: nodeHeight(node) })),
+    ...agentPlaces.map(({ at }) => ({ x: at.x - 88, y: at.y - 26, w: 176, h: 96 })),
+    ...talks.flatMap(talk => {
+      const at = board.agents[`talk:${talk.key}`];
+      return at ? [{ ...at, w: BUBBLE_W, h: BUBBLE_H }] : [];
     }),
-    // The agents themselves: a bubble born on the midpoint of two NEIGHBOURING blobs would
-    // otherwise land on their faces.
-    ...agentPlaces.map((agent) => ({ x: agent.at.x - 52, y: agent.at.y - 26, w: 104, h: 96 })),
   ];
-  const crossesOccupied = (at: Point) =>
-    occupied.some(
-      (zone) =>
-        at.x < zone.x + zone.w + CLEAR &&
-        zone.x < at.x + BUBBLE_W + CLEAR &&
-        at.y < zone.y + zone.h + CLEAR &&
-        zone.y < at.y + BUBBLE_H + CLEAR,
-    );
-  // The middle column of the funnel, ranked by weight: the room leads - it is the trunk every
-  // voice feeds - then pairs by traffic. A rank is a default; a dragged bubble is the owner's.
-  const talkRank = new Map<string, number>();
-  [...talks]
-    .sort((a, b) => {
-      if (a.key === "room") return -1;
-      if (b.key === "room") return 1;
-      if (b.count !== a.count) return b.count - a.count;
-      return a.key.localeCompare(b.key);
-    })
-    .forEach((talk, rank) => talkRank.set(talk.key, rank));
-  const talkPlaces = talks.map((talk) => {
+  const talkPlaces = [...talks].sort((a, b) => {
+    if (a.key === b.key) return 0;
+    if (a.key === "room") return -1;
+    if (b.key === "room") return 1;
+    return a.key.localeCompare(b.key);
+  }).map((talk, rank) => {
     const stored = board.agents[`talk:${talk.key}`];
     if (stored) return { talk, at: stored };
-    const anchors = talk.participants
-      .map((id) => agentPlaces.find((agent) => agent.id === id)?.at)
-      .filter((point): point is Point => point !== undefined);
-    let at: Point;
-    if (talk.key === "room" && anchors.length > 0) {
-      // The room crowns the web: centred over everyone, ABOVE the topmost agent - never inside
-      // the web, where it would shove every pair bubble out of its own midpoint.
-      at = {
-        x: anchors.reduce((sum, point) => sum + point.x, 0) / anchors.length - 100,
-        y: Math.min(...anchors.map((point) => point.y)) - BUBBLE_H - 56,
-      };
-    } else if (anchors.length >= 2) {
-      const midX = anchors.reduce((sum, point) => sum + point.x, 0) / anchors.length - 100;
-      const ys = anchors.map((point) => point.y);
-      const sameRow = Math.max(...ys) - Math.min(...ys) < 40;
-      // Between the two who hold it. A TOP-row pair's bubble sits INLINE in the row's open
-      // centre; a BOTTOM-row pair's hangs beneath its two; a cross-row pair stands in the band
-      // between the rows. All three are how the owner laid the web out by hand.
-      at = sameRow
-        ? ys[0] < 400
-          ? { x: midX, y: ys[0] - 8 }
-          : { x: midX, y: ys[0] + 150 }
-        : { x: midX, y: (Math.min(...ys) + Math.max(...ys)) / 2 - 26 };
-    } else {
-      at = { x: 110 + (talkRank.get(talk.key) ?? 0) * 250, y: 470 };
+    const at = { x: 280, y: 100 + rank * 180 };
+    // Every downward move clears at least one finite obstacle; no unchecked fallback.
+    for (let attempt = 0; attempt <= occupied.length; attempt += 1) {
+      const collisions = occupied.filter(zone => at.x < zone.x + zone.w + 18 && zone.x < at.x + BUBBLE_W + 18 && at.y < zone.y + zone.h + 18 && zone.y < at.y + BUBBLE_H + 18);
+      if (collisions.length === 0) break;
+      at.y = Math.max(...collisions.map(zone => zone.y + zone.h + 18));
     }
-    // A taken spot resolves SIDEWAYS first - the web spreads like a hand layout - and only
-    // then downward. The old push-down-only cascade stacked bubbles into a column.
-    if (crossesOccupied(at)) {
-      const home = { ...at };
-      const candidates: Point[] = [];
-      for (const dy of [0, BUBBLE_H + CLEAR, (BUBBLE_H + CLEAR) * 2]) {
-        for (const dx of [0, 230, -230, 460, -460]) {
-          candidates.push({ x: home.x + dx, y: home.y + dy });
-        }
-      }
-      const found = candidates.find((candidate) => !crossesOccupied(candidate));
-      at = found ?? { x: home.x, y: home.y + (BUBBLE_H + CLEAR) * 3 };
-    }
-    occupied.push({ x: at.x, y: at.y, w: BUBBLE_W, h: BUBBLE_H });
+    occupied.push({ ...at, w: BUBBLE_W, h: BUBBLE_H });
     return { talk, at };
   });
 
+  const contentBounds = (() => {
+    const items: BoardBounds[] = [
+      ...model.nodes.map((node, index) => {
+        const at = nodePosition(node.id, index);
+        return { x: at.x, y: at.y, w: CARD_WIDTH, h: nodeHeight(node) };
+      }),
+      ...agentPlaces.map((agent) => ({ x: agent.at.x - 88, y: agent.at.y - 26, w: 176, h: 96 })),
+      ...talkPlaces.map(({ at }) => ({ x: at.x, y: at.y, w: BUBBLE_W, h: BUBBLE_H })),
+    ];
+    if (items.length === 0) return null;
+    items.push({ x: -8, y: 8, w: 1038, h: Math.max(330, crew.length * 140 + 104, talks.length * 180 + 104) });
+    const left = Math.min(...items.map((item) => item.x));
+    const top = Math.min(...items.map((item) => item.y));
+    const right = Math.max(...items.map((item) => item.x + item.w));
+    const bottom = Math.max(...items.map((item) => item.y + item.h));
+    return { x: left, y: top, w: right - left, h: bottom - top };
+  })();
+  const focusedBoundsRef = useRef<BoardBounds | null>(null);
+  const fit = (selection?: BoardBounds, wholeMap = false) => {
+    const box = surface.current?.getBoundingClientRect();
+    const first = model.nodes[0];
+    const mobileFocus = !wholeMap && !selection && box && box.width < 700 && first ? { ...nodePosition(first.id, 0), w: CARD_WIDTH, h: nodeHeight(first) } : null;
+    const bounds = selection ?? mobileFocus ?? contentBounds;
+    if (!box || box.width <= 0 || box.height <= 0 || !bounds) return;
+    focusedBoundsRef.current = selection ?? null;
+    const camera = fitCamera(bounds, { w: box.width, h: box.height }, 24, selection ? 1.25 : 1);
+    // Large live maps remain readable. Explicit Fit is the opt-in whole-map miniature.
+    if (!wholeMap && !selection && !mobileFocus && camera.zoom < 0.8) {
+      camera.zoom = 0.8;
+      camera.x = 24 - bounds.x * camera.zoom;
+      camera.y = 24 - bounds.y * camera.zoom;
+    }
+    setView(camera);
+  };
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  useEffect(() => {
+    if (!organized) fitRef.current();
+  }, [organized]);
+  useEffect(() => {
+    if (arrangePending.current) {
+      arrangePending.current = false;
+      fitRef.current();
+    }
+  }, [board.positions, board.agents]);
+  const framedRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    const frameKey = runId ?? "draft";
+    if (framedRunRef.current !== frameKey && contentBounds !== null) {
+      fit();
+      framedRunRef.current = frameKey;
+    }
+  }, [runId, contentBounds]);
+  useEffect(() => {
+    const element = surface.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (framedRunRef.current !== null) fitRef.current(focusedBoundsRef.current ?? undefined);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const onSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (tool === "hand") {
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      panStartRef.current = { vx: view.x, vy: view.y, sx: event.clientX, sy: event.clientY };
+      dragging.current = { kind: "pan", id: "", grab: { x: 0, y: 0 }, origin: pointAt(event), moved: false };
+      return;
+    }
     if (event.target !== event.currentTarget && !(event.target as HTMLElement).closest(".sheet-ink")) {
       return;
     }
+    event.preventDefault();
     if (tool === "pen") {
       const first = [pointAt(event)];
       strokeRef.current = first;
@@ -503,11 +543,6 @@ export function Board({
       setTool("select");
       return;
     }
-    if (tool === "hand") {
-      panStartRef.current = { vx: view.x, vy: view.y, sx: event.clientX, sy: event.clientY };
-      dragging.current = { kind: "pan", id: "", grab: { x: 0, y: 0 }, origin: pointAt(event), moved: false };
-      return;
-    }
     // Select tool on empty board: a drag is a marquee. The click that ends an empty marquee is
     // swallowed; a plain click still deselects via onSurfaceClick.
     marqueeRef.current = { a: pointAt(event), b: pointAt(event) };
@@ -516,11 +551,11 @@ export function Board({
   const showConnect = connectOpen || graphFile.trim().length > 0 || connectionTone !== "none";
 
   itemRectsRef.current = [
-    ...agentPlaces.map((agent) => ({ id: `agent:${agent.id}`, x: agent.at.x - 52, y: agent.at.y - 26, w: 104, h: 96 })),
+    ...agentPlaces.map((agent) => ({ id: `agent:${agent.id}`, x: agent.at.x - 88, y: agent.at.y - 26, w: 176, h: 96 })),
     ...talkPlaces.map(({ talk, at }) => ({ id: `talk:${talk.key}`, x: at.x, y: at.y, w: BUBBLE_W, h: BUBBLE_H })),
     ...model.nodes.map((node, index) => {
-      const at = positionOf(board, node.id, index);
-      return { id: `node:${node.id}`, x: at.x, y: at.y, w: CARD_WIDTH, h: CARD_HEIGHT };
+      const at = nodePosition(node.id, index);
+      return { id: `node:${node.id}`, x: at.x, y: at.y, w: CARD_WIDTH, h: nodeHeight(node) };
     }),
   ];
 
@@ -538,7 +573,7 @@ export function Board({
         if (at) starts.set(id, at);
       } else if (id.startsWith("node:")) {
         const index = model.nodes.findIndex((node) => `node:${node.id}` === id);
-        if (index >= 0) starts.set(id, positionOf(board, model.nodes[index].id, index));
+        if (index >= 0) starts.set(id, nodePosition(model.nodes[index].id, index));
       }
     }
     groupStartRef.current = starts;
@@ -559,9 +594,10 @@ export function Board({
 
   const spaceHeld = useRef<Tool | null>(null);
   useEffect(() => {
+    if (organized) return;
     const typing = (event: KeyboardEvent) => {
-      const tag = (event.target as HTMLElement | null)?.tagName;
-      return tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT";
+      const target = event.target as HTMLElement | null;
+      return Boolean(target?.closest("input, textarea, select, button, summary, a, [contenteditable='true'], [role='button']"));
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -597,7 +633,7 @@ export function Board({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, []);
+  }, [organized]);
 
   // Ctrl+wheel zooms at the cursor; a plain wheel pans. Native listener because React's wheel
   // is passive and the browser's own page-zoom must be preempted.
@@ -645,6 +681,33 @@ export function Board({
 
   return (
     <>
+      <div className="work-view-switch" role="group" aria-label="Workspace view">
+        <button type="button" aria-pressed={organized} onClick={() => setOrganized(true)}>Overview</button>
+        <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
+      </div>
+      {organized && <div className="work-overview-scroll">
+        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} />
+        <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
+      </div>}
+      <div className="free-canvas-content" hidden={organized}>
+      <div className="canvas-story">
+        <span><Activity aria-hidden="true" /> Execution map</span>
+        <h2>{model.nodes.length === 0 ? "Waiting for work to appear" : model.nodes.every(node => node.touches === 0) ? "No node activity yet" : `${model.nodes.filter(node => node.state === "running").length} running / ${model.nodes.filter(node => node.state === "blocked").length} blocked`}</h2>
+        <p>{model.nodes.every(node => node.touches === 0) ? "Follow the conversations. Node updates will appear as work is reported." : "Follow the people, their conversations, and the latest reported work."}</p>
+      </div>
+      <div className="canvas-arrange" role="group" aria-label="Canvas layout">
+        <button type="button" onClick={() => {
+          setLayoutUndo({ run: runId, positions: board.positions, agents: board.agents });
+          arrangePending.current = true;
+          onChange(tidyBoard(board));
+        }}>Organize</button>
+        {layoutUndo?.run === runId && layoutUndo !== null && <button type="button" onClick={() => {
+          arrangePending.current = true;
+          onChange({ ...board, positions: layoutUndo.positions, agents: layoutUndo.agents });
+          setLayoutUndo(null);
+        }}>Undo layout</button>}
+        <span>Drag to arrange / select to inspect</span>
+      </div>
       <div
         className={`sheet tool-${tool}`}
         ref={surface}
@@ -690,14 +753,19 @@ export function Board({
           className="world"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
         >
-        {/* The funnel's own captions: presentation, not data - they name the three columns a
-          * fresh board lays out, and stay put as orientation once things are dragged. */}
-        <span className="stage-label" style={{ left: 24, top: 320 }} aria-hidden="true">
-          agents &amp; groups
-        </span>
-        <span className="stage-label" style={{ left: 1478, top: 140 }} aria-hidden="true">
-          nodes
-        </span>
+        <div className="canvas-region" style={{ left: -8, top: 8, width: 216, height: Math.max(420, crew.length * 140 + 104) }} aria-hidden="true">
+          <header><Users /><strong>People</strong><span>{crew.length}</span></header>
+          <p>Agents seen in this run</p>
+        </div>
+        <div className="canvas-region" style={{ left: 250, top: 8, width: 340, height: Math.max(330, talks.length * 180 + 104) }} aria-hidden="true">
+          <header><MessageSquare /><strong>Conversations</strong><span>{talks.length}</span></header>
+          <p>Who is talking to whom</p>
+        </div>
+        <div className="canvas-region work-region" style={{ left: 650, top: 8, width: Math.max(380, Math.ceil(model.nodes.length / layoutRows) * 380), height: Math.max(330, ...model.nodes.map((node, index) => nodePosition(node.id, index).y + nodeHeight(node) + 24)) }}>
+          <header><GitBranch /><strong>Work</strong><span>{model.nodes.length}{model.rosterDeclared ? "" : "+"}</span></header>
+          <p>{model.edgesKnown ? "Verified dependencies connect these nodes" : "Connections have not been verified"}</p>
+          {!model.edgesKnown && <button type="button" onClick={() => setConnectOpen(true)}>Verify connections</button>}
+        </div>
 
         <svg className="sheet-ink" aria-hidden="true">
           <defs>
@@ -722,13 +790,10 @@ export function Board({
               const anchor = agentPlaces.find((agent) => agent.id === id)?.at;
               if (anchor === undefined) return [];
               return [
-                <line
+                <path
                   key={`${talk.key}->${id}`}
                   className={`talk-tie ${selectedTalk === talk.key ? "on" : ""}`}
-                  x1={at.x + 20}
-                  y1={at.y + 30}
-                  x2={anchor.x}
-                  y2={anchor.y}
+                  d={`M ${anchor.x + 88} ${anchor.y} C ${anchor.x + 132} ${anchor.y}, ${at.x - 64} ${at.y + 40}, ${at.x} ${at.y + 40}`}
                 />,
               ];
             }),
@@ -751,6 +816,13 @@ export function Board({
           ))}
           {drawing && <path className={`stroke ${tone} live`} d={pathOf(drawing)} />}
         </svg>
+        {model.edgesKnown && model.edges.length > 0 && (
+          <ul className="sr-only" aria-label="Verified dependencies">
+            {model.edges.map((edge) => (
+              <li key={edge.id}>{edge.from} connects to {edge.to} ({edge.type})</li>
+            ))}
+          </ul>
+        )}
 
         {board.notes.map((note) => (
           <label
@@ -795,14 +867,16 @@ export function Board({
 
         {model.nodes.map((node, index) => (
           <NodeBlock
+            connections={model.edgesKnown ? model.edges.filter(edge => edge.from === node.id || edge.to === node.id).length : null}
             key={node.id}
             node={node}
-            at={positionOf(board, node.id, index)}
+            at={nodePosition(node.id, index)}
             entry={model.entrypoints.includes(node.id)}
             selected={node.id === selectedNode}
             multi={picked.has(`node:${node.id}`)}
             onOpen={() => {
               if (swallowClick.current) return;
+              focusedBoundsRef.current = itemRectsRef.current.find((item) => item.id === `node:${node.id}`) ?? null;
               onSelectNode(node.id);
             }}
             highlight={
@@ -813,7 +887,7 @@ export function Board({
               if (tool !== "select") return;
               const here = pointAt(event);
               if (armGroup(`node:${node.id}`, here)) return;
-              const at = positionOf(board, node.id, index);
+              const at = nodePosition(node.id, index);
               dragging.current = {
                 kind: "node",
                 id: node.id,
@@ -849,6 +923,7 @@ export function Board({
               className="agent-open"
               onClick={() => {
                 if (swallowClick.current) return;
+                focusedBoundsRef.current = selectedAgent === agent.id ? null : itemRectsRef.current.find((item) => item.id === `agent:${agent.id}`) ?? null;
                 onSelectAgent?.(selectedAgent === agent.id ? null : agent.id);
               }}
             >
@@ -862,10 +937,10 @@ export function Board({
               >
                 {initialOf(agent.id)}
               </span>
-              <span className="agent-name">{agent.id}</span>
+              <span className="agent-name" title={agent.id}>{agent.id}</span>
               {/* Presentation only: the blob's accessible name stays the agent's id alone. */}
               <span className="agent-when" aria-hidden="true">
-                {ago(crew.find((member) => member.id === agent.id)?.lastAt)}
+                Seen {ago(crew.find((member) => member.id === agent.id)?.lastAt)} ago
               </span>
               {crew.find((member) => member.id === agent.id)?.charter != null && (
                 <span className="crew-role">persona</span>
@@ -897,7 +972,6 @@ export function Board({
               type="button"
               className="talk-open"
               style={{
-                opacity: fadeOf(minutesSince(talk.lastAt)),
                 borderColor: talk.count >= 8 ? "var(--faint)" : undefined,
                 ...(selectedAgent !== null &&
                 selectedTalk !== talk.key &&
@@ -907,6 +981,7 @@ export function Board({
               }}
               onClick={() => {
                 if (swallowClick.current) return;
+                focusedBoundsRef.current = selectedTalk === talk.key ? null : itemRectsRef.current.find((item) => item.id === `talk:${talk.key}`) ?? null;
                 onSelectTalk?.(selectedTalk === talk.key ? null : talk.key);
               }}
             >
@@ -930,6 +1005,7 @@ export function Board({
                   {talk.key === "room" && <span className="talk-kind">the whole room</span>}
                 </span>
               </span>
+              <span className="talk-preview">{talk.preview || "Message preview unavailable"}</span>
               <span className="talk-meta">
                 <span>{talk.count} msg{talk.count === 1 ? "" : "s"}</span>
                 <span>{ago(talk.lastAt)}</span>
@@ -954,6 +1030,38 @@ export function Board({
         </div>
       </div>
 
+      <div className="connection-legend" aria-label="Connection types">
+        <span><i className="conversation-line" aria-hidden="true" />Conversation</span>
+        {model.edgesKnown && <span><i className="dependency-line" aria-hidden="true" />Verified dependency</span>}
+      </div>
+      <div className="canvas-sections" role="group" aria-label="Explore canvas sections">
+        <button type="button" disabled={crew.length === 0} onClick={() => { const item = itemRectsRef.current.find(item => item.id.startsWith("agent:")); if (item) fit(item); }}>People</button>
+        <button type="button" disabled={talks.length === 0} onClick={() => { const item = itemRectsRef.current.find(item => item.id.startsWith("talk:")); if (item) fit(item); }}>Chats</button>
+        <button type="button" disabled={model.nodes.length === 0} onClick={() => { const item = itemRectsRef.current.find(item => item.id.startsWith("node:")); if (item) fit(item); }}>Work</button>
+        {!model.edgesKnown && <button type="button" aria-label="Verify work dependencies" onClick={() => setConnectOpen(true)}>Verify graph</button>}
+      </div>
+      <label className="board-navigator">
+        <span className="sr-only">Find on board</span>
+        <select value="" onChange={(event) => {
+          const value = event.target.value;
+          const item = itemRectsRef.current.find((candidate) => candidate.id === value);
+          if (item) fit(item);
+          if (value.startsWith("node:")) onSelectNode(value.slice(5));
+          else if (value.startsWith("agent:")) onSelectAgent?.(value.slice(6));
+          else if (value.startsWith("talk:")) onSelectTalk?.(value.slice(5));
+        }}>
+          <option value="" disabled>Find people, chats or nodes</option>
+          <optgroup label="Nodes">
+            {model.nodes.map((node) => <option key={node.id} value={`node:${node.id}`}>{node.id} · {readable(node.state)}</option>)}
+          </optgroup>
+          {crew.length > 0 && <optgroup label="Agents">
+            {crew.map((agent) => <option key={agent.id} value={`agent:${agent.id}`}>{agent.id}</option>)}
+          </optgroup>}
+          {talks.length > 0 && <optgroup label="Conversations">
+            {talks.map((talk) => <option key={talk.key} value={`talk:${talk.key}`}>{talk.key === "room" ? "Everyone" : talk.label}</option>)}
+          </optgroup>}
+        </select>
+      </label>
       <p className={`edge-note ${connectionTone === "none" ? "" : connectionTone}`}>
         {model.rosterDeclared
           ? `${model.nodes.length} node${model.nodes.length === 1 ? "" : "s"}`
@@ -961,12 +1069,12 @@ export function Board({
         {" · "}
         {model.edgesKnown
           ? `${model.edges.length} connection${model.edges.length === 1 ? "" : "s"} drawn`
-          : "no connections drawn"}
+          : "work connections unverified"}
         {" · "}
-        {connectionNote}
+        {model.edgesKnown || connectionTone === "refused" ? connectionNote : "Verify the graph to connect work nodes."}
         {!showConnect && (
           <button type="button" className="connect-toggle" onClick={() => setConnectOpen(true)}>
-            {"connect" + "\u2026"}
+            Verify graph
           </button>
         )}
       </p>
@@ -975,6 +1083,7 @@ export function Board({
         * project lints a PLAN file; ours lints the LOG - each line names the disagreement and,
         * when an event is accused, cites its #sequence click-to-copy, same as the thread's. */}
       {model.lint.length > 0 && (
+        <details className="canvas-lint"><summary>{model.lint.length} log disagreements</summary>
         <ul className="lint-strip" aria-label="Disagreements the log attests">
           {model.lint.map((finding, index) => (
             <li key={`${finding.kind}-${finding.sequence ?? index}`}>
@@ -992,6 +1101,7 @@ export function Board({
             </li>
           ))}
         </ul>
+        </details>
       )}
 
       {showConnect && (
@@ -1091,6 +1201,23 @@ export function Board({
           undo
         </button>
         <span className="zoomer">
+          <button type="button" onClick={() => fit(undefined, true)} title="Frame nodes, agents and conversations">
+            fit
+          </button>
+          <button
+            type="button"
+            disabled={selectedNode === null}
+            onClick={() => {
+              if (selectedNode === null) return;
+              const index = model.nodes.findIndex((node) => node.id === selectedNode);
+              if (index < 0) return;
+              const at = nodePosition(selectedNode, index);
+              fit({ x: at.x, y: at.y, w: CARD_WIDTH, h: nodeHeight(model.nodes[index]) });
+            }}
+            title="Frame the selected node"
+          >
+            fit selected
+          </button>
           <button type="button" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
             <Minus aria-hidden="true" />
           </button>
@@ -1107,11 +1234,13 @@ export function Board({
           </button>
         </span>
       </div>
+      </div>
     </>
   );
 }
 
 function NodeBlock({
+  connections = null,
   node,
   at,
   entry,
@@ -1123,6 +1252,7 @@ function NodeBlock({
   highlightAgent = null,
 }: {
   multi?: boolean;
+  connections?: number | null;
   node: GraphNode;
   at: Point;
   entry: boolean;
@@ -1135,6 +1265,7 @@ function NodeBlock({
 }) {
   const mood = moodOf(node.state);
   const last = node.history.at(-1);
+  const latestActor = last?.actorId ?? null;
   const [historyOpen, setHistoryOpen] = useState(false);
   // The actors whose hands touched this node, newest first. Owner and system stay off the card:
   // the question the chips answer is "which AGENT is on this", and lifecycle is not a contact.
@@ -1156,7 +1287,7 @@ function NodeBlock({
   };
   return (
     <article
-      className={`node ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
+      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
       style={{
         left: at.x,
         top: at.y,
@@ -1170,14 +1301,13 @@ function NodeBlock({
         {/* Eyebrow: the log's own address for the block, and - only while something moves or
             waits - the state word breathing on the right. */}
         <span className="node-eyebrow">
-          <span className="node-tag">#{entry ? "entrypoint" : "node"}</span>
-          {(mood === "moving" || mood === "waiting") && (
-            <span className={`node-live-word ${mood}`}>
-              {readable(node.state)} <i aria-hidden="true">✳</i>
-            </span>
-          )}
+          <span className="node-tag"><GitBranch aria-hidden="true" />{entry ? "Entry node" : "Work node"}</span>
+          <span className={`hist-chip ${mood === "moving" ? "live pulse" : mood === "waiting" || mood === "dead" ? "alarm" : "quiet"}`}>
+            {node.state === "unknown" ? "Awaiting event" : readable(node.state)}
+            {(mood === "moving" || mood === "waiting") && <i aria-hidden="true"> ✳</i>}
+          </span>
         </span>
-        <span className="node-title">{node.id}</span>
+        <span className="node-title" title={node.id}>{node.id}</span>
         {/* THE DISAGREEMENT CHIP - the reference project's best signal ("quietly reopened the
           * part it already called done"), derived here from the log alone: this node settled at
           * one sequence and a later event named it again. Both coordinates cited, author named. */}
@@ -1189,36 +1319,18 @@ function NodeBlock({
             reopened after done · #{node.reopened.settledAt}→#{node.reopened.reopenedAt}
           </span>
         )}
-        <span className="node-status">
-          {node.touches === 0 ? (
-            <span>waiting for its agent</span>
-          ) : (
-            <>
-              <span>
-                {node.touches} node event{node.touches === 1 ? "" : "s"} · {readable(node.state)}
-              </span>
-              <span className="node-fresh">
-                {last?.outcome ? readable(last.outcome) : readable(last?.kind ?? "")} · {ago(node.lastEventAt)}
-              </span>
-            </>
-          )}
+        <span className="node-story-status">
+          {node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state)}
         </span>
-        {crew.length > 0 && (
-          <span className="node-crew">
-            {crew.map((actorId) => (
-              <span
-                key={actorId}
-                className="avatar mini"
-                title={actorId}
-                aria-hidden="true"
-                style={{ background: `hsl(${hueOf(actorId)} 52% 46%)` }}
-              >
-                {initialOf(actorId)}
-              </span>
-            ))}
-            <span className="who">{crew[0]}</span>
-          </span>
-        )}
+        {node.touches > 0 && <span className="node-facts">
+          <span><small>Last observed actor</small><strong>{latestActor ?? "Not reported"}</strong></span>
+          <span><small>Latest update</small><strong>{node.lastEventAt ? ago(node.lastEventAt) : "No updates yet"}</strong></span>
+        </span>}
+        {node.touches > 0 && <span className="node-receipt">
+          <span>{node.touches} event{node.touches === 1 ? "" : "s"}{last?.sequence !== undefined ? ` / #${last.sequence}` : ""}</span>
+          <span>{connections === null ? "Connections unverified" : `${connections} connection${connections === 1 ? "" : "s"}`}</span>
+        </span>}
+        <span className="node-inspect">Inspect node <ArrowUpRight aria-hidden="true" /></span>
       </button>
 
       {node.history.length > 0 && (

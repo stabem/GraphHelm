@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { Board } from "./board";
@@ -114,6 +114,27 @@ describe("the run capsule", () => {
       />,
     );
     expect(screen.queryByLabelText("This run's progress")).not.toBeInTheDocument();
+  });
+});
+
+describe("node evidence", () => {
+  it("shows the latest observed actor and event address", () => {
+    render(<Board model={{ ...MODEL, nodes: [...MODEL.nodes, { id: "draft", state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+    expect(screen.getByText("system-cli")).toBeInTheDocument();
+    expect(screen.getByText(/3 events \/ #7/)).toBeInTheDocument();
+    expect(screen.getByText(/Awaiting first work update/)).toBeInTheDocument();
+  });
+
+  it("exposes verified dependencies to assistive technology", () => {
+    const model: GraphModel = {
+      ...MODEL,
+      edgesKnown: true,
+      edges: [{ id: "implementation->deploy", from: "implementation", to: "deploy", type: "control" }],
+    };
+    render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+    expect(screen.getByRole("list", { name: "Verified dependencies" })).toHaveTextContent(
+      "implementation connects to deploy (control)",
+    );
   });
 });
 
@@ -345,10 +366,47 @@ describe("the lint strip", () => {
 });
 
 describe("what the board refuses to imply", () => {
+  it("keeps the directly opened node framed after a navigator choice and resize", async () => {
+    let resize = () => {};
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: 900, bottom: 700, width: 900, height: 700, toJSON() {} });
+    try {
+      const { container } = render(<Board model={MODEL} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="resize-test" {...REST} />);
+      const transform = () => (container.querySelector(".world") as HTMLElement).style.transform;
+      await userEvent.selectOptions(screen.getByRole("combobox", { name: "Find on board" }), "node:implementation");
+      const expected = transform();
+      await userEvent.selectOptions(screen.getByRole("combobox", { name: "Find on board" }), "node:deploy");
+      expect(transform()).not.toBe(expected);
+      fireEvent.click(container.querySelector(".node-open")!);
+      act(() => resize());
+      expect(transform()).toBe(expected);
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+  it("leaves Space activation available on focused controls", async () => {
+    mountBoard();
+    const history = screen.getAllByRole("button", { name: /show history/i })[0];
+    history.focus();
+    await userEvent.keyboard(" ");
+    expect(history).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens the exact node picked in the board navigator", async () => {
+    const selected = vi.fn();
+    render(<Board model={MODEL} board={emptyBoard()} selectedNode={null} onSelectNode={selected} onChange={vi.fn()} {...REST} />);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Find on board" }), "node:deploy");
+    expect(selected).toHaveBeenCalledWith("deploy");
+  });
   it("draws no connection between cards and says why", () => {
     const board = mountBoard();
     expect(board.sheet().querySelectorAll("path.edge")).toHaveLength(0);
-    expect(screen.getByText(/no connections drawn/i)).toBeInTheDocument();
+    expect(screen.getByText(/work connections unverified/i)).toBeInTheDocument();
   });
 
   it("says the roster is incomplete when it has not been declared", () => {
@@ -364,4 +422,58 @@ describe("what the board refuses to imply", () => {
     );
     expect(screen.getAllByText(/roster not read/i).length).toBeGreaterThan(0);
   });
+});
+
+
+describe("organizing a saved canvas", () => {
+  it("restores the old positions without removing marks when the layout is undone", () => {
+    const initial = { ...emptyBoard(), positions: { implementation: { x: 1900, y: 900 } }, agents: { "talk:room": { x: 1700, y: 20 } }, notes: [{ id: "note", at: { x: 3, y: 4 }, text: "Keep this" }] };
+    const board = mountBoard(initial);
+    fireEvent.click(screen.getByRole("button", { name: "Organize" }));
+    expect(board.latest().positions).toEqual({});
+    expect(board.latest().agents).toEqual({});
+    expect(board.latest().notes).toEqual(initial.notes);
+    fireEvent.click(screen.getByRole("button", { name: "Undo layout" }));
+    expect(board.latest()).toEqual(initial);
+  });
+});
+
+
+describe("canvas graph evidence boundaries", () => {
+  it("does not crash or draw an edge to a node missing from the roster", () => {
+    render(<Board model={{ ...MODEL, edgesKnown: true, edges: [{ id: "missing", from: "implementation", to: "ghost", type: "data" }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+    expect(document.querySelectorAll("path.edge")).toHaveLength(0);
+    expect(screen.getByText("implementation")).toBeInTheDocument();
+  });
+  it("offers graph verification as an accessible work-region action", () => {
+    render(<Board model={MODEL} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+    fireEvent.click(screen.getByRole("button", { name: "Verify connections" }));
+    expect(screen.getByRole("textbox", { name: "Graph file path on the Runtime host" })).toBeInTheDocument();
+  });
+});
+
+
+it("does not intercept Space on a disclosure", () => {
+  render(<Board model={{ ...MODEL, lint: [{ kind: "orphan-edge", detail: "Missing node", sequence: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+  const summary = document.querySelector(".canvas-lint summary") as HTMLElement;
+  summary.focus();
+  expect(fireEvent.keyDown(summary, { key: " " })).toBe(true);
+  expect(screen.getByRole("button", { name: "pan" })).toHaveAttribute("aria-pressed", "false");
+});
+
+
+it("pans from a section title without native text selection or moving cards", () => {
+  const board = mountBoard();
+  fireEvent.click(screen.getByRole("button", { name: "pan" }));
+  const title = document.querySelector(".canvas-region strong") as HTMLElement;
+  const range = document.createRange();
+  range.selectNodeContents(title);
+  window.getSelection()?.addRange(range);
+  const initial = document.querySelector(".world")?.getAttribute("style");
+  expect(fireEvent.pointerDown(title, { button: 0, clientX: 100, clientY: 100, bubbles: true })).toBe(false);
+  drag(180, 150);
+  release();
+  expect(window.getSelection()?.toString()).toBe("");
+  expect(document.querySelector(".world")?.getAttribute("style")).not.toBe(initial);
+  expect(board.changes).toHaveLength(0);
 });

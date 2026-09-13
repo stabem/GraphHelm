@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AlertTriangle, LayoutGrid, LoaderCircle, LogOut, RefreshCw } from "lucide-react";
+import { AlertTriangle, LayoutGrid, LoaderCircle, LogOut, Menu, MessageSquare, RefreshCw } from "lucide-react";
 
 import {
   DisconnectedError,
@@ -68,6 +68,7 @@ import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
 import { readable, verdictOf } from "./components/format";
 import { actionLegality } from "./components/legality";
+import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
 
 /** Whether a typed budget is one the client (and the envelope schema behind it) will accept. */
 function budgetSecondsLegal(typed: string | undefined): boolean {
@@ -118,9 +119,16 @@ export default function App({
   const clientRef = useRef<RuntimeClient | null>(null);
   const toolsRef = useRef<RegisteredTools | null>(null);
 
+  const [canvasMode, setCanvasMode] = useState(false);
+  const [runActionsOpen, setRunActionsOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
+  const [projectIdentity, setProjectIdentity] = useState<string | null>(null);
+  const [removedRuns, setRemovedRuns] = useState<string[]>([]);
+  const removedRunsRef = useRef<string[]>([]);
+  removedRunsRef.current = removedRuns;
+  const [projectPreferenceNotice, setProjectPreferenceNotice] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -154,12 +162,15 @@ export default function App({
   /** Whether the run's conversation column is open. Closing the panel closes the PANEL — the
    * run, its board and its crew stay; the run's name in the top strip brings it back. The old
    * wiring deselected the whole run and left "This board is empty" over 19 messages. */
-  const [talkOpen, setTalkOpen] = useState(true);
+  const [talkOpen, setTalkOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
+  const [projectsOpen, setProjectsOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
 
   const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
   /** The rows currently on the rail, readable from the poll timer without joining its
    * dependency list - the refresh reads as many pages as the operator has loaded. */
   const executionsRef = useRef<ExecutionSummary[]>([]);
+  /** Restored rows outside the explicitly paged prefix must not expand background paging. */
+  const restoredOutsidePage = useRef(new Set<string>());
   useEffect(() => {
     executionsRef.current = executions;
   }, [executions]);
@@ -324,7 +335,7 @@ export default function App({
           // The rail refresh covers EVERY row the operator has paged in, not just page one: a
           // kept-but-stale row let a page-two run flip to needs_you invisibly under the "live"
           // badge (PR #467 review). Pages follow the loaded count, bounded at 50 hops.
-          const loadedRows = executionsRef.current.length;
+          const loadedRows = executionsRef.current.filter((run) => !restoredOutsidePage.current.has(run.executionId)).length;
           const readList = async () => {
             const first = await client.listExecutions({ limit: LIST_PAGE_SIZE });
             const rows = [...first.executions];
@@ -344,6 +355,7 @@ export default function App({
           // The connection too, not just the run: Runtime B can hold the same execution id, and
           // a tick that started against A must not paint B (PR #467 review, P1).
           if (clientRef.current !== client || selectedRef.current !== selected) return;
+          for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
           setStatus(nextStatus);
           // The refresh covers what it read and prepends what is new; rows beyond the read
           // range (a store that GREW past the operator's paging mid-poll) are kept, not
@@ -394,7 +406,18 @@ export default function App({
         after: options.cursor ?? undefined,
       });
       if (clientRef.current !== client) return [] as ExecutionSummary[];
-      setExecutions((previous) => (options.append ? [...previous, ...page.executions] : page.executions));
+      for (const run of page.executions) restoredOutsidePage.current.delete(run.executionId);
+      setExecutions((previous) => {
+        // A page-one refresh resets ordinary pagination, but an explicitly restored row
+        // outside that prefix stays visible and excluded from background page expansion.
+        if (!options.append) return [...page.executions, ...previous.filter((run) => restoredOutsidePage.current.has(run.executionId))];
+        const known = new Set(previous.map((run) => run.executionId));
+        return [...previous, ...page.executions.filter((run) => {
+          if (known.has(run.executionId)) return false;
+          known.add(run.executionId);
+          return true;
+        })];
+      });
       setNextCursor(page.hasMore ? page.nextCursor : null);
       return page.executions;
     },
@@ -408,6 +431,8 @@ export default function App({
     (id: string) => {
       selectedRef.current = id;
       setSelected(id);
+      // A deselection starts no replacement read whose finally could release this flag.
+      if (id === "") setBusy(false);
       setStatus(null);
       setEvents(null);
       setFocus({ kind: "none" });
@@ -454,6 +479,7 @@ export default function App({
     if (!client) return;
     const executionId = newExecutionId();
     setDraft({ executionId });
+    setTalkOpen(true);
     selectedRef.current = "";
     setSelected("");
     setStatus(null);
@@ -682,6 +708,7 @@ export default function App({
       // A disconnect while the opening read was in flight must not re-light the page: this
       // completion belongs to the connection it started, like every other (PR #467 review, P1).
       if (clientRef.current !== client) return;
+      restoredOutsidePage.current.clear();
       setExecutions(page.executions);
       setNextCursor(page.hasMore ? page.nextCursor : null);
       setConnected(true);
@@ -723,15 +750,18 @@ export default function App({
       // otherwise open calm with the debt hidden behind a "more" button (PR #467 review).
       // Bounded at 50 hops (1,000 runs) - a triage pick, not a full index scan; the rail still
       // shows page one and the selected run loads by id regardless of which page held it.
-      let candidate = page.executions.find((row) => row.attention === "needs_you");
+      const visible = (row: ExecutionSummary) => !removedRunsRef.current.includes(row.executionId);
+      let firstVisible = page.executions.find(visible);
+      let candidate = page.executions.find((row) => visible(row) && row.attention === "needs_you");
       let cursor = page.hasMore ? page.nextCursor : null;
       for (let hops = 0; candidate === undefined && cursor !== null && hops < 50; hops += 1) {
         const next = await client.listExecutions({ after: cursor, limit: LIST_PAGE_SIZE });
         if (clientRef.current !== client) return;
-        candidate = next.executions.find((row) => row.attention === "needs_you");
+        firstVisible ??= next.executions.find(visible);
+        candidate = next.executions.find((row) => visible(row) && row.attention === "needs_you");
         cursor = next.hasMore ? next.nextCursor : null;
       }
-      const first = candidate ?? page.executions[0];
+      const first = candidate ?? firstVisible;
       if (first) {
         selectedRef.current = first.executionId;
         setSelected(first.executionId);
@@ -757,17 +787,35 @@ export default function App({
    * continuation re-opening a session the operator just closed is the exact behavior the boot
    * effect's own comment forbids. */
   const connectionAttempted = useRef(false);
+  const connectionGeneration = useRef(0);
 
   const connect = useCallback(
-    async (token: string) => {
+    async (token: string, knownProject?: string | null) => {
       connectionAttempted.current = true;
+      const generation = ++connectionGeneration.current;
       setConnecting(true);
       setError("");
       const client = createClient ? createClient(token) : new RuntimeClient(token);
       try {
         await client.health();
+        if (connectionGeneration.current !== generation) { client.dispose(); return; }
+        // A manual reconnect must establish its public identity again. A different bearer
+        // cannot inherit the previous Runtime's browser preferences merely by sharing a tab.
+        let identity = knownProject;
+        if (identity === undefined) {
+          const opened = await (session ?? devSession)().catch(() => null);
+          identity = opened?.token === token ? opened.project : null;
+        }
+        if (connectionGeneration.current !== generation) { client.dispose(); return; }
+        setProjectIdentity(identity);
+        setProject(identity === null ? null : loadProjectName(`${location.origin}:${identity}`, identity));
+        const removed = identity === null ? [] : loadRemovedRuns(`${location.origin}:${identity}`);
+        removedRunsRef.current = removed;
+        setRemovedRuns(removed);
+        setProjectPreferenceNotice("");
         await openWith(client);
       } catch (reason) {
+        if (connectionGeneration.current !== generation) { client.dispose(); return; }
         // The tools too, not just the client: a failure AFTER registration (the first load can
         // throw) would otherwise leave the host holding registrations whose only removal handle
         // this overwrite discards - and the next connect's registerTool calls then collide with
@@ -781,10 +829,10 @@ export default function App({
         setConnected(false);
         setError(messageOf(reason, "The Runtime could not be reached."));
       } finally {
-        setConnecting(false);
+        if (connectionGeneration.current === generation) setConnecting(false);
       }
     },
-    [createClient, openWith],
+    [createClient, openWith, session],
   );
 
   const connectRef = useRef(connect);
@@ -812,8 +860,7 @@ export default function App({
       // operator typed a token faster than the dev endpoint answered - this continuation
       // discards itself instead of starting a second connection over the manual one.
       if (cancelled || opened === null || connectionAttempted.current) return;
-      setProject(opened.project);
-      await connectRef.current(opened.token);
+      await connectRef.current(opened.token, opened.project);
     })();
     return () => {
       cancelled = true;
@@ -821,6 +868,8 @@ export default function App({
   }, [session]);
 
   const disconnect = useCallback(() => {
+    connectionGeneration.current += 1;
+    setConnecting(false);
     toolsRef.current?.unregister();
     toolsRef.current = null;
     clientRef.current?.dispose();
@@ -831,7 +880,13 @@ export default function App({
     // one store's words as another's (three round-4 reviewers).
     resetPanelCaches();
     setConnected(false);
+    setProject(null);
+    setProjectIdentity(null);
+    setRemovedRuns([]);
+    removedRunsRef.current = [];
+    setProjectPreferenceNotice("");
     setExecutions([]);
+    restoredOutsidePage.current.clear();
     setNextCursor(null);
     setSelected("");
     setStatus(null);
@@ -854,6 +909,7 @@ export default function App({
 
   useEffect(
     () => () => {
+      connectionGeneration.current += 1;
       toolsRef.current?.unregister();
       clientRef.current?.dispose();
     },
@@ -1040,6 +1096,7 @@ export default function App({
                 ],
                 count: room.length,
                 lastAt: room.at(-1)?.occurredAt ?? null,
+                preview: envelopes[room.at(-1)!.sequence]?.text?.slice(0, 220) ?? null,
               },
             ]
           : []),
@@ -1049,6 +1106,7 @@ export default function App({
           participants: entry.participants,
           count: entry.events.length,
           lastAt: entry.events.at(-1)?.occurredAt ?? null,
+          preview: envelopes[entry.events.at(-1)!.sequence]?.text?.slice(0, 220) ?? null,
         })),
       ],
     };
@@ -1183,11 +1241,84 @@ export default function App({
       : topology?.match === "matched"
         ? "proven"
         : "none";
+  const runtimePreferenceKey = projectIdentity === null ? null : `${location.origin}:${projectIdentity}`;
+  const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
+  const renameProject = (name: string): boolean => {
+    const valid = validProjectName(name);
+    if (valid === null) return false;
+    if (runtimePreferenceKey === null) {
+      setProject(valid);
+      setProjectPreferenceNotice("Project name changed for this browser view only; this Runtime has no public project identity.");
+      return true;
+    }
+    const saved = saveProjectName(runtimePreferenceKey, valid);
+    if (!saved) {
+      setProjectPreferenceNotice("Project name changed for this view only; browser storage is unavailable.");
+      setProject(valid);
+      return true;
+    }
+    setProject(valid);
+    setProjectPreferenceNotice("");
+    return true;
+  };
+  const removeRun = (id: string) => {
+    const next = [...new Set([...removedRuns, id])];
+    setRemovedRuns(next);
+    if (runtimePreferenceKey === null) {
+      setProjectPreferenceNotice("Removed from this browser view only; this Runtime has no public project identity.");
+    } else if (!saveRemovedRuns(runtimePreferenceKey, next)) {
+      setProjectPreferenceNotice("Removed from this view only; browser storage is unavailable or full.");
+    }
+    if (selected === id) select("");
+  };
+  const restoreRun = async (id: string) => {
+    const client = clientRef.current;
+    if (!client) return;
+    if (!executionsRef.current.some((run) => run.executionId === id)) {
+      try {
+        // Read a bounded prefix to find the row. Keep the restore
+        // entry until the Runtime has actually returned that run; an absent row is not success.
+        let cursor: string | null = null;
+        let restored: ExecutionSummary | undefined;
+        for (let pageNumber = 0; pageNumber < 50; pageNumber += 1) {
+          const page = await client.listExecutions({ limit: LIST_PAGE_SIZE, after: cursor ?? undefined });
+          if (clientRef.current !== client) return;
+          cursor = page.hasMore ? page.nextCursor : null;
+          restored = page.executions.find((run) => run.executionId === id);
+          if (restored || cursor === null) break;
+        }
+        if (!restored) {
+          setProjectPreferenceNotice(cursor === null
+            ? "This run is not in the Runtime list. It remains in the removed list; try restoring it again later."
+            : "This run was not found in the first 50 pages. It remains in the removed list; try restoring it again later.");
+          return;
+        }
+        // Restoring one run must not page every traversed row into the live rail: polling
+        // follows its loaded row count. Preserve concurrent rows and the Show more cursor.
+        const target = restored;
+        if (!executionsRef.current.some((run) => run.executionId === id)) restoredOutsidePage.current.add(id);
+        setExecutions((previous) => previous.some((run) => run.executionId === id)
+          ? previous
+          : [...previous, target]);
+      } catch {
+        if (clientRef.current === client) setProjectPreferenceNotice("The run could not be loaded. It remains in the removed list; try restoring it again.");
+        return;
+      }
+    }
+    const next = removedRunsRef.current.filter((runId) => runId !== id);
+    removedRunsRef.current = next;
+    setRemovedRuns(next);
+    if (runtimePreferenceKey === null) {
+      setProjectPreferenceNotice("Restored for this browser view only; this Runtime has no public project identity.");
+    } else if (!saveRemovedRuns(runtimePreferenceKey, next)) {
+      setProjectPreferenceNotice("Restored for this view only; browser storage is unavailable or full.");
+    }
+  };
 
   return (
-    <div className="app" style={{ "--rail": `${railWidth}px` } as CSSProperties}>
+    <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
-        projects={[{ name: project ?? "this runtime", runs: executions }]}
+        projects={[{ name: project ?? "this runtime", runs: visibleExecutions }]}
         selected={selected}
         connected={connected}
         stale={stale}
@@ -1200,6 +1331,11 @@ export default function App({
           setAddingProject(true);
           setFocus({ kind: "none" });
         }}
+        projectName={project ?? undefined}
+        onRenameProject={renameProject}
+        removedRuns={removedRuns}
+        onRemoveRun={removeRun}
+        onRestoreRun={restoreRun}
       />
 
       {/* The grip is a real control, so it is focusable and the keyboard can move it: a pointer
@@ -1230,6 +1366,8 @@ export default function App({
 
       <div className="stage">
         <div className="topstrip">
+          <button type="button" className="ghost mobile-toggle projects-toggle" aria-expanded={projectsOpen} aria-controls="projects-rail" onClick={() => setProjectsOpen((open) => !open)} aria-label="Toggle projects"><Menu aria-hidden="true" /></button>
+          <button type="button" className="ghost mobile-toggle conversation-toggle" disabled={addingProject || (!draft && selected === "")} aria-expanded={talkOpen} aria-controls="conversation-panel" onClick={() => setTalkOpen((open) => !open)} aria-label="Toggle conversation"><MessageSquare aria-hidden="true" /></button>
           <div className="strip-card">
             {selected ? (
               <button
@@ -1252,7 +1390,7 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {verdict && <span className={`tag ${verdict.key}`}>{verdict.label}</span>}
+            {verdict && <span className={`tag ${verdict.key}`}>{status?.status && `${readable(status.status)} · `}{verdict.label}</span>}
           </div>
 
           <div className="strip-card right">
@@ -1340,6 +1478,7 @@ export default function App({
             <AlertTriangle aria-hidden="true" /> {error}
           </div>
         )}
+        {projectPreferenceNotice !== "" && <p className="hint" role="status">{projectPreferenceNotice}</p>}
 
         {/* THE CONVERSATION AND THE BOARD ARE PEERS. The first layout floated the panel over the
           * canvas, and a real screenshot showed it burying node cards, the attention line and the
@@ -1349,7 +1488,7 @@ export default function App({
           <AddProject onClose={() => setAddingProject(false)} />
         ) : draft !== null ? (
           <div className="split">
-            <aside className="talk">
+            <aside id="conversation-panel" className="talk" hidden={!talkOpen}>
               <Composer
                 choice={routes}
                 busy={busy}
@@ -1360,6 +1499,7 @@ export default function App({
             </aside>
             <div className="scene">
               <Board
+                initialLayout="overview"
                 model={draftModel}
                 board={board}
                 selectedNode={focus.kind === "node" ? focus.id : null}
@@ -1390,7 +1530,7 @@ export default function App({
         ) : (
           <div className="split">
             {talkOpen && (
-            <aside className="talk">
+            <aside id="conversation-panel" className="talk">
               {/* WHY IT NEEDS YOU, where you answer it. This block lived in the top strip -
                 * a header narrating a panel it did not belong to. Each reason still carries
                 * the one action that is legal for it. */}
@@ -1574,6 +1714,7 @@ export default function App({
 
             <div className="scene">
             <Board
+              initialLayout="overview"
               model={model}
               board={board}
               selectedNode={focusedNode}
@@ -1595,6 +1736,7 @@ export default function App({
               crew={crew}
               selectedAgent={focus.kind === "agent" ? focus.id : null}
               onSelectAgent={(id) => setFocus(id === null ? { kind: "none" } : { kind: "agent", id })}
+              onCanvasChange={setCanvasMode}
               talks={talks}
               selectedTalk={focus.kind === "talk" ? focus.id : null}
               onSelectTalk={(id) => setFocus(id === null ? { kind: "none" } : { kind: "talk", id })}
@@ -1609,6 +1751,10 @@ export default function App({
               * never shows its own (the channel the resume fix below already condemned), and
               * `actionLegality` is the one place that judgement lives. */}
             <div className="dock">
+              <span className="canvas-execution-state">Execution / {status.status ?? "State unavailable"}</span>
+              <details className="execution-actions" open={!canvasMode || runActionsOpen} onToggle={(event) => { if (canvasMode) setRunActionsOpen(event.currentTarget.open); }}>
+              <summary>Run actions</summary>
+              <div className="execution-menu">
               <span title={legality.pause ?? "Nothing new starts; work already in flight finishes and is joined — the run exits by quiescence."}>
                 <button
                   type="button"
@@ -1750,10 +1896,12 @@ export default function App({
                     onClick={() => setConfirmCancel(true)}
                     disabled={busy || legality.cancel !== undefined}
                   >
-                    cancel…
+                    Cancel execution
                   </button>
                 </span>
               )}
+              </div>
+              </details>
             </div>
 
             {/* THE VERDICT'S OWN REMEDY, offered where the verdict stands: each silence the

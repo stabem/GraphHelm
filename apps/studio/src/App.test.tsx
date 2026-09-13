@@ -8,10 +8,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import App from "./App";
+import { saveProjectName, saveRemovedRuns } from "./studio-preferences";
 import { resetPanelCaches } from "./components/panel";
 import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS } from "./runtime/client";
@@ -177,6 +178,195 @@ function fakeModelContext() {
 // Module state surviving a remount is the feature; surviving into the NEXT TEST is pollution.
 beforeEach(() => resetPanelCaches());
 
+describe("Studio organization and responsive navigation", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it.each([
+    ["needs_you", "Needs you"],
+    ["can_sleep", "Can sleep"],
+  ])("names lifecycle and %s verdict in the run header", async (attention, label) => {
+    const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, attention })) });
+    await open(client);
+    const strip = document.querySelector(".topstrip") as HTMLElement;
+    expect(await within(strip).findByText(`running · ${label}`)).toBeVisible();
+  });
+
+  it("does not automatically open a removed run after reconnecting", async () => {
+    saveRemovedRuns(`${location.origin}:dale-api-base`, ["demo-deploy"]);
+    const client = stubClient();
+    await open(client);
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm"));
+    expect(client.getStatus).not.toHaveBeenCalledWith("demo-deploy");
+  });
+
+  it.each(["local-token", "another-token"])("scopes preferences on manual reconnect with %s", async (token) => {
+    saveProjectName(`${location.origin}:dale-api-base`, "My workspace");
+    saveRemovedRuns(`${location.origin}:dale-api-base`, ["demo-deploy"]);
+    const first = stubClient();
+    const second = stubClient();
+    const createClient = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    render(<App createClient={createClient} modelContext={null} session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+    await screen.findByRole("button", { name: "Rename My workspace" });
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), { detail: 1 });
+    await userEvent.type(await screen.findByLabelText(/bearer token/i), token);
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await screen.findByRole("navigation", { name: "Projects" });
+    if (token === "local-token") {
+      expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeVisible();
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm"));
+      expect(second.getStatus).not.toHaveBeenCalledWith("demo-deploy");
+    } else {
+      expect(screen.getByRole("button", { name: "Rename this runtime" })).toBeVisible();
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy"));
+    }
+  });
+
+  it("clears busy when the selected run is removed during a pending action", async () => {
+    let finish!: (value: MutationEvidence) => void;
+    const pause = vi.fn(() => new Promise<MutationEvidence>((resolve) => { finish = resolve; }));
+    const client = stubClient({ pause });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: "pause · finish in-flight" }));
+    await waitFor(() => expect(pause).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: "Remove demo-deploy from this browser's list" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Remove$/ }));
+    const newTask = screen.getByRole("button", { name: "New task in dale-api-base" });
+    expect(newTask).toBeEnabled();
+    await userEvent.click(newTask);
+    finish(PAUSED_EVIDENCE);
+    expect(await screen.findByLabelText("What should this task do?")).toBeVisible();
+    expect(screen.getByLabelText("What should this task do?")).toBeEnabled();
+  });
+
+  it("loads a removed run from a later page before restoring its row", async () => {
+    saveRemovedRuns(`${location.origin}:dale-api-base`, ["later-run"]);
+    const row = { executionId: "later-run", mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 };
+    const listExecutions = vi.fn(async (options?: { after?: string }) => options?.after === "last" ? {
+      executions: [row, { ...row, executionId: "target-page-neighbor" }], hasMore: false, nextCursor: null,
+    } : options?.after === "next" ? {
+      executions: [{ ...row, executionId: "intermediate-run" }], hasMore: true, nextCursor: "last",
+    } : {
+      executions: [{ ...row, executionId: "demo-deploy", attention: "needs_you" }], hasMore: true, nextCursor: "next",
+    });
+    const client = stubClient({ listExecutions });
+    const props = {
+      createClient: () => client as unknown as RuntimeClient,
+      modelContext: null,
+      session: async () => ({ token: "local-token", project: "dale-api-base" }),
+    };
+    const view = render(<App {...props} pollIntervalMs={60_000} />);
+    await screen.findByRole("navigation", { name: "Projects" });
+    await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
+    const rail = screen.getByRole("navigation", { name: "Projects" });
+    expect(await within(rail).findByRole("button", { name: /^later-run/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "restore later-run" })).not.toBeInTheDocument();
+    expect(listExecutions).toHaveBeenCalledWith(expect.objectContaining({ after: "last" }));
+    expect(within(rail).queryByRole("button", { name: /^intermediate-run/ })).not.toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: /^target-page-neighbor/ })).not.toBeInTheDocument();
+    const callsBeforePause = listExecutions.mock.calls.length;
+    const pause = screen.getByRole("button", { name: "pause · finish in-flight" });
+    await userEvent.click(pause);
+    await waitFor(() => expect(client.pause).toHaveBeenCalled());
+    await waitFor(() => expect(listExecutions.mock.calls.length).toBeGreaterThan(callsBeforePause));
+    await waitFor(() => expect(pause).toBeEnabled());
+    expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
+    listExecutions.mockClear();
+    view.rerender(<App {...props} pollIntervalMs={10} />);
+    await waitFor(() => expect(listExecutions.mock.calls.length).toBeGreaterThanOrEqual(3));
+    view.rerender(<App {...props} pollIntervalMs={60_000} />);
+    expect(listExecutions.mock.calls.every(([options]) => options?.after === undefined)).toBe(true);
+    expect(within(rail).queryByRole("button", { name: /^intermediate-run/ })).not.toBeInTheDocument();
+    expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
+    await userEvent.click(within(rail).getByRole("button", { name: /show more/i }));
+    expect(await within(rail).findByRole("button", { name: /^intermediate-run/ })).toBeVisible();
+    await userEvent.click(within(rail).getByRole("button", { name: /show more/i }));
+    expect(await within(rail).findByRole("button", { name: /^target-page-neighbor/ })).toBeVisible();
+    expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
+  });
+
+  it("keeps the restore entry when a missing run cannot be loaded", async () => {
+    saveRemovedRuns(`${location.origin}:dale-api-base`, ["later-run"]);
+    const client = stubClient();
+    await open(client);
+    client.listExecutions.mockRejectedValueOnce(new Error("offline"));
+    await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
+    expect(await screen.findByText(/The run could not be loaded/)).toHaveAttribute("role", "status");
+    expect(screen.getByRole("button", { name: "restore later-run" })).toBeVisible();
+  });
+
+  it("discards a pending restore after disconnecting", async () => {
+    saveRemovedRuns(`${location.origin}:dale-api-base`, ["later-run"]);
+    const client = stubClient();
+    await open(client);
+    let finish!: (page: Awaited<ReturnType<typeof client.listExecutions>>) => void;
+    client.listExecutions.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), { detail: 1 });
+    await screen.findByLabelText(/bearer token/i);
+    finish({ executions: [{ executionId: "later-run", mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 }], hasMore: false, nextCursor: null });
+    await userEvent.type(screen.getByLabelText(/bearer token/i), "local-token");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(await screen.findByRole("button", { name: "restore later-run" })).toBeVisible();
+    expect(within(screen.getByRole("navigation", { name: "Projects" })).queryByRole("button", { name: /^later-run/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the objective when the conversation is hidden and reopened", async () => {
+    await open(stubClient());
+    await userEvent.click(screen.getByRole("button", { name: "New task in dale-api-base" }));
+    await userEvent.type(screen.getByLabelText("What should this task do?"), "Keep my objective");
+    await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));
+    await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));
+    expect(screen.getByLabelText("What should this task do?")).toHaveValue("Keep my objective");
+  });
+
+  it("opens the new task composer after the conversation was closed", async () => {
+    await open(stubClient());
+    await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));
+    expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(screen.getByRole("button", { name: "New task in dale-api-base" }));
+    expect(screen.getByLabelText("What should this task do?")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("keeps an unsent message when the conversation is hidden and reopened", async () => {
+    await open(stubClient());
+    await screen.findByLabelText(/^Run demo-deploy/);
+    await userEvent.type(screen.getByLabelText(/say something into this run/i), "Do not lose these words");
+    await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));
+    await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));
+    expect(screen.getByLabelText(/say something into this run/i)).toHaveValue("Do not lose these words");
+  });
+
+  it("persists rename and reversible removal across a remount without cancelling execution", async () => {
+    const client = stubClient();
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: "Rename dale-api-base" }));
+    await userEvent.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Project name" }), "My workspace{Enter}");
+    await userEvent.click(screen.getByRole("button", { name: "Remove demo-deploy from this browser's list" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Remove$/ }));
+    expect(within(screen.getByRole("navigation", { name: "Projects" })).queryByRole("button", { name: /^demo-deploy/ })).not.toBeInTheDocument();
+    expect(client.cancel).not.toHaveBeenCalled();
+    cleanup();
+    await open(stubClient());
+    expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "restore demo-deploy" }));
+    expect(within(screen.getByRole("navigation", { name: "Projects" })).getByRole("button", { name: /^demo-deploy/ })).toBeInTheDocument();
+  });
+
+  it("reports failed browser persistence instead of claiming a saved rename", async () => {
+    await open(stubClient());
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("full"); });
+    await userEvent.click(screen.getByRole("button", { name: "Rename dale-api-base" }));
+    await userEvent.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Project name" }), "View only{Enter}");
+    expect(await screen.findByText(/Project name changed for this view only/)).toHaveAttribute("role", "status");
+  });
+});
+
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */
 async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null) {
   render(
@@ -187,9 +377,18 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
     />,
   );
   await screen.findByLabelText("Projects");
+  // These existing journeys exercise the free canvas; overview has dedicated default-view coverage.
+  await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
+  await userEvent.click(screen.getByText("Run actions"));
 }
 
 describe("opening", () => {
+  it("opens the organized overview without applying saved canvas coordinates", async () => {
+    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm"})} />);
+    expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();
+    expect(screen.getByRole("button",{name:/^Overview$/})).toHaveAttribute("aria-pressed","true");
+    expect(screen.queryByRole("combobox",{name:"Find on board"})).not.toBeInTheDocument();
+  });
   /** THE POINT OF THE SESSION WORK. Nobody types anything: the page asks the dev server, gets the
    * token the Runtime already wrote, and is connected before the operator does a thing. */
   it("opens connected, with no token asked for", async () => {
@@ -294,7 +493,7 @@ describe("the board", () => {
     await open(stubClient());
     const board = await screen.findByLabelText("Execution board");
     expect(board.querySelectorAll("path.edge")).toHaveLength(0);
-    expect(screen.getByText(/no connections drawn/i)).toBeInTheDocument();
+    expect(screen.getByText(/work connections unverified/i)).toBeInTheDocument();
   });
 
   it("renders the log as text, never as markup", async () => {
@@ -445,12 +644,12 @@ describe("operator actions", () => {
   it("cancels only through the in-place confirmation", async () => {
     const client = stubClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: /cancel…/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Cancel execution/i }));
     expect(client.cancel).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /keep running/i }));
     expect(client.cancel).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: /cancel…/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Cancel execution/i }));
     await userEvent.click(screen.getByRole("button", { name: /yes, cancel it/i }));
     await waitFor(() => expect(client.cancel).toHaveBeenCalled());
   });
@@ -461,7 +660,7 @@ describe("operator actions", () => {
   it("disarms the cancel confirmation across a disconnect and reconnect", async () => {
     const client = stubClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: /cancel…/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Cancel execution/i }));
     expect(screen.getByRole("button", { name: /yes, cancel it/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
@@ -472,7 +671,7 @@ describe("operator actions", () => {
     await screen.findByLabelText("Projects");
 
     expect(screen.queryByRole("button", { name: /yes, cancel it/i })).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /cancel…/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Cancel execution/i })).toBeInTheDocument();
     expect(client.cancel).not.toHaveBeenCalled();
   });
 
@@ -500,13 +699,13 @@ describe("operator actions", () => {
     );
     await screen.findByLabelText("Projects");
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await userEvent.click(await screen.findByRole("button", { name: /cancel…/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Cancel execution/i }));
     expect(screen.getByRole("button", { name: /yes, cancel it/i })).toBeInTheDocument();
 
     // Now the run finishes underneath the open question; the next poll tick brings it.
     finished = true;
     await waitFor(() => expect(screen.queryByRole("button", { name: /yes, cancel it/i })).not.toBeInTheDocument());
-    const cancel = screen.getByRole("button", { name: /cancel…/i });
+    const cancel = screen.getByRole("button", { name: /Cancel execution/i });
     expect(cancel).toBeDisabled();
     expect(cancel.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
     expect(client.cancel).not.toHaveBeenCalled();
@@ -530,7 +729,7 @@ describe("operator actions", () => {
     const pause = await screen.findByRole("button", { name: /pause · finish in-flight/i });
     expect(pause).toBeDisabled();
     expect(pause.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
-    const cancel = screen.getByRole("button", { name: /cancel…/i });
+    const cancel = screen.getByRole("button", { name: /Cancel execution/i });
     expect(cancel).toBeDisabled();
     expect(cancel.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
   });
@@ -1686,7 +1885,7 @@ describe("round-2: controls stop betraying their own guards", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await screen.findByLabelText(/^Run demo-deploy/);
 
-    await userEvent.click(screen.getByRole("button", { name: /connect…/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
     await userEvent.type(screen.getByLabelText(/graph file path on the runtime host/i), "f");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(client.getTopology).not.toHaveBeenCalled();
@@ -1697,7 +1896,7 @@ describe("round-2: the rail says each thing once", () => {
   it("a run's state reaches the accessible name exactly once", async () => {
     await open(stubClient());
     const rail = screen.getByLabelText("Projects");
-    const row = within(rail).getByRole("button", { name: /demo-deploy/i });
+    const row = within(rail).getByRole("button", { name: /^demo-deploy/i });
     const matches = (row.textContent ?? "").match(/needs you/gi) ?? [];
     expect(matches.length).toBeLessThanOrEqual(1);
     expect(row.querySelector("[title='needs you']")).toBeNull();
@@ -1797,7 +1996,7 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
     await screen.findByLabelText("Projects");
     const rail = screen.getByLabelText("Projects");
     await waitFor(() => {
-      const row = within(rail).getByRole("button", { name: /demo-calm/i });
+      const row = within(rail).getByRole("button", { name: /^demo-calm/i });
       expect(row.textContent).toMatch(/needs you/i);
     });
   });
@@ -1965,7 +2164,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
     await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await screen.findByText(/paused — done/i);
 
-    await userEvent.click(screen.getByRole("button", { name: /demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^demo-calm/ }));
     await screen.findByLabelText(/^Run demo-calm/);
     expect(screen.queryByText(/only demo-deploy's problem/)).not.toBeInTheDocument();
     expect(screen.queryByText(/paused — done/i)).not.toBeInTheDocument();
@@ -2233,12 +2432,12 @@ describe("the log is searchable and addressable", () => {
 
     await userEvent.type(screen.getByLabelText(/search this conversation/i), "porta");
     expect(screen.getByText(/porta certa/)).toBeInTheDocument();
-    expect(screen.queryByText(/fila esta vazia/)).not.toBeInTheDocument();
+    expect(within(document.querySelector(".talk") as HTMLElement).queryByText(/fila esta vazia/)).not.toBeInTheDocument();
     // The narrowing is announced - a thread that silently hides is a thread that lies.
     expect(screen.getByText(/1 of 2/)).toBeInTheDocument();
 
     await userEvent.clear(screen.getByLabelText(/search this conversation/i));
-    expect(await screen.findByText(/fila esta vazia/)).toBeInTheDocument();
+    expect(await within(document.querySelector(".talk") as HTMLElement).findByText(/fila esta vazia/)).toBeInTheDocument();
   });
 
   it("every spoken turn carries its coordinate, and clicking copies it", async () => {

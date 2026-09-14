@@ -572,6 +572,24 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    the thread by its own SESSION id, found nothing, and was one step from pressing a pull request its
    own lane had given `APPROVE-WITH-RISK` the previous day under session `[6468fe]`. Read the `Lane:`
    field and decide; the `Session:` field is an address for a reply, not an identity for a count.
+   **ONE STATED EXCEPTION (owner order, 2026-09-13; `AGENTS.md`, the amendment under the
+   2026-09-11 clause): when the diff was written by a SUBAGENT and not by the session's own
+   context, authorship attaches to that subagent, not to the lane.** Two OTHER fresh-context
+   subagents of the spawning session are then the two passes although all three share the lane.
+   The presser accepts them only when ALL of these hold, read from the pull request itself: the
+   body names the implementing subagent; each pass carries the disclosure form
+   `Lane: X (subagent <name> of <session> [ref], non-author for this PR)` with a `<name>` that is
+   not the implementer's and not the other pass's; the gate was GREEN at the head before either
+   pass was written and each pass names that head; the briefs differ (each pass states its own
+   angle) and each pass states, in its own body, that its subagent was spawned new for that pass
+   after the gate and that its brief carried no finding from the implementer, the orchestrator or
+   the other pass - a pass without that statement is a reading; and a timestamped lane census
+   (`ListAgents`) posted on the pull request BEFORE the passes AND again immediately before the
+   press shows NO other non-author lane live on the board - the exception exists because the
+   lane set is one, it lapses the moment a second non-author lane can read, and the second census
+   is what catches a lane that appeared between the passes and the button. A diff the
+   session's own context touched at all — even one line — is the mixed case
+   and stays under the general rule: every subagent of that session is a reader, never a pass.
    **AND A VERDICT DISQUALIFIES, A NOTE DOES NOT.** What bars a lane from the button is having
    REVIEWED — a body carrying a verdict word, which is the same thing this item already counts a
    pass by. A body that measures something, routes the work, reports a coupling, reports a dead gate

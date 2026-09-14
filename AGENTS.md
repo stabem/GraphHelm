@@ -277,6 +277,41 @@ behaved exactly like a missing one.
     a lane produces a pass; the author exclusion settles WHICH lane may produce one for a given pull
     request. Answering the second question with the first lets an author's own subagents satisfy a
     rule written to exclude the author, and that substitution is what made this amendment necessary.
+    Precisely: "the session that authored" means the CONTEXT that wrote the diff. When the diff was
+    written by the session's own context, every subagent of that session is the author's and produces
+    readings only. When the diff was written by a subagent, that subagent is the author and is excluded,
+    and the spawning session's OTHER fresh-context subagents are governed by the amendment below and
+    by nothing else in this bullet (the reconciliation Codex asked for on #1081). A MIXED diff — any
+    line written by the session's own context, however small — is the first case, not the second.
+    The pull request body names the implementing subagent, so that a presser can tell the two cases
+    apart from the record and not from the session's word. Item 8 of `.factory/MERGE-CHECKLIST.md`
+    carries the same exception in the presser's terms.
+  - **Amendment (owner order, 2026-09-13): an ORCHESTRATING session's subagents may produce the two
+    passes on a pull request that other subagents of the same session implemented.** The owner's
+    words, given in chat to the MVP orchestrator lane when no other lane on the board could take the
+    passes (the two remaining Claude sessions had been told by the owner to work only with each other):
+    in English paraphrase (verbatim on #1080, as #901 carries the 2026-09-11 order): "spawn two
+    subagents; you may change that AGENTS.md so that a subagent also does the review". This clause is the one exception the preceding bullet names, and it governs exactly the
+    case where the diff was written by a subagent and not by the session's own context. What this changes and
+    what it keeps: the AUTHOR is the subagent that wrote the diff, and it still never reviews; the
+    orchestrating session that planned, wrote no line of the diff and only relayed findings is the
+    non-author lane, and two FRESH-CONTEXT subagents it spawns are that lane's two passes. FRESH
+    CONTEXT means: a subagent spawned new for the pass, never a resumed one; its brief carries the
+    pull request number, the gated head and its own reading angle, and NO finding from the
+    implementing subagent, from the orchestrator's own reading or from the other pass - a brief
+    that pastes a report is a seeded brief and its output is a reading. A reader spawned before
+    the gate is never resumed to write the pass. Because the lane set is one, the spawning session
+    is also the presser: the press is the checklist run, and the merge comment names the
+    implementing subagent and both pass subagents so the whole chain is on the record. Every other
+    condition above stands unchanged: different briefs, neither seeded with the other's findings, the
+    disclosure line in the lane field naming the subagent and the spawning session, the gate GREEN at
+    the head before the passes, and the presser reading the head that carries the manifest. A reading
+    the orchestrator's subagent produced BEFORE the gate (to find defects early) is a reading, not a
+    pass; the pass is written against the gated head. This clause exists because the previous bullet
+    answered the question "which lane" with "not the one whose subagents wrote it", and a session
+    whose subagents wrote it and whose other subagents read it with fresh context is, in every
+    measurable respect that matters for independence (fresh context, no shared findings), the same
+    reader the previous bullet trusted from a different account.
   - **The two readers MUST be given different briefs, neither may see the other's brief, and neither
     may be seeded with the other's findings.** A pass produced from the other reader's brief, or
     after being shown the other reader's findings, or from a brief that differs only cosmetically,

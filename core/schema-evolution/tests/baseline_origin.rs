@@ -420,8 +420,13 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
     divergent.dedup();
     assert_eq!(
         divergent,
-        vec!["execution-accounting-receipt", "graph-signal"],
-        "the deliberate divergences from 1.0.0 are exactly these two"
+        vec![
+            "context-provenance",
+            "execution-accounting-receipt",
+            "graph-signal"
+        ],
+        "the deliberate divergences from 1.0.0 are exactly these three (#1065 added \
+         context-provenance whole)"
     );
     for change in &report.changes {
         assert_ne!(

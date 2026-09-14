@@ -382,10 +382,12 @@ async fn append_plain(
 
 const RETRY_CAUSE_CONFLICT_CODE: &str = "GHG015_RETRY_CAUSE_CONFLICT";
 const RETRY_POLICY_TYPED_CODE: &str = "GHS003_TYPED";
+/// #1065: a declared `context.budgetBytes` that is not an integer in `1..=MAX_BUDGET_BYTES`.
+const CONTEXT_BUDGET_INVALID_CODE: &str = "GHG016_CONTEXT_BUDGET_INVALID";
 
 /// Record ADR-030's invalid-policy refusal and terminal execution settlement in one batch.
 /// No node lifecycle event may precede this pair: contradictory policy is rejected before work.
-async fn append_retry_policy_refusal(
+async fn append_preflight_refusal(
     store_open: &StoreOpen,
     ids: &Arc<dyn IdGenerator>,
     scope: &RepositoryScope,
@@ -405,7 +407,7 @@ async fn append_retry_policy_refusal(
         let next_sequence = store.next_sequence(&scope, stream.as_str())?;
         let events = vec![
             NewEvent::new(
-                mint_key(ids.as_ref(), "retry-policy-refused")?,
+                mint_key(ids.as_ref(), "preflight-refused")?,
                 actor.clone(),
                 Sensitivity::Internal,
                 WireEventKind::GraphValidationFailed(GraphValidationFailed { diagnostics }),
@@ -465,12 +467,16 @@ fn build_work(
     node: &str,
     attempt: u32,
     gate_context: &GateContext<'_>,
+    // #1065: the capsule compiled for this node BEFORE this call, off the reactor (the search
+    // and reads are blocking filesystem work). `None` for every kind that runs without one.
+    context: Option<crate::context::CompiledContext>,
 ) -> Result<NodeWork, crate::executor::ExecutorRefusal> {
     let graph_node = spec
         .nodes
         .get(node)
         .ok_or(crate::executor::ExecutorRefusal::Unsupported)?;
     let kind = crate::classify::work_kind(&graph_node.node_type)?;
+    let mut context_summary = None;
     let (prompt, tool_call, gate_check, judge) = match kind {
         crate::classify::NodeWorkKind::Cognitive => {
             // The blind-judge specialization (M06 Task 5): an Evaluator whose contract
@@ -486,7 +492,21 @@ fn build_work(
                     .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)?;
                 (crate::judge::assemble(&judge), None, None, Some(judge))
             } else {
-                (crate::prompt::assemble(graph_node)?, None, None, None)
+                // #1065: the capsule is the prompt's third field and enters its digest, so the
+                // sealed record names exactly what the model was shown. No ports, no capsule:
+                // the field is empty and the summary absent, which is today's behaviour said
+                // out loud rather than assumed.
+                let (text, summary) = match context {
+                    Some(compiled) => (compiled.text, Some(compiled.summary)),
+                    None => (String::new(), None),
+                };
+                context_summary = summary;
+                (
+                    crate::prompt::assemble_with_context(graph_node, &text)?,
+                    None,
+                    None,
+                    None,
+                )
             }
         }
         crate::classify::NodeWorkKind::Tool => {
@@ -543,7 +563,48 @@ fn build_work(
         tool_call,
         gate_check,
         judge,
+        context: context_summary,
     })
+}
+
+/// Whether a node runs with a context capsule (#1065): plain cognitive work only. Tool and gate
+/// work have no prompt, and the blind judge assembles from its own diet by design.
+fn wants_context(node: &graphhelm_protocols::GraphNode) -> bool {
+    matches!(
+        crate::classify::work_kind(&node.node_type),
+        Ok(crate::classify::NodeWorkKind::Cognitive)
+    ) && !(node.node_type == graphhelm_protocols::NodeType::Evaluator
+        && node.properties.contains_key("judge"))
+}
+
+/// Compile one node's capsule off the reactor: the search walks the workspace and the reads
+/// touch disk, so the work runs in `spawn_blocking` exactly like every store touch above. The
+/// summary is NOT recorded here: the ledger says what a node RAN with, and between this compile
+/// and the dispatch stand the assembly refusal and the pause re-read — the record is written
+/// after the `Started` hop, by the loop, for nodes that were actually dispatched.
+async fn compile_context_async(
+    ports: &crate::context::ContextPorts,
+    execution_id: &OpaqueId,
+    node: &str,
+    attempt: u32,
+    graph_node: &graphhelm_protocols::GraphNode,
+) -> Result<crate::context::CompiledContext, crate::executor::ExecutorRefusal> {
+    let owned_ports = ports.clone();
+    let execution_id = execution_id.to_string();
+    let node_id = node.to_owned();
+    let graph_node = graph_node.clone();
+    let compiled = tokio::task::spawn_blocking(move || {
+        crate::context::compile_for_node(
+            &owned_ports,
+            &execution_id,
+            &node_id,
+            attempt,
+            &graph_node,
+        )
+    })
+    .await
+    .expect("the context compile task is never cancelled")?;
+    Ok(compiled)
 }
 
 const TOOL_EXITED_NON_ZERO_CAUSE: &str = "tool_exited_non_zero";
@@ -622,6 +683,36 @@ fn retry_policy_conflict_diagnostics(
                 DiagnosticComponent::Schema,
             )?);
         }
+    }
+    Ok(diagnostics)
+}
+
+/// #1065: every node that DECLARES `context.budgetBytes` is asked whether the declaration can be
+/// read, before any node effect. A declared ceiling that cannot be read is a typo, not permission
+/// to apply the default — and not permission to skip the node either: skipped in the loop, the
+/// node stayed `Ready`, nothing was journaled, and the execution sat `running` with no diagnostic
+/// to say why. Refused here, the execution fails closed with the node named.
+fn context_budget_diagnostics(spec: &GraphSpec) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for (node_id, node) in &spec.nodes {
+        let declared = node
+            .properties
+            .get("context")
+            .and_then(|context| context.get("budgetBytes"));
+        if declared.is_none() || crate::context::declared_budget(node).is_ok() {
+            continue;
+        }
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        // `/spec/nodes/<id>/context`: the registered node-field pointer (the domain-path
+        // grammar names node fields one segment deep, exactly as the retry preflight's
+        // `/retry` does), so the diagnostic points at the block that carries the typo.
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/context"))
+            .map_err(|_| DriverError::Identity)?;
+        diagnostics.push(retry_policy_diagnostic(
+            CONTEXT_BUDGET_INVALID_CODE,
+            path,
+            DiagnosticComponent::Graph,
+        )?);
     }
     Ok(diagnostics)
 }
@@ -721,9 +812,18 @@ pub async fn drive_to_quiescence_async(
     // to. `None` refuses every gate node, which is what a binary that registers no gate at
     // all should do.
     gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
+    // #1065: the bounded search and reader over the project root, plus the ledger the caller
+    // reads back. `None` is the pre-#1065 drive: no capsule, every context receipt field
+    // `unavailable`, the prompt's context field empty.
+    context: Option<crate::context::ContextPorts>,
 ) -> Result<ExecutionProjection, DriverError> {
-    let retry_policy_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
-    if !retry_policy_diagnostics.is_empty() {
+    // Preflight, before any node effect: a retry policy that contradicts itself, and (#1065) a
+    // declared `context.budgetBytes` that cannot be read. Both are graph typos, both refuse the
+    // EXECUTION with a journaled diagnostic and a terminal settlement — never a node that is
+    // silently skipped while the execution stays `running`.
+    let mut preflight_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
+    preflight_diagnostics.extend(context_budget_diagnostics(&spec)?);
+    if !preflight_diagnostics.is_empty() {
         let projection = reread_async(&store_open, &scope, &stream).await?;
         let already_terminal = matches!(
             projection.simulation_status,
@@ -734,14 +834,14 @@ pub async fn drive_to_quiescence_async(
             )
         );
         if !already_terminal {
-            append_retry_policy_refusal(
+            append_preflight_refusal(
                 &store_open,
                 &ids,
                 &scope,
                 &stream,
                 &execution_id,
                 &actor,
-                retry_policy_diagnostics,
+                preflight_diagnostics,
             )
             .await?;
         }
@@ -761,7 +861,7 @@ pub async fn drive_to_quiescence_async(
     // the loop would still correctly detect a request happened, but attribute it to whichever
     // request happened to be sitting in the channel at the LATER read, not the one that actually
     // triggered this stop.
-    let cancelled_request: Option<ImmediateCancelRequest> = loop {
+    let cancelled_request: Option<ImmediateCancelRequest> = 'passes: loop {
         if let Some(request) = cancel.borrow().clone() {
             break Some(request);
         }
@@ -896,15 +996,54 @@ pub async fn drive_to_quiescence_async(
                 certifications: &projection.gate_certifications,
                 gates: gates.as_deref(),
             };
-            let work = match build_work(&spec, &execution_id, node, attempt, &gate_context) {
-                Ok(work) => work,
-                Err(_) => {
-                    // A refusal is a refusal: the node is simply never dispatched. It stays
-                    // whatever state it is in; the driver moves on.
-                    refused.insert(node.clone());
-                    continue;
+            // #1065: bounded retrieval BEFORE assembly, and before the dispatch hop below is
+            // written. A capsule compiled for a node that is then refused (unassemblable) or
+            // held back (a pause landed since the plan was read) is discarded with the node: the
+            // ledger records only what was DISPATCHED, after the `Started` hop below, so the
+            // drive reply never says a node "ran with" a capsule it never saw.
+            // RACED against immediate cancellation, exactly as the executor futures are below
+            // (Codex P1 on #1078): the search and the reads are blocking filesystem work whose
+            // only bound is the channel's declared ceilings, and an unconditional await here let
+            // the rest of the plan compile and dispatch after a stop was requested. The blocking
+            // task itself runs to its bound and is then dropped unread; nothing after it is
+            // dispatched. An unreadable declared budget was refused by the preflight above, so
+            // the refusal arm here is a belt over that brace, never a silent default.
+            let compiled = match (&context, spec.nodes.get(node)) {
+                (Some(ports), Some(graph_node)) if wants_context(graph_node) => {
+                    let compile =
+                        compile_context_async(ports, &execution_id, node, attempt, graph_node);
+                    tokio::pin!(compile);
+                    let compiled = tokio::select! {
+                        compiled = &mut compile => compiled,
+                        changed = cancel.changed() => {
+                            if changed.is_ok()
+                                && let Some(request) = cancel.borrow().clone()
+                            {
+                                break 'passes Some(request);
+                            }
+                            compile.await
+                        }
+                    };
+                    match compiled {
+                        Ok(compiled) => Some(compiled),
+                        Err(_) => {
+                            refused.insert(node.clone());
+                            continue;
+                        }
+                    }
                 }
+                _ => None,
             };
+            let work =
+                match build_work(&spec, &execution_id, node, attempt, &gate_context, compiled) {
+                    Ok(work) => work,
+                    Err(_) => {
+                        // A refusal is a refusal: the node is simply never dispatched. It stays
+                        // whatever state it is in; the driver moves on.
+                        refused.insert(node.clone());
+                        continue;
+                    }
+                };
             // Dispatch hops flow through the same writer BEFORE the executor future starts,
             // so sequencing matches 04f exactly.
             // ASKED AT THE POINT OF DISPATCH, from the projection this point actually holds.
@@ -956,6 +1095,11 @@ pub async fn drive_to_quiescence_async(
                 bare(NodeOutcome::Started),
             )
             .await?;
+            // #1065: the ledger line is written HERE, past every gate that could still hold the
+            // node back — the summary is what this node runs with, now that it is running.
+            if let (Some(ports), Some(summary)) = (&context, work.context.as_ref()) {
+                ports.ledger.record(node, summary.clone());
+            }
 
             let executor = executor.clone();
             let node_name = node.clone();

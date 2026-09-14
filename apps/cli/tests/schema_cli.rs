@@ -477,9 +477,9 @@ fn five_schema_commands_return_one_json_document_with_exact_names() {
 
 #[test]
 fn checked_in_catalog_reports_the_additive_evolutions_as_one_minor_step() {
-    // 1.1.0, and a THIRD evolution does not move it. Two independent minors stand between the
-    // frozen 1.0.0 and the live set -- execution-accounting-receipt added whole, and graph-signal's
-    // optional addressing -- and the reported version is one transition from the baseline, sized by
+    // 1.1.0, and a THIRD evolution does not move it. Three independent minors stand between the
+    // frozen 1.0.0 and the live set -- execution-accounting-receipt added whole, graph-signal's
+    // optional addressing, and context-provenance added whole (#1065) -- and the reported version is one transition from the baseline, sized by
     // the cumulative impact, never one bump per evolution: `expected_version(1.0.0, Minor)` is
     // 1.1.0 in core/schema-evolution/src/release.rs.
     //
@@ -496,7 +496,7 @@ fn checked_in_catalog_reports_the_additive_evolutions_as_one_minor_step() {
     );
     let value = output_json(&output);
     assert_eq!(value["data"]["releaseVersion"], "1.1.0");
-    assert_eq!(value["data"]["schemaCount"], 16);
+    assert_eq!(value["data"]["schemaCount"], 17);
 }
 
 #[test]

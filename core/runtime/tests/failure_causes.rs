@@ -132,6 +132,7 @@ fn prompt() -> AssembledPrompt {
     AssembledPrompt {
         system: "system".to_owned(),
         task: "task".to_owned(),
+        context: String::new(),
         sha256: "sha256:0".to_owned(),
     }
 }
@@ -147,6 +148,7 @@ fn cognitive_work() -> NodeWork {
         tool_call: None,
         gate_check: None,
         judge: None,
+        context: None,
     }
 }
 
@@ -164,6 +166,7 @@ fn tool_work() -> NodeWork {
         })),
         gate_check: None,
         judge: None,
+        context: None,
     }
 }
 

@@ -149,9 +149,10 @@ fn repository_has_one_safe_initial_release() {
         )
         .collect::<std::collections::BTreeSet<_>>();
 
-    // 1.1.0, and the number does NOT count evolutions. Two independent minors stand between the
-    // frozen 1.0.0 and the live set -- execution-accounting-receipt added whole, and graph-signal's
-    // optional addressing -- and both land in ONE transition, because the release rule measures a
+    // 1.1.0, and the number does NOT count evolutions. Three independent minors stand between the
+    // frozen 1.0.0 and the live set -- execution-accounting-receipt added whole, graph-signal's
+    // optional addressing, and context-provenance added whole (#1065) -- and all land in ONE
+    // transition, because the release rule measures a
     // single step from the frozen baseline sized by the CUMULATIVE impact:
     // `expected_version(1.0.0, Minor) == 1.1.0` in core/schema-evolution/src/release.rs.
     //
@@ -161,11 +162,11 @@ fn repository_has_one_safe_initial_release() {
     // change, and `graphhelm schema check --baseline schemas/releases/1.0.0/catalog.json` refuses
     // 1.2.0 with GHC004_SEMVER_MISMATCH -- which is how this was found.
     assert_eq!(catalog.release_version, Version::new(1, 1, 0));
-    assert_eq!(catalog.schemas.len(), 16);
+    assert_eq!(catalog.schemas.len(), 17);
     assert!(!root.join("schemas/releases/1.1.0").exists());
     assert!(!root.join("schemas/releases/1.2.0").exists());
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 54);
-    assert_eq!(declared_resources.len(), 56);
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 57);
+    assert_eq!(declared_resources.len(), 59);
 }
 
 #[test]
@@ -181,7 +182,7 @@ fn current_catalog_adds_execution_accounting_without_backfilling_release_1_0_0()
     // 1.1.0: one transition from the frozen baseline, sized by cumulative impact -- see the
     // reasoning at the release_version assertion above.
     assert_eq!(current.release_version, Version::new(1, 1, 0));
-    assert_eq!(current.schemas.len(), 16);
+    assert_eq!(current.schemas.len(), 17);
     assert!(current.schemas.contains_key("execution-accounting-receipt"));
     assert_eq!(release.release_version, Version::new(1, 0, 0));
     assert_eq!(release.schemas.len(), 15);
@@ -402,11 +403,12 @@ const RELEASE_1_0_0_SCHEMA_NAMES: [&str; 15] = [
     "sensitivity",
 ];
 
-const CURRENT_SCHEMA_NAMES: [&str; 16] = [
+const CURRENT_SCHEMA_NAMES: [&str; 17] = [
     "agent",
     "artifact-reference",
     "claim",
     "context-capsule",
+    "context-provenance",
     "edge",
     "event-envelope",
     "evidence-record",
@@ -584,7 +586,7 @@ fn the_release_snapshot_is_frozen_and_divergence_is_version_declared() {
     // 1.1.0, for the reason written at the first release_version assertion in this file.
     assert_eq!(current.catalog.release_version, Version::new(1, 1, 0));
     assert_eq!(release.catalog.release_version, Version::new(1, 0, 0));
-    assert_eq!(current.catalog.schemas.len(), 16);
+    assert_eq!(current.catalog.schemas.len(), 17);
     assert_eq!(release.catalog.schemas.len(), 15);
     for (label, resources) in [("current", &current), ("release", &release)] {
         let report = validate_catalog(resources);
@@ -825,13 +827,16 @@ fn current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts() 
         .filter(|case| case["kind"] == "schema")
         .collect::<Vec<_>>();
 
-    // 34 = main's 32 plus the two graph-signal-reply cases the 1.1.0 evolution shipped.
-    assert_eq!(schema_cases.len(), 34);
+    // 37 = main's 32, plus the two graph-signal-reply cases the 1.1.0 evolution shipped, plus
+    // the three context-provenance cases (#1065: valid, measured-estimate, traversal-source).
+    assert_eq!(schema_cases.len(), 37);
     let current_catalog = load_repo_catalog(RepositoryPackage::Current).catalog;
     let release_catalog = load_repo_catalog(RepositoryPackage::Release1_0_0).catalog;
     for case in schema_cases {
         let name = case["schema"].as_str().unwrap();
-        if name == "execution-accounting-receipt" {
+        // Schemas the frozen 1.0.0 release never held have no release-side validator to agree
+        // with: the receipt (added whole after 1.0.0) and context-provenance (#1065, likewise).
+        if name == "execution-accounting-receipt" || name == "context-provenance" {
             continue;
         }
         let input = case["input"].as_str().unwrap();

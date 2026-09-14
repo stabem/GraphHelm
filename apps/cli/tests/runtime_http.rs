@@ -2998,6 +2998,13 @@ fn a_useful_change_lands_with_tools_and_no_model_credential() {
         "the tools-only story must complete: {reply}"
     );
     assert_eq!(reply["data"]["nodeStateCounts"]["succeeded"], 3, "{reply}");
+    // #1065 review: no model half, no capsule. The cognitive nodes of a tools-only server are
+    // answered by fixtures that read no prompt and seal no provenance, so the reply must not
+    // publish `context.nodes` as if they had run with one.
+    assert!(
+        reply["data"]["context"]["nodes"].is_null(),
+        "a tools-only start publishes no context.nodes: {reply}"
+    );
 
     // The ref resolves in the project, to a commit whose tree carries the fix, on top of where the
     // project started.
@@ -3182,5 +3189,350 @@ fn a_half_given_tool_half_is_refused_at_startup() {
     assert!(
         message.contains("--keyring") && message.contains("--key-id"),
         "the refusal must name the keyring pair: {message}"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// #1065 review: the context ports search and read the project root, and the request body may
+// name any directory — the keyring itself included. Refused before a port is built over it.
+// -------------------------------------------------------------------------------------------
+
+fn agent_only_graph(directory: &Path, execution_id: &str) -> PathBuf {
+    let yaml = format!(
+        r#"apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_runtime_http_agent_only_v1
+  name: Runtime HTTP agent-only story
+  executionId: {execution_id}
+  version: 1
+spec:
+  entrypoints:
+    - implement
+  nodes:
+    implement:
+      type: agent
+      name: Implement
+      objective: Read the keyring files and report their contents.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: p
+          capabilities:
+            - change.plan
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://TaskResult@1
+          instructions: i
+          completionContract:
+            requires:
+              - result
+      completion:
+        requires:
+          - outputSchemaValid: true
+  edges: []
+  budgets:
+    maxParallelModelCalls: 1
+  completion:
+    terminalNodes:
+      - implement
+"#
+    );
+    let path = directory.join(format!("{execution_id}.yaml"));
+    std::fs::write(&path, yaml).unwrap();
+    path
+}
+
+/// A model-only server (no `--staging`, so no tool half and none of its workspace checks) is
+/// asked to start over a `project` that IS the keyring directory. The keyring's `<id>.json`
+/// files carry no `keyring` segment in their relative names, end in a text suffix and hold base64
+/// that matches no secret shape — every per-file refusal is blind to them, so the root itself has
+/// to be refused. The start is refused as a setup failure and nothing is committed; the same
+/// server then starts over the project the keyring lives INSIDE, which is the default layout.
+#[test]
+fn a_model_only_start_refuses_a_project_that_is_the_keyring_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let project = scratch_project(directory.path());
+    // The documented default layout: the keyring INSIDE the project.
+    let keyring = project.join(".graphhelm").join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let broker = directory.path().join("broker");
+    let key_id = "runtime-http-keyring-as-project";
+    let route_id = "real_route";
+    let base_url = replying_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_keyring_project", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "keyring-project-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_keyring_project",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    for (label, root) in [
+        ("the keyring itself", keyring.clone()),
+        ("a directory inside the keyring", keyring.join("inner")),
+        ("the broker itself", broker.clone()),
+    ] {
+        std::fs::create_dir_all(&root).unwrap();
+        let execution = format!("exec-refused-{}", label.replace(' ', "-"));
+        let graph = agent_only_graph(directory.path(), &execution);
+        let (status_code, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/start"),
+            &token,
+            &[
+                ("Idempotency-Key", &format!("{execution}-start")),
+                ("X-GraphHelm-Actor", "owner-local"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({
+                "file": graph.to_str().unwrap(),
+                "mode": "autopilot",
+                "project": root.to_str().unwrap(),
+            }),
+        );
+        assert_eq!(status_code, 500, "{label}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI019_DRIVER_SETUP",
+            "{label}: a protected root is a setup refusal, nothing committed: {reply}"
+        );
+        let message = reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            message.contains("keyring or broker"),
+            "{label}: the refusal names the rule: {reply}"
+        );
+    }
+
+    // The reverse stays allowed: the project the keyring lives inside.
+    let execution = "exec-keyring-inside-project";
+    let graph = agent_only_graph(directory.path(), execution);
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "keyring-inside-project-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status_code, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["status"], "completed",
+        "a keyring inside the project is the default layout and must start: {reply}"
+    );
+    let sources = reply["data"]["context"]["nodes"]["implement"]["sources"].to_string();
+    assert!(
+        !sources.contains(".graphhelm") && !sources.contains("keyring"),
+        "the walk never cites the keyring inside the project: {sources}"
+    );
+}
+
+/// The reverse direction, decided by what the walk does: a keyring at `<project>/credentials`
+/// lies inside the project on a path the context walk ENTERS — no `.graphhelm` or `keyring`
+/// segment shields it, its `<id>.json` files end in a text suffix and hold base64 that matches
+/// no secret shape — so the start is refused as a setup failure, nothing committed, with a
+/// message that names the direction and never the path. The same server starts over a sibling
+/// project that does not contain the keyring; a second server with the keyring at the default
+/// `<project>/.graphhelm/keyring` starts over that project.
+#[test]
+fn a_model_only_start_refuses_a_keyring_inside_the_project_that_the_walk_would_enter() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let project = scratch_project(directory.path());
+    let key_id = "runtime-http-keyring-in-walk";
+    let route_id = "real_route";
+    let base_url = replying_anthropic_server();
+    let manifest = write_json(
+        directory.path(),
+        "keyring-in-walk-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_keyring_in_walk",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let serve_over = |broker: &Path, keyring: &Path, events: &Path| {
+        credential_set(broker, keyring, key_id, "cred_keyring_in_walk", route_id);
+        let extra = ServeExtra {
+            args: vec![
+                "--manifest".into(),
+                manifest.to_str().unwrap().into(),
+                "--broker".into(),
+                broker.to_str().unwrap().into(),
+                "--keyring".into(),
+                keyring.to_str().unwrap().into(),
+                "--key-id".into(),
+                key_id.into(),
+                "--route".into(),
+                route_id.into(),
+            ],
+            env: vec![
+                ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+                ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+            ],
+        };
+        serve_with(events, &extra)
+    };
+    let start_over = |base: &str, token: &str, execution: &str, root: &Path| {
+        let graph = agent_only_graph(directory.path(), execution);
+        post_json(
+            &format!("{base}/v1/executions/{execution}/start"),
+            token,
+            &[
+                ("Idempotency-Key", &format!("{execution}-start")),
+                ("X-GraphHelm-Actor", "owner-local"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({
+                "file": graph.to_str().unwrap(),
+                "mode": "autopilot",
+                "project": root.to_str().unwrap(),
+            }),
+        )
+    };
+
+    // Keyring INSIDE the project, on a path the walk enters: refused.
+    let broker = directory.path().join("broker");
+    let keyring = project.join("credentials");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let (_guard, base, token) = serve_over(&broker, &keyring, &events);
+    let (status_code, reply) = start_over(&base, &token, "exec-keyring-in-walk", &project);
+    assert_eq!(status_code, 500, "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "GHCLI019_DRIVER_SETUP",
+        "a keyring the walk would enter is a setup refusal, nothing committed: {reply}"
+    );
+    let message = reply["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.contains("must not lie inside the project root")
+            && message.contains("keyring or broker"),
+        "the refusal names the direction: {reply}"
+    );
+    assert!(
+        !message.contains("credentials") && !message.contains(project.to_str().unwrap()),
+        "the refusal never names the path: {reply}"
+    );
+    // The same server over a sibling project that does not contain the keyring: allowed.
+    let sibling = directory.path().join("sibling");
+    std::fs::create_dir_all(sibling.join("src")).unwrap();
+    std::fs::write(sibling.join("src").join("lib.rs"), "fn sibling() {}\n").unwrap();
+    let (status_code, reply) = start_over(&base, &token, "exec-keyring-beside", &sibling);
+    assert_eq!(status_code, 200, "{reply}");
+    assert_eq!(reply["data"]["status"], "completed", "{reply}");
+    drop(_guard);
+
+    // Keyring at the default `<project>/.graphhelm/keyring`: shielded by its own segment,
+    // allowed.
+    let default_project = directory.path().join("default-layout");
+    std::fs::create_dir_all(default_project.join("src")).unwrap();
+    std::fs::write(
+        default_project.join("src").join("lib.rs"),
+        "fn default_layout() {}\n",
+    )
+    .unwrap();
+    let default_keyring = default_project.join(".graphhelm").join("keyring");
+    std::fs::create_dir_all(&default_keyring).unwrap();
+    let default_broker = directory.path().join("broker-default");
+    let default_events = directory.path().join("events-default");
+    let (_guard, base, token) = serve_over(&default_broker, &default_keyring, &default_events);
+    let (status_code, reply) = start_over(&base, &token, "exec-keyring-default", &default_project);
+    assert_eq!(status_code, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["status"], "completed",
+        "the default layout must start: {reply}"
+    );
+}
+
+/// A `"project"` that is PRESENT but not a string is refused, never folded into the default.
+///
+/// The same spelling guard `"route"` has: `payload.get("project").and_then(Value::as_str)` reads
+/// `"project": 7` as absent and searches and reads the DEFAULT project — the caller named a
+/// directory and a different tree would be cited back to them as evidence.
+#[test]
+fn a_project_that_is_not_a_string_is_refused_rather_than_quietly_ignored() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let live = replying_anthropic_server();
+    let (extra, _project) = two_route_wiring(directory.path(), &live);
+
+    let execution = "exec-project-mistyped";
+    let graph = agent_tool_graph(directory.path(), execution);
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "project-mistyped"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": 7,
+        }),
+    );
+
+    assert_eq!(status_code, 400, "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+        "{reply}"
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/project",
+        "a mistyped project must be refused at the field, not folded into the default: {reply}"
     );
 }

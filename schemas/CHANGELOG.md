@@ -1,5 +1,35 @@
 # Schema Changelog
 
+## context-provenance 1.0.0 - added whole (#1065)
+
+The content-free record the runtime seals beside a model reply when a context capsule was
+compiled for the node: the tokenizer and estimator ids, the query terms, the repository-relative
+`sources` shipped, the counts (candidates returned, dropped, unreadable; items dropped by the
+budget; excerpted sources), the byte totals, the capsule digest, the fallback if any — and six
+`accounting` lines in the execution-accounting-receipt's own `CostField` vocabulary:
+`zero_result_queries`, `retrieval_pages`, `retrieval_fallbacks` `measured` by
+`context_retrieval`; `compiled_input_tokens`, `eligible_candidate_tokens`, `tokens_saved`
+`derived`, no producer, a note opening with the method id `bytes-div-4/v1: ` and the arithmetic.
+Never `measured`, because nobody counted tokens — the `invalid.measured-estimate` fixture pins
+that refusal at `/accounting/3`. No `oneOf` anywhere: every line has one shape, because the record
+exists only when the chain ran. Added whole, the same class of divergence from the frozen 1.0.0
+baseline as the receipt itself; the by-name ledger in `core/schema-evolution/tests/baseline_origin.rs`
+names it.
+
+**Why the receipt's own lines did not move, stated so nobody repeats the attempt.** The first
+shape of #1065 changed `execution-accounting-receipt` in place — `zero_result_queries`,
+`retrieval_pages`, `retrieval_fallbacks` to a measured-or-unavailable line, `compiled_input_tokens`
+to a derived-or-unavailable line, and `eligible_candidate_tokens` / `tokens_saved` appended with
+`minItems: 13` so every existing document stayed valid. By meaning that is additive. The
+compatibility comparator does not reason about meaning: it classes a changed positional `$ref`
+and a newly constrained `prefixItems` position as `GHC003_BREAKING_CHANGE`, and the house then
+holds two rules at once — `no_silent_breaking_change_against_what_landed_on_main` demands the
+document move to exactly `major + 1`, while `graphhelm schema check` against the frozen 1.0.0
+baseline refuses any unreleased schema not at `1.0.0` (`GHC004_SEMVER_MISMATCH`, "new milestone
+02 schemas must start at document version 1.0.0"). An unreleased schema therefore admits only
+comparator-compatible changes, and no reshaping of positional lines is one. The receipt stays
+byte-for-byte at 1.0.0 with its six context lines `unavailable`; the numbers live here; the
+receipt's lines move when the next frozen baseline is cut.
 ## event-envelope 1.0.0 - `execution_form_declared` gains `name`, `objective` and `executor`
 
 Three OPTIONAL properties on the declared shape (#1063), so a resume briefing derived from the

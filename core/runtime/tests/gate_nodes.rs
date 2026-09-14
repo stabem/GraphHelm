@@ -537,6 +537,7 @@ fn drive(
             gate_actor(),
             cancel_rx,
             gates,
+            None,
         ))
         .unwrap()
 }

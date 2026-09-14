@@ -1969,6 +1969,59 @@ fn driver_failure(message: &str) -> execution::Failure {
     }
 }
 
+/// The directory names the context walk never enters and the runtime never reads through, at
+/// any depth (`source_channel::CREDENTIAL_DIRS`, `context::sensitive_path`): a protected
+/// directory inside the project is shielded from the walk only when its path below the root
+/// carries one of them. Case-folded, as both of those are.
+const WALK_SHIELDING_SEGMENTS: [&str; 2] = [".graphhelm", "keyring"];
+
+/// #1065: refuse a project root that IS, or lies INSIDE, a protected directory (the keyring, the
+/// broker), because the context ports would search and read it as repository evidence — and
+/// refuse the REVERSE when the protected directory lies inside the project on a path the walk
+/// would enter.
+///
+/// Compared canonical against canonical, so a relative spelling or a link cannot dodge the rule.
+/// A project that cannot be canonicalized is left to the builders after this check, which refuse
+/// it with their own reason (not a directory, not readable); a protected directory that cannot
+/// be canonicalized is compared as spelled.
+///
+/// The reverse direction is refused by what the walk does, not by containment alone: the
+/// documented default layout is `<project>/.graphhelm/keyring`, and the walk skips a
+/// `.graphhelm` or `keyring` segment at any depth, so a protected directory whose relative path
+/// carries one of [`WALK_SHIELDING_SEGMENTS`] stays allowed. One at `<project>/credentials`
+/// carries neither: its `<id>.json` files end in a text suffix and hold base64 that matches no
+/// secret shape, so every per-file refusal is blind to them and the walk would cite them. Both
+/// messages name the direction and never the path.
+fn refuse_protected_project(project: &Path, protected: &[PathBuf]) -> Result<(), String> {
+    let Ok(canonical) = project.canonicalize() else {
+        return Ok(());
+    };
+    for path in protected {
+        let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if canonical.starts_with(&path) {
+            return Err(
+                "the project root must not be, or lie inside, the keyring or broker directory"
+                    .to_owned(),
+            );
+        }
+        if let Ok(relative) = path.strip_prefix(&canonical) {
+            let shielded = relative.components().any(|component| match component {
+                std::path::Component::Normal(name) => name.to_str().is_some_and(|name| {
+                    WALK_SHIELDING_SEGMENTS.contains(&name.to_lowercase().as_str())
+                }),
+                _ => false,
+            });
+            if !shielded {
+                return Err(
+                    "the keyring or broker directory must not lie inside the project root on a path the context walk enters: below the root its path needs a `.graphhelm` or `keyring` segment"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Class (a): the drive's setup refused and no decision was committed. See [`SETUP_FAILURE_CODE`].
 fn setup_failure(message: &str) -> execution::Failure {
     execution::Failure {
@@ -2016,6 +2069,14 @@ struct DriveSetup {
 struct PreparedPorts {
     model: Option<(ServeModelPort, String)>,
     tools: Option<(ServeToolPort, ToolLease)>,
+    /// #1065: the bounded search and reader over the project root this drive resolved, and the
+    /// ledger the drive reply publishes from. Present only when the MODEL half is wired: the
+    /// capsule is a prompt field, and a tools-only server answers its cognitive nodes from node
+    /// fixtures, which read no prompt and seal no provenance — compiling a capsule there would
+    /// publish `context.nodes` for nodes that never saw one. The root is the one the tool half is
+    /// built on when there is one, and the same three-deep resolution (request, `--project`,
+    /// working directory) when there is not.
+    context: Option<graphhelm_runtime::context::ContextPorts>,
 }
 
 /// Which model this drive runs on: the request's `"route"` when it names one, the deployer's
@@ -2128,35 +2189,57 @@ async fn prepare_drive(
                 }
                 None => None,
             };
+            // Three-deep fallback (issue #82): the caller's own `"project"` wins when given (no
+            // MCP tool currently exposes this field, but the raw HTTP body always could); absent
+            // that, the deployer's own `--project` default (set once, the same way `--staging`
+            // itself is, so it lives on the tool half); only when NEITHER is configured does
+            // this fall back to the server process's own working directory — the default that
+            // collides with `--staging` whenever `serve` happens to run from a `--staging`
+            // ancestor, which is exactly what #82 documents. A deployer who hits that collision
+            // fixes it once with `--project`; nothing changes for a deployment that never had
+            // the collision. Resolved ONCE, here, because the tool workspace and the context
+            // ports (#1065) must be built over the same root.
+            //
+            // A PRESENT-BUT-UNUSABLE `"project"` IS REFUSED, the same way `"route"` is: the
+            // `and_then(Value::as_str)` spelling folds "absent" and "present but not a string"
+            // into one `None`, and the `None` branch searches and reads the DEFAULT project —
+            // the caller named a directory and a different tree was cited back as evidence.
+            let requested_project = match payload.get("project") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(path)) => Some(PathBuf::from(path)),
+                Some(_) => {
+                    return Err(MutationError::Prepared(bad_request(
+                        command,
+                        "\"project\" must be a string naming a directory",
+                        "/project",
+                    )));
+                }
+            };
+            let project = requested_project
+                .or_else(|| wiring.tools.as_ref().and_then(|tools| tools.project.clone()))
+                .or_else(|| std::env::current_dir().ok())
+                .ok_or_else(|| {
+                    MutationError::from(setup_failure(
+                        "no \"project\" was given, no --project default is configured, and the server's working directory could not be read",
+                    ))
+                })?;
+            // The directories the workspace must never overlap: the keyring always, the broker
+            // when a model half holds one (#1066 — a tools-only server has no broker directory
+            // to protect).
+            let mut protected = vec![wiring.keyring_dir.clone()];
+            if let Some(model_wiring) = wiring.model.as_ref() {
+                protected.push(model_wiring.broker_dir.clone());
+            }
+            // #1065: the project root is what the context ports SEARCH and READ, and the request
+            // body may name any directory — the keyring itself included, whose `<id>.json` files
+            // carry no `keyring` segment in their RELATIVE names, end in a text suffix and hold
+            // base64 that matches no secret shape. Refused before a port is built over it. The
+            // reverse — the keyring inside the project, which the default
+            // `<project>/.graphhelm/keyring` is — stays allowed: the walk skips those names.
+            refuse_protected_project(&project, &protected)
+                .map_err(|message| MutationError::from(setup_failure(&message)))?;
             let tools = match wiring.tools.as_ref() {
                 Some(tool_wiring) => {
-                    // Three-deep fallback (issue #82): the caller's own `"project"` wins when
-                    // given (no MCP tool currently exposes this field, but the raw HTTP body
-                    // always could); absent that, the deployer's own `--project` default (set
-                    // once, the same way `--staging` itself is); only when NEITHER is configured
-                    // does this fall back to the server process's own working directory — the
-                    // default that collides with `--staging` whenever `serve` happens to run from
-                    // a `--staging` ancestor, which is exactly what #82 documents. A deployer who
-                    // hits that collision fixes it once with `--project`; nothing changes for a
-                    // deployment that never had the collision.
-                    let project = payload
-                        .get("project")
-                        .and_then(serde_json::Value::as_str)
-                        .map(PathBuf::from)
-                        .or_else(|| tool_wiring.project.clone())
-                        .or_else(|| std::env::current_dir().ok())
-                        .ok_or_else(|| {
-                            MutationError::from(setup_failure(
-                                "no \"project\" was given, no --project default is configured, and the server's working directory could not be read",
-                            ))
-                        })?;
-                    // The directories the workspace must never overlap: the keyring always, the
-                    // broker when a model half holds one (#1066 — a tools-only server has no
-                    // broker directory to protect).
-                    let mut protected = vec![wiring.keyring_dir.clone()];
-                    if let Some(model_wiring) = wiring.model.as_ref() {
-                        protected.push(model_wiring.broker_dir.clone());
-                    }
                     let port =
                         ServeToolPort::build(tool_wiring, &protected, &project, execution_id)
                             .map_err(|message| MutationError::from(setup_failure(&message)))?;
@@ -2176,7 +2259,19 @@ async fn prepare_drive(
                 }
                 None => None,
             };
-            Some(PreparedPorts { model, tools })
+            // #1065: context ports only beside a real model — see `PreparedPorts::context`.
+            let context = match model {
+                Some(_) => Some(
+                    super::ports::build_context_ports(&project)
+                        .map_err(|message| MutationError::from(setup_failure(&message)))?,
+                ),
+                None => None,
+            };
+            Some(PreparedPorts {
+                model,
+                tools,
+                context,
+            })
         }
         None => None,
     };
@@ -2203,6 +2298,9 @@ async fn drive(
     // all arrive here as one piece of configuration.
     let gates: Arc<dyn graphhelm_runtime::ports::GateRegistryPort> =
         Arc::new(crate::commands::quality::RegisteredGates);
+    // #1065: the context ports travel with the real executor and nowhere else. A fixture drive
+    // has no project root to search, so it runs exactly as before and its reply says so.
+    let context_ports = ports.as_ref().and_then(|ports| ports.context.clone());
     // The workspace release handle is taken BEFORE the tool port moves into the executor and
     // used AFTER the drive returns, whatever it returned (#1066): the execution's Tier 1 tree
     // lives exactly as long as this drive, and the ref it landed outlives it.
@@ -2219,6 +2317,7 @@ async fn drive(
         Some(PreparedPorts {
             model: Some((model, route_id)),
             tools: Some((tools, lease)),
+            context: _,
         }) => Arc::new(PortExecutor {
             model: Arc::new(model),
             tools: Arc::new(tools),
@@ -2233,7 +2332,11 @@ async fn drive(
         // the other — so a tools-only deployment runs a real `apply_patch`/`tests`/`commit`
         // while its cognitive nodes are answered by node fixtures exactly as before, and a
         // model-only deployment runs a real model while its tool nodes are.
-        Some(PreparedPorts { model, tools }) => {
+        Some(PreparedPorts {
+            model,
+            tools,
+            context: _,
+        }) => {
             let cognitive: Arc<dyn AsyncNodeExecutor> = match model {
                 Some((model, route_id)) => Arc::new(ModelExecutor {
                     model: Arc::new(model),
@@ -2284,10 +2387,17 @@ async fn drive(
         // digest of THAT gate's own suite, read from this registry (#668). It used to be one
         // digest -- geometry's -- for every gate.
         Some(gates),
+        context_ports.clone(),
     )
     .await;
 
     state.cancels.lock().await.remove(execution_id);
+
+    // #1065: the per-node context summaries this drive compiled, read back from the ledger the
+    // driver wrote as it went. Content-free (paths, counts, digests). Only THIS reply — the one
+    // door that held the ports — can publish them without opening sealed evidence; every other
+    // door renders the projection alone and says the field is unavailable there.
+    let context = context_ports.map(|ports| ports.ledger.snapshot());
 
     // The tree goes, the ref stays (#1066). Off the reactor: it is a `git worktree remove`. A
     // removal failure is reported over a drive that otherwise succeeded, because a leaked
@@ -2304,12 +2414,13 @@ async fn drive(
     }
 
     match result {
-        Ok(projection) => Ok(execution::render(
+        Ok(projection) => Ok(execution::render_with_context(
             &projection,
             // This path holds a projection and no history: it states that it measured
             // nothing instead of implying calm.
             &graphhelm_execution::AttentionInputs::default(),
             &execution::Liveness::default(),
+            context.as_ref(),
         )),
         Err(error) => Err(MutationError::from(driver_failure(&error.to_string()))),
     }

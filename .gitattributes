@@ -129,3 +129,7 @@ AGENTS.md text eol=lf
 # `tools/acceptance-map/src/bin/record_demonstration.rs`. Verified with `git check-attr`, which
 # reported `text: set` for such a path before this line existed.
 docs/acceptance/demos/** -text
+# #1065: the frozen context-quality corpus. The fixture manifest pins each file by sha256 and
+# the test re-derives the digests from the bytes on disk, so a checkout that rewrote line
+# endings would read as a moved corpus on Windows alone.
+adapters/tool-host/tests/fixtures/context-quality/** text eol=lf

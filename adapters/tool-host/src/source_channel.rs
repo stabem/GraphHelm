@@ -32,12 +32,65 @@ const EXCLUDED_PREFIXES: &[&str] = &[
     ".factory/",
     ".superpowers/",
     ".git/",
+    // #1065: credential locations. The runtime's `context::sensitive_path` refuses these again
+    // before any read, so a channel that forgot this list would still not ship them; listed
+    // here so the WALK never opens them either.
+    ".graphhelm/",
+    "keyring/",
     // NARROWED (G's #622 finding): `docs/superpowers/` as a whole also holds
     // `docs/superpowers/specs/`, which carries NORMATIVE subsystem specifications — exactly the
     // kind of document a question about the system should be able to reach. The justification
     // for this list is "working notes about the work", and only the plans directory is that.
     "docs/superpowers/plans/",
 ];
+
+/// Directory NAMES never entered at any depth, because they are credential locations: the
+/// project's own `.graphhelm/` state (the default keyring lives under it) and any `keyring/`.
+/// `EXCLUDED_PREFIXES` above covers them at the root; a nested project, a vendored copy or a
+/// second checkout inside the tree carries the same directories deeper, where a prefix rule is
+/// blind. The runtime's `context::sensitive_path` refuses the same names on the way to a read, so
+/// the walk skipping them is the first of two locks, not the only one.
+const CREDENTIAL_DIRS: &[&str] = &[".graphhelm", "keyring"];
+
+/// Directory NAMES never entered at any depth, because they are the factory's own state rather
+/// than repository evidence: the process diary and the object store. `EXCLUDED_PREFIXES` sees
+/// them only at the root; a nested package (`packages/app/.factory/`) or a vendored checkout
+/// (`vendor/x/.git/`) carries the same names deeper, where a prefix rule is blind. The runtime's
+/// `context::sensitive_path` refuses the same names on the way to a read (`INTERNAL_DIRS`).
+const PROCESS_DIRS: &[&str] = &[".factory", ".superpowers", ".git"];
+
+/// Directory NAMES never entered at any depth, because they are generated: dependency trees,
+/// build output, virtual environments, caches. They hold no repository evidence, they are the
+/// bulk of a checked-out tree by entry count — one `node_modules/` is tens of thousands of
+/// entries — and walking them spends the traversal ceiling on files the answer cannot cite. A
+/// tree that hits the ceiling refuses the whole search, so a generated directory left in the walk
+/// turns a bounded search over the SOURCES into a refusal caused by the ARTIFACTS. Skipped by
+/// name before the directory is pushed; the directory entry itself is still counted, so the
+/// ceiling stays a ceiling.
+const GENERATED_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "vendor",
+    "dist",
+    "build",
+    "__pycache__",
+    ".next",
+    ".cache",
+];
+
+/// Whether a directory entry is one the walk never enters, by its own name and at any depth.
+fn skipped_directory_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            let folded = name.to_lowercase();
+            CREDENTIAL_DIRS.contains(&folded.as_str())
+                || PROCESS_DIRS.contains(&folded.as_str())
+                || GENERATED_DIRS.contains(&folded.as_str())
+        })
+}
 
 /// Suffixes the channel will open. Everything else (binaries, images, archives) is skipped
 /// without being read: a byte bound spent on a PNG buys nothing and the match would be noise.
@@ -138,7 +191,7 @@ impl WorkspaceSourceChannel {
 /// the flag is free for every file this channel serves. Windows: no such open exists in std;
 /// the caller's path-based re-check carries that platform's declared residual.
 #[cfg(unix)]
-fn open_candidate(path: &Path) -> std::io::Result<std::fs::File> {
+pub(crate) fn open_candidate(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt as _;
     std::fs::OpenOptions::new()
         .read(true)
@@ -147,7 +200,7 @@ fn open_candidate(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 #[cfg(not(unix))]
-fn open_candidate(path: &Path) -> std::io::Result<std::fs::File> {
+pub(crate) fn open_candidate(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::File::open(path)
 }
 
@@ -191,7 +244,7 @@ fn excluded_by(relative: &str, prefix: &str) -> bool {
 /// of that choice, declared here rather than papered over; the closure is to point the channel at
 /// the pin, which is architecture, not a line.
 #[cfg(unix)]
-fn still_names_opened_file(file: &std::fs::File, path: &Path) -> bool {
+pub(crate) fn still_names_opened_file(file: &std::fs::File, path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt as _;
     match (file.metadata(), std::fs::symlink_metadata(path)) {
         (Ok(handle), Ok(now)) => {
@@ -202,7 +255,7 @@ fn still_names_opened_file(file: &std::fs::File, path: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn still_names_opened_file(_file: &std::fs::File, path: &Path) -> bool {
+pub(crate) fn still_names_opened_file(_file: &std::fs::File, path: &Path) -> bool {
     // No stable file identity on Windows: the symlink re-check catches a symlink swapped in but
     // NOT a regular-file swap, which stays a declared residual.
     std::fs::symlink_metadata(path)
@@ -315,6 +368,12 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
                     continue;
                 }
                 if metadata.is_dir() {
+                    // Credential and generated directories are skipped by NAME at any depth
+                    // (#1065). The entry was already counted above, so the traversal bound still
+                    // sees the directory it refused to enter.
+                    if skipped_directory_name(&path) {
+                        continue;
+                    }
                     stack.push(path);
                     continue;
                 }

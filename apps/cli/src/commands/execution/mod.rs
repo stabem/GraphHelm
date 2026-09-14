@@ -873,6 +873,28 @@ pub(super) fn render(
     inputs: &AttentionInputs,
     liveness: &Liveness,
 ) -> serde_json::Value {
+    render_with_context(projection, inputs, liveness, None)
+}
+
+/// Why `context.nodes` is null on every door that holds only the projection (#1065).
+///
+/// The per-node context provenance is sealed evidence beside each attempt's reply; the unsealed
+/// projection does not carry it, so a `status` read from the store — CLI, HTTP or MCP alike —
+/// cannot publish the numbers without a keyring and does not pretend to. The drive reply is the
+/// one door that held the ledger. Only the context-provenance evidence is named: the accounting
+/// receipt's six context lines stay `unavailable` in this release (`schemas/CHANGELOG.md`), so
+/// sending an operator there would send them to a record that does not hold the numbers.
+pub(in crate::commands) const CONTEXT_UNAVAILABLE_REASON: &str = "the unsealed projection carries no context provenance; each attempt's sources and numbers live in its sealed context-provenance evidence, and only the drive reply that compiled them publishes them";
+
+/// [`render`] with the context summaries a drive just compiled (#1065), when the caller holds
+/// them. Every other caller passes `None` and the field states why it is unavailable, so the
+/// CLI/API parity story — which never holds a ledger on either side — sees one value.
+pub(in crate::commands) fn render_with_context(
+    projection: &ExecutionProjection,
+    inputs: &AttentionInputs,
+    liveness: &Liveness,
+    context: Option<&BTreeMap<String, graphhelm_runtime::context::NodeContextSummary>>,
+) -> serde_json::Value {
     // F1: the sleep question, answered ONCE and shared. `attentionRequired` is derived
     // from the reasons inside `attention`, and the triage list below is a FILTER over the
     // same value — no surface in the system recomputes this predicate.
@@ -912,6 +934,9 @@ pub(super) fn render(
         // #163: the scan history, ONE typed value shared by every door that calls render().
         "customs": serde_json::to_value(graphhelm_execution::customs_view(projection))
             .expect("a view built from already-serializable fold types serializes"),
+        // #1065: what each node ran with — paths, counts and a digest, never content. Present
+        // only on the reply of the drive that compiled it (see `CONTEXT_UNAVAILABLE_REASON`).
+        "context": context_view(context),
         "signalsRecorded": projection.signals_recorded,
         "acceptedMutations": projection.accepted_mutations,
         "untriagedInterruptions": untriaged_interruptions(&answer),
@@ -939,6 +964,43 @@ pub(super) fn render(
         // surface computed. That is what `lastEventAt` will publish; an elapsed number is a
         // moving fact wearing a value's clothes.
     })
+}
+
+/// The content-free per-node view: sources in rank order, the capsule's size, the two §9.2
+/// numbers, the retrieval counters and the capsule digest. Or the reason nothing can be said.
+fn context_view(
+    context: Option<&BTreeMap<String, graphhelm_runtime::context::NodeContextSummary>>,
+) -> serde_json::Value {
+    match context {
+        Some(nodes) => serde_json::json!({
+            "nodes": nodes
+                .iter()
+                .map(|(node, summary)| {
+                    (
+                        node.clone(),
+                        serde_json::json!({
+                            "sources": summary.sources,
+                            "capsuleBytes": summary.capsule_bytes,
+                            "eligibleCandidateTokens": summary.eligible_candidate_tokens,
+                            "compiledInputTokens": summary.compiled_input_tokens,
+                            "tokensSaved": summary.tokens_saved,
+                            "retrievalPages": summary.retrieval_pages,
+                            "zeroResultQueries": summary.zero_result_queries,
+                            "retrievalFallbacks": summary.retrieval_fallbacks,
+                            "fallback": summary.fallback,
+                            "estimator": summary.estimator,
+                            "digest": summary.digest,
+                        }),
+                    )
+                })
+                .collect::<BTreeMap<String, serde_json::Value>>(),
+            "unavailable": serde_json::Value::Null,
+        }),
+        None => serde_json::json!({
+            "nodes": serde_json::Value::Null,
+            "unavailable": CONTEXT_UNAVAILABLE_REASON,
+        }),
+    }
 }
 
 #[cfg(test)]

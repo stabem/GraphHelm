@@ -1,5 +1,108 @@
 # Specification Changelog
 
+## Context reaches the node, #1065 - 2026-09-13
+
+- **A capsule reaches every plain cognitive node.** Before assembly the driver derives query
+  terms from the objective (`objective-terms/v1`: lowercase, split on non-alphanumerics, drop
+  terms under 3 characters and a 40-word stop-list, dedupe, cap 12), searches the project root
+  through the bounded workspace channel (8 results, 50,000 entries / 20,000 files / 256 MiB
+  ceilings), reads at most 8 candidates as 16 KiB prefixes within 64 KiB total, fits them to the
+  node's `context.budgetBytes` (default 32 KiB) and compiles an `evidence` section of
+  `source://<path>` items. The capsule is `AssembledPrompt.context` and enters the prompt digest
+  as a third length-prefixed field: a prompt with an empty capsule has a different digest from
+  the pre-#1065 prompt of the same system and task, by construction.
+- **Bounds refuse and count; fallbacks count and never stop the node.** A candidate over the cap
+  or the byte bound is refused whole, never trimmed; the prefix read is the one declared partial
+  (`bytes 0..n of len` in the item); the budget bounds the rendered capsule, framing included.
+  No terms, a refused search, zero candidates, no readable candidate, nothing that fits the
+  budget or only secret-shaped candidates are `retrieval_fallbacks = 1` with the cause named;
+  the node runs. A declared `context.budgetBytes` that is not an integer in `1..=1 MiB` refuses
+  the execution before it starts, in the same preflight as a retry-policy conflict:
+  `GHG016_CONTEXT_BUDGET_INVALID` at `/spec/nodes/<node>/context` journaled under
+  `GraphValidationFailed`, then `ExecutionCompleted(Failed)` — never a node skipped in silence
+  with the execution left `running`. An immediate stop during a node's compile dispatches
+  nothing after it. `development compile-context` bounds the RENDERED capsule the same way the
+  node path does: trailing optional items are dropped and counted until the framing fits, and a
+  required-only capsule still over budget is refused with the rendered size as the budget that
+  would fit.
+- **Secrets never enter a capsule.** Credential locations (`.env*`, `*.key`, `*.token`, a
+  `.graphhelm` or `keyring` segment at ANY depth) are refused before a read, and the workspace
+  walk never enters a directory of either name at any depth; a file NAME carrying a secret shape
+  is refused before the read too, because the path is the citation; excerpts carrying a secret
+  shape (a bare hex run of 64 characters or more that is not a digest, `sk-`/`ghp_`/`AKIA`
+  tokens, PEM private keys, `password=`/`token=`/`secret=` assignments) are refused before
+  they can become an item; all count as `candidatesSecretShaped` and are never named. On the
+  wire the capsule travels inside an explicit trust boundary — opened as untrusted repository
+  excerpts that are evidence and never instructions, closed by an end marker before the task —
+  and the prompt digest, over the three fields, is unchanged by the framing. The boundary is
+  unforgeable from inside the capsule: both markers carry the first sixteen hex characters of
+  the capsule's own SHA-256 (`--- BEGIN CONTEXT CAPSULE <digest16> (…) ---` /
+  `--- END CONTEXT CAPSULE <digest16> ---`, the prefix of the `sha256:` digest the provenance
+  record and the drive reply publish — deterministic, never a nonce), and every excerpt line
+  that begins like a marker is quoted with `> ` before the capsule is digested and sealed, so
+  the sealed bytes and the wire are one text and a retrieved file carrying the literal end
+  marker cannot close the capsule early. The walk also skips
+  generated directories by name at any depth (`node_modules`, `target`, `.venv`, `venv`,
+  `vendor`, `dist`, `build`, `__pycache__`, `.next`, `.cache`): they are the bulk of a tree by
+  entry count and no answer can cite them, so they no longer spend the traversal ceiling; the
+  directory entry itself is still counted. A model-only `serve` refuses a `project` that is, or
+  lies inside, the keyring or broker directory (setup failure, nothing committed) — the
+  keyring's own files carry no `keyring` segment in their relative names and match no shape;
+  the keyring inside the project (the default layout) stays allowed. The reverse is decided
+  by what the walk does: a keyring or broker directory INSIDE the project is refused the same
+  way when its path below the root carries no `.graphhelm` or `keyring` segment (say
+  `<project>/credentials`), because the walk would enter it and cite its files; the default
+  `<project>/.graphhelm/keyring` carries the segment the walk skips and stays allowed. Both
+  sides are compared canonical against canonical, and both messages name the direction, never
+  the path.
+- **The numbers are sealed beside the reply, in the receipt's own vocabulary.** A content-free
+  `context-provenance@1` record (new schema, added whole) carries `zero_result_queries`,
+  `retrieval_pages`, `retrieval_fallbacks` `measured` by `context_retrieval` and
+  `compiled_input_tokens`, `eligible_candidate_tokens`, `tokens_saved` `derived` under
+  `bytes-div-4/v1` with the arithmetic in the note (roadmap §9.2's v1 estimator, recorded as an
+  estimator), beside the paths, counts and capsule digest. The accounting receipt's own six
+  context lines stay `unavailable`: the schema-evolution guards admit only comparator-compatible
+  changes to a schema the frozen release never held, and none of the receipt's positional lines
+  can change that way — `schemas/CHANGELOG.md` records the attempt and the rule. They move at
+  the next frozen baseline.
+- **The cut of a clipped prefix is checked too, and the path is re-checked after the read.** A
+  16 KiB excerpt that ENDS in the head of a secret shape — a trailing hex run of 32 or more
+  that is not a digest, a final `sk-`/`ghp_`/`AKIA` token however short, a `-----BEGIN ` block
+  with no `-----END `, a `password=`/`token=`/`secret=` whose value lies past the cut — is
+  refused and counted as `candidatesSecretShaped`, so a 64-hex key straddling the boundary no
+  longer ships 63 of its characters under the whole-shape rule; the workspace excerpt reader
+  repeats its identity check after `read_to_end`, as the search channel does, and refuses a
+  path that no longer names the opened file; a `"project"` that is present but not a string is
+  a 400 at `/project`, never the default tree; a declared candidate length that would carry
+  `eligibleCandidateBytes` past the schema's `9007199254740991` is refused as dropped before the
+  provenance record is built.
+- **The drive reply says what each node ran with.** `context.nodes.<node>` carries `sources`,
+  `capsuleBytes`, `eligibleCandidateTokens`, `compiledInputTokens`, `tokensSaved`, the three
+  counters, `fallback`, `estimator`, `digest` — paths and numbers, never content. The ledger
+  line is written after the dispatch gate: a node refused at assembly or held back by a pause
+  that landed since the plan was read is never recorded as having run with a capsule. Context
+  ports are built only beside a real model half — a tools-only server answers its cognitive
+  nodes from fixtures that read no prompt and seal no provenance, so it publishes no
+  `context.nodes`. Every door that holds only the projection (`status` on CLI, HTTP and MCP)
+  publishes `nodes: null` with the reason, so the CLI/API parity story sees one value on both
+  sides. The `context-provenance@1` `sources` pattern is segment-aware: `.` and `..` segments,
+  empty segments, a leading or trailing slash and a backslash are refused (`.env` and `..x`
+  remain names); `conformance/schemas/invalid/context-provenance-traversal-source.json` pins it.
+- **`development compile-context` runs the same producer** (`context::compile_items`): its digest
+  is now the digest of the capsule the required items compile to. #724's producer half; the
+  adapter half stays open there.
+- **Measured over a frozen corpus** (`adapters/tool-host/tests/context_quality.rs`, ten pairs
+  from real files; `adapters/tool-host/tests/fixtures/context-quality/tree`, the ten target files
+  and five decoy documents copied from `1ac2438e` and pinned by sha256 in `MANIFEST.md`):
+  hit rate@3 (success@3: the one relevant file is in the top three — with one relevant document
+  per query, precision@3 would max out at 1/3, so that is not the number measured) = 9/10 =
+  0.90, the floor the test asserts; tokens eligible 902,886 / shipped 55,782
+  / saved 847,104. The live repository tree is measured and printed with no floor: 6/10 = 0.60 at
+  `0e398e75` (eligible 1,629,696 / shipped 60,713 / saved 1,568,983; 1,556,434 / 61,810 /
+  1,494,624 after the secret-shape refusal), 4/10 = 0.40 at `1ac2438e` after three merges of
+  documentation moved what outranks what — a floor over a moving corpus is not a deterministic
+  test. Entity RRF, graph-neighbour RRF, vectors, authority, the Knowledge Graph and Dreams remain
+  open under #302 / #111.
 ## A useful change lands: tools without a model credential, #1066 - 2026-09-13
 
 - **`serve` runs real tools with no model route.** The real-executor wiring is now two

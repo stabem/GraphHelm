@@ -20,6 +20,12 @@
       "path": "schemas/claim.schema.json",
       "sha256": "sha256:a4c9b9c077d23542129d6cf34b984c7b24de066713f02833016b3588bfcdb33b"
     },
+    "context-provenance": {
+      "id": "https://p50.dev/schemas/context-provenance.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/context-provenance.schema.json",
+      "sha256": "sha256:eddff2f2c669d05f52cbbb71f376cf1e64a26523b2a1aab112aef1f278cf7391"
+    },
     "context-capsule": {
       "id": "https://p50.dev/schemas/context-capsule.schema.json",
       "documentVersion": "1.0.0",

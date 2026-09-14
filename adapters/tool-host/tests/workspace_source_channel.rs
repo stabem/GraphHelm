@@ -575,3 +575,105 @@ fn a_workspace_reached_through_a_symlinked_ancestor_is_searchable() {
         .expect("a workspace reached through a linked ancestor is searchable");
     assert_eq!(hits, vec!["evidence.rs".to_owned()], "{hits:?}");
 }
+
+/// Generated directories are skipped by NAME at any depth (#1065 review): a `node_modules/`
+/// alone is tens of thousands of entries, and walking it spends the traversal ceiling on files
+/// the answer cannot cite — turning a bounded search over the SOURCES into a refusal caused by
+/// the ARTIFACTS. The directory entry itself is still counted, so the ceiling stays a ceiling.
+#[test]
+fn a_generated_directory_does_not_consume_the_traversal_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |rel: &str, body: &str| {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    write("src/verdict.rs", "fn verdict() {}\n");
+    // Far more entries than the bound below, every one of them matching the query — and every
+    // one of them under a generated directory, at two depths.
+    for index in 0..40 {
+        write(
+            &format!("node_modules/pkg-{index}/index.js"),
+            "export const verdict = 1;\n",
+        );
+        write(&format!("web/dist/chunk-{index}.js"), "verdict\n");
+    }
+    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+
+    let hits = channel
+        .search(
+            &["verdict".to_owned()],
+            &SourceSearchBounds {
+                // Root: `node_modules`, `src`, `web`; then `src/verdict.rs`, `web/dist`. Five
+                // entries visited if the generated trees are skipped; a hundred and more if not.
+                max_entries_visited: 8,
+                max_files_scanned: 10_000,
+                max_bytes_scanned: 64 * 1024 * 1024,
+                max_results: 10,
+                max_terms: 64,
+                max_term_bytes: 64 * 256,
+            },
+        )
+        .expect("a search that skips generated trees stays inside the traversal bound");
+
+    assert_eq!(hits, vec!["src/verdict.rs".to_owned()]);
+}
+
+/// Credential directories are skipped by NAME at any depth (#1065 review), not only at the root
+/// where `EXCLUDED_PREFIXES` sees them: a nested checkout or a vendored copy carries its own
+/// `.graphhelm/keyring`, and a prefix rule is blind to it.
+#[test]
+fn a_nested_credential_directory_is_never_entered() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |rel: &str, body: &str| {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    write("src/verdict.rs", "fn verdict() {}\n");
+    write(
+        "apps/inner/.graphhelm/keyring/main.json",
+        "{\"verdict\": \"secret\"}\n",
+    );
+    write(
+        "apps/inner/.graphhelm/state.json",
+        "{\"verdict\": \"state\"}\n",
+    );
+    write("ops/keyring/backup.json", "{\"verdict\": \"backup\"}\n");
+    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+
+    let hits = channel
+        .search(&["verdict".to_owned()], &generous())
+        .unwrap();
+
+    assert_eq!(hits, vec!["src/verdict.rs".to_owned()]);
+}
+
+/// The factory's own process directories are skipped by NAME at any depth too (#1078 review):
+/// `EXCLUDED_PREFIXES` sees `.factory/` and `.git/` only at the root, and a nested package or a
+/// vendored checkout carries the same names deeper. `packages/app/.factory/notes.md` is never a
+/// candidate, however well it matches.
+#[test]
+fn a_nested_process_directory_is_never_entered() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |rel: &str, body: &str| {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    write("src/verdict.rs", "fn verdict() {}\n");
+    write(
+        "packages/app/.factory/notes.md",
+        "# verdict verdict verdict\n",
+    );
+    write("packages/app/.FACTORY/board.md", "# verdict board\n");
+    write("vendor/x/.git/hooks/README.md", "# verdict hook\n");
+    write("tools/.superpowers/plan.md", "# verdict plan\n");
+    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+
+    let hits = channel
+        .search(&["verdict".to_owned()], &generous())
+        .unwrap();
+
+    assert_eq!(hits, vec!["src/verdict.rs".to_owned()]);
+}

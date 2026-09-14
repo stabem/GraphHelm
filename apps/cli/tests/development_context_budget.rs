@@ -177,6 +177,13 @@ fn the_refusal_exits_with_its_allocated_code_not_the_generic_domain_failure() {
     );
 }
 
+/// The framing the compiled capsule adds around the items: the capsule id, the version, the
+/// section name, the counts and a length prefix per part. The budget bounds the RENDERED capsule
+/// (#1065 review), so a budget that fits the required text by one byte no longer fits the
+/// capsule it compiles to; this allowance is generous rather than exact — an exact number would
+/// be a second producer of the framing size, and the cell is about fitting, not about the size.
+const FRAMING_ALLOWANCE: usize = 256;
+
 /// A capsule whose required context fits must still compile, and must NOT refuse.
 ///
 /// Without this, the cheapest way to make the cell above pass is to refuse unconditionally, and
@@ -184,7 +191,7 @@ fn the_refusal_exits_with_its_allocated_code_not_the_generic_domain_failure() {
 /// uninformative cell: it is the one that fails if the fix is "always refuse".
 #[test]
 fn compile_context_still_compiles_when_the_required_context_fits() {
-    let budget = (REQUIRED.len() + 1).to_string();
+    let budget = (REQUIRED.len() + FRAMING_ALLOWANCE).to_string();
     let outcome = run(&[
         "development",
         "compile-context",
@@ -411,7 +418,7 @@ fn the_http_route_still_compiles_when_the_required_context_fits() {
     let (status, envelope) = post_json(
         &server,
         "/v1/development/context",
-        &serde_json::json!({"budget": REQUIRED.len() + 1, "require": [REQUIRED]}),
+        &serde_json::json!({"budget": REQUIRED.len() + FRAMING_ALLOWANCE, "require": [REQUIRED]}),
     );
 
     assert_eq!(
@@ -567,7 +574,7 @@ fn the_mcp_tool_still_compiles_when_the_required_context_fits() {
     let server = start_server(directory.path());
     let reply = mcp_call(
         &server,
-        &serde_json::json!({"budget": REQUIRED.len() + 1, "require": [REQUIRED]}),
+        &serde_json::json!({"budget": REQUIRED.len() + FRAMING_ALLOWANCE, "require": [REQUIRED]}),
     );
 
     assert_eq!(

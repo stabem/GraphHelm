@@ -381,6 +381,33 @@ pub(super) fn build_sealer(
     )))
 }
 
+/// The context ports (#1065): the bounded search channel and the bounded prefix reader, both
+/// over the SAME project root the tool port was built from, plus a fresh ledger for this drive.
+///
+/// Built beside `ServeToolPort::build` rather than inside it because they answer to a different
+/// port and a different reader contract; a root the channel cannot admit (not a directory, a
+/// link) refuses the drive with the same setup failure a bad tool workspace would.
+pub(super) fn build_context_ports(
+    project: &std::path::Path,
+) -> Result<graphhelm_runtime::context::ContextPorts, String> {
+    let search = graphhelm_tool_host::source_channel::WorkspaceSourceChannel::open(project)
+        .map_err(|error| match error {
+            graphhelm_runtime::ports::SourceSearchError::Unavailable => {
+                "the project root is not a readable directory, so it cannot be searched".to_owned()
+            }
+            graphhelm_runtime::ports::SourceSearchError::BoundExceeded => {
+                "the project root exceeds the search channel's admission bound".to_owned()
+            }
+        })?;
+    let reader = graphhelm_tool_host::source_reader::WorkspaceExcerptReader::open(project)
+        .map_err(|error| format!("the project root cannot be read: {error}"))?;
+    Ok(graphhelm_runtime::context::ContextPorts {
+        search: Arc::new(search),
+        reader: Arc::new(reader),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+    })
+}
+
 /// The mirror of `build_sealer`: the same keyring, opened for READING sealed Evidence back.
 ///
 /// `EvidenceProtector` implements both halves, so this is the same construction reached through

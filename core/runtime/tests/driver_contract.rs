@@ -97,6 +97,7 @@ fn prompt() -> AssembledPrompt {
     AssembledPrompt {
         system: "Purpose: test\n".to_owned(),
         task: "do the thing".to_owned(),
+        context: String::new(),
         sha256: "0".repeat(64),
     }
 }
@@ -112,6 +113,7 @@ fn cognitive_work() -> NodeWork {
         tool_call: None,
         gate_check: None,
         judge: None,
+        context: None,
     }
 }
 
@@ -129,6 +131,7 @@ fn tool_work() -> NodeWork {
         })),
         gate_check: None,
         judge: None,
+        context: None,
     }
 }
 
@@ -1535,6 +1538,7 @@ fn drive_tool_fixture(
             driver_actor(),
             cancel_rx,
             None,
+            None,
         ))
         .unwrap()
 }
@@ -1763,6 +1767,7 @@ fn conflicting_retry_policy_refuses_before_every_node_effect_and_settles_failed(
             driver_actor(),
             cancel_rx,
             None,
+            None,
         ))
         .unwrap();
 
@@ -1860,6 +1865,7 @@ fn malformed_conflicting_retry_policy_fails_closed_before_every_node_effect() {
             std::collections::BTreeSet::new(),
             driver_actor(),
             cancel_rx,
+            None,
             None,
         ))
         .unwrap();
@@ -1989,6 +1995,7 @@ fn the_async_driver_reproduces_the_04f_sequencing_on_a_happy_chain() {
             driver_actor(),
             cancel_rx,
             None,
+            None,
         ))
         .unwrap();
     assert_eq!(
@@ -2088,6 +2095,7 @@ fn max_parallel_dispatches_concurrently_and_respects_the_bound() {
             driver_actor(),
             cancel_rx,
             None,
+            None,
         ));
         // Gate on the port's own counters, never on sleeps: the root runs alone, then the
         // three children contend for the bound of 2.
@@ -2149,6 +2157,7 @@ fn immediate_stop_interrupts_in_flight_work_and_blocks_it() {
             std::collections::BTreeSet::new(),
             driver_actor(),
             cancel_rx,
+            None,
             None,
         ));
         while model.called.load(Ordering::SeqCst) == 0 {
@@ -2244,6 +2253,7 @@ fn a_cancelled_tool_child_is_actually_dead() {
             std::collections::BTreeSet::new(),
             driver_actor(),
             cancel_rx,
+            None,
             None,
         ));
         while tools.child.lock().unwrap().is_none() {
@@ -2393,6 +2403,7 @@ fn an_ordinary_pause_stops_the_drive_before_it_dispatches_more_work() {
             driver_actor(),
             cancel_rx,
             None,
+            None,
         ));
 
         while model.called.load(Ordering::SeqCst) == 0 {
@@ -2482,4 +2493,373 @@ impl graphhelm_runtime::ports::GateRegistryPort for NoGates {
     ) -> Option<graphhelm_runtime::ports::GateEvaluation> {
         None
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// #1065 (Codex P1 on #1078): an immediate stop that arrives while a node's context is being
+// compiled — the search or a read blocking on the filesystem — must not let that node, or any
+// node after it in the plan, be dispatched. The compile is raced against the cancel channel.
+// ---------------------------------------------------------------------------------------------
+
+/// A search that BLOCKS until the test releases it, and says when it was entered.
+struct BlockingSearch {
+    entered: std::sync::atomic::AtomicBool,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl graphhelm_runtime::ports::BoundedSourceSearch for BlockingSearch {
+    fn search(
+        &self,
+        _terms: &[String],
+        _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+    ) -> Result<Vec<String>, graphhelm_runtime::ports::SourceSearchError> {
+        self.entered.store(true, Ordering::SeqCst);
+        let _ = self.release.lock().unwrap().recv();
+        Ok(vec!["src/lib.rs".to_owned()])
+    }
+}
+
+struct NeverReader;
+
+impl graphhelm_runtime::ports::BoundedSourceReader for NeverReader {
+    fn read_prefix(
+        &self,
+        _relative_path: &str,
+        _max_bytes: u64,
+    ) -> Result<graphhelm_runtime::ports::SourceExcerpt, graphhelm_runtime::ports::SourceReadError>
+    {
+        Err(graphhelm_runtime::ports::SourceReadError::Unreadable)
+    }
+}
+
+#[test]
+fn immediate_stop_during_context_compilation_dispatches_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            ("first", agent_graph_node("search the tree")),
+            ("second", agent_graph_node("also search the tree")),
+        ],
+        vec![],
+        2,
+    );
+    let model = Arc::new(HangingModelPort::new());
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
+    let ids = Arc::new(SequenceIds::default());
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let search = Arc::new(BlockingSearch {
+        entered: std::sync::atomic::AtomicBool::new(false),
+        release: std::sync::Mutex::new(release_rx),
+    });
+    let ports = graphhelm_runtime::context::ContextPorts {
+        search: search.clone(),
+        reader: Arc::new(NeverReader),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+    };
+
+    let runtime = multi_thread_runtime();
+    let projection = runtime.block_on(async {
+        let driver = tokio::spawn(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            protector.clone(),
+            ids,
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id.clone(),
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            Some(ports),
+        ));
+        while !search.entered.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        cancel_tx
+            .send(Some(ImmediateCancelRequest {
+                actor: driver_actor(),
+                idempotency_key: OpaqueId::parse("driver-contract-cancel-during-compile").unwrap(),
+            }))
+            .unwrap();
+        let projection = driver.await.unwrap().unwrap();
+        // Released only AFTER the drive returned: the drive did not wait for the search.
+        release_tx.send(()).unwrap();
+        projection
+    });
+
+    assert_eq!(
+        model.called.load(Ordering::SeqCst),
+        0,
+        "no model call was ever made"
+    );
+    for node in ["first", "second"] {
+        assert_ne!(
+            projection.node_states.get(node),
+            Some(&NodeState::Running),
+            "{node} was never dispatched"
+        );
+        assert_ne!(
+            projection.node_states.get(node),
+            Some(&NodeState::Blocked),
+            "{node} was never interrupted, because it never started"
+        );
+    }
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Paused)
+    );
+    let store = opener(directory.path().to_path_buf())().unwrap();
+    let history = store
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    assert!(
+        !history.iter().any(|envelope| matches!(
+            &envelope.kind,
+            EventKind::NodeOutcomeRecorded(record) if record.outcome == NodeOutcome::Started
+        )),
+        "no dispatch hop was written after the stop was requested"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// #1065 review: a declared `context.budgetBytes` that cannot be read refuses the EXECUTION in
+// preflight, journaled like a retry-policy conflict — never a node silently skipped while the
+// execution stays `running`.
+// ---------------------------------------------------------------------------------------------
+
+fn agent_graph_node_with_budget(objective: &str, budget: serde_json::Value) -> GraphNode {
+    let mut node = agent_graph_node(objective);
+    node.properties.insert(
+        "context".to_owned(),
+        serde_json::json!({ "budgetBytes": budget }),
+    );
+    node
+}
+
+#[test]
+fn an_unreadable_declared_context_budget_refuses_the_execution_before_any_node_effect() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let model = Arc::new(FakeModelPort {
+        result: Ok(reply("unused")),
+        calls: AtomicUsize::new(0),
+    });
+    let spec = spec_with(
+        vec![
+            (
+                "typo",
+                agent_graph_node_with_budget("search", serde_json::json!(0)),
+            ),
+            (
+                "fine",
+                agent_graph_node_with_budget("search", serde_json::json!(4096)),
+            ),
+            ("plain", agent_graph_node("search")),
+        ],
+        vec![],
+        2,
+    );
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ))
+        .unwrap();
+
+    assert_eq!(model.calls.load(Ordering::SeqCst), 0, "no model may run");
+    assert!(
+        projection.node_states.is_empty(),
+        "preflight refusal must precede even Draft -> Ready approval"
+    );
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Failed),
+        "the execution is refused, never left running with the node skipped"
+    );
+
+    let repository = opener(directory.path().to_path_buf())().unwrap();
+    let history = repository
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::NodeOutcomeRecorded(_))),
+        "a refusal before effects cannot record a node lifecycle hop"
+    );
+    let diagnostics = history
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::GraphValidationFailed(failed) => Some(&failed.diagnostics),
+            _ => None,
+        })
+        .expect("stable refusal diagnostics are journaled");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.path().as_str()))
+            .collect::<Vec<_>>(),
+        vec![("GHG016_CONTEXT_BUDGET_INVALID", "/spec/nodes/typo/context")],
+        "only the unreadable declaration is named; a valid one and an absent one are not"
+    );
+    assert_eq!(
+        diagnostics[0].component(),
+        graphhelm_protocols::DiagnosticComponent::Graph
+    );
+    assert_eq!(history.len(), 3, "start + atomic refusal/settlement pair");
+    assert!(matches!(
+        history.last().map(|event| &event.kind),
+        Some(EventKind::ExecutionCompleted(ExecutionCompleted {
+            status: graphhelm_protocols::SimulationStatus::Failed,
+            ..
+        }))
+    ));
+}
+
+// ---------------------------------------------------------------------------------------------
+// #1065 review: the ledger says what a node RAN with. A capsule compiled for a node that is then
+// refused at assembly (or held back by a pause) is never recorded — only dispatched nodes are.
+// ---------------------------------------------------------------------------------------------
+
+struct StaticSearch(Vec<String>);
+
+impl graphhelm_runtime::ports::BoundedSourceSearch for StaticSearch {
+    fn search(
+        &self,
+        _terms: &[String],
+        _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+    ) -> Result<Vec<String>, graphhelm_runtime::ports::SourceSearchError> {
+        Ok(self.0.clone())
+    }
+}
+
+struct StaticReader(&'static [u8]);
+
+impl graphhelm_runtime::ports::BoundedSourceReader for StaticReader {
+    fn read_prefix(
+        &self,
+        _relative_path: &str,
+        max_bytes: u64,
+    ) -> Result<graphhelm_runtime::ports::SourceExcerpt, graphhelm_runtime::ports::SourceReadError>
+    {
+        let take = usize::try_from(max_bytes)
+            .unwrap_or(usize::MAX)
+            .min(self.0.len());
+        Ok(graphhelm_runtime::ports::SourceExcerpt {
+            bytes: self.0[..take].to_vec(),
+            file_len: self.0.len() as u64,
+        })
+    }
+}
+
+#[test]
+fn the_context_ledger_records_only_nodes_that_were_dispatched() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    // `refused` is an Agent with NO `agent` block: it wants a capsule (plain cognitive work), the
+    // capsule compiles, and assembly then refuses it as unassemblable. `ran` is a proper node.
+    let refused = GraphNode {
+        node_type: NodeType::Agent,
+        name: "n".to_owned(),
+        objective: "search the tree".to_owned(),
+        optionality: Optionality::Required,
+        properties: std::collections::BTreeMap::new(),
+    };
+    let spec = spec_with(
+        vec![
+            ("ran", agent_graph_node("search the tree")),
+            ("refused", refused),
+        ],
+        vec![],
+        2,
+    );
+    let model = Arc::new(FakeModelPort {
+        result: Ok(reply("done")),
+        calls: AtomicUsize::new(0),
+    });
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let ports = graphhelm_runtime::context::ContextPorts {
+        search: Arc::new(StaticSearch(vec!["src/tree.rs".to_owned()])),
+        reader: Arc::new(StaticReader(b"fn search_the_tree() {}\n")),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+    };
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            Some(ports.clone()),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        model.calls.load(Ordering::SeqCst),
+        1,
+        "only `ran` reached the model"
+    );
+    assert_eq!(
+        projection.node_states.get("ran"),
+        Some(&NodeState::Succeeded)
+    );
+    assert_ne!(
+        projection.node_states.get("refused"),
+        Some(&NodeState::Running),
+        "the refused node was never dispatched"
+    );
+    let ledger = ports.ledger.snapshot();
+    assert_eq!(
+        ledger.keys().cloned().collect::<Vec<_>>(),
+        vec!["ran".to_owned()],
+        "the ledger names exactly the nodes that ran with a capsule: {ledger:?}"
+    );
+    assert_eq!(ledger["ran"].sources, ["src/tree.rs"]);
 }

@@ -4,6 +4,94 @@
 
 This layer prevents every agent from receiving the entire project, turns execution into traceable knowledge, and keeps documentation/memory useful over time. It is the foundation of "context low": the system shares just enough, while preserving recoverable references and provenance.
 
+## 1.1 What runs today (#1065, measured at `1ac2438e`)
+
+Everything below §1.1 is the design. This section is the part of it that RUNS, so a reader can
+tell the two apart without opening the tree.
+
+**The chain, in the tree's own names.** For every plain cognitive node (Agent, Planner,
+Classifier, Evaluator without a `judge` block — the blind judge keeps its own diet), before the
+prompt is assembled:
+
+1. `context::objective_terms` derives query terms from the node objective — `objective-terms/v1`:
+   lowercase; split on every non-alphanumeric character; drop terms shorter than 3 or longer
+   than 64 and a fixed 40-word English stop-list; dedupe preserving first occurrence; cap at
+   12. The split rule is what makes an objective unable to name a path: `../` and `/` are
+   separators. A declared `context.budgetBytes` must be an integer in `1..=1 MiB`; anything
+   else refuses the node (`Unassemblable`) rather than silently applying the default.
+2. `BoundedSourceSearch::search` — the workspace channel of #622 (`WorkspaceSourceChannel`),
+   ranked by (distinct terms matched, path), text suffixes only, `.factory/` and the other
+   working-notes prefixes excluded — within `context::SEARCH_BOUNDS`: 50,000 entries visited,
+   20,000 files opened, 256 MiB read, 12 terms / 1,024 term bytes, 8 results.
+3. `BoundedSourceReader::read_prefix` — `WorkspaceExcerptReader`, root-contained through
+   `RelativePath` + `resolve_within`, no-follow — at most 16 KiB per candidate, at most 8
+   candidates, at most 64 KiB shipped in total. A ceiling REFUSES the item it would cut and counts
+   it; nothing is trimmed to fit. The one declared partial is the prefix read, stated in the item
+   text as `bytes 0..n of len`. **Secrets never enter a capsule** (AGENTS.md invariant): a
+   credential LOCATION (`.env*`, `*.key`, `*.token`, `.graphhelm/`, `keyring/`) is refused before
+   a byte is read, and an excerpt carrying a secret SHAPE (`context::SECRET_SHAPES`: a bare
+   64-hex run that is not a `sha256:` digest, an `sk-`/`ghp_`/`AKIA` token, a PEM private-key
+   block, a `password=`/`token=`/`secret=` assignment) is refused after the read and before it
+   can become an item; both are counted as `candidatesSecretShaped`, never named.
+4. `context_compiler::fit_within_budget` against the node's `context.budgetBytes` (default 32
+   KiB; optional items only, so a node with nothing that fits still runs), then
+   `compile_capsule` with a single `evidence` section of `source://<repository-relative path>`
+   items carrying the excerpt. The budget bounds the RENDERED capsule, framing included: the
+   last-ranked item is dropped (and counted) until the compiled bytes fit.
+5. The capsule bytes are the third field of `AssembledPrompt` and enter its length-prefixed
+   digest, so the sealed record names exactly what the model was shown; on the wire the executor
+   places the capsule between the system block and the task.
+6. Accounting: a content-free `context-provenance@1` record seals beside the reply — paths,
+   counts, digest, and six lines in the accounting receipt's own `CostField` vocabulary:
+   `zero_result_queries`, `retrieval_pages`, `retrieval_fallbacks` `measured` (producer
+   `context_retrieval`); `compiled_input_tokens`, `eligible_candidate_tokens`, `tokens_saved`
+   `derived` under the estimator below, with the arithmetic in each note. The accounting
+   receipt's own six context lines stay `unavailable`: the schema-evolution guards admit only
+   comparator-compatible changes to a schema the frozen release never held, and its positional
+   lines cannot change that way (`schemas/CHANGELOG.md`); they move at the next frozen baseline.
+   The drive reply publishes the same numbers per node under `context.nodes`; a door that holds
+   only the projection publishes `context.nodes: null` with the reason.
+
+**The estimator, `bytes-div-4/v1`** (§9.2 of the roadmap, "a free compiler byproduct … stated
+explicitly as a conservative lower bound"): `tokens = bytes / 4`, floored. `eligible` is the total
+length of every candidate the search returned before any cut, `shipped` is the capsule's own
+length, `saved = eligible − shipped` floored at zero. It is an estimate and is recorded as one
+(`derived`, never `measured`); a provider that reports per-part counts would let
+`compiled_input_tokens` move to `measured` under the same field.
+
+**Fallbacks, all counted, none fatal.** No terms, a refused search (`Unavailable` /
+`BoundExceeded`), zero candidates, no readable candidate, nothing that fits the budget
+(`nothing_fits_budget` — raise the budget), or only secret-shaped candidates
+(`secret_shaped_candidate`): `retrieval_fallbacks = 1`, the fallback's name in the provenance,
+the node runs with an empty capsule. Zero candidates is additionally `zero_result_queries = 1`.
+An immediate stop that arrives while a node's context is compiling is observed: the compile is
+raced against the cancel channel and nothing after it is dispatched.
+
+**Measured** (`adapters/tool-host/tests/context_quality.rs`, ten objective → expected-file pairs
+written from real files). The floor is asserted over a **frozen corpus**
+(`adapters/tool-host/tests/fixtures/context-quality/tree`: the ten target files and five decoy
+documents copied byte-for-byte from `1ac2438e`, pinned by sha256 in its `MANIFEST.md`, which the
+test re-derives before measuring): **hit rate@3 (success@3) = 9/10 = 0.90** — the one relevant
+file is in the top three; with one relevant document per query, precision@3 would max out at
+1/3, so hit rate is the number measured — tokens over the ten cases
+eligible 902,886 / shipped 55,782 / saved 847,104. The one miss is `context_accounting.rs`,
+outranked by the changelog, the decision register and `serve/mod.rs`. The live repository tree is
+measured by the same test and the number printed with no floor (the test's own path and the
+fixture excluded from the count, because both hold the objectives): 6/10 = 0.60 at `0e398e75`
+(eligible 1,629,696 / shipped 60,713 / saved 1,568,983; 1,556,434 / 61,810 / 1,494,624 after the
+secret-shape refusal) and 4/10 = 0.40 at `1ac2438e`, after three merges of documentation
+(`docs/install/GETTING_STARTED.md`, `docs/product/PROVIDER_LESS_MODE.md`, the decision register)
+outranked implementation files for two more objectives with no retrieval code changing — which is
+why the floor is no longer over the live tree. The misses are what a term-count ranking does:
+`CHANGELOG.md` and `docs/DECISION_REGISTER.md` mention every subsystem and outrank the file that
+implements it. Two sources ship per case on average, because a 16 KiB prefix of two large files
+fills a 32 KiB budget — the excerpt is a prefix, not the passage that matched.
+
+**What does not run** (open under #302): entity RRF, graph-neighbour RRF, vectors, authority
+ranking, passage-level excerpts, the Knowledge Graph (#111), Dreams, and the RetrievalPlan
+adapter half of #724 (the producer half — `development compile-context` on the same
+`context::compile_items` — is closed by #1065).
+
 ## 2. Three-layer architecture of truth
 
 ```mermaid

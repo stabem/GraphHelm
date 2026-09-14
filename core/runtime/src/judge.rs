@@ -64,6 +64,9 @@ pub fn assemble(work: &JudgeWork) -> AssembledPrompt {
     AssembledPrompt {
         system,
         task,
+        // The blind judge's diet is the story and the surface, nothing else (M06 Task 5):
+        // no project capsule reaches it, by the same fence its signature draws.
+        context: String::new(),
         sha256,
     }
 }

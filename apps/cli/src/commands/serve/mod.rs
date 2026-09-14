@@ -118,9 +118,10 @@ struct ServeState {
     /// concurrency model: the store's own exclusive append lock is what serializes concurrent
     /// writers safely, not anything this server does.
     events: Arc<Path>,
-    /// Milestone 05d Task 9: the real-executor wiring, present only when `serve` was launched
-    /// with the full `{manifest, broker, keyring, key-id, route, staging}` group (STEP 2's
-    /// grouping rule). `None` keeps the 05a fixture-only shape unchanged.
+    /// Milestone 05d Task 9: the real-executor wiring, present when `serve` was launched with
+    /// at least one real half — the model half `{manifest, broker, route}` or the tool half
+    /// `{staging, allow-program}` (#1066), each with `{keyring, key-id}`. `None` keeps the 05a
+    /// fixture-only shape unchanged.
     runtime: Option<Arc<RuntimeWiring>>,
     /// The keyring coordinates alone, present whenever `--keyring`/`--key-id` were given —
     /// independently of `runtime` (STEP 2: `{keyring, key-id}` is its own all-or-none group,
@@ -195,12 +196,18 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
 // real work -- it made GROWTH of the default a visible test change -- but its subject no longer
 // exists, and a guard whose subject is gone certifies nothing while still looking like coverage.
 
-/// STEP 2's grouping rule, enforced once at startup (`serve_invalid` on violation) rather than
-/// per-request: `{manifest, broker, route, staging}` is all-or-none; `{keyring, key-id}` is
-/// all-or-none; real-executor mode (a non-`None` `RuntimeWiring`) additionally requires BOTH
-/// groups present together. A manifest is loaded and validated here (`RouteManifest::from_json`,
-/// fail fast) and the configured `--route` is resolved to a cloned `ModelRoute` — never re-parsed
-/// per drive.
+/// STEP 2's grouping rule as #1066 reshaped it, enforced once at startup (`serve_invalid` on
+/// violation) rather than per-request. Two independent all-or-none groups make the real halves:
+/// `{manifest, broker, route}` is the MODEL half, `{staging, allow-program}` is the TOOL half;
+/// either, both, or neither. `{keyring, key-id}` is its own all-or-none group, usable alone as
+/// sealing-only configuration, and REQUIRED whenever either real half is present — real work
+/// seals evidence, and a keyring is what it seals under. A manifest is loaded and validated
+/// here (`RouteManifest::from_json`, fail fast) and the configured `--route` is resolved to a
+/// cloned `ModelRoute` — never re-parsed per drive.
+///
+/// Before this, the four executor flags were ONE group and a tool node could not run a real
+/// `cargo test` unless a model route was also configured — the "invent an API key to get past
+/// setup" smell `gateway/keyring.rs` already names for messages, applied to tools.
 ///
 /// The third element is the startup WARNINGS: conditions that do not stop `serve` but that the
 /// operator should read on the `serve.started` line (today: a keyring the key does not open).
@@ -216,17 +223,43 @@ fn build_wiring(
     Failure,
 > {
     let mut warnings = Vec::new();
-    let executor_group = [
+    let model_group = [
         args.manifest.is_some(),
         args.broker.is_some(),
         args.route.is_some(),
-        args.staging.is_some(),
     ];
-    let executor_all = executor_group.iter().all(|present| *present);
-    let executor_none = executor_group.iter().all(|present| !*present);
-    if !executor_all && !executor_none {
+    let model_all = model_group.iter().all(|present| *present);
+    let model_none = model_group.iter().all(|present| !*present);
+    if !model_all && !model_none {
         return Err(serve_invalid(
-            "--manifest, --broker, --route and --staging must be given together or not at all",
+            "--manifest, --broker and --route must be given together or not at all",
+            "/arguments",
+        ));
+    }
+    // #583: the program allowlist is the set of executables an execution may spawn, so it is
+    // DECLARED or the execution does not start. It used to default to two names when the operator
+    // gave none, which made a deliberate choice and an inherited one produce byte-identical
+    // journals -- the record kept the list and lost the decision.
+    //
+    // The cure makes the ambiguous state unrepresentable instead of recording it: with no default,
+    // every journal's allowlist was chosen by someone. #1066 folds the allowlist into the tool
+    // half's own all-or-none group: `--staging` without `--allow-program` is the undeclared
+    // allowlist #583 refuses, and `--allow-program` without `--staging` is a list nothing would
+    // ever consult.
+    //
+    // This sits BEFORE the manifest is read, with the other argument-shape refusals, so an
+    // operator learns what is missing without first needing every path to be valid.
+    //
+    // The message names the FLAGS and never the programs. If it suggested a list, every operator
+    // would paste that list back and "declared deliberately" would be theatre -- the refusal asks
+    // the question, it does not hand over an answer.
+    let tool_group = [args.staging.is_some(), !args.allow_program.is_empty()];
+    let tool_all = tool_group.iter().all(|present| *present);
+    let tool_none = tool_group.iter().all(|present| !*present);
+    if !tool_all && !tool_none {
+        return Err(serve_invalid(
+            "--staging and --allow-program must be given together or not at all: the set of \
+             programs an execution may spawn is declared per run, never defaulted",
             "/arguments",
         ));
     }
@@ -239,32 +272,9 @@ fn build_wiring(
             "/arguments",
         ));
     }
-    if executor_all && !keyring_all {
+    if (model_all || tool_all) && !keyring_all {
         return Err(serve_invalid(
             "the real-executor flags require --keyring and --key-id as well",
-            "/arguments",
-        ));
-    }
-    // #583: the program allowlist is the set of executables an execution may spawn, so it is
-    // DECLARED or the execution does not start. It used to default to two names when the operator
-    // gave none, which made a deliberate choice and an inherited one produce byte-identical
-    // journals -- the record kept the list and lost the decision.
-    //
-    // The cure makes the ambiguous state unrepresentable instead of recording it: with no default,
-    // every journal's allowlist was chosen by someone. That is the same shape as this module's
-    // sibling rules, where a half-given group is refused rather than completed on the caller's
-    // behalf.
-    //
-    // This sits BEFORE the manifest is read, with the other argument-shape refusals, so an
-    // operator learns what is missing without first needing every path to be valid.
-    //
-    // The message names the FLAG and never the programs. If it suggested a list, every operator
-    // would paste that list back and "declared deliberately" would be theatre -- the refusal asks
-    // the question, it does not hand over an answer.
-    if executor_all && args.allow_program.is_empty() {
-        return Err(serve_invalid(
-            "the real-executor flags require --allow-program: the set of programs an execution \
-             may spawn is declared per run, never defaulted",
             "/arguments",
         ));
     }
@@ -301,11 +311,8 @@ fn build_wiring(
         None
     };
 
-    let runtime = if executor_all {
-        let manifest_path = args
-            .manifest
-            .as_ref()
-            .expect("executor_all guarantees Some");
+    let model = if model_all {
+        let manifest_path = args.manifest.as_ref().expect("model_all guarantees Some");
         // The same bounded, regular-file-only read the per-request re-read uses (#559), so the
         // manifest `serve` starts on cannot be one it would later refuse.
         let bytes =
@@ -323,7 +330,7 @@ fn build_wiring(
             .map_err(|_| serve_invalid("--manifest is not valid UTF-8", "/manifest"))?;
         let manifest = RouteManifest::from_json(&text)
             .map_err(|error| serve_invalid(&error.to_string(), "/manifest"))?;
-        let route_id = args.route.as_ref().expect("executor_all guarantees Some");
+        let route_id = args.route.as_ref().expect("model_all guarantees Some");
         // Through `ports::find_route`, not an inline `find` here: a request can now name a route
         // too, and the day these two lookups are written twice is the day they disagree. The
         // lookup also filters `enabled` (PR #467 review), so a disabled route refuses at startup
@@ -334,19 +341,36 @@ fn build_wiring(
                 "/route",
             )
         })?;
-        // Never empty: the argument check above refuses an executor run that declared none.
-        let allow_programs = args.allow_program.clone();
-        Some(RuntimeWiring {
+        Some(ports::ModelWiring {
             manifest_path: manifest_path.clone(),
             route,
-            broker_dir: args.broker.clone().expect("executor_all guarantees Some"),
-            keyring_dir: args.keyring.clone().expect("executor_all guarantees Some"),
-            key_id: args.key_id.clone().expect("executor_all guarantees Some"),
-            staging: args.staging.clone().expect("executor_all guarantees Some"),
-            project: args.project.clone(),
-            tests_runner: args.tests_runner.clone(),
-            allow_programs,
-            path_prepend: args.path_prepend.clone(),
+            broker_dir: args.broker.clone().expect("model_all guarantees Some"),
+        })
+    } else {
+        None
+    };
+
+    let tools = tool_all.then(|| ports::ToolWiring {
+        staging: args.staging.clone().expect("tool_all guarantees Some"),
+        project: args.project.clone(),
+        tests_runner: args.tests_runner.clone(),
+        // Never empty: the group check above refuses a staging area that declared none.
+        allow_programs: args.allow_program.clone(),
+        path_prepend: args.path_prepend.clone(),
+    });
+
+    let runtime = if model.is_some() || tools.is_some() {
+        Some(RuntimeWiring {
+            model,
+            tools,
+            keyring_dir: args
+                .keyring
+                .clone()
+                .expect("a real half guarantees the keyring"),
+            key_id: args
+                .key_id
+                .clone()
+                .expect("a real half guarantees the key id"),
         })
     } else {
         None
@@ -372,9 +396,16 @@ async fn serve_forever(
     // writes through a `LineWriter` and so flushes on the trailing newline regardless of
     // piping, but the explicit flush below makes the ordering (bind, print, flush, then serve
     // forever) airtight rather than relying on that implementation detail.
+    // `executors` says which halves are REAL on this server (#1073): a client reading the
+    // startup line learns whether its cognitive nodes and its tool nodes will run or be answered
+    // by fixtures, without having to infer it from a parked node later.
+    let executors = ExecutorWiring::from_state(&state);
     let started = Outcome::success(
         STARTED_COMMAND,
-        serde_json::json!({ "address": bound.to_string() }),
+        serde_json::json!({
+            "address": bound.to_string(),
+            "executors": { "model": executors.model, "tools": executors.tools },
+        }),
     )
     .with_warnings(startup_warnings);
     crate::output::print(&started.output, false);
@@ -1123,28 +1154,65 @@ type MutationFuture<'a> =
 /// compiles, and the failure mode would be exactly the silence this diagnostic exists to close.
 /// The enum makes the wrong value a name mismatch a reader catches at the call site, not a
 /// swapped `true`/`false` that reads the same either way.
+///
+/// Per KIND since #1066 (Codex, on #1073): the two halves are wired independently, so "real" is
+/// a question about cognitive nodes and a question about tool nodes, and a single answer was
+/// wrong for one of them in every half-wired deployment — a model-only server let a tool node
+/// "succeed" from a fixture with no diagnostic, and a tools-only server printed "no
+/// real-executor wiring" over a tool host that was running.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ExecutorWiring {
-    FixtureOnly,
-    Real,
+struct ExecutorWiring {
+    /// Cognitive nodes (agent, planner, classifier, evaluator) run on a real model route.
+    model: bool,
+    /// Tool nodes run on the real tool host.
+    tools: bool,
 }
 
 impl ExecutorWiring {
+    /// Neither half wired: every node is answered by fixtures — the 05a server.
+    const FIXTURE_ONLY: Self = Self {
+        model: false,
+        tools: false,
+    };
+
     fn from_state(state: &ServeState) -> Self {
-        if state.runtime.is_some() {
-            Self::Real
-        } else {
-            Self::FixtureOnly
+        match state.runtime.as_ref() {
+            Some(wiring) => Self {
+                model: wiring.model.is_some(),
+                tools: wiring.tools.is_some(),
+            },
+            None => Self::FIXTURE_ONLY,
+        }
+    }
+
+    /// Whether any kind of node is answered by fixtures on this deployment.
+    const fn any_fixture(self) -> bool {
+        !self.model || !self.tools
+    }
+
+    /// The words the GHCLI021/022 diagnostics use for what fixtures answer here.
+    fn fixture_kinds(self) -> &'static str {
+        match (self.model, self.tools) {
+            (false, false) => "every node (fixture-only mode)",
+            (false, true) => "cognitive nodes (tools-only mode: the tool host is real)",
+            (true, false) => "tool nodes (model-only mode: the model route is real)",
+            (true, true) => "no node",
         }
     }
 
     /// The executor `start` declares on the form (#1063), read off the SAME predicate that
     /// decides the fixture-only warning above - one answer to "what runs the nodes here", so
     /// the declaration and the diagnostic cannot disagree.
+    ///
+    /// The declaration has two words (`fixture` | `gateway`) and the wiring is per kind
+    /// (#1066): it is `gateway` the moment EITHER half is real, since a node then runs on a
+    /// real port and a briefing must not say `fixture` over a tool host that ran `cargo test`.
+    /// Which kinds fixtures still answer is what GHCLI021/022 name on the reply.
     pub(super) const fn declared(self) -> graphhelm_protocols::DeclaredExecutor {
-        match self {
-            Self::Real => graphhelm_protocols::DeclaredExecutor::Gateway,
-            Self::FixtureOnly => graphhelm_protocols::DeclaredExecutor::Fixture,
+        if self.model || self.tools {
+            graphhelm_protocols::DeclaredExecutor::Gateway
+        } else {
+            graphhelm_protocols::DeclaredExecutor::Fixture
         }
     }
 }
@@ -1776,21 +1844,26 @@ enum WaitingInputCheck {
     Undetermined,
 }
 
-fn fixture_only_diagnostic(check: WaitingInputCheck) -> Option<Diagnostic> {
+fn fixture_only_diagnostic(check: WaitingInputCheck, wiring: ExecutorWiring) -> Option<Diagnostic> {
+    let kinds = wiring.fixture_kinds();
     match check {
         WaitingInputCheck::Present => Some(Diagnostic::warning(
             crate::error_codes::GHCLI021_FIXTURE_ONLY_WAITING_INPUT,
-            "this deployment has no real-executor wiring (fixture-only mode); a node with no \
-             fixture answer parks in waiting_input and will never proceed on its own -- this is a \
-             configuration state, not a workflow wait",
+            format!(
+                "this deployment answers {kinds} from node fixtures; such a node with no fixture \
+                 answer parks in waiting_input and will never proceed on its own -- this is a \
+                 configuration state, not a workflow wait"
+            ),
             "/",
             SOURCE,
         )),
         WaitingInputCheck::Undetermined => Some(Diagnostic::warning(
             crate::error_codes::GHCLI022_FIXTURE_ONLY_STATE_UNDETERMINED,
-            "this deployment has no real-executor wiring (fixture-only mode), and whether any \
-             node is parked in waiting_input could not be determined -- the store could not be \
-             re-read after this mutation",
+            format!(
+                "this deployment answers {kinds} from node fixtures, and whether any node is \
+                 parked in waiting_input could not be determined -- the store could not be \
+                 re-read after this mutation"
+            ),
             "/",
             SOURCE,
         )),
@@ -1804,8 +1877,9 @@ fn annotate_fixture_only(
     execution: &str,
     wiring: ExecutorWiring,
 ) {
-    if wiring == ExecutorWiring::FixtureOnly
-        && let Some(diagnostic) = fixture_only_diagnostic(check_waiting_input(events, execution))
+    if wiring.any_fixture()
+        && let Some(diagnostic) =
+            fixture_only_diagnostic(check_waiting_input(events, execution), wiring)
     {
         output.diagnostics.push(diagnostic);
     }
@@ -2195,7 +2269,7 @@ mod tests {
             Path::new("unused-because-annotation-fails-first"),
             "exec-unused",
             "execution.signal",
-            ExecutorWiring::FixtureOnly,
+            ExecutorWiring::FIXTURE_ONLY,
             serde_json::json!("not-an-object"),
             17,
         );
@@ -2287,7 +2361,7 @@ mod tests {
                 execution_id,
                 "execution.signal",
                 identity,
-                ExecutorWiring::FixtureOnly,
+                ExecutorWiring::FIXTURE_ONLY,
                 MutationObservation {
                     after_absent_preflight: async move {
                         rendezvous.wait().await;
@@ -2419,7 +2493,7 @@ mod tests {
             "an unreadable store must not answer the same as a store that read cleanly and \
              found nothing waiting"
         );
-        let diagnostic = fixture_only_diagnostic(check)
+        let diagnostic = fixture_only_diagnostic(check, ExecutorWiring::FIXTURE_ONLY)
             .expect("an undetermined fixture-only state must produce GHCLI022");
         assert_eq!(
             diagnostic.code,

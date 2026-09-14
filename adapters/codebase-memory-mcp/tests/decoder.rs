@@ -616,6 +616,9 @@ fn receipt_contains_only_recorded_evidence_and_marks_missing_identity_unavailabl
         reused: false,
         verified_executable: None,
         contained_session: None,
+        commit: None,
+        landed_ref: None,
+        recovered_workspace: false,
     };
 
     let receipt = TransportReceipt::from_record(&record);

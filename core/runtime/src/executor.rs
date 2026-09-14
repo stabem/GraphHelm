@@ -200,14 +200,13 @@ const fn reason_for_gateway_error(
     }
 }
 
-impl PortExecutor {
-    fn cognitive_outcome(
-        &self,
-        reply: Result<
-            graphhelm_gateway::call::ModelReply,
-            graphhelm_gateway::taxonomy::GatewayError,
-        >,
-    ) -> WorkOutcome {
+/// A plain cognitive reply mapped onto an outcome. A free function rather than a method (#1066):
+/// [`PortExecutor`] and [`ModelExecutor`] map replies identically, and one body is how they stay
+/// identical.
+fn cognitive_outcome(
+    reply: Result<graphhelm_gateway::call::ModelReply, graphhelm_gateway::taxonomy::GatewayError>,
+) -> WorkOutcome {
+    {
         match reply {
             Ok(reply) => {
                 let sealed = serde_json::to_vec(&reply).expect("a reply serializes");
@@ -264,12 +263,16 @@ impl PortExecutor {
             },
         }
     }
+}
 
-    fn tool_outcome(
-        &self,
-        result: crate::ports::ToolPortResult,
-        failure_semantics: ToolFailureSemantics,
-    ) -> WorkOutcome {
+/// A tool port result mapped onto an outcome: the disposition decides, the record and both
+/// streams seal. Free for the same reason as [`cognitive_outcome`]: [`PortExecutor`] and
+/// [`ToolExecutor`] must map one result to one outcome.
+fn tool_outcome(
+    result: crate::ports::ToolPortResult,
+    failure_semantics: ToolFailureSemantics,
+) -> WorkOutcome {
+    {
         use graphhelm_tool_broker::record::ToolDisposition;
         let outcome = match &result.record.disposition {
             ToolDisposition::Completed { exit_code: 0 } => NodeOutcome::Succeeded,
@@ -332,6 +335,144 @@ impl PortExecutor {
     }
 }
 
+/// The cognitive half of a real executor, on its own (#1066): a model port and the route it
+/// answers on. `Tool` and `GateCheck` work is `Unsupported` here — this executor is meant to be
+/// one arm of a [`SplitExecutor`], never the whole answer.
+pub struct ModelExecutor {
+    pub model: std::sync::Arc<dyn crate::ports::ModelPort>,
+    pub route_id: String,
+}
+
+impl AsyncNodeExecutor for ModelExecutor {
+    fn cancel_all(&self) {
+        self.model.cancel_all();
+    }
+
+    fn execute<'a>(
+        &'a self,
+        work: &'a NodeWork,
+    ) -> Pin<Box<dyn Future<Output = Result<WorkOutcome, ExecutorRefusal>> + Send + 'a>> {
+        Box::pin(async move {
+            match work.kind {
+                crate::classify::NodeWorkKind::Cognitive => {
+                    Ok(cognitive_work(self.model.as_ref(), &self.route_id, work).await)
+                }
+                crate::classify::NodeWorkKind::Tool | crate::classify::NodeWorkKind::GateCheck => {
+                    Err(ExecutorRefusal::Unsupported)
+                }
+            }
+        })
+    }
+}
+
+/// The tool half of a real executor, on its own (#1066): the tool port, the lease and the actor
+/// every call presents. `Cognitive` and `GateCheck` work is `Unsupported` here, for the reason
+/// [`ModelExecutor`] gives.
+pub struct ToolExecutor {
+    pub tools: std::sync::Arc<dyn crate::ports::ToolPort>,
+    pub lease: graphhelm_tool_broker::lease::ToolLease,
+    pub actor: String,
+}
+
+impl AsyncNodeExecutor for ToolExecutor {
+    fn cancel_all(&self) {
+        self.tools.cancel_all();
+    }
+
+    fn execute<'a>(
+        &'a self,
+        work: &'a NodeWork,
+    ) -> Pin<Box<dyn Future<Output = Result<WorkOutcome, ExecutorRefusal>> + Send + 'a>> {
+        Box::pin(async move {
+            match work.kind {
+                crate::classify::NodeWorkKind::Tool => {
+                    tool_work(self.tools.as_ref(), &self.lease, &self.actor, work).await
+                }
+                crate::classify::NodeWorkKind::Cognitive
+                | crate::classify::NodeWorkKind::GateCheck => Err(ExecutorRefusal::Unsupported),
+            }
+        })
+    }
+}
+
+/// Dispatch by [`crate::classify::NodeWorkKind`] between two executors (#1066): cognitive work
+/// to `cognitive`, tool work to `tool`, gate checks to the registry — so a deployment can wire
+/// a real tool host with NO model credential (cognitive nodes answered by fixtures, tool nodes by
+/// the host), or a model route with no tool host, and the journal records exactly which half
+/// was real. Each arm is asked only for the kind it was wired for; an arm that cannot answer
+/// refuses (`Unsupported`) rather than answering for the other.
+///
+/// [`PortExecutor`] remains the all-real composition and is unchanged for callers that have both
+/// halves; this exists for the halves.
+pub struct SplitExecutor {
+    pub cognitive: std::sync::Arc<dyn AsyncNodeExecutor>,
+    pub tool: std::sync::Arc<dyn AsyncNodeExecutor>,
+    /// The same registry the driver reads digests from (#668) — see [`PortExecutor::gates`].
+    pub gates: std::sync::Arc<dyn crate::ports::GateRegistryPort>,
+}
+
+impl AsyncNodeExecutor for SplitExecutor {
+    fn cancel_all(&self) {
+        self.cognitive.cancel_all();
+        self.tool.cancel_all();
+    }
+
+    fn execute<'a>(
+        &'a self,
+        work: &'a NodeWork,
+    ) -> Pin<Box<dyn Future<Output = Result<WorkOutcome, ExecutorRefusal>> + Send + 'a>> {
+        Box::pin(async move {
+            match work.kind {
+                crate::classify::NodeWorkKind::Cognitive => self.cognitive.execute(work).await,
+                crate::classify::NodeWorkKind::Tool => self.tool.execute(work).await,
+                crate::classify::NodeWorkKind::GateCheck => {
+                    let Some(gate) = work.gate_check.as_ref() else {
+                        return Err(ExecutorRefusal::Unassemblable);
+                    };
+                    gate_check_outcome(gate, self.gates.as_ref())
+                }
+            }
+        })
+    }
+}
+
+/// One cognitive attempt through a model port: the prompt on the wire, the plain or judge
+/// mapping on the way back. Shared by [`PortExecutor`] and [`ModelExecutor`].
+async fn cognitive_work(
+    model: &dyn crate::ports::ModelPort,
+    route_id: &str,
+    work: &NodeWork,
+) -> WorkOutcome {
+    // One prompt string on the wire: the assembled system block then the task, in the
+    // assembler's fixed order (the gateway's ModelCall carries a single prompt channel).
+    let prompt = format!("{}\n{}", work.prompt.system, work.prompt.task);
+    let call = graphhelm_gateway::call::ModelCall {
+        prompt,
+        max_tokens: DEFAULT_MAX_TOKENS,
+    };
+    let reply = model.call(route_id, &call).await;
+    match work.judge.as_ref() {
+        Some(judge) => judge_outcome(judge, reply),
+        None => cognitive_outcome(reply),
+    }
+}
+
+/// One tool attempt through a tool port. Shared by [`PortExecutor`] and [`ToolExecutor`]: a
+/// Tool node with no decided call cannot be executed honestly — the executor must not invent
+/// one.
+async fn tool_work(
+    tools: &dyn crate::ports::ToolPort,
+    lease: &graphhelm_tool_broker::lease::ToolLease,
+    actor: &str,
+    work: &NodeWork,
+) -> Result<WorkOutcome, ExecutorRefusal> {
+    let Some(call) = work.tool_call.as_ref() else {
+        return Err(ExecutorRefusal::Unassemblable);
+    };
+    let result = tools.invoke(call, lease, actor).await;
+    Ok(tool_outcome(result, work.tool_failure_semantics))
+}
+
 impl AsyncNodeExecutor for PortExecutor {
     fn cancel_all(&self) {
         self.model.cancel_all();
@@ -345,28 +486,10 @@ impl AsyncNodeExecutor for PortExecutor {
         Box::pin(async move {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
-                    // One prompt string on the wire: the assembled system block then the
-                    // task, in the assembler's fixed order (the gateway's ModelCall carries
-                    // a single prompt channel).
-                    let prompt = format!("{}\n{}", work.prompt.system, work.prompt.task);
-                    let call = graphhelm_gateway::call::ModelCall {
-                        prompt,
-                        max_tokens: DEFAULT_MAX_TOKENS,
-                    };
-                    let reply = self.model.call(&self.route_id, &call).await;
-                    match work.judge.as_ref() {
-                        Some(judge) => Ok(judge_outcome(judge, reply)),
-                        None => Ok(self.cognitive_outcome(reply)),
-                    }
+                    Ok(cognitive_work(self.model.as_ref(), &self.route_id, work).await)
                 }
                 crate::classify::NodeWorkKind::Tool => {
-                    let Some(call) = work.tool_call.as_ref() else {
-                        // A Tool node with no decided call cannot be executed honestly —
-                        // the executor must not invent one.
-                        return Err(ExecutorRefusal::Unassemblable);
-                    };
-                    let result = self.tools.invoke(call, &self.lease, &self.actor).await;
-                    Ok(self.tool_outcome(result, work.tool_failure_semantics))
+                    tool_work(self.tools.as_ref(), &self.lease, &self.actor, work).await
                 }
                 crate::classify::NodeWorkKind::GateCheck => {
                     let Some(gate) = work.gate_check.as_ref() else {

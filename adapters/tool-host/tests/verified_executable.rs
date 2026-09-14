@@ -162,6 +162,9 @@ fn the_identity_round_trips_and_old_records_decode_as_none() {
             sha256: digest_hex(b"the provider bytes"),
         }),
         contained_session: None,
+        commit: None,
+        landed_ref: None,
+        recovered_workspace: false,
     };
     let wire = serde_json::to_string(&record).expect("encodes");
     let back: ToolCallRecord = serde_json::from_str(&wire).expect("decodes");

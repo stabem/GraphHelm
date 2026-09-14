@@ -79,6 +79,9 @@ impl ToolPort for FakeToolPort {
             reused: false,
             verified_executable: None,
             contained_session: None,
+            commit: None,
+            landed_ref: None,
+            recovered_workspace: false,
         };
         Box::pin(async move {
             ToolPortResult {

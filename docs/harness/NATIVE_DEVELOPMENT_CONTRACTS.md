@@ -629,9 +629,9 @@ closed vocabulary, and refuses a COMPLETE claim the producer's own record contra
 ```
 core/runtime/src/retrieval.rs:490   fn plan_coverage_is_a_closed_token
 core/runtime/src/retrieval.rs:371   return Err(RetrievalReceiptError::CoveragePromotion)
-core/runtime/tests/retrieval.rs:3113
+core/runtime/tests/retrieval.rs:3116
        a_plan_coverage_token_outside_the_closed_vocabulary_is_refused
-core/runtime/tests/retrieval.rs:3193
+core/runtime/tests/retrieval.rs:3196
        the_committed_s2_corpus_is_refused_by_the_retrieval_plan_compiler
 ```
 

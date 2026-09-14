@@ -2819,3 +2819,368 @@ fn the_envelope_form_names_the_whole_body_when_a_key_is_missing() {
          {message}"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// #1066: a useful change lands — tools without a model credential, one Tier 1 workspace per
+// execution, the commit as a ref.
+// -------------------------------------------------------------------------------------------
+
+/// The runner's "test": `git grep -n FIXED -- src/lib.rs`. Exit 1 before the patch (nothing
+/// matches), exit 0 after, and the matching line is the runner's REAL stdout — cheap, no toolchain,
+/// and a genuine verdict about the tree the execution changed. `--tests-runner git` makes `git` the
+/// runner; the node supplies only the arguments.
+const USEFUL_CHANGE_PATCH: &str = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n // scratch\n+pub const FIXED: bool = true;\n";
+
+/// Three TOOL nodes and nothing cognitive: apply the fix, run the test, commit. Control edges in
+/// that order; every node is required; `commit` is terminal.
+fn useful_change_graph(directory: &Path, execution_id: &str) -> PathBuf {
+    let patch_block = USEFUL_CHANGE_PATCH
+        .lines()
+        .map(|line| format!("{}{line}", " ".repeat(12)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let yaml = format!(
+        r#"apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_useful_change_v1
+  name: A useful change lands
+  executionId: {execution_id}
+  version: 1
+spec:
+  entrypoints:
+    - apply_fix
+  nodes:
+    apply_fix:
+      type: tool
+      name: Apply the fix
+      objective: Apply the unified diff that adds the FIXED constant.
+      optionality: required
+      tool:
+        call:
+          tool: repository
+          action: apply_patch
+          patch: |
+{patch_block}
+    run_tests:
+      type: tool
+      name: Run the tests
+      objective: Prove the fix with the configured tests runner.
+      optionality: required
+      tool:
+        call:
+          tool: tests
+          arguments:
+            - grep
+            - -n
+            - FIXED
+            - --
+            - src/lib.rs
+    land:
+      type: tool
+      name: Commit the fix
+      objective: Record the tested tree as a commit the operator can merge.
+      optionality: required
+      tool:
+        call:
+          tool: repository
+          action: commit
+          message: "fix: add the FIXED constant (landed by the execution)"
+  edges:
+    - id: apply_to_tests
+      from: apply_fix
+      to: run_tests
+      type: control
+    - id: tests_to_land
+      from: run_tests
+      to: land
+      type: control
+  budgets:
+    maxParallelModelCalls: 1
+  completion:
+    terminalNodes:
+      - land
+"#
+    );
+    let path = directory.join("useful-change.yaml");
+    std::fs::write(&path, yaml).unwrap();
+    path
+}
+
+/// `git` in the operator's project, as the operator would run it.
+fn project_git(project: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .args(args)
+        .current_dir(project)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+fn project_git_ok(project: &Path, args: &[&str]) -> String {
+    let output = project_git(project, args);
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// THE JOURNEY (#1066, proof (a)): a temp git project with a "failing test", a graph of three tool
+/// nodes, `serve` with the TOOL half only — `--staging`, `--allow-program`, `--keyring`/`--key-id`,
+/// and NO manifest, broker or route: no model credential anywhere — started over HTTP.
+///
+/// What is proven, each by its own observer: the execution `completed` with every node succeeded;
+/// `refs/graphhelm/executions/<id>` resolves IN THE PROJECT to a commit whose tree carries the fix,
+/// stacked on the commit the project started from; the operator's `HEAD` and working tree are
+/// untouched and no branch was created; the staging directory holds no workspace once the drive
+/// ended; the sealed evidence of the `tests` node is the runner's REAL stdout (the grep hit on the
+/// patched line); the sealed record of the `commit` node names the ref and the commit; and the
+/// finished stream replays byte-identically twice.
+#[test]
+fn a_useful_change_lands_with_tools_and_no_model_credential() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-tools-only";
+    keyring_init(&keyring, key_id);
+    let project = scratch_project(directory.path());
+    let head_before = project_git_ok(&project, &["rev-parse", "HEAD"]);
+    // The "test" fails before the change: the constant is not there yet.
+    assert_eq!(
+        project_git(&project, &["grep", "-n", "FIXED", "--", "src/lib.rs"])
+            .status
+            .code(),
+        Some(1),
+        "the scratch project must start with the test failing"
+    );
+
+    let execution = "exec-useful-change";
+    let graph = useful_change_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--tests-runner".into(),
+            "git".into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+        ],
+        // Only the EVENTS key: there is no gateway to unlock.
+        env: vec![("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key())],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+
+    let (status_code, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "useful-change-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status_code, 200, "{reply}");
+    assert_eq!(
+        reply["data"]["status"], "completed",
+        "the tools-only story must complete: {reply}"
+    );
+    assert_eq!(reply["data"]["nodeStateCounts"]["succeeded"], 3, "{reply}");
+
+    // The ref resolves in the project, to a commit whose tree carries the fix, on top of where the
+    // project started.
+    let reference = format!("refs/graphhelm/executions/{execution}");
+    let landed = project_git_ok(&project, &["rev-parse", &reference]);
+    assert_eq!(landed.len(), 40, "{landed}");
+    let blob = project_git_ok(&project, &["show", &format!("{reference}:src/lib.rs")]);
+    assert!(
+        blob.contains("pub const FIXED: bool = true;"),
+        "the landed tree must carry the fix: {blob:?}"
+    );
+    assert_eq!(
+        project_git_ok(&project, &["rev-parse", &format!("{reference}^")]),
+        head_before
+    );
+    // The test passes in a worktree of that ref — the operator's own check, run the operator's way.
+    let check = directory.path().join("check");
+    project_git_ok(
+        &project,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            check.to_str().unwrap(),
+            &reference,
+        ],
+    );
+    assert_eq!(
+        project_git(&check, &["grep", "-n", "FIXED", "--", "src/lib.rs"])
+            .status
+            .code(),
+        Some(0),
+        "the test must pass in a worktree of the landed ref"
+    );
+    project_git_ok(
+        &project,
+        &["worktree", "remove", "--force", check.to_str().unwrap()],
+    );
+
+    // Sovereignty: the operator's checkout did not move, the file is as they left it, and no
+    // branch appeared.
+    assert_eq!(
+        project_git_ok(&project, &["rev-parse", "HEAD"]),
+        head_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join("src/lib.rs")).unwrap(),
+        "// scratch\n"
+    );
+    assert_eq!(
+        project_git_ok(&project, &["branch", "--list"])
+            .lines()
+            .count(),
+        1,
+        "no branch may be created by an execution"
+    );
+    // The execution's workspace is gone once the drive ended; the ref is what stays.
+    let leftover: Vec<String> = std::fs::read_dir(&staging)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("ghtool-"))
+        .collect();
+    assert!(
+        leftover.is_empty(),
+        "the workspace must be released: {leftover:?}"
+    );
+
+    // Sealed evidence: the tests node's stdout is the runner's real output, and the commit node's
+    // record names the ref and the commit.
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let events_reply = get_json(&events_url, Some(&token));
+    let entries = envelope_array(&events_reply, "events", &events_url);
+    let evidence_id = |node: &str, suffix: &str| -> String {
+        entries
+            .iter()
+            .filter(|entry| {
+                entry["kind"]["type"] == "node_outcome_recorded"
+                    && entry["kind"]["data"]["nodeId"] == node
+            })
+            .filter_map(|entry| entry["evidenceRefs"].as_array())
+            .flatten()
+            .filter_map(|reference| reference["evidenceId"].as_str())
+            .find(|id| id.ends_with(suffix))
+            .unwrap_or_else(|| panic!("{node} must seal a {suffix}: {entries:?}"))
+            .to_owned()
+    };
+    let open = |id: &str| -> String {
+        let url = format!("{base}/v1/executions/{execution}/evidence/{id}");
+        let opened = get_json(&url, Some(&token));
+        assert_eq!(opened["ok"], true, "{opened}");
+        envelope_str(&opened, "content", &url).to_owned()
+    };
+    let tests_stdout = open(&evidence_id("run_tests", "stdout"));
+    assert!(
+        tests_stdout.contains("src/lib.rs:2:pub const FIXED: bool = true;"),
+        "the sealed tests stdout must be the runner's real output: {tests_stdout:?}"
+    );
+    let commit_record: Value = serde_json::from_str(&open(&evidence_id("land", "record")))
+        .expect("the sealed record is JSON");
+    assert_eq!(commit_record["landedRef"], reference, "{commit_record}");
+    assert_eq!(commit_record["commit"], landed, "{commit_record}");
+    assert_eq!(commit_record["tier"], "tier_1", "{commit_record}");
+
+    // Byte-identical double replay of the finished stream — the same clause the all-real story
+    // proves, verbatim.
+    let replay = |_: ()| {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["graph", "replay", "--events", events.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output.stdout
+    };
+    assert_eq!(replay(()), replay(()), "replay must be byte-identical");
+}
+
+/// The tool half is all-or-none and needs the keyring (#1066): `--staging` without
+/// `--allow-program`, `--allow-program` without `--staging`, and the pair without a keyring each
+/// refuse AT STARTUP with `GHCLI006_SERVE_INVALID`, naming the flags and never a program.
+#[test]
+fn a_half_given_tool_half_is_refused_at_startup() {
+    let directory = tempfile::tempdir().unwrap();
+    let staging = directory.path().join("staging");
+    let events = directory.path().join("events");
+    let refusal = |args: &[&str]| -> (Option<i32>, Value) {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["serve", "--bind", "127.0.0.1:0"])
+            .args(["--events", events.to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap();
+        let stdout_text = String::from_utf8_lossy(&output.stdout);
+        let value: Value = serde_json::from_str(stdout_text.trim()).unwrap_or_else(|error| {
+            panic!("stdout must be one JSON envelope ({error}): {stdout_text:?}")
+        });
+        (output.status.code(), value)
+    };
+
+    for (label, args) in [
+        (
+            "staging without allow-program",
+            vec!["--staging", staging.to_str().unwrap()],
+        ),
+        (
+            "allow-program without staging",
+            vec!["--allow-program", "git"],
+        ),
+    ] {
+        let (code, value) = refusal(&args);
+        assert_eq!(code, Some(2), "{label}: {value}");
+        assert_eq!(value["ok"], false, "{label}");
+        assert_eq!(
+            value["diagnostics"][0]["code"], "GHCLI006_SERVE_INVALID",
+            "{label}: {value}"
+        );
+        let message = value["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            message.contains("--staging") && message.contains("--allow-program"),
+            "{label}: the refusal must name both flags: {message}"
+        );
+        assert!(
+            !message.contains("cargo"),
+            "{label}: the refusal must not prescribe a program: {message}"
+        );
+    }
+
+    // The pair without a keyring: real work seals, so sealing must be configured.
+    let (code, value) = refusal(&[
+        "--staging",
+        staging.to_str().unwrap(),
+        "--allow-program",
+        "git",
+    ]);
+    assert_eq!(code, Some(2), "{value}");
+    assert_eq!(value["diagnostics"][0]["code"], "GHCLI006_SERVE_INVALID");
+    let message = value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.contains("--keyring") && message.contains("--key-id"),
+        "the refusal must name the keyring pair: {message}"
+    );
+}

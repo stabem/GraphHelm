@@ -1,5 +1,36 @@
 # Specification Changelog
 
+## A useful change lands: tools without a model credential, #1066 - 2026-09-13
+
+- **`serve` runs real tools with no model route.** The real-executor wiring is now two
+  independent all-or-none halves: `{--manifest, --broker, --route}` wires the model port,
+  `{--staging, --allow-program}` wires the tool host; either, both, or neither, and any real half
+  requires `--keyring`/`--key-id`. With the tool half alone, tool nodes run on the real host and
+  cognitive nodes are answered by node fixtures exactly as in fixture-only mode
+  (`graphhelm_runtime::executor::SplitExecutor`, dispatching by `NodeWorkKind`; `PortExecutor`
+  is unchanged for the all-real case). A half-given group refuses at startup under
+  `GHCLI006_SERVE_INVALID`, naming flags and never programs.
+- **One Tier 1 workspace per execution.** `ToolHost::invoke_for_execution` keys one detached
+  worktree on the execution id and reuses it across that execution's tool calls; the driver
+  releases it when the drive ends (`ToolHost::release`). `ToolHost::invoke` keeps its per-call
+  contract, and `--keep-workspace` keeps a tree past release as it kept one past a call.
+- **The commit lands as a ref.** A completed `commit` runs
+  `git update-ref refs/graphhelm/executions/<execution id> <commit>` in the project — a plain
+  ref, never a branch, never the operator's checkout — and a later drive of the same execution
+  provisions its tree from that ref. `ToolCallRecord` gains `commit` and `landedRef`, both
+  optional and content-free; an id git cannot spell in a ref takes
+  `sha256-<32 hex>` (`graphhelm_tool_broker::record::execution_ref`).
+- **Hooks never run on an execution's behalf; a dead server's tree is reclaimed; landing is a
+  compare-and-swap** (review of #1073). Every spawn through the tool host carries
+  `core.hooksPath` at a hook-free directory via `GIT_CONFIG_*`, not only provisioning; a stale
+  tree at an execution's root is removed and re-provisioned from the ref, recorded as
+  `recoveredWorkspace: true`; `update-ref` passes the expected old value. `serve.started`
+  publishes `executors: {model, tools}`, and GHCLI021/022 name which node kinds fixtures answer.
+- Proof: `apps/cli/tests/runtime_http.rs` (`a_useful_change_lands_with_tools_and_no_model_credential`,
+  `a_half_given_tool_half_is_refused_at_startup`), `adapters/tool-host/tests/execution_workspace.rs`,
+  and the hand-run record `docs/acceptance/useful-change-2026-09-13.md`. Operator doc:
+  `docs/operations/TOOLS_ONLY_RUNTIME.md`.
+
 ## Provider-less mode as a declared guarantee, #1064 - 2026-09-13
 
 - **The promise is written down and held.** `docs/product/PROVIDER_LESS_MODE.md` states that a
@@ -20,6 +51,7 @@
   a stream recorded before the field existed carry nothing.
 - `docs/product/ROADMAP_AND_ACCEPTANCE.md` §3.2.1 row 4 moves from "not declared" to declared
   and held. README and QUICKSTART link the page.
+
 ## The resume briefing: continuity across harnesses, #1063 - 2026-09-13
 
 - **A second harness picks an execution up from the store alone (MVP promise 3 of #302).**

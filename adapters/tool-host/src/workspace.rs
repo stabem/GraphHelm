@@ -102,6 +102,9 @@ impl WorkspaceConfig {
 pub struct Tier1Workspace {
     root: PathBuf,
     project: PathBuf,
+    /// Whether `provision_from` found a stale tree at this root and reclaimed it first (#1073):
+    /// the leftover of a drive whose server died before `release`. Surfaces on the record.
+    recovered: bool,
     /// The counted span that makes `cancel` wait for this workspace's TEARDOWN (#617).
     ///
     /// Taken in `provision` and released when `remove` returns, so the in-flight count never
@@ -130,6 +133,27 @@ impl Tier1Workspace {
         call_id: &str,
         cancel: Option<&CancelSignal>,
     ) -> Result<Self, HostError> {
+        Self::provision_from(config, call_id, cancel, "HEAD")
+    }
+
+    /// [`Tier1Workspace::provision`] at an explicit start point instead of `HEAD` (#1066): an
+    /// execution whose earlier drive already landed `refs/graphhelm/executions/<id>` continues
+    /// from ITS OWN last commit, not from wherever the operator's checkout has moved since.
+    ///
+    /// `start_point` is a ref name or `HEAD`, never caller input: the host derives it from the
+    /// execution id through `graphhelm_tool_broker::record::execution_ref`, and a ref name
+    /// cannot begin with `-` or contain whitespace under that derivation, so it never reads as
+    /// a git option.
+    ///
+    /// # Errors
+    /// As [`Tier1Workspace::provision`]; a start point git cannot resolve refuses with
+    /// [`HostError::Config`].
+    pub fn provision_from(
+        config: &WorkspaceConfig,
+        call_id: &str,
+        cancel: Option<&CancelSignal>,
+        start_point: &str,
+    ) -> Result<Self, HostError> {
         // Defense in depth: the id flows into a path join, so its shape is pinned even though
         // today's only caller is internal — "../x" must never become a staging escape.
         let id_ok = !call_id.is_empty()
@@ -143,10 +167,15 @@ impl Tier1Workspace {
             });
         }
         let root = config.staging.join(format!("ghtool-{call_id}"));
-        if root.exists() {
-            return Err(HostError::Config {
-                rule: "the workspace directory already exists",
-            });
+        // A tree already at this root is a LEFTOVER, never a live workspace: a live one is held
+        // by the host that provisioned it, and the host names its trees so two calls cannot
+        // share one. A server killed mid-drive leaves the tree and its `.git/worktrees/…`
+        // registration behind, and refusing here made every later drive of that execution
+        // refuse forever (Codex, on #1073). The root is under OUR staging by construction
+        // (`config.staging.join`), so reclaiming it removes nothing that is not ours.
+        let mut recovered = root.exists();
+        if recovered {
+            reclaim_stale(&config.project, &root)?;
         }
         let no_hooks = config.staging.join(format!("ghtool-{call_id}-nohooks"));
         std::fs::create_dir_all(&no_hooks).map_err(|source| HostError::Prepare { source })?;
@@ -197,7 +226,7 @@ impl Tier1Workspace {
             .arg(git_safe(&config.project))
             .args(["worktree", "add", "--detach"])
             .arg(git_safe(&root))
-            .arg("HEAD")
+            .arg(start_point)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -206,21 +235,54 @@ impl Tier1Workspace {
             .env("XDG_CONFIG_HOME", no_hooks.join("xdg"))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        let outcome = run_supervised(&mut command, cancel, true)?;
+        let mut retried = false;
+        let status = loop {
+            let outcome = run_supervised(&mut command, cancel, true);
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&no_hooks);
+                    return Err(error);
+                }
+            };
+            let status = match outcome {
+                SupervisedOutcome::Finished(status) => status,
+                SupervisedOutcome::Cancelled => {
+                    // The killed `worktree add` may have left a partial directory AND a
+                    // registration in the project. Neither is this call's to keep: the
+                    // directory goes, and the registration goes with it through the same
+                    // reclaim the stale-tree path uses (`worktree remove --force` clears a
+                    // registration whose directory is already gone — Codex, on #1073: without
+                    // this, the next provision at the deterministic root was refused as
+                    // "missing but already registered"). Best-effort, because the outcome is
+                    // already decided.
+                    let _ = std::fs::remove_dir_all(&no_hooks);
+                    let _ = std::fs::remove_dir_all(&root);
+                    let _ = reclaim_stale(&config.project, &root);
+                    return Err(HostError::Cancelled);
+                }
+            };
+            if status.success() {
+                break status;
+            }
+            // A refusal with NO directory at the root is the registration-without-a-directory
+            // case (a provision cancelled or killed after git registered the path): reclaim it
+            // once and try again. A second refusal is git's own answer and is reported.
+            if !retried && !recovered && !root.exists() {
+                retried = true;
+                recovered = true;
+                if let Err(error) = reclaim_stale(&config.project, &root) {
+                    let _ = std::fs::remove_dir_all(&no_hooks);
+                    return Err(error);
+                }
+                continue;
+            }
+            break status;
+        };
         // The no-hooks directory's whole role ends when `worktree add` returns; removing it
         // here keeps the staging area's contract simple — after a call completes, staging is
         // empty again (the Task 7 broker asserts exactly that).
         let _ = std::fs::remove_dir_all(&no_hooks);
-        let status = match outcome {
-            SupervisedOutcome::Finished(status) => status,
-            SupervisedOutcome::Cancelled => {
-                // The killed `worktree add` may have left a partial directory and a registration
-                // in the project. Neither is this call's to keep, and neither is worth a second
-                // failure path: best-effort, because the outcome is already decided.
-                let _ = std::fs::remove_dir_all(&root);
-                return Err(HostError::Cancelled);
-            }
-        };
         if !status.success() {
             return Err(HostError::Config {
                 rule: "git worktree add refused the provision",
@@ -233,7 +295,39 @@ impl Tier1Workspace {
             root,
             project: config.project.clone(),
             hold,
+            recovered,
         })
+    }
+
+    /// Whether provisioning reclaimed a stale tree at this root first (#1073).
+    #[must_use]
+    pub fn recovered(&self) -> bool {
+        self.recovered
+    }
+
+    /// Releases the counted cancellation span WITHOUT removing the tree (#1073): an execution's
+    /// workspace outlives its calls, and a hold kept between them made `CancelSignal::cancel`
+    /// — and so an immediate pause — wait its full grace for a tree with nothing running in it.
+    /// The span exists to make a cancellation wait for a TEARDOWN in flight; between calls
+    /// there is none. `unpark` retakes it before the next call.
+    pub fn park(&mut self) {
+        self.hold = None;
+    }
+
+    /// Retakes the counted span for a call about to run in this tree — idempotent, so a tree
+    /// fresh from `provision` (which already holds one) is unchanged. A signal that is already
+    /// raised refuses, the same fail-closed answer `provision` gives.
+    ///
+    /// # Errors
+    /// [`HostError::Cancelled`] when the signal is already raised.
+    pub fn unpark(&mut self, cancel: Option<&CancelSignal>) -> Result<(), HostError> {
+        if self.hold.is_some() {
+            return Ok(());
+        }
+        if let Some(signal) = cancel {
+            self.hold = Some(signal.hold().ok_or(HostError::Cancelled)?);
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -341,6 +435,71 @@ impl Tier1Workspace {
             Ok(SupervisedOutcome::Finished(status)) if status.success()
         )
     }
+}
+
+/// Removes a stale tree at `root` (a leftover of a drive whose server died before `release`)
+/// and its registration in the project, so the root can be provisioned again (#1073).
+/// `git worktree remove --force` under retry, then `remove_dir_all`, then `git worktree prune`
+/// — the same three steps `Tier1Workspace::remove` takes, applied to a tree no `Tier1Workspace`
+/// value holds. Same scrubbed posture, same disabled hooks.
+///
+/// # Errors
+/// [`HostError::Config`] if the tree still exists after every attempt.
+fn reclaim_stale(project: &Path, root: &Path) -> Result<(), HostError> {
+    let git_remove = || {
+        let mut command = Command::new("git");
+        scrub_environment(&mut command);
+        command
+            .arg("-C")
+            .arg(git_safe(project))
+            .args(["worktree", "remove", "--force"])
+            .arg(git_safe(root))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", root.join(".home"))
+            .env("USERPROFILE", root.join(".home"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        matches!(
+            run_supervised(&mut command, None, false),
+            Ok(SupervisedOutcome::Finished(status)) if status.success()
+        )
+    };
+    let mut removed = git_remove();
+    if !removed {
+        for backoff in REMOVE_BACKOFFS {
+            std::thread::sleep(*backoff);
+            if git_remove() {
+                removed = true;
+                break;
+            }
+        }
+    }
+    if !removed && root.exists() {
+        for backoff in REMOVE_BACKOFFS {
+            if std::fs::remove_dir_all(root).is_ok() {
+                break;
+            }
+            std::thread::sleep(*backoff);
+        }
+    }
+    // The registration goes regardless of which step freed the tree: `worktree add` refuses a
+    // root that is still registered even when nothing is on disk.
+    let mut prune = Command::new("git");
+    scrub_environment(&mut prune);
+    prune
+        .arg("-C")
+        .arg(git_safe(project))
+        .args(["worktree", "prune"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let _ = run_supervised(&mut prune, None, false);
+    if root.exists() {
+        return Err(HostError::Config {
+            rule: "a stale workspace at this root could not be reclaimed",
+        });
+    }
+    Ok(())
 }
 
 /// The anti-link containment walk, shared by the workspace's `resolve` and the host's

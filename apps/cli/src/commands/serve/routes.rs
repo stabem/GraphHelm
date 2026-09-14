@@ -16,7 +16,9 @@ use graphhelm_gateway::call::ModelCall;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
-use graphhelm_runtime::executor::{AsyncNodeExecutor, PortExecutor};
+use graphhelm_runtime::executor::{
+    AsyncNodeExecutor, ModelExecutor, PortExecutor, SplitExecutor, ToolExecutor,
+};
 use graphhelm_runtime::fixture::FixtureAsyncExecutor;
 use graphhelm_runtime::ports::ModelPort;
 use graphhelm_simulation::FixtureExecutor;
@@ -25,7 +27,8 @@ use graphhelm_tool_broker::lease::{Capability, ToolLease};
 use graphhelm_gateway::manifest::{ModelRoute, RouteManifest};
 
 use super::ports::{
-    RuntimeWiring, ServeModelPort, ServeToolPort, build_opener, build_sealer, find_route,
+    ModelWiring, ServeModelPort, ServeToolPort, WorkspaceRelease, build_opener, build_sealer,
+    find_route,
 };
 use super::{
     ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
@@ -315,26 +318,31 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
                 }
             }
         }
-        None => match state.runtime.as_ref() {
+        None => match state
+            .runtime
+            .as_ref()
+            .and_then(|wiring| wiring.model.as_ref().map(|model| (wiring, model)))
+        {
             None => {
                 return bad_request(
                     SYNTHESIZE_COMMAND,
-                    "this server has no runtime wiring (fixture-only mode): pass \"fixture\" \
-                     naming a recorded-replies file, or start serve with --manifest/--route so \
-                     a model route can answer",
+                    "this server has no model route wired (fixture-only or tools-only mode): \
+                     pass \"fixture\" naming a recorded-replies file, or start serve with \
+                     --manifest/--route so a model route can answer",
                     "/fixture",
                 );
             }
-            Some(wiring) => {
+            Some((wiring, model_wiring)) => {
                 let route =
-                    match resolve_requested_route(wiring, SYNTHESIZE_COMMAND, &payload).await {
+                    match resolve_requested_route(model_wiring, SYNTHESIZE_COMMAND, &payload).await
+                    {
                         Ok(route) => route,
                         Err(MutationError::Prepared(response)) => return response,
                         Err(MutationError::Command(failure)) => {
                             return respond_failure(SYNTHESIZE_COMMAND, failure);
                         }
                     };
-                match ServeModelPort::build(wiring, &route).await {
+                match ServeModelPort::build(wiring, model_wiring, &route).await {
                     Ok(port) => Box::new(ServeDraftModel {
                         route_id: route.id().to_owned(),
                         port,
@@ -350,7 +358,8 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         state
             .runtime
             .as_ref()
-            .map(|wiring| wiring.allow_programs.clone())
+            .and_then(|wiring| wiring.tools.as_ref())
+            .map(|tools| tools.allow_programs.clone())
             .unwrap_or_default()
     });
 
@@ -830,6 +839,9 @@ pub(super) async fn start(
     // `Arc`-backed) and `execution_id` is a plain owned `String` — so `async move` can take
     // ownership of its own copies while the outer call still borrows the originals directly.
     let drive_state = state.clone();
+    // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
+    // mutation runner still borrows `execution_id` for its own journalling.
+    let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
@@ -852,7 +864,9 @@ pub(super) async fn start(
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: same ordering as `resume` — the shared shape is where the fix lands, so
                     // `start` cannot commit `ExecutionStarted` for a drive whose setup then refuses.
-                    let setup = prepare_drive(&drive_state, START_COMMAND, &payload).await?;
+                    let setup =
+                        prepare_drive(&drive_state, START_COMMAND, &drive_execution, &payload)
+                            .await?;
                     let prepared = execution::start::execute_prepared(
                         &version,
                         &drive_state.events,
@@ -1439,6 +1453,9 @@ pub(super) async fn resume(
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
     let drive_state = state.clone();
+    // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
+    // mutation runner still borrows `execution_id` for its own journalling.
+    let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
@@ -1456,7 +1473,9 @@ pub(super) async fn resume(
                     // #83: the drive's fallible setup runs FIRST, so the resume decision is the
                     // last thing that can fail rather than the first thing that commits. A setup
                     // refusal now leaves the operator's pause hold exactly where they left it.
-                    let setup = prepare_drive(&drive_state, RESUME_COMMAND, &payload).await?;
+                    let setup =
+                        prepare_drive(&drive_state, RESUME_COMMAND, &drive_execution, &payload)
+                            .await?;
                     let prepared = execution::resume::execute_prepared(
                         &version,
                         &drive_state.events,
@@ -1787,6 +1806,9 @@ pub(super) async fn clear(
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
     let drive_state = state.clone();
+    // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
+    // mutation runner still borrows `execution_id` for its own journalling.
+    let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
@@ -1803,7 +1825,9 @@ pub(super) async fn clear(
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the clearance is the last
                     // thing that can fail rather than the first thing that commits.
-                    let setup = prepare_drive(&drive_state, CLEAR_COMMAND, &payload).await?;
+                    let setup =
+                        prepare_drive(&drive_state, CLEAR_COMMAND, &drive_execution, &payload)
+                            .await?;
                     let (outcome, prepared) = execution::clear::decide(
                         &version,
                         &drive_state.events,
@@ -1986,12 +2010,12 @@ struct DriveSetup {
     ports: Option<PreparedPorts>,
 }
 
-/// The runtime-backed ports, built once and moved into the executor after the commit.
+/// The runtime-backed ports, built once and moved into the executor after the commit. Each
+/// half is present exactly when its wiring is (#1066): `model` with `{manifest, broker, route}`,
+/// `tools` with `{staging, allow-program}`; `drive` composes the executor from what is here.
 struct PreparedPorts {
-    model: ServeModelPort,
-    tools: ServeToolPort,
-    route_id: String,
-    lease: ToolLease,
+    model: Option<(ServeModelPort, String)>,
+    tools: Option<(ServeToolPort, ToolLease)>,
 }
 
 /// Which model this drive runs on: the request's `"route"` when it names one, the deployer's
@@ -2011,7 +2035,7 @@ struct PreparedPorts {
 /// produce.
 #[allow(clippy::result_large_err)] // `MutationError::Prepared` carries a built response
 async fn resolve_requested_route(
-    wiring: &RuntimeWiring,
+    wiring: &ModelWiring,
     command: &'static str,
     payload: &serde_json::Value,
 ) -> Result<ModelRoute, MutationError> {
@@ -2084,57 +2108,75 @@ async fn resolve_requested_route(
 async fn prepare_drive(
     state: &ServeState,
     command: &'static str,
+    execution_id: &str,
     payload: &serde_json::Value,
 ) -> Result<DriveSetup, MutationError> {
     let sealer = build_sealer(state.sealing.as_deref())
         .map_err(|message| MutationError::from(setup_failure(&message)))?;
     let ports = match &state.runtime {
         Some(wiring) => {
-            let route = resolve_requested_route(wiring, command, payload).await?;
-            let model = ServeModelPort::build(wiring, &route)
-                .await
-                .map_err(|message| MutationError::from(setup_failure(&message)))?;
-            // Three-deep fallback (issue #82): the caller's own `"project"` wins when given (no
-            // MCP tool currently exposes this field, but the raw HTTP body always could); absent
-            // that, the deployer's own `--project` default (set once, the same way `--staging`
-            // itself is); only when NEITHER is configured does this fall back to the server
-            // process's own working directory — the default that collides with `--staging`
-            // whenever `serve` happens to run from a `--staging` ancestor, which is exactly what
-            // #82 documents. A deployer who hits that collision fixes it once with `--project`;
-            // nothing changes for a deployment that never had the collision.
-            let project = payload
-                .get("project")
-                .and_then(serde_json::Value::as_str)
-                .map(PathBuf::from)
-                .or_else(|| wiring.project.clone())
-                .or_else(|| std::env::current_dir().ok())
-                .ok_or_else(|| {
-                    MutationError::from(setup_failure(
-                        "no \"project\" was given, no --project default is configured, and the server's working directory could not be read",
-                    ))
-                })?;
-            let tools = ServeToolPort::build(wiring, &project)
-                .map_err(|message| MutationError::from(setup_failure(&message)))?;
-            Some(PreparedPorts {
-                model,
-                tools,
-                // The route the drive RESOLVED, never `wiring.route` again: the executor stamps
-                // this id onto the work it dispatches, so a stale default here would label every
-                // call with a model that did not answer it.
-                route_id: route.id().to_owned(),
-                lease: ToolLease {
-                    actor: "runtime".to_owned(),
-                    capabilities: [
-                        Capability::RepositoryRead,
-                        Capability::RepositoryWrite,
-                        Capability::ShellExecute,
-                        Capability::TestsExecute,
-                    ]
-                    .into_iter()
-                    .collect(),
-                    programs: wiring.allow_programs.iter().cloned().collect(),
-                },
-            })
+            let model = match wiring.model.as_ref() {
+                Some(model_wiring) => {
+                    let route = resolve_requested_route(model_wiring, command, payload).await?;
+                    let port = ServeModelPort::build(wiring, model_wiring, &route)
+                        .await
+                        .map_err(|message| MutationError::from(setup_failure(&message)))?;
+                    // The route the drive RESOLVED, never the startup default again: the
+                    // executor stamps this id onto the work it dispatches, so a stale default
+                    // here would label every call with a model that did not answer it.
+                    Some((port, route.id().to_owned()))
+                }
+                None => None,
+            };
+            let tools = match wiring.tools.as_ref() {
+                Some(tool_wiring) => {
+                    // Three-deep fallback (issue #82): the caller's own `"project"` wins when
+                    // given (no MCP tool currently exposes this field, but the raw HTTP body
+                    // always could); absent that, the deployer's own `--project` default (set
+                    // once, the same way `--staging` itself is); only when NEITHER is configured
+                    // does this fall back to the server process's own working directory — the
+                    // default that collides with `--staging` whenever `serve` happens to run from
+                    // a `--staging` ancestor, which is exactly what #82 documents. A deployer who
+                    // hits that collision fixes it once with `--project`; nothing changes for a
+                    // deployment that never had the collision.
+                    let project = payload
+                        .get("project")
+                        .and_then(serde_json::Value::as_str)
+                        .map(PathBuf::from)
+                        .or_else(|| tool_wiring.project.clone())
+                        .or_else(|| std::env::current_dir().ok())
+                        .ok_or_else(|| {
+                            MutationError::from(setup_failure(
+                                "no \"project\" was given, no --project default is configured, and the server's working directory could not be read",
+                            ))
+                        })?;
+                    // The directories the workspace must never overlap: the keyring always, the
+                    // broker when a model half holds one (#1066 — a tools-only server has no
+                    // broker directory to protect).
+                    let mut protected = vec![wiring.keyring_dir.clone()];
+                    if let Some(model_wiring) = wiring.model.as_ref() {
+                        protected.push(model_wiring.broker_dir.clone());
+                    }
+                    let port =
+                        ServeToolPort::build(tool_wiring, &protected, &project, execution_id)
+                            .map_err(|message| MutationError::from(setup_failure(&message)))?;
+                    let lease = ToolLease {
+                        actor: "runtime".to_owned(),
+                        capabilities: [
+                            Capability::RepositoryRead,
+                            Capability::RepositoryWrite,
+                            Capability::ShellExecute,
+                            Capability::TestsExecute,
+                        ]
+                        .into_iter()
+                        .collect(),
+                        programs: tool_wiring.allow_programs.iter().cloned().collect(),
+                    };
+                    Some((port, lease))
+                }
+                None => None,
+            };
+            Some(PreparedPorts { model, tools })
         }
         None => None,
     };
@@ -2161,21 +2203,59 @@ async fn drive(
     // all arrive here as one piece of configuration.
     let gates: Arc<dyn graphhelm_runtime::ports::GateRegistryPort> =
         Arc::new(crate::commands::quality::RegisteredGates);
+    // The workspace release handle is taken BEFORE the tool port moves into the executor and
+    // used AFTER the drive returns, whatever it returned (#1066): the execution's Tier 1 tree
+    // lives exactly as long as this drive, and the ref it landed outlives it.
+    let release: Option<WorkspaceRelease> = ports
+        .as_ref()
+        .and_then(|ports| ports.tools.as_ref())
+        .map(|(port, _)| port.releaser());
+    let fixtures = || {
+        let fixtures = FixtureExecutor::new(prepared.fixtures.clone());
+        Arc::new(FixtureAsyncExecutor::new(fixtures)) as Arc<dyn AsyncNodeExecutor>
+    };
     let executor: Arc<dyn AsyncNodeExecutor> = match ports {
-        Some(ports) => Arc::new(PortExecutor {
-            model: Arc::new(ports.model),
-            tools: Arc::new(ports.tools),
-            route_id: ports.route_id,
-            lease: ports.lease,
+        // Both halves real: the all-real composition, unchanged.
+        Some(PreparedPorts {
+            model: Some((model, route_id)),
+            tools: Some((tools, lease)),
+        }) => Arc::new(PortExecutor {
+            model: Arc::new(model),
+            tools: Arc::new(tools),
+            route_id,
+            lease,
             actor: "runtime".to_owned(),
             // #668: the SAME registry object the drive call below reads digests from, so a
             // node cannot be certified against one gate and judged by another.
             gates: gates.clone(),
         }),
-        None => {
-            let fixtures = FixtureExecutor::new(prepared.fixtures.clone());
-            Arc::new(FixtureAsyncExecutor::new(fixtures))
+        // One half real (#1066): that half's executor for its kind, the fixture executor for
+        // the other — so a tools-only deployment runs a real `apply_patch`/`tests`/`commit`
+        // while its cognitive nodes are answered by node fixtures exactly as before, and a
+        // model-only deployment runs a real model while its tool nodes are.
+        Some(PreparedPorts { model, tools }) => {
+            let cognitive: Arc<dyn AsyncNodeExecutor> = match model {
+                Some((model, route_id)) => Arc::new(ModelExecutor {
+                    model: Arc::new(model),
+                    route_id,
+                }),
+                None => fixtures(),
+            };
+            let tool: Arc<dyn AsyncNodeExecutor> = match tools {
+                Some((tools, lease)) => Arc::new(ToolExecutor {
+                    tools: Arc::new(tools),
+                    lease,
+                    actor: "runtime".to_owned(),
+                }),
+                None => fixtures(),
+            };
+            Arc::new(SplitExecutor {
+                cognitive,
+                tool,
+                gates: gates.clone(),
+            })
         }
+        None => fixtures(),
     };
 
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
@@ -2209,6 +2289,20 @@ async fn drive(
 
     state.cancels.lock().await.remove(execution_id);
 
+    // The tree goes, the ref stays (#1066). Off the reactor: it is a `git worktree remove`. A
+    // removal failure is reported over a drive that otherwise succeeded, because a leaked
+    // workspace is a leaked write capability and "completed" must not also mean "clean" when it
+    // is not; a drive that already failed keeps its own error, which is the one the operator
+    // needs first.
+    if let Some(release) = release {
+        let released = tokio::task::spawn_blocking(move || release.release())
+            .await
+            .unwrap_or_else(|_| Err("the workspace release task failed".to_owned()));
+        if let (Err(message), Ok(_)) = (&released, &result) {
+            return Err(MutationError::from(driver_failure(message)));
+        }
+    }
+
     match result {
         Ok(projection) => Ok(execution::render(
             &projection,
@@ -2240,7 +2334,8 @@ fn effective_manifest(state: &ServeState, query_manifest: Option<PathBuf>) -> Op
         state
             .runtime
             .as_ref()
-            .map(|wiring| wiring.manifest_path.clone())
+            .and_then(|wiring| wiring.model.as_ref())
+            .map(|model| model.manifest_path.clone())
     })
 }
 
@@ -2335,7 +2430,7 @@ pub(super) async fn gateway_probe(
         );
     };
     if let Some(wiring) = state.runtime.as_ref() {
-        broker = broker.or_else(|| Some(wiring.broker_dir.clone()));
+        broker = broker.or_else(|| wiring.model.as_ref().map(|model| model.broker_dir.clone()));
         keyring = keyring.or_else(|| Some(wiring.keyring_dir.clone()));
         key_id = key_id.or_else(|| Some(wiring.key_id.clone()));
     }
@@ -2811,9 +2906,10 @@ mod off_reactor_tests {
     use axum::http::StatusCode;
 
     use super::{
-        MutationError, RuntimeWiring, graph_topology, list_executions_over, off_reactor,
-        off_reactor_witness, resolve_requested_route,
+        MutationError, graph_topology, list_executions_over, off_reactor, off_reactor_witness,
+        resolve_requested_route,
     };
+    use crate::commands::serve::ports::{ModelWiring, RuntimeWiring, ToolWiring};
 
     static SERIAL: Mutex<()> = Mutex::new(());
 
@@ -2939,16 +3035,20 @@ mod off_reactor_tests {
             graphhelm_gateway::manifest::RouteManifest::from_json(&manifest_json()).unwrap();
         let route = super::find_route(&manifest, "anthropic_byok").unwrap();
         RuntimeWiring {
-            manifest_path,
-            route,
-            broker_dir: PathBuf::from("unused"),
+            model: Some(ModelWiring {
+                manifest_path,
+                route,
+                broker_dir: PathBuf::from("unused"),
+            }),
+            tools: Some(ToolWiring {
+                staging: PathBuf::from("unused"),
+                project: None,
+                tests_runner: "unused".to_owned(),
+                allow_programs: Vec::new(),
+                path_prepend: Vec::new(),
+            }),
             keyring_dir: PathBuf::from("unused"),
             key_id: "unused".to_owned(),
-            staging: PathBuf::from("unused"),
-            project: None,
-            tests_runner: "unused".to_owned(),
-            allow_programs: Vec::new(),
-            path_prepend: Vec::new(),
         }
     }
 
@@ -2990,7 +3090,7 @@ mod off_reactor_tests {
         let wiring = wiring_for(manifest_path);
         let payload = serde_json::json!({ "route": "anthropic_byok" });
         let (route, runs) = measured(resolve_requested_route(
-            &wiring,
+            wiring.model.as_ref().unwrap(),
             "execution.start",
             &payload,
         ));
@@ -3025,7 +3125,7 @@ mod off_reactor_tests {
         let wiring = wiring_for(manifest_path);
         let payload = serde_json::json!({});
         let (outcome, _) = measured(resolve_requested_route(
-            &wiring,
+            wiring.model.as_ref().unwrap(),
             "execution.start",
             &payload,
         ));
@@ -3048,7 +3148,7 @@ mod off_reactor_tests {
         let wiring = wiring_for(directory.path().to_path_buf());
         let payload = serde_json::json!({});
         let (outcome, _) = measured(resolve_requested_route(
-            &wiring,
+            wiring.model.as_ref().unwrap(),
             "execution.start",
             &payload,
         ));

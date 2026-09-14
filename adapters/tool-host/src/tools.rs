@@ -9,7 +9,10 @@ use std::path::Path;
 use graphhelm_tool_broker::call::valid_commit_message;
 use graphhelm_tool_broker::path::RelativePath;
 
-use crate::process::{CancelSignal, CapturedProcess, HostError, ProcessLimits, run_in_workspace};
+use crate::process::{
+    CancelSignal, CapturedProcess, HostError, ProcessLimits, WORKSPACE_SCRATCH_NAMES,
+    run_in_workspace,
+};
 use crate::workspace::resolve_within;
 
 /// Repository reads are in-process under the containment walk — Tier 0 runs no child at all
@@ -17,7 +20,7 @@ use crate::workspace::resolve_within;
 /// `git diff --no-ext-diff` (read-only under `GIT_OPTIONAL_LOCKS=0`). Writes run in the Tier 1
 /// workspace: `ApplyPatch` pipes the patch through stdin (`git apply --index` — the one
 /// per-tool stdin exception), `Commit` re-checks the argv bound as defense in depth and then
-/// runs `git add -A` + `git commit -m`.
+/// runs `git add -A` (minus the funnel's scratch directories) + `git commit -m`.
 pub struct RepositoryTool;
 
 /// Shell: exactly `run_in_workspace(root, program, arguments)` — no extra env, no shell string
@@ -183,6 +186,23 @@ impl RepositoryTool {
     /// Tier 1: `git add -A` then `git commit -m <message>`. The message bound is re-checked
     /// here as defense in depth — `from_json` guards the trust boundary, but a
     /// directly-constructed call never passed through it, and this message rides argv.
+    ///
+    /// The add excludes the funnel's scratch directories ([`WORKSPACE_SCRATCH_NAMES`]) by
+    /// pathspec: inside an execution the root is the execution's own worktree, so `.home`
+    /// (the child's HOME — `.cargo/credentials`, tool caches), `.tmp` and `.cbm-cache` sit
+    /// beside the tracked tree and `-A` alone would land them in the ref (#1073). Pathspec
+    /// rather than `info/exclude`: a linked worktree shares `info/exclude` with the project
+    /// (`$GIT_COMMON_DIR/info/exclude`), so writing it would edit operator state the host has
+    /// no business touching, and an exclude file inside the tree would itself be a change the
+    /// commit carries. The argv is the host's alone; nothing here is caller input.
+    ///
+    /// The pathspec exclusion only governs what THIS add stages. `git` is on the child's PATH
+    /// and in lease allowlists, and the execution's tree persists across calls, so an earlier
+    /// shell call may already have staged a scratch path (`git add .home/token`); `-A` with an
+    /// exclusion leaves the index alone for excluded paths, and the commit would carry it.
+    /// So the scratch names are reset to `HEAD` in the index first — a `git reset -- <paths>`
+    /// touches only the index (the files stay on disk), matches nothing without complaint, and
+    /// keeps whatever `HEAD` itself tracks under those names.
     pub(crate) fn commit(
         workspace_root: &Path,
         message: &str,
@@ -195,10 +215,40 @@ impl RepositoryTool {
                 rule: "the commit message exceeds the argv bound",
             });
         }
+        let mut reset_argv = vec!["reset".to_owned(), "-q".to_owned(), "--".to_owned()];
+        reset_argv.extend(
+            WORKSPACE_SCRATCH_NAMES
+                .iter()
+                .map(|name| (*name).to_owned()),
+        );
+        let reset = run_in_workspace(
+            workspace_root,
+            "git",
+            &reset_argv,
+            &BTreeMap::new(),
+            path_prepend,
+            None,
+            limits,
+            cancel,
+        )?;
+        if first_stage_is_final(&reset) {
+            return Ok(reset);
+        }
+        let mut add_argv = vec![
+            "add".to_owned(),
+            "-A".to_owned(),
+            "--".to_owned(),
+            ".".to_owned(),
+        ];
+        add_argv.extend(
+            WORKSPACE_SCRATCH_NAMES
+                .iter()
+                .map(|name| format!(":(exclude,top){name}")),
+        );
         let add = run_in_workspace(
             workspace_root,
             "git",
-            &["add".to_owned(), "-A".to_owned()],
+            &add_argv,
             &BTreeMap::new(),
             path_prepend,
             None,

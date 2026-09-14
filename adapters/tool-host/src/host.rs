@@ -6,13 +6,14 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use graphhelm_tool_broker::call::FreshnessClass;
 use graphhelm_tool_broker::call::{RepositoryAction, ToolCall};
 use graphhelm_tool_broker::effect::{IsolationTier, ToolEffect, required_tier};
 use graphhelm_tool_broker::lease::{BrokerPlan, BrokerRefusal, ToolLease, authorize};
 use graphhelm_tool_broker::path::validate_program_name;
-use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition, digest_hex};
+use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition, digest_hex, execution_ref};
 
 use crate::cache::ReadCache;
 use crate::process::{CapturedProcess, HostError, ProcessLimits};
@@ -49,12 +50,96 @@ pub struct CapturedStreams {
 pub struct ToolHost {
     config: HostConfig,
     call_counter: AtomicU64,
+    /// What makes this host's scratch names its own (Codex, on #1073): the serve path builds
+    /// one `ToolHost` per drive over ONE `--staging`, and every host's `call_counter` starts at
+    /// zero, so two hosts' first ref probes both named `ghtool-scratch-c0` and one removed the
+    /// other's directory between its `create_dir` and its spawn — the probe answered `false`
+    /// and the tree was provisioned from `HEAD` instead of the execution's ref. The token is
+    /// this process's id and a process-wide monotonic count, taken at construction, so no two
+    /// hosts alive at once — in one process or in two — share a scratch name.
+    host_token: String,
     /// Raised by [`ToolHost::cancel_all`], read by the spawn loop at its next 50 ms poll (#180).
     ///
     /// Held by the HOST rather than per call, because a caller cancelling a run does not know
     /// which call is in flight -- it knows the execution is over. Every child this host spawns
     /// shares it, which is exactly the scope `cancel_all` names.
     cancel: crate::process::CancelSignal,
+    /// One Tier 1 workspace per execution (#1066), keyed by execution id and created on the
+    /// first Tier 1 call that names the execution. Every later call of that execution runs in
+    /// the SAME tree, so a patch node A applied is still there when node B tests it and node C
+    /// commits it; the tree lives until [`ToolHost::release`] and never past it.
+    ///
+    /// Each slot carries its own lock, held for the whole of a call: two calls of one execution
+    /// serialize (one git index, one tree), two executions run side by side. The outer lock is
+    /// held only to find or insert a slot, never across a spawn.
+    executions: Mutex<BTreeMap<String, Arc<ExecutionSlot>>>,
+}
+
+/// An execution's workspace slot. `None` inside means the slot exists but its workspace has
+/// not been provisioned yet (or was released while a caller still held the `Arc`).
+struct ExecutionSlot {
+    workspace: Mutex<Option<Tier1Workspace>>,
+    /// The commit `refs/graphhelm/executions/<id>` pointed at when this slot's tree was
+    /// provisioned, `None` when the ref did not exist — and the value a landing then expects to
+    /// find there (#1073, compare-and-swap): `update-ref <ref> <new> <old>` refuses if anything
+    /// else moved the ref meanwhile, instead of silently overwriting it. Advanced on every
+    /// successful landing. Guarded by the same lock as the tree, which is what makes the two
+    /// consistent.
+    landed_at: Mutex<Option<String>>,
+}
+
+/// What a routed execution produced: the capture, plus — for a `commit` that completed — the
+/// object id it made and the ref it moved. The three travel together so the record is written
+/// from one value and cannot name a commit that did not happen.
+struct Executed {
+    captured: CapturedProcess,
+    commit: Option<String>,
+    landed_ref: Option<String>,
+    /// A host failure that happened AFTER the capture — the landing refused (#1073, 4b). The
+    /// record takes this failure's disposition and still names `commit`: the commit exists in
+    /// the workspace, only the ref did not move, and a record that hid the id would send the
+    /// operator looking for a commit that is there.
+    failure: Option<HostError>,
+    /// Whether a stale tree was reclaimed before this call ran (see `ToolCallRecord`).
+    recovered_workspace: bool,
+}
+
+impl From<CapturedProcess> for Executed {
+    fn from(captured: CapturedProcess) -> Self {
+        Self {
+            captured,
+            commit: None,
+            landed_ref: None,
+            failure: None,
+            recovered_workspace: false,
+        }
+    }
+}
+
+/// Where a Tier 1 call runs: a fresh tree torn down after the call (the per-call contract every
+/// existing caller relies on), or the execution's shared tree (#1066).
+enum Tier1Home<'a> {
+    PerCall(Tier1Workspace),
+    Execution {
+        id: &'a str,
+        guard: std::sync::MutexGuard<'a, Option<Tier1Workspace>>,
+        slot: &'a ExecutionSlot,
+    },
+}
+
+impl Tier1Home<'_> {
+    fn workspace(&self) -> &Tier1Workspace {
+        match self {
+            Self::PerCall(workspace) => workspace,
+            Self::Execution { guard, .. } => guard
+                .as_ref()
+                .expect("an execution home is only built around a provisioned workspace"),
+        }
+    }
+
+    fn root(&self) -> &std::path::Path {
+        self.workspace().root()
+    }
 }
 
 /// The stable rule name a refusal records — the `Denied` disposition's content-free vocabulary.
@@ -167,11 +252,67 @@ fn call_names(call: &ToolCall) -> (&'static str, &'static str) {
 impl ToolHost {
     #[must_use]
     pub fn new(config: HostConfig) -> Self {
+        static HOSTS: AtomicU64 = AtomicU64::new(0);
         Self {
             config,
             call_counter: AtomicU64::new(0),
+            host_token: format!(
+                "{}-{}",
+                std::process::id(),
+                HOSTS.fetch_add(1, Ordering::Relaxed)
+            ),
             cancel: crate::process::CancelSignal::new(),
+            executions: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Removes the execution's Tier 1 workspace (#1066), if one was provisioned. The driver
+    /// calls this when the execution's drive ends — a terminal state, a pause, a cancellation —
+    /// and the ref the execution landed (`refs/graphhelm/executions/<id>`) STAYS: the tree was
+    /// the execution's scratch, the ref is its result. A later drive of the same execution
+    /// provisions its next tree from that ref, so committed work survives the removal and only
+    /// uncommitted edits do not.
+    ///
+    /// Waits for a call of this execution that is still running (the slot's own lock), so the
+    /// removal never races the tool that is writing into the tree. Under `keep_workspace` the
+    /// tree is left in place exactly as a per-call tree would be: kept is the operator's to
+    /// delete.
+    ///
+    /// # Errors
+    /// [`HostError::Config`] when the tree could not be removed — a leaked workspace is a
+    /// leaked write capability and is reported, never swallowed. An execution that never
+    /// provisioned a workspace releases as `Ok(())`.
+    pub fn release(&self, execution_id: &str) -> Result<(), HostError> {
+        let slot = self
+            .executions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(execution_id);
+        let Some(slot) = slot else {
+            return Ok(());
+        };
+        let workspace = slot
+            .workspace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match workspace {
+            Some(workspace) if !self.config.keep_workspace => workspace.remove(),
+            _ => Ok(()),
+        }
+    }
+
+    /// The execution ids that currently hold a provisioned workspace — what
+    /// [`ToolHost::release`] would tear down. For the driver's own bookkeeping and for tests;
+    /// never a path, never content.
+    #[must_use]
+    pub fn live_executions(&self) -> Vec<String> {
+        self.executions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Kill and reap every child this host has in flight (#180).
@@ -201,6 +342,35 @@ impl ToolHost {
         call: &ToolCall,
         lease: &ToolLease,
         actor: &str,
+    ) -> (ToolCallRecord, CapturedStreams) {
+        self.invoke_inner(call, lease, actor, None)
+    }
+
+    /// [`ToolHost::invoke`] inside an execution's own Tier 1 workspace (#1066): the first Tier 1
+    /// call of `execution_id` provisions the tree (from `refs/graphhelm/executions/<id>` when an
+    /// earlier drive landed it, from `HEAD` otherwise), every later call of the same execution
+    /// reuses it, and a `commit` that completes moves that ref to the new object — recorded as
+    /// `commit` and `landed_ref` on the [`ToolCallRecord`]. The tree lives until
+    /// [`ToolHost::release`]. Authorization is unchanged: the execution id is a workspace key,
+    /// not a capability, and the lease decides exactly what it decided before.
+    ///
+    /// Tier 0 reads are unaffected: they aim at the project as they always have.
+    pub fn invoke_for_execution(
+        &self,
+        execution_id: &str,
+        call: &ToolCall,
+        lease: &ToolLease,
+        actor: &str,
+    ) -> (ToolCallRecord, CapturedStreams) {
+        self.invoke_inner(call, lease, actor, Some(execution_id))
+    }
+
+    fn invoke_inner(
+        &self,
+        call: &ToolCall,
+        lease: &ToolLease,
+        actor: &str,
+        execution: Option<&str>,
     ) -> (ToolCallRecord, CapturedStreams) {
         let (tool, action) = call_names(call);
         // Recording is its own trust boundary. `authorize` preserves identity/capability
@@ -236,6 +406,9 @@ impl ToolHost {
                         reused: false,
                         verified_executable: None,
                         contained_session: None,
+                        commit: None,
+                        landed_ref: None,
+                        recovered_workspace: false,
                     },
                     CapturedStreams {
                         stdout: Vec::new(),
@@ -273,11 +446,28 @@ impl ToolHost {
             return (record, CapturedStreams { stdout, stderr });
         }
 
-        let executed = self.execute_plan(call, &plan, actor);
-        let (disposition, captured) = match executed {
-            Ok(captured) => {
-                let disposition = disposition_for(&captured);
-                (disposition, captured)
+        let executed = self.execute_plan(call, &plan, execution);
+        let (disposition, captured, commit, landed_ref, recovered_workspace) = match executed {
+            Ok(Executed {
+                captured,
+                commit,
+                landed_ref,
+                failure,
+                recovered_workspace,
+            }) => {
+                let disposition = match failure {
+                    Some(error) => ToolDisposition::HostError {
+                        code: host_error_code(&error),
+                    },
+                    None => disposition_for(&captured),
+                };
+                (
+                    disposition,
+                    captured,
+                    commit,
+                    landed_ref,
+                    recovered_workspace,
+                )
             }
             Err(error) => (
                 ToolDisposition::HostError {
@@ -301,6 +491,9 @@ impl ToolHost {
                     // `host_error_code`; this arm is about a child that never existed.
                     cancelled: false,
                 },
+                None,
+                None,
+                false,
             ),
         };
 
@@ -323,6 +516,9 @@ impl ToolHost {
             // unknown -- never invented (D-042).
             verified_executable: None,
             contained_session: None,
+            commit,
+            landed_ref,
+            recovered_workspace,
         };
         // Store only clean completions of cache-eligible calls; a storage failure is not a
         // call failure (the cache is an economy, not a dependency).
@@ -355,19 +551,171 @@ impl ToolHost {
         actor: &str,
     ) -> Result<CapturedProcess, HostError> {
         let _ = actor;
-        self.execute_plan(call, plan, actor)
+        self.execute_plan(call, plan, None)
+            .map(|executed| executed.captured)
     }
 
     fn next_call_id(&self) -> String {
         format!("c{}", self.call_counter.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// A fresh scratch directory under staging for a Tier 0 spawn's CWD, named by this host's
+    /// token and the call id (see `host_token`), created with `create_dir` so a name that
+    /// somehow already exists is an error rather than a directory shared with whoever made it.
+    fn scratch_dir(&self) -> std::io::Result<PathBuf> {
+        let scratch = self.config.workspace.staging().join(format!(
+            "ghtool-scratch-{}-{}",
+            self.host_token,
+            self.next_call_id()
+        ));
+        std::fs::create_dir(&scratch)?;
+        Ok(scratch)
+    }
+
+    /// The staging-relative name of an execution's tree. `Tier1Workspace::provision` pins its
+    /// id to `[a-z0-9-]{1,64}` and an execution id is wider than that (`is_opaque_id` admits most
+    /// of printable ASCII), so the tree is named by a digest of the id rather than by the id:
+    /// deterministic, always legal, never a path a caller chose. The REF is where the id is
+    /// readable (`execution_ref`), and the ref is the audit surface; the tree is scratch.
+    fn execution_tree_id(execution_id: &str) -> String {
+        format!("exec-{}", &digest_hex(execution_id.as_bytes())[..24])
+    }
+
+    /// Finds or creates `execution_id`'s slot. The outer map lock is held only for this lookup.
+    fn execution_slot(&self, execution_id: &str) -> Arc<ExecutionSlot> {
+        let mut executions = self
+            .executions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        executions
+            .entry(execution_id.to_owned())
+            .or_insert_with(|| {
+                Arc::new(ExecutionSlot {
+                    workspace: Mutex::new(None),
+                    landed_at: Mutex::new(None),
+                })
+            })
+            .clone()
+    }
+
+    /// Whether `reference` resolves to an object in the PROJECT (#1066): the read-only probe
+    /// that decides whether an execution's next tree starts from its own last landing. Through
+    /// `run_in_workspace` like every other spawn (Codex, on #1073: it used to run bare, with no
+    /// cancel signal and no deadline, so a stalled `rev-parse` could not be paused) — the child's
+    /// CWD is an ephemeral scratch sibling under staging, the Tier 0 `diff` shape, so the probe
+    /// never writes a byte into the project; `-C` aims git at it. Output is never read, only the
+    /// exit status: a failed spawn, a timeout or a cancellation answers `false`, and the caller
+    /// then provisions from `HEAD` exactly as before this probe existed.
+    fn ref_exists(&self, reference: &str) -> bool {
+        let Ok(scratch) = self.scratch_dir() else {
+            return false;
+        };
+        let project = crate::workspace::git_safe(self.config.workspace.project());
+        let captured = crate::process::run_in_workspace(
+            &scratch,
+            "git",
+            &[
+                "-C".to_owned(),
+                project,
+                "rev-parse".to_owned(),
+                "--verify".to_owned(),
+                "--quiet".to_owned(),
+                "--end-of-options".to_owned(),
+                reference.to_owned(),
+            ],
+            &BTreeMap::new(),
+            &self.config.path_prepend,
+            None,
+            &self.config.limits,
+            Some(&self.cancel),
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+        matches!(captured, Ok(captured) if captured.exit_code == Some(0) && !captured.timed_out && !captured.cancelled)
+    }
+
+    /// The full object id of the workspace's `HEAD` after a commit: `git rev-parse HEAD` under
+    /// the same funnel every tool spawn uses, parsed by [`object_id_from_rev_parse`] — 40 hex
+    /// (SHA-1) or 64 hex (SHA-256 object format). Anything else — a failed spawn, a non-zero
+    /// exit, output that is not an object id — is `None`, and the record then carries no commit
+    /// rather than a guess.
+    fn head_object_id(&self, workspace_root: &std::path::Path) -> Option<String> {
+        let captured = crate::process::run_in_workspace(
+            workspace_root,
+            "git",
+            &["rev-parse".to_owned(), "HEAD".to_owned()],
+            &BTreeMap::new(),
+            &self.config.path_prepend,
+            None,
+            &self.config.limits,
+            Some(&self.cancel),
+        )
+        .ok()?;
+        if captured.exit_code != Some(0) || captured.readers_abandoned || captured.reader_lost {
+            return None;
+        }
+        object_id_from_rev_parse(&captured.stdout)
+    }
+
+    /// `git -C <project> update-ref <ref> <commit>` (#1066): a PLAIN ref under
+    /// `refs/graphhelm/executions/`, never `refs/heads`, so no branch the operator has checked
+    /// out can move — the operator's `HEAD` is untouched by construction, and the record names
+    /// the ref so a reader can `git merge` it deliberately. Runs from the workspace (the child's
+    /// CWD) aimed at the project with `-C`, the same shape `RepositoryTool::diff` uses for a
+    /// Tier 0 read, so the spawn never has the project as its working directory.
+    ///
+    /// Compare-and-swap (#1073): `expected` is the commit the ref held when this execution's
+    /// tree was provisioned (`None` = the ref must not exist yet), passed as `update-ref`'s
+    /// `<oldvalue>` (the empty string for "must not exist"), so a ref moved by anyone else
+    /// since — another server, an operator — refuses instead of being overwritten.
+    ///
+    /// `--no-deref` (Codex, on #1073, reproduced): repository state is untrusted, and a
+    /// repository can carry `refs/graphhelm/executions/<id>` as a SYMBOLIC ref aimed at
+    /// `refs/heads/main`. Without the flag `update-ref` follows the symref and moves the
+    /// branch — the operator's checked-out branch, the thing the plain-ref guarantee exists
+    /// to protect. With it the ref itself is rewritten into a direct ref at the commit; the
+    /// compare-and-swap still reads through the symref for `<oldvalue>`, so it is the same
+    /// check either way. The branch does not move by construction.
+    fn land_ref(
+        &self,
+        workspace_root: &std::path::Path,
+        reference: &str,
+        commit: &str,
+        expected: Option<&str>,
+    ) -> Result<(), HostError> {
+        let project = crate::workspace::git_safe(self.config.workspace.project());
+        let captured = crate::process::run_in_workspace(
+            workspace_root,
+            "git",
+            &[
+                "-C".to_owned(),
+                project,
+                "update-ref".to_owned(),
+                "--no-deref".to_owned(),
+                reference.to_owned(),
+                commit.to_owned(),
+                expected.unwrap_or_default().to_owned(),
+            ],
+            &BTreeMap::new(),
+            &self.config.path_prepend,
+            None,
+            &self.config.limits,
+            Some(&self.cancel),
+        )?;
+        if captured.exit_code == Some(0) && !captured.readers_abandoned && !captured.reader_lost {
+            Ok(())
+        } else {
+            Err(HostError::Config {
+                rule: "the execution ref could not be updated",
+            })
+        }
+    }
+
     fn execute_plan(
         &self,
         call: &ToolCall,
         plan: &BrokerPlan,
-        _actor: &str,
-    ) -> Result<CapturedProcess, HostError> {
+        execution: Option<&str>,
+    ) -> Result<Executed, HostError> {
         // Defense in depth: even a forged plan cannot run write-effect work outside Tier 1.
         // `authorize` can never produce this shape; the host refuses it anyway.
         if plan.effect != ToolEffect::ReadOnly && plan.tier == IsolationTier::Tier0 {
@@ -380,6 +728,7 @@ impl ToolHost {
             IsolationTier::Tier0 => match call {
                 ToolCall::Repository(RepositoryAction::ReadFile { path }) => {
                     RepositoryTool::read_file(self.config.workspace.project(), path, limits)
+                        .map(Executed::from)
                 }
                 ToolCall::Repository(RepositoryAction::ListFiles { prefix }) => {
                     RepositoryTool::list_files(
@@ -387,16 +736,13 @@ impl ToolHost {
                         prefix.as_ref(),
                         limits,
                     )
+                    .map(Executed::from)
                 }
                 ToolCall::Repository(RepositoryAction::Diff) => {
                     // The scratch sibling keeps the child's CWD (and its .home/.tmp) out of
                     // the project: a Tier 0 read never writes a byte into the tree it reads.
                     let scratch = self
-                        .config
-                        .workspace
-                        .staging()
-                        .join(format!("ghtool-scratch-{}", self.next_call_id()));
-                    std::fs::create_dir_all(&scratch)
+                        .scratch_dir()
                         .map_err(|source| HostError::Prepare { source })?;
                     let result = RepositoryTool::diff(
                         &scratch,
@@ -406,42 +752,94 @@ impl ToolHost {
                         Some(&self.cancel),
                     );
                     let _ = std::fs::remove_dir_all(&scratch);
-                    result
+                    result.map(Executed::from)
                 }
                 _ => Err(HostError::TierViolation),
             },
             IsolationTier::Tier1 => {
-                let workspace = Tier1Workspace::provision(
-                    &self.config.workspace,
-                    &self.next_call_id(),
-                    Some(&self.cancel),
-                )?;
+                // WHERE the call runs (#1066). Without an execution: a fresh tree per call, torn
+                // down below — the contract every existing caller (the CLI's `tool invoke`, the
+                // broker suite) was written against, unchanged. With one: the execution's own
+                // tree, found or provisioned here and released only by `release`, so this call's
+                // writes are the next call's starting state.
+                //
+                // The slot's lock is taken BEFORE provisioning and held until this arm returns:
+                // the second call of an execution that arrives while the first is still running
+                // waits here rather than racing it for one git index.
+                let slot = execution.map(|id| self.execution_slot(id));
+                let home = match (execution, slot.as_ref()) {
+                    (Some(id), Some(slot)) => {
+                        let mut guard = slot
+                            .workspace
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if guard.is_none() {
+                            // Continue from the execution's own last landing when there is one:
+                            // a resumed execution picks up the tree it committed, not the
+                            // operator's checkout as it happens to stand now.
+                            let reference = execution_ref(id);
+                            let start_point = if self.ref_exists(&reference) {
+                                reference
+                            } else {
+                                "HEAD".to_owned()
+                            };
+                            let workspace = Tier1Workspace::provision_from(
+                                &self.config.workspace,
+                                &Self::execution_tree_id(id),
+                                Some(&self.cancel),
+                                &start_point,
+                            )?;
+                            // Remember what the ref held at provisioning, for the landing's
+                            // compare-and-swap. Read from the TREE (`rev-parse HEAD` there is the
+                            // ref's commit when provisioned from it), not from the ref again, so
+                            // a ref that moves between the two reads is caught, not absorbed.
+                            let landed_at = if start_point == "HEAD" {
+                                None
+                            } else {
+                                self.head_object_id(workspace.root())
+                            };
+                            *slot
+                                .landed_at
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) = landed_at;
+                            *guard = Some(workspace);
+                        }
+                        // Retake the cancellation span for THIS call (a no-op on a tree fresh
+                        // from `provision`); it is parked again below when the call returns,
+                        // so a pause between calls never waits on a tree with nothing running.
+                        guard
+                            .as_mut()
+                            .expect("provisioned or reused just above")
+                            .unpark(Some(&self.cancel))?;
+                        Tier1Home::Execution { id, guard, slot }
+                    }
+                    _ => Tier1Home::PerCall(Tier1Workspace::provision(
+                        &self.config.workspace,
+                        &self.next_call_id(),
+                        Some(&self.cancel),
+                    )?),
+                };
+                let root = home.root().to_path_buf();
+                let recovered_workspace = home.workspace().recovered();
                 let result = match call {
                     ToolCall::Repository(RepositoryAction::ApplyPatch { patch }) => {
                         RepositoryTool::apply_patch(
-                            workspace.root(),
+                            &root,
                             patch,
                             prepend,
                             limits,
                             Some(&self.cancel),
                         )
+                        .map(Executed::from)
                     }
                     ToolCall::Repository(RepositoryAction::Commit { message }) => {
-                        RepositoryTool::commit(
-                            workspace.root(),
-                            message,
-                            prepend,
-                            limits,
-                            Some(&self.cancel),
-                        )
+                        RepositoryTool::commit(&root, message, prepend, limits, Some(&self.cancel))
+                            .and_then(|captured| self.landed_commit(&home, &root, captured))
                     }
-                    ToolCall::Repository(RepositoryAction::Diff) => RepositoryTool::diff(
-                        workspace.root(),
-                        workspace.root(),
-                        prepend,
-                        limits,
-                        Some(&self.cancel),
-                    ),
+                    ToolCall::Repository(RepositoryAction::Diff) => {
+                        RepositoryTool::diff(&root, &root, prepend, limits, Some(&self.cancel))
+                            .map(Executed::from)
+                    }
                     ToolCall::Repository(
                         RepositoryAction::ReadFile { .. } | RepositoryAction::ListFiles { .. },
                     ) => {
@@ -455,13 +853,14 @@ impl ToolHost {
                         validate_program_name(&action.program)
                             .map_err(|_| HostError::TierViolation)?;
                         ShellTool::run(
-                            workspace.root(),
+                            &root,
                             &action.program,
                             &action.arguments,
                             prepend,
                             limits,
                             Some(&self.cancel),
                         )
+                        .map(Executed::from)
                     }
                     ToolCall::Tests(action) => {
                         validate_program_name(&self.config.tests_runner).map_err(|_| {
@@ -470,7 +869,7 @@ impl ToolHost {
                             }
                         })?;
                         TestsTool::run(
-                            workspace.root(),
+                            &root,
                             &self.config.tests_runner,
                             &self.config.tests_runner_env,
                             &action.arguments,
@@ -478,20 +877,178 @@ impl ToolHost {
                             limits,
                             Some(&self.cancel),
                         )
+                        .map(Executed::from)
                     }
                 };
-                if self.config.keep_workspace {
-                    return result;
-                }
-                let removed = workspace.remove();
-                match (result, removed) {
-                    (Ok(captured), Ok(())) => Ok(captured),
-                    // A leaked workspace is a leaked write capability: removal failure wins
-                    // over a successful capture, because the record must not say "clean".
-                    (Ok(_), Err(error)) | (Err(error), _) => Err(error),
+                let result = result.map(|mut executed| {
+                    executed.recovered_workspace = recovered_workspace;
+                    executed
+                });
+                match home {
+                    // An execution's tree outlives the call; `release` is its only exit. The
+                    // cancellation span does NOT outlive the call (#1073).
+                    Tier1Home::Execution { mut guard, .. } => {
+                        if let Some(workspace) = guard.as_mut() {
+                            workspace.park();
+                        }
+                        result
+                    }
+                    Tier1Home::PerCall(workspace) => {
+                        if self.config.keep_workspace {
+                            return result;
+                        }
+                        let removed = workspace.remove();
+                        match (result, removed) {
+                            (Ok(executed), Ok(())) => Ok(executed),
+                            // A leaked workspace is a leaked write capability: removal failure
+                            // wins over a successful capture, because the record must not say
+                            // "clean".
+                            (Ok(_), Err(error)) | (Err(error), _) => Err(error),
+                        }
+                    }
                 }
             }
             IsolationTier::Tier2 | IsolationTier::Tier3 => Err(HostError::TierViolation),
+        }
+    }
+
+    /// What a completed `commit` records beyond its capture (#1066): the object id it made, and
+    /// — inside an execution — the ref it moved. A commit that did not complete (non-zero exit,
+    /// a lost capture, a first stage that was final) records neither: the capture already says
+    /// what happened, and naming a commit that may not exist would be an invention.
+    fn landed_commit(
+        &self,
+        home: &Tier1Home<'_>,
+        root: &std::path::Path,
+        captured: CapturedProcess,
+    ) -> Result<Executed, HostError> {
+        let completed =
+            captured.exit_code == Some(0) && !captured.readers_abandoned && !captured.reader_lost;
+        if !completed {
+            return Ok(Executed::from(captured));
+        }
+        let commit = self.head_object_id(root);
+        // A commit whose object id cannot be read back — a truncated, timed-out, cancelled or
+        // failed `rev-parse` — is a LANDING FAILURE, not an optional field (Codex, on #1073):
+        // nothing can be landed for it, and a record that said "completed" with no commit and
+        // no ref would report a successful commit node that published nothing.
+        if commit.is_none() {
+            return Ok(Executed {
+                captured,
+                commit: None,
+                landed_ref: None,
+                failure: Some(HostError::Config {
+                    rule: "the commit's object id could not be read back",
+                }),
+                recovered_workspace: false,
+            });
+        }
+        let (landed_ref, failure) = match (home, commit.as_deref()) {
+            (Tier1Home::Execution { id, slot, .. }, Some(commit)) => {
+                let reference = execution_ref(id);
+                let mut landed_at = slot
+                    .landed_at
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                match self.land_ref(root, &reference, commit, landed_at.as_deref()) {
+                    Ok(()) => {
+                        *landed_at = Some(commit.to_owned());
+                        (Some(reference), None)
+                    }
+                    // The commit exists; the ref did not move. Both facts go on the record.
+                    Err(error) => (None, Some(error)),
+                }
+            }
+            _ => (None, None),
+        };
+        Ok(Executed {
+            captured,
+            commit,
+            landed_ref,
+            failure,
+            recovered_workspace: false,
+        })
+    }
+}
+
+/// `git rev-parse HEAD`'s stdout as an object id, or `None`. Both object formats git supports
+/// are accepted — 40 hex for SHA-1, 64 hex for a repository initialised with
+/// `--object-format=sha256` (Codex, on #1073: a 40-only check turned a SHA-256 repository's
+/// commit into `commit: None`, and `landed_commit` then skipped `update-ref` while the call
+/// still recorded as completed). Any other width, a non-hex byte, or extra lines is `None`: the
+/// record must not name a commit this function could not read back.
+fn object_id_from_rev_parse(stdout: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(stdout).ok()?;
+    let id = text.trim();
+    (matches!(id.len(), 40 | 64) && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| id.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod object_id_tests {
+    use super::object_id_from_rev_parse;
+
+    #[test]
+    fn a_sha1_object_id_is_accepted() {
+        let id = "e83e553422f7c7d375e6aa44236b4ca05a8f7606";
+        assert_eq!(
+            object_id_from_rev_parse(
+                format!(
+                    "{id}
+"
+                )
+                .as_bytes()
+            )
+            .as_deref(),
+            Some(id)
+        );
+    }
+
+    /// THE cell for the review finding: a SHA-256 repository's 64-hex id is an id.
+    #[test]
+    fn a_sha256_object_id_is_accepted() {
+        let id = "a".repeat(64);
+        assert_eq!(
+            object_id_from_rev_parse(
+                format!(
+                    "{id}
+"
+                )
+                .as_bytes()
+            )
+            .as_deref(),
+            Some(id.as_str())
+        );
+    }
+
+    #[test]
+    fn uppercase_hex_is_lowercased() {
+        assert_eq!(
+            object_id_from_rev_parse(b"ABCDEF0123456789ABCDEF0123456789ABCDEF01").as_deref(),
+            Some("abcdef0123456789abcdef0123456789abcdef01")
+        );
+    }
+
+    /// Any other width, a non-hex byte, or a second line is not an object id — the record names
+    /// nothing rather than guessing.
+    #[test]
+    fn anything_else_is_none() {
+        for junk in [
+            "",
+            "HEAD",
+            "abc",
+            "g".repeat(40).as_str(),
+            &"a".repeat(41),
+            &"a".repeat(63),
+            &"a".repeat(65),
+            &format!(
+                "{}
+{}",
+                "a".repeat(40),
+                "b".repeat(40)
+            ),
+        ] {
+            assert_eq!(object_id_from_rev_parse(junk.as_bytes()), None, "{junk:?}");
         }
     }
 }

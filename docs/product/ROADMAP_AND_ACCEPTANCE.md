@@ -122,7 +122,9 @@ obligation — a gap with no date is a gap nobody will close.
 4. imports a repository;
 5. requests a feature;
 6. system generates Graph v1;
-7. execution maps, plans, changes, tests and reviews;
+7. execution maps, plans, changes, tests and reviews; (steps 5-7's "changes, tests" half
+   is proven without a model credential in `docs/acceptance/useful-change-2026-09-13.md`:
+   the change lands as `refs/graphhelm/executions/<id>` in the project, #1066)
 8. user removes review and forces deploy to a test environment;
 9. Graph Draft shows risks;
 10. user confirms;

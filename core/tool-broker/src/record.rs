@@ -75,6 +75,79 @@ pub struct ToolCallRecord {
     /// record instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contained_session: Option<ContainedSessionIdentity>,
+    /// The commit a `repository`/`commit` call produced, as its full lowercase hex object id
+    /// (#1066). `None` for every other call, for a commit that did not complete, and for
+    /// records that predate the field. Content-free by construction: an object id names the
+    /// tree, it does not carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// The ref in the PROJECT that `commit` now points at `commit` — always under
+    /// [`EXECUTION_REF_NAMESPACE`], never a branch, never the operator's checkout (#1066).
+    /// `Some` only when the call ran inside an execution's workspace (a per-call workspace has
+    /// no execution to land under, so its commit stays reachable only from the record).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landed_ref: Option<String>,
+    /// Whether the host reclaimed a STALE workspace before this call ran (#1073): the leftover
+    /// of an earlier drive of the same execution whose server died before releasing it. The
+    /// call then ran in a fresh tree provisioned from the execution's ref (or `HEAD`), exactly
+    /// as if nothing had been left behind; this flag is the audit trail that something was.
+    /// Absent on the wire when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recovered_workspace: bool,
+}
+
+/// Where an execution's commits land in the project: a plain ref namespace, deliberately
+/// outside `refs/heads` so nothing an execution does can move a branch the operator has
+/// checked out (sovereignty — the operator merges with `git merge <ref>` when they choose).
+pub const EXECUTION_REF_NAMESPACE: &str = "refs/graphhelm/executions/";
+
+/// The prefix of the digest spelling under [`EXECUTION_REF_NAMESPACE`]; an id carrying it is
+/// never spelled verbatim, so the two spellings cannot collide.
+const DIGEST_SPELLING_PREFIX: &str = "sha256-";
+
+/// The ref an execution's commits land under: [`EXECUTION_REF_NAMESPACE`] followed by the
+/// execution id when the id is a legal LOWERCASE ref segment, otherwise by `sha256-<first 32 hex
+/// of the id's sha256>`. Deterministic, so an auditor holding the record can re-derive it; an
+/// execution id may carry bytes git refuses in a ref name (`~`, `^`, `:`, `?`, `*`, `[`, `..`),
+/// and the record names the ref that was actually written either way.
+///
+/// Lowercase only (Codex, on #1073): loose refs are files, and on the case-insensitive
+/// filesystems Git for Windows normally runs on `Build-1` and `build-1` would alias one path —
+/// the second execution would resume from the first's commit and overwrite its ref. An id with
+/// any uppercase byte takes the digest spelling, whose hex is lowercase by construction, so two
+/// ids that differ only by case land under two refs.
+///
+/// An id that itself begins with `sha256-` ALWAYS takes the digest spelling (#1073): spelled
+/// verbatim, `sha256-<32 hex>` is exactly the digest spelling of some other id, so
+/// `sha256-a5bb…` as a literal id and `Build-1` (whose digest that is) would land under one ref.
+/// Digesting every `sha256-`-prefixed id keeps the verbatim and digest spellings disjoint —
+/// the verbatim branch can no longer produce a name the digest branch can produce.
+#[must_use]
+pub fn execution_ref(execution_id: &str) -> String {
+    if is_ref_segment(execution_id) && !execution_id.starts_with(DIGEST_SPELLING_PREFIX) {
+        format!("{EXECUTION_REF_NAMESPACE}{execution_id}")
+    } else {
+        let digest = digest_hex(execution_id.as_bytes());
+        format!(
+            "{EXECUTION_REF_NAMESPACE}{DIGEST_SPELLING_PREFIX}{}",
+            &digest[..32]
+        )
+    }
+}
+
+/// `git check-ref-format`'s rules for ONE component, applied conservatively and case-safely:
+/// ASCII LOWERCASE letters, digits, `.`, `_` and `-` only; no leading `.`, no trailing `.`, no
+/// `..`, no `.lock` suffix, bounded length. Anything else takes the digest spelling.
+fn is_ref_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && !value.ends_with(".lock")
 }
 
 /// The identity half of #540, as the record carries it: which absolute path, which bytes.

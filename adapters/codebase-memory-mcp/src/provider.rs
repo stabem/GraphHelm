@@ -250,6 +250,9 @@ impl StructuralCodeIndex for ContainedIndexProvider {
                 sha256: self.session.executable().sha256().to_owned(),
             }),
             contained_session: Some(self.session.identity().clone()),
+            commit: None,
+            landed_ref: None,
+            recovered_workspace: false,
         };
 
         Ok(graphhelm_runtime::ports::StructuralIndexResponse {

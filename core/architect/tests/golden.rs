@@ -595,3 +595,52 @@ fn a_recording_that_answers_nothing_names_the_first_prompt() {
         other => panic!("{other:?}"),
     }
 }
+
+/// #1066: the goal of `docs/acceptance/useful-change-2026-09-13.md`, read from its own file so the
+/// CLI journey and this test share one string.
+fn useful_change_goal() -> String {
+    std::fs::read_to_string(fixtures().join("useful-change").join("GOAL.txt"))
+        .unwrap()
+        .trim_end()
+        .to_owned()
+}
+
+/// The recorded reply for the tools-only goal compiles to ONE `tests` node and nothing cognitive:
+/// a graph a Runtime with no model credential runs end to end (`serve --staging --allow-program`,
+/// #1066). The catalog offers `git` only — the runner is host configuration, not a program the
+/// draft may name — and the draft names no shell program at all.
+#[test]
+fn the_useful_change_goal_compiles_to_one_tests_node_and_nothing_cognitive() {
+    let goal = useful_change_goal();
+    let synthesized = compile(
+        "useful-change/replies.json",
+        &TaskProfile::new(&goal),
+        &CapabilityCatalog::from_runtime(&["git".to_owned()]),
+    )
+    .unwrap_or_else(|refusal| panic!("{refusal:?}"));
+    assert_eq!(synthesized.rounds, 1);
+    let nodes = synthesized.document["spec"]["nodes"]
+        .as_object()
+        .expect("nodes");
+    assert_eq!(nodes.len(), 1, "{nodes:?}");
+    let node = &nodes["run_tests"];
+    assert_eq!(node["type"], "tool");
+    assert_eq!(node["tool"]["call"]["tool"], "tests");
+    assert_eq!(
+        node["tool"]["call"]["arguments"],
+        serde_json::json!(["grep", "-n", "FIXED", "--", "src/lib.rs"])
+    );
+    assert_eq!(
+        synthesized.document["spec"]["completion"]["terminalNodes"],
+        serde_json::json!(["run_tests"])
+    );
+    let report = relint(&synthesized.document);
+    assert!(
+        report
+            .errors
+            .iter()
+            .chain(report.warnings.iter())
+            .all(|diagnostic| diagnostic.code != "GHG102_UNBOUNDED_CUSTOMS"),
+        "the stamped document must be completable"
+    );
+}

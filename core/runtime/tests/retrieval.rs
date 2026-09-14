@@ -1424,6 +1424,9 @@ fn broker_record(request: &StructuralIndexRequest, bytes: u64) -> ToolCallRecord
         reused: false,
         verified_executable: None,
         contained_session: None,
+        commit: None,
+        landed_ref: None,
+        recovered_workspace: false,
     }
 }
 

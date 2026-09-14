@@ -1147,7 +1147,16 @@ const INHERITED: &[&str] = &[
 /// to the sandbox exactly the way HOME and TEMP are -- set by the host to a workspace path, denied
 /// in `extra_env`, and structurally absent from inheritance via `env_clear`. Confinement by the
 /// same mechanism as its siblings, so one sweep of this list answers "what does Tier 1 redirect".
-const REDIRECTED: &[&str] = &["HOME", "USERPROFILE", "TEMP", "TMP", "CBM_CACHE_DIR"];
+const REDIRECTED: &[&str] = &[
+    "HOME",
+    "USERPROFILE",
+    "TEMP",
+    "TMP",
+    "CBM_CACHE_DIR",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_KEY_0",
+    "GIT_CONFIG_VALUE_0",
+];
 
 /// The one address a broker-run index provider reads its store from: the funnel sets
 /// `CBM_CACHE_DIR` here (#538), so anything that must be VISIBLE to the provider — the pinned
@@ -1155,6 +1164,15 @@ const REDIRECTED: &[&str] = &["HOME", "USERPROFILE", "TEMP", "TMP", "CBM_CACHE_D
 pub(crate) fn cbm_cache_dir(root: &Path) -> PathBuf {
     root.join(".cbm-cache")
 }
+
+/// The three directories the funnel creates INSIDE the workspace root for every spawn: the
+/// child's redirected `HOME`/`USERPROFILE`, its `TEMP`/`TMP`, and the index provider's cache.
+/// Inside an execution the root is the execution's own worktree, so whatever a shell or tests
+/// call writes there — a `.cargo/credentials` under HOME, a build's temp files — sits beside the
+/// tracked tree, and a `git add -A` would carry it into `refs/graphhelm/executions/<id>`
+/// (#1073). [`RepositoryTool::commit`](crate::tools::RepositoryTool::commit) excludes exactly
+/// these names by pathspec; keep the list and the `create_dir_all` calls below in step.
+pub(crate) const WORKSPACE_SCRATCH_NAMES: [&str; 3] = [".home", ".tmp", ".cbm-cache"];
 
 /// The fixed git posture: no system config, no prompts, no optional locks, and a synthetic
 /// commit identity — `env_clear` plus an empty redirected HOME leaves git with no
@@ -1286,6 +1304,54 @@ impl Drop for AttachedSpawn<'_> {
     }
 }
 
+/// The hook-free directory one spawn points `core.hooksPath` at: a fresh sibling of the
+/// workspace root, so it is under the staging area and outside the tree the child owns, named
+/// by this process's id, a per-process random token and a process-wide counter so two hosts
+/// sharing one staging area — or two calls of one host — never name the same directory.
+/// Created with `create_dir`, which fails when the name already exists: a directory planted at a
+/// guessed name refuses the call instead of supplying hooks to it. Removed on drop, that is,
+/// when the call returns by any path.
+struct NoHooksDir(PathBuf);
+
+impl NoHooksDir {
+    fn create(root: &Path) -> Result<Self, HostError> {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static TOKEN: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let token = TOKEN.get_or_init(|| {
+            use std::hash::{BuildHasher, Hasher};
+            // `RandomState` is seeded per process from the OS; the hash of nothing is that seed
+            // made visible, which is all this needs — unguessable across processes, no new dep.
+            std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+        });
+        let absolute = std::path::absolute(root).map_err(|source| HostError::Prepare { source })?;
+        let parent = absolute.parent().ok_or_else(|| HostError::Prepare {
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a workspace root must have a parent to hold its hook-free directory",
+            ),
+        })?;
+        let path = parent.join(format!(
+            "ghtool-nohooks-{}-{token:016x}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path).map_err(|source| HostError::Prepare { source })?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for NoHooksDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The eighth argument, and the alternative that was rejected (#180).
 ///
 /// Folding `cancel` into [`ProcessLimits`] would keep the arity at seven and is coherent on its
@@ -1314,8 +1380,9 @@ pub fn run_in_workspace(
         }
     }
 
-    let home = root.join(".home");
-    let tmp = root.join(".tmp");
+    let [home_name, tmp_name, _] = WORKSPACE_SCRATCH_NAMES;
+    let home = root.join(home_name);
+    let tmp = root.join(tmp_name);
     let cbm_cache = cbm_cache_dir(root);
     std::fs::create_dir_all(&home).map_err(|source| HostError::Prepare { source })?;
     std::fs::create_dir_all(&tmp).map_err(|source| HostError::Prepare { source })?;
@@ -1358,6 +1425,32 @@ pub fn run_in_workspace(
     command.env("HOME", &home).env("USERPROFILE", &home);
     command.env("TEMP", &tmp).env("TMP", &tmp);
     command.env("CBM_CACHE_DIR", &cbm_cache);
+    // Hooks disabled on EVERY spawn through this funnel, not only at provisioning (Codex, on
+    // #1073, measured: the project's `pre-commit` ran on `git commit` and its
+    // `reference-transaction` hook ran on `update-ref`). `core.hooksPath` is pointed at a
+    // hook-free directory through the `GIT_CONFIG_*` environment triple git reads ahead of
+    // every config file, so it applies to git however it is reached: directly, as the tests
+    // runner, or from a program the allowlist admits that shells out to git. A non-git child
+    // ignores the three names. The names are reserved from `extra_env` (`REDIRECTED`), so no
+    // caller can point hooks back at the repository.
+    //
+    // The directory is OUTSIDE the workspace (Codex, on #1073, second pass, reproduced on git
+    // 2.43): the first shape pointed it at the redirected HOME, which is `<root>/.home` — a
+    // directory every untrusted child of the execution writes to and that persists across
+    // calls, so a shell call planting an executable `.home/pre-commit` had it run by the next
+    // brokered `git commit`. Now it is a fresh sibling of the root (under staging, never under
+    // the tree a child owns), created for THIS spawn with `create_dir` — a name that already
+    // exists refuses the call rather than trusting whatever is there — and removed when the
+    // call returns. Handed to git in `git_safe` form: the root is canonical (`\?\` on
+    // Windows) and git refuses that prefix.
+    let no_hooks = NoHooksDir::create(root)?;
+    command
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env(
+            "GIT_CONFIG_VALUE_0",
+            crate::workspace::git_safe(no_hooks.path()),
+        );
     for (name, value) in FIXED_GIT {
         command.env(name, value);
     }

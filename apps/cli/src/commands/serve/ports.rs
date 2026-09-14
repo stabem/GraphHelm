@@ -29,19 +29,37 @@ use graphhelm_tool_host::workspace::WorkspaceConfig;
 const TIMEOUT_SECONDS: u64 = 300;
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
-/// The real-executor wiring parsed and validated once at `serve` startup (STEP 2's grouping
-/// rule): a chosen route cloned out of the manifest, the broker/keyring coordinates, the tool
-/// workspace's fixed inputs, and the allow-list/PATH-prepend configuration every drive's
-/// `ToolLease` and `ToolHost` are built from.
+/// The real-executor wiring parsed and validated once at `serve` startup: two HALVES (#1066),
+/// each optional on its own, plus the keyring both halves seal under. `model` is the gateway
+/// half (`{manifest, broker, route}`); `tools` is the host half (`{staging, allow-program}`).
+/// A `RuntimeWiring` exists only when at least one half does — `build_wiring` answers `None`
+/// for the fixture-only shape — and the executor a drive gets is composed from whichever halves
+/// are present (`routes::drive`): both → `PortExecutor`; one → `SplitExecutor` with the fixture
+/// executor standing in for the absent half.
 pub(super) struct RuntimeWiring {
+    pub(super) model: Option<ModelWiring>,
+    pub(super) tools: Option<ToolWiring>,
+    /// Required whenever anything real is wired: real work seals evidence, and a keyring is
+    /// what it seals under. Also the directory the tool workspace must never overlap.
+    pub(super) keyring_dir: PathBuf,
+    pub(super) key_id: String,
+}
+
+/// The model half: a chosen route cloned out of the manifest and the broker its credential is
+/// leased from.
+pub(super) struct ModelWiring {
     /// The manifest file `--manifest` named, kept as the path (not the parsed value): the
     /// gateway read surface (05e Task 4) re-reads it through the SAME `gateway::routes`/
     /// `gateway::probe` command layer the CLI runs, so the two can never drift on parsing.
     pub(super) manifest_path: PathBuf,
     pub(super) route: ModelRoute,
     pub(super) broker_dir: PathBuf,
-    pub(super) keyring_dir: PathBuf,
-    pub(super) key_id: String,
+}
+
+/// The tool half: the workspace's fixed inputs and the allow-list/PATH-prepend configuration
+/// every drive's `ToolLease` and `ToolHost` are built from. No credential lives here and none
+/// is needed: Tier 1 work is git, a runner and an allowlist (#1066).
+pub(super) struct ToolWiring {
     pub(super) staging: PathBuf,
     /// The deployer's own default for a request's absent `"project"` (issue #82) — `--project`
     /// at startup, never required. `None` preserves the prior behavior exactly: `drive`'s own
@@ -92,7 +110,11 @@ impl ServeModelPort {
     /// request pick a model: `wiring.route` is the deployer's default, not the only answer. The
     /// broker/keyring coordinates still come from `wiring` — those are deployment facts, and a
     /// request that could redirect the credential lookup would be choosing whose key it spends.
-    pub(super) async fn build(wiring: &RuntimeWiring, route: &ModelRoute) -> Result<Self, String> {
+    pub(super) async fn build(
+        wiring: &RuntimeWiring,
+        model: &ModelWiring,
+        route: &ModelRoute,
+    ) -> Result<Self, String> {
         match route.transport() {
             Transport::NativeRuntime => Ok(Self::NativeRuntime {
                 route: route.clone(),
@@ -100,7 +122,7 @@ impl ServeModelPort {
             Transport::DirectApi => {
                 let passphrase = gateway_passphrase()?;
                 let broker = CredentialBroker::open(
-                    &wiring.broker_dir,
+                    &model.broker_dir,
                     &wiring.keyring_dir,
                     &wiring.key_id,
                     passphrase,
@@ -206,18 +228,47 @@ impl ModelPort for ServeModelPort {
 /// signal).
 pub(super) struct ServeToolPort {
     host: Arc<ToolHost>,
+    /// The execution every call of this port runs for (#1066): the host keys ONE Tier 1
+    /// workspace on it, so node A's patch is still in the tree when node B tests it and node C
+    /// commits it, and a `commit` lands `refs/graphhelm/executions/<id>` in the project. Bound
+    /// by `drive` before the port is handed to the executor; a port is built per drive and a
+    /// drive is one execution, so the binding is total.
+    execution_id: String,
+}
+
+/// The handle `drive` keeps to tear an execution's workspace down once the drive ends (#1066),
+/// separate from the port itself because the port has been moved into the executor by then.
+pub(super) struct WorkspaceRelease {
+    host: Arc<ToolHost>,
+    execution_id: String,
+}
+
+impl WorkspaceRelease {
+    /// Removes the execution's Tier 1 workspace; the ref it landed stays. Blocking (a
+    /// `git worktree remove`), so the caller runs it off the reactor.
+    pub(super) fn release(self) -> Result<(), String> {
+        self.host
+            .release(&self.execution_id)
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl ServeToolPort {
-    pub(super) fn build(wiring: &RuntimeWiring, project: &std::path::Path) -> Result<Self, String> {
+    /// `protected` is every directory the tool workspace must never overlap — the keyring
+    /// always, the broker when a model half is wired.
+    pub(super) fn build(
+        tools: &ToolWiring,
+        protected: &[PathBuf],
+        project: &std::path::Path,
+        execution_id: &str,
+    ) -> Result<Self, String> {
         // The staging area itself is `WorkspaceConfig::validated`'s second argument, not a
         // "protected" directory to check the staging area against — passing it in `protected`
         // too made every drive refuse with "the staging area must not overlap a protected
         // directory" (it always overlaps itself), observed directly while proving STEP 6 test 3
         // green. Only the keyring/broker are genuinely separate directories that must never
         // overlap the tool workspace.
-        let protected = vec![wiring.keyring_dir.clone(), wiring.broker_dir.clone()];
-        let workspace = WorkspaceConfig::validated(project, &wiring.staging, &protected)
+        let workspace = WorkspaceConfig::validated(project, &tools.staging, protected)
             .map_err(|error| error.to_string())?;
         let host = ToolHost::new(HostConfig {
             workspace,
@@ -225,14 +276,24 @@ impl ServeToolPort {
                 timeout: std::time::Duration::from_secs(TIMEOUT_SECONDS),
                 max_output_bytes: MAX_OUTPUT_BYTES,
             },
-            tests_runner: wiring.tests_runner.clone(),
+            tests_runner: tools.tests_runner.clone(),
             tests_runner_env: std::collections::BTreeMap::new(),
-            path_prepend: wiring.path_prepend.clone(),
+            path_prepend: tools.path_prepend.clone(),
             keep_workspace: false,
         });
         Ok(Self {
             host: Arc::new(host),
+            execution_id: execution_id.to_owned(),
         })
+    }
+
+    /// The release handle for this port's execution — taken by `drive` BEFORE the port moves
+    /// into the executor, used AFTER the drive returns.
+    pub(super) fn releaser(&self) -> WorkspaceRelease {
+        WorkspaceRelease {
+            host: self.host.clone(),
+            execution_id: self.execution_id.clone(),
+        }
     }
 }
 
@@ -244,14 +305,16 @@ impl ToolPort for ServeToolPort {
         actor: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolPortResult> + Send + 'a>> {
         let host = self.host.clone();
+        let execution_id = self.execution_id.clone();
         let call = call.clone();
         let lease = lease.clone();
         let actor = actor.to_owned();
         Box::pin(async move {
-            let (record, streams) =
-                tokio::task::spawn_blocking(move || host.invoke(&call, &lease, &actor))
-                    .await
-                    .expect("the tool-host blocking task is never cancelled");
+            let (record, streams) = tokio::task::spawn_blocking(move || {
+                host.invoke_for_execution(&execution_id, &call, &lease, &actor)
+            })
+            .await
+            .expect("the tool-host blocking task is never cancelled");
             ToolPortResult {
                 record,
                 streams: ToolStreams {

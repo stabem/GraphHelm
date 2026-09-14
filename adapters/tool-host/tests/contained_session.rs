@@ -233,6 +233,9 @@ fn the_session_identity_round_trips_in_the_record_and_old_records_decode_as_none
             snapshot_generation: "sha256-xyz".to_owned(),
             executable_sha256: "deadbeef".to_owned(),
         }),
+        commit: None,
+        landed_ref: None,
+        recovered_workspace: false,
     };
     let wire = serde_json::to_string(&record).unwrap();
     let back: ToolCallRecord = serde_json::from_str(&wire).unwrap();

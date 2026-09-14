@@ -276,19 +276,32 @@ pub struct ServeArgs {
     /// beyond localhost.
     #[arg(long)]
     pub bind: String,
-    /// The real-executor wiring. Optional as a GROUP — see
-    /// `commands::serve::mod`'s startup validation for the exact all-or-none rule this and its
-    /// siblings below must satisfy. Absent entirely, `serve` stays the fixture-only 05a server.
+    /// The MODEL half of the real-executor wiring: `--manifest`, `--broker` and `--route` are
+    /// all-or-none (#1066). With them, cognitive nodes (agent, planner, classifier, evaluator)
+    /// run on the named route. Without them, cognitive nodes are answered by node fixtures.
+    /// Any real half also requires `--keyring`/`--key-id`. Absent entirely, together with the
+    /// tool half below, `serve` stays the fixture-only 05a server.
     #[arg(long)]
     pub manifest: Option<PathBuf>,
+    /// The credential broker directory the model half leases from. See `--manifest`.
     #[arg(long)]
     pub broker: Option<PathBuf>,
+    /// The sealed keyring evidence is sealed under; with `--key-id` it is its own all-or-none
+    /// pair, usable alone (sealing-only, for `signal`) and REQUIRED with either real half.
     #[arg(long)]
     pub keyring: Option<PathBuf>,
     #[arg(long = "key-id")]
     pub key_id: Option<String>,
+    /// The manifest route cognitive nodes run on by default (a request may name another). See
+    /// `--manifest`.
     #[arg(long)]
     pub route: Option<String>,
+    /// The TOOL half of the real-executor wiring: `--staging` and `--allow-program` are
+    /// all-or-none (#1066), and need NO model credential. With them, tool nodes run on the real
+    /// tool host: one Tier 1 worktree per execution under this staging directory, kept across
+    /// that execution's tool calls and removed when its drive ends; a `commit` node lands
+    /// `refs/graphhelm/executions/<execution id>` in the project — a plain ref, never a branch,
+    /// never the operator's checkout. Without them, tool nodes are answered by node fixtures.
     #[arg(long)]
     pub staging: Option<PathBuf>,
     /// The deployer's own default workspace root for `start`/`resume`, used whenever a request
@@ -299,8 +312,8 @@ pub struct ServeArgs {
     /// colliding with `--staging` when the server happens to run from a `--staging` ancestor, so
     /// the deployer must be able to fix the default once, the same way `--staging` itself is
     /// fixed once, rather than every caller needing infrastructure knowledge it was never given.
-    /// Meaningful only alongside the real-executor group above (`drive` only ever consults it
-    /// there); given without them, it is accepted but silently unused.
+    /// Meaningful only alongside the tool half (`--staging`/`--allow-program`; `drive` only ever
+    /// consults it there); given without it, it is accepted but silently unused.
     #[arg(long)]
     pub project: Option<PathBuf>,
     /// Run the customs sweep automatically every N seconds, journalling each one as
@@ -322,11 +335,14 @@ pub struct ServeArgs {
     /// movement would stop implying progress.
     #[arg(long = "read-audit")]
     pub read_audit: Option<PathBuf>,
+    /// The bare program name a `tests` tool node runs, resolved on the child's PATH (see
+    /// `--path-prepend`). Host configuration, never caller input.
     #[arg(long = "tests-runner", default_value = "cargo")]
     pub tests_runner: String,
-    /// Repeatable; REQUIRED with the real-executor flags (#583). There is no default: the set of
-    /// programs an execution may spawn is declared per run, so the journal records a choice rather
-    /// than an inheritance.
+    /// Repeatable; the other half of the `--staging` pair (#583, #1066). There is no default: the
+    /// set of programs an execution may spawn is declared per run, so the journal records a choice
+    /// rather than an inheritance. The tests runner is host configuration (`--tests-runner`) and
+    /// is not listed here.
     #[arg(long = "allow-program")]
     pub allow_program: Vec<String>,
     /// Repeatable; directories joined ahead of the child's inherited PATH.

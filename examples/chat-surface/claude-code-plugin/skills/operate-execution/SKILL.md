@@ -12,6 +12,10 @@ not do (§6 parity).
 
 ## What this skill reads
 
+- `tool:briefing` — the resume briefing: what the run is for (`name`, `objective`), what runs
+  its nodes (`executor`), the `graphHash` to verify the file `resume` needs, every decision in
+  order with the actor that made it, the work done, what is pending, and `nextStep`. Derived
+  from the store alone; identical on CLI, HTTP and MCP.
 - `tool:status` — the execution's aggregate state, node-state counts, head sequence.
 - `tool:events` — the attributed event tail (`after`/`limit` paged); triage items surface
   here: blocked nodes, pending approvals, capacity waits.
@@ -34,7 +38,14 @@ not do (§6 parity).
 
 ## The loop
 
-1. `tool:start` (or pick up a running execution via `tool:status`).
+1. `tool:start` — or, to pick up an execution another session or harness drove, call
+   `tool:briefing` FIRST and act on its `nextStep`: `resume_held` names the `resume` to run
+   (verify the graph file's hash against `graphHash` with `tool:topology` before you do),
+   `answer` names the node and the verb (`approve`, `claim`, `amend_budget`), `diagnose` carries
+   a reason no single verb answers (a failed node, a wedged run, a foreign wake burn - read its
+   events and evidence, then decide, typically `cancel`), `dispatch` means nobody is needed,
+   `finished` means the run is over. Do not narrate `status` plus the event
+   tail into a summary of your own: the briefing is that summary, folded once from the store.
 2. Watch: poll `tool:events` from the last seen head (`after`), never re-reading the whole
    stream. Pin mutations with `ifMatch` when acting on what was just read — a stale pin
    comes back as the API's own 409: re-read via `tool:status`, retry once with the fresh

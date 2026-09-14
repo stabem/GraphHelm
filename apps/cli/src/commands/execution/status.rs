@@ -42,6 +42,18 @@ pub(crate) fn budgeted(
     execute_within(events, execution, crate::commands::status_read_budget())
 }
 
+/// One operator-facing read: the folded projection, the raw history it was folded from, and the
+/// attention inputs MEASURED from that history. `status` renders it; `briefing` (#1063) briefs
+/// from it. One measurement, two renders, so the two surfaces can never disagree about what is
+/// pending.
+pub(crate) struct Read {
+    pub(crate) projection: graphhelm_events::ExecutionProjection,
+    pub(crate) history: Vec<graphhelm_protocols::EventEnvelope>,
+    pub(crate) inputs: graphhelm_execution::AttentionInputs,
+    /// `at_sequence(&history)`: `None` for an empty history, never `Some(0)`.
+    pub(crate) at_sequence: Option<u64>,
+}
+
 /// The shared body, with the budget supplied rather than read from the wall clock.
 ///
 /// The seam exists so the bound can be PROVEN. `budgeted` reads the system clock, and a cell
@@ -52,6 +64,26 @@ pub(crate) fn execute_within(
     execution: Option<&str>,
     budget: graphhelm_events::ReadBudget,
 ) -> Result<serde_json::Value, Failure> {
+    let read = read_within(events, execution, budget)?;
+    let mut value = render(
+        &read.projection,
+        &read.inputs,
+        &super::Liveness::measured(&read.history),
+    );
+    // The WIRE field keeps its existing shape on purpose, zero and all: `headSequence` is a
+    // different contract from `at_sequence`, read by clients that already treat 0 as "nothing
+    // yet", and widening it to null is a wire change that needs its own justification. The
+    // flattening is left here DECLARED rather than silently carried into the seam.
+    value["headSequence"] = serde_json::json!(read.at_sequence.unwrap_or(0));
+    Ok(value)
+}
+
+/// The read half of [`execute_within`], shared with `briefing::execute_within`.
+pub(crate) fn read_within(
+    events: &Path,
+    execution: Option<&str>,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<Read, Failure> {
     // ONE budget for the whole read. Both halves are linear in the history - the journal
     // verification `open` performs, and then the fold - so both are checked against this same
     // deadline. Bounding only the fold would cover 42% of the measured cost while reading as a
@@ -85,13 +117,12 @@ pub(crate) fn execute_within(
         // `Some(0)` would claim one at a sequence streams never issue.
         at_sequence,
     };
-    let mut value = render(&projection, &inputs, &super::Liveness::measured(&history));
-    // The WIRE field keeps its existing shape on purpose, zero and all: `headSequence` is a
-    // different contract from `at_sequence`, read by clients that already treat 0 as "nothing
-    // yet", and widening it to null is a wire change that needs its own justification. The
-    // flattening is left here DECLARED rather than silently carried into the seam.
-    value["headSequence"] = serde_json::json!(at_sequence.unwrap_or(0));
-    Ok(value)
+    Ok(Read {
+        projection,
+        history,
+        inputs,
+        at_sequence,
+    })
 }
 
 pub fn run(events: &Path, execution: Option<&str>, html: Option<&Path>) -> Outcome {

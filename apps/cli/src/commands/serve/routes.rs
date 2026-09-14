@@ -40,6 +40,7 @@ const LIST_COMMAND: &str = "execution.list";
 const TOPOLOGY_COMMAND: &str = "graph.topology";
 const SYNTHESIZE_COMMAND: &str = "graph.synthesize";
 const STATUS_COMMAND: &str = "execution.status";
+const BRIEFING_COMMAND: &str = "execution.briefing";
 const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
 const SIGNAL_COMMAND: &str = "execution.signal";
@@ -538,6 +539,23 @@ pub(super) async fn status(
     }
 }
 
+/// `GET /v1/executions/{id}/briefing` (#1063): replies `execution.briefing`'s own `data` - the
+/// exact same `execution::briefing` read the CLI runs, under the same read budget and the same
+/// token as `status`, so a harness picking the run up over HTTP or MCP reads byte-identical
+/// bytes to one reading the store directly.
+pub(super) async fn briefing(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    match execution::briefing::budgeted(&state.events, Some(&execution_id)) {
+        Ok(value) => respond(
+            StatusCode::OK,
+            Outcome::success(BRIEFING_COMMAND, value).output,
+        ),
+        Err(failure) => respond_failure(BRIEFING_COMMAND, failure),
+    }
+}
+
 /// `GET /v1/executions/{id}/events?after=N&limit=M`: a page of the raw event envelope tail, read
 /// through the same `execution::resolve_stream` the CLI's replay path uses, sliced by `after`
 /// (exclusive) and `limit` (default 100, max 1000). Envelopes serialize verbatim — their payloads
@@ -841,7 +859,14 @@ pub(super) async fn start(
                         fixtures.as_deref(),
                         &mode,
                         Some(drive_execution_id.as_str()),
-                        execution::start::Attribution { actor, key },
+                        execution::start::Attribution {
+                            actor,
+                            key,
+                            // #1063: gateway when the real-executor wiring is configured,
+                            // fixture otherwise - the same predicate `annotate_fixture_only`
+                            // reads, so the form and the warning never disagree.
+                            executor: Some(ExecutorWiring::from_state(&drive_state).declared()),
+                        },
                         // The HTTP start always drives; `--held` is the CLI spelling and its own
                         // route is the follow-up this PR names. #90.
                         false,

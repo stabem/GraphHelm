@@ -1754,6 +1754,53 @@ fn status_over_http_matches_the_cli_and_the_events_tail_pages() {
     );
 }
 
+/// #1063: `GET /v1/executions/{id}/briefing` is `execution briefing`'s own read - same store,
+/// same bytes. The CLI reads the store directly; the API reads it through the server; a
+/// harness on either side gets the same briefing.
+#[test]
+fn the_briefing_over_http_matches_the_cli_on_the_same_store() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-briefing";
+    let fixtures = all_success_fixtures(directory.path());
+
+    cli_start(&events, &fixtures, execution);
+    let cli_briefing = cli(&[
+        "execution",
+        "briefing",
+        "--events",
+        events.to_str().unwrap(),
+        "--execution",
+        execution,
+    ]);
+    assert_eq!(cli_briefing["command"], "execution.briefing");
+
+    let (_guard, base, token) = serve(&events);
+    let briefing = get_json(
+        &format!("{base}/v1/executions/{execution}/briefing"),
+        Some(&token),
+    );
+    assert_eq!(briefing["command"], "execution.briefing", "{briefing}");
+    assert_eq!(
+        briefing["data"], cli_briefing["data"],
+        "one store, one briefing"
+    );
+    assert_eq!(
+        briefing["data"]["nextStep"],
+        serde_json::json!({"kind": "finished", "status": "completed"}),
+        "{briefing}"
+    );
+    assert_eq!(
+        briefing["data"]["workDone"].as_array().unwrap().len(),
+        2,
+        "both nodes succeeded: {briefing}"
+    );
+
+    // Same token rule as status: no bearer, no briefing.
+    let refused = raw_request(&format!("{base}/v1/executions/{execution}/briefing"), None).unwrap();
+    assert_eq!(refused.status, 401, "{}", refused.body);
+}
+
 /// `limit` above the 1000 cap is refused with 400, never silently truncated to the cap.
 #[test]
 fn the_events_tail_refuses_a_limit_above_the_cap_instead_of_truncating() {

@@ -1,5 +1,6 @@
 pub(super) mod amend;
 pub(super) mod approve;
+pub(super) mod briefing;
 pub(super) mod cancel;
 pub(super) mod claim;
 pub(super) mod clear;
@@ -869,6 +870,13 @@ pub(super) fn render(
     serde_json::json!({
         "executionId": projection.execution_id,
         "mode": projection.mode,
+        // #1063: what `start` declared it would drive the nodes with - `fixture`, `gateway`, or
+        // null for a history written before the declaration carried it. Read off the declared
+        // form, so it is the same fact the briefing reports.
+        "executor": projection
+            .declared_form
+            .as_ref()
+            .and_then(|form| form.executor),
         "status": reported_status(projection),
         // The tri-state on the wire, replacing the boolean the judge caught lying. There is
         // NO `attentionRequired` beside it: a convenience projection of a three-valued answer

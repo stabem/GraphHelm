@@ -2604,6 +2604,322 @@ fn the_declared_shape_and_the_start_are_one_append() {
     );
 }
 
+/// #1063: a start records what the run is FOR and who was going to run it, on the declared
+/// form. `name` is the document's `metadata.name`; `objective` is the first entrypoint's own
+/// objective (the operator's words, where the Studio's draft keeps them); the CLI's `start` is
+/// fixture-driven and says so. A briefing derived from the store alone reads these back.
+#[test]
+fn a_start_records_the_name_the_objective_and_the_executor_on_the_declared_form() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = start_once(
+        directory.path(),
+        "examples/graphs/manual-override-deploy.yaml",
+    );
+    let (_, _, declared) = journal_events(&events)
+        .into_iter()
+        .find(|(_, kind, _)| kind == "execution_form_declared")
+        .expect("a start must declare the shape of the execution");
+
+    assert_eq!(declared["name"], "Deploy com override manual");
+    assert_eq!(
+        declared["objective"], "Produzir build implantável.",
+        "the FIRST entrypoint's objective, verbatim: {declared}"
+    );
+    assert_eq!(declared["executor"], "fixture");
+}
+
+fn briefing(events: &Path, execution: &str) -> Value {
+    let output = command()
+        .args([
+            "execution",
+            "briefing",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let envelope = json(&output.stdout);
+    assert_eq!(envelope["command"], "execution.briefing", "{envelope}");
+    envelope["data"].clone()
+}
+
+/// #1063: the resume briefing, read from the store alone after start -> approve -> pause on the
+/// two-node example with a failure fixture. Each section names what happened: the objective
+/// declared at start, the decisions IN ORDER with the actor that made them, the pending reason
+/// while it existed, and the next step naming `resume` once the run is held.
+#[test]
+fn the_briefing_reports_the_decisions_in_order_with_actors_and_names_resume_when_held() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-briefing";
+    let blocking = fixtures_file(
+        directory.path(),
+        serde_json::json!({ "implementation": "failure" }),
+    );
+    start(&events, &blocking, "supervised", execution);
+
+    // BEFORE the approval: the blocked node is the pending reason, and the next step is the
+    // verb that answers it. Asserted here because the story resolves it two lines down, and
+    // parity about an empty `pending` proves nothing.
+    let blocked = briefing(&events, execution);
+    assert_eq!(blocked["name"], "Deploy com override manual", "{blocked}");
+    assert_eq!(blocked["objective"], "Produzir build implantável.");
+    assert_eq!(blocked["executor"], "fixture");
+    assert_eq!(
+        blocked["pending"][0],
+        serde_json::json!({"kind": "blocked_node", "node": "implementation"}),
+        "{blocked}"
+    );
+    assert_eq!(
+        blocked["nextStep"],
+        serde_json::json!({"kind": "answer", "node": "implementation", "remedy": "approve"}),
+        "{blocked}"
+    );
+    assert_eq!(
+        blocked["decisions"],
+        serde_json::json!([]),
+        "a fixture failure is an outcome, not a decision: {blocked}"
+    );
+
+    approve(&events, execution, "implementation");
+    pause(&events, execution);
+
+    let held = briefing(&events, execution);
+    let decisions: Vec<(String, String, String)> = held["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|decision| {
+            (
+                decision["kind"].as_str().unwrap().to_owned(),
+                decision["actor"]["id"].as_str().unwrap().to_owned(),
+                decision["actor"]["type"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        decisions,
+        vec![
+            (
+                "approval".to_owned(),
+                "owner-cli".to_owned(),
+                "owner".to_owned()
+            ),
+            (
+                "paused".to_owned(),
+                "owner-cli".to_owned(),
+                "owner".to_owned()
+            ),
+        ],
+        "{held}"
+    );
+    assert_eq!(held["decisions"][0]["node"], "implementation");
+    assert!(
+        held["decisions"][0]["sequence"].as_u64().unwrap()
+            < held["decisions"][1]["sequence"].as_u64().unwrap(),
+        "ordered by sequence: {held}"
+    );
+    assert_eq!(held["nextStep"]["kind"], "resume_held", "{held}");
+    let command = held["nextStep"]["command"].as_str().unwrap();
+    assert!(
+        command.contains("execution resume") && command.contains(execution),
+        "the next step names resume and the execution: {command}"
+    );
+    assert_eq!(
+        held["nextStep"]["nodes"],
+        serde_json::json!(["deploy", "implementation"]),
+        "the held nodes: {held}"
+    );
+    assert_eq!(held["pending"], serde_json::json!([]), "{held}");
+    assert_eq!(held["workDone"], serde_json::json!([]), "{held}");
+
+    // The hash a reader verifies the graph file against is the one the start recorded.
+    let (_, _, started) = journal_events(&events)
+        .into_iter()
+        .find(|(_, kind, _)| kind == "execution_started")
+        .unwrap();
+    assert_eq!(held["graphHash"], started["graphHash"]);
+    assert_eq!(held["graphVersion"], started["graphVersion"]);
+    assert_eq!(
+        held["asOfSequence"],
+        serde_json::json!(status_head(&events, execution).unwrap()),
+        "folded at the head status reports"
+    );
+    // The status view carries the same declared executor, so a glance says what a briefing says.
+    assert_eq!(status(&events, execution)["executor"], "fixture");
+}
+
+/// #1063: `execution briefing` refuses exactly as `execution status` does when no stream can be
+/// selected - same code, same pointer - under its OWN command name, so a caller reading the
+/// envelope knows which verb refused.
+#[test]
+fn briefing_without_an_execution_refuses_with_statuss_own_code_under_its_own_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let refusal = |verb: &str| -> Value {
+        let output = command()
+            .args(["execution", verb, "--events", events.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "{verb} must refuse an empty store"
+        );
+        json(&output.stdout)
+    };
+    let status = refusal("status");
+    let briefing = refusal("briefing");
+    assert_eq!(briefing["ok"], false);
+    assert_eq!(briefing["command"], "execution.briefing", "{briefing}");
+    assert_eq!(briefing["data"], Value::Null);
+    assert_eq!(
+        briefing["diagnostics"][0]["code"], status["diagnostics"][0]["code"],
+        "the same refusal as status: {briefing} vs {status}"
+    );
+    assert_eq!(
+        briefing["diagnostics"][0]["code"],
+        "GHE010_STREAM_SELECTION_REQUIRED"
+    );
+    assert_eq!(
+        briefing["diagnostics"][0]["path"],
+        status["diagnostics"][0]["path"]
+    );
+}
+
+/// #1063: a held start drives nothing, so it declares no executor - whoever resumes it (the CLI
+/// with fixtures, or `serve` with the gateway) decides that later, and `resume` re-declares
+/// nothing. A `fixture` written here would be repeated by every briefing for work the gateway
+/// actually did.
+#[test]
+fn a_held_start_declares_no_executor() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let (_, _, declared) = journal_events(&events)
+        .into_iter()
+        .find(|(_, kind, _)| kind == "execution_form_declared")
+        .unwrap();
+    assert_eq!(declared["name"], "Deploy com override manual");
+    assert!(
+        declared.get("executor").is_none(),
+        "a held start declares no executor: {declared}"
+    );
+}
+
+/// #1063: a name that LOOKS like a secret is left off the declaration, not written to the log
+/// and not a refused start. The store's durable-content scan is the rule every append is held
+/// to; before this field existed such a graph started, and it still does - the briefing reads
+/// its name as absent.
+#[test]
+fn a_secret_shaped_name_is_omitted_from_the_declaration_and_the_start_proceeds() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let source =
+        std::fs::read_to_string(root().join("examples/graphs/manual-override-deploy.yaml"))
+            .unwrap();
+    let token = format!("sk-{}", "a".repeat(40));
+    let rewritten = source.replace(
+        "  name: Deploy com override manual\n",
+        &format!("  name: Rotate the key {token} today\n"),
+    );
+    assert_ne!(rewritten, source, "the example's name line must be found");
+    let graph = directory.path().join("secret-name.yaml");
+    std::fs::write(&graph, rewritten).unwrap();
+    let fixtures = all_success_fixtures(directory.path());
+
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec-secret-name",
+        ])
+        .output()
+        .unwrap();
+    let reply = json(&output.stdout);
+    assert_eq!(reply["ok"], true, "the start proceeds: {reply}");
+    let (_, _, declared) = journal_events(&events)
+        .into_iter()
+        .find(|(_, kind, _)| kind == "execution_form_declared")
+        .unwrap();
+    assert!(
+        declared.get("name").is_none(),
+        "the secret-shaped name never reaches the log: {declared}"
+    );
+    assert_eq!(
+        declared["objective"], "Produzir build implantável.",
+        "the safe field is still declared"
+    );
+    let briefing = briefing(&events, "exec-secret-name");
+    assert_eq!(briefing["name"], Value::Null);
+    let journal = std::fs::read_dir(&events).unwrap().count();
+    assert!(journal > 0);
+    assert!(
+        !std::fs::read_to_string(
+            journal_paths(&events)
+                .first()
+                .expect("a journal was written")
+        )
+        .unwrap()
+        .contains(&token),
+        "the token is in no journal line"
+    );
+}
+
+fn journal_paths(events: &Path) -> Vec<PathBuf> {
+    fn find(directory: &Path, found: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                find(&path, found);
+            } else if path.file_name().is_some_and(|name| name == "journal.jsonl") {
+                found.push(path);
+            }
+        }
+    }
+    let mut journals = Vec::new();
+    find(events, &mut journals);
+    journals.sort();
+    journals
+}
+
 /// A node that declares no deadline arrives ABSENT — not zero, not a default.
 ///
 /// Zero is the specific lie this guards: it is what a dropped field looks like once someone

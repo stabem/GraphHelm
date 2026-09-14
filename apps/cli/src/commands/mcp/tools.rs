@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 27] = [
+const TOOLS: [ToolSpec; 28] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -64,6 +64,17 @@ const TOOLS: [ToolSpec; 27] = [
     ToolSpec {
         name: "status",
         description: "Read an execution's status (GET /v1/executions/{executionId}).",
+        schema: execution_only_schema,
+    },
+    ToolSpec {
+        name: "briefing",
+        description: "Read an execution's resume briefing (GET /v1/executions/{executionId}/briefing): \
+                      what the run is for (name, objective), what runs its nodes, the graph \
+                      hash to verify the file `resume` needs, every decision in order with the \
+                      actor that made it, the work done, what is pending, and the next step. \
+                      Call this FIRST when picking up an execution another session or harness \
+                      drove - it is derived from the store alone and is identical on CLI, HTTP \
+                      and MCP. Read-only: it appends nothing.",
         schema: execution_only_schema,
     },
     ToolSpec {
@@ -823,6 +834,15 @@ pub(crate) fn call(
             api.request(
                 "GET",
                 &url::segment_path(&["v1", "executions", id]),
+                None,
+                None,
+                None,
+            )
+        }),
+        "briefing" => require(arguments, "executionId").map(|id| {
+            api.request(
+                "GET",
+                &url::segment_path(&["v1", "executions", id, "briefing"]),
                 None,
                 None,
                 None,

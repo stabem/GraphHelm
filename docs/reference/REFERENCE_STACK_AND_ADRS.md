@@ -333,6 +333,46 @@ graphhelm/
 
 **Relationship and supersession:** this ADR refines ADR-003, ADR-005, ADR-011, ADR-014, ADR-015 and ADR-021 and makes D-036 normative. It specifically replaces the previous internal assumptions of raw `GraphVersionRecord` persistence, Foundation parity in the journal, persisted Foundation diagnostics, unbounded waiver, legacy import, the `1.1.0` release and runtime compatibility. The historical rationale remains documented, but does not authorize implementation incompatible with this ADR. Provisional wire identifiers `p50.dev` remain preserved except where the corrected representation requires a new document name; any future change to this boundary requires an accepted ADR and an explicit compatibility plan.
 
+### ADR-022 amendment A1 (2026-09-14): bounded declared text
+
+**Status:** accepted. Deciding authority: the owner's standing orchestrator authority (global `CLAUDE.md`, "Orchestrator authority", owner order of 2026-09-07 — the orchestrator decides for the project and does not wait on the owner). Recorded on PR #1071 (issue #1063) as the ADR that AGENTS.md requires when a change contradicts a higher-precedence source instead of resolving it silently.
+
+**Context:** promise 3 of #302 — continuity across harnesses — needs a second harness to read what an execution is FOR from the event stream alone, with no keyring and no Evidence store. The Studio's draft keeps the operator's sentence in the first entrypoint's `objective` (its `metadata.name` is a placeholder); a synthesized graph keeps the goal it was compiled from in `metadata.name`. Under ADR-022 §3 both are sealed Evidence, so the resume briefing could not name the goal without a credential it has no use for.
+
+**Evidence — the contradiction, cited:**
+
+- The code: `apps/cli/src/commands/execution/start.rs:287-305` records `name` (`graph.metadata.name`) and `objective` (the first entrypoint node's `objective`) inline and unsealed on `ExecutionFormDeclared`; `start.rs:440-452` (`declared_text`) bounds them through `graphhelm_protocols::bound_declared_text` (`core/protocols/src/event.rs:751-757`, `MAX_DECLARED_OBJECTIVE_CHARS = 2000` at `event.rs:744`, cut on a char boundary, whitespace-only becomes `None`) and passes them through `graphhelm_graph::validate_durable_content` (`core/graph/src/persistence.rs:446`), the same durable-content scan every append is held to (`core/events/src/integrity.rs:487-495`); text the scan refuses — a `secret://` reference, a token-shaped run — is left OFF the declaration and the start proceeds.
+- The rules it contradicts: ADR-022 §3 above ("Instructions, objectives, purposes, textual contracts, free-form explanations, diagnostic details and unregistered execution strings are externalized. The safe, bounded structural topology remains inline.") and [D-036](../DECISION_REGISTER.md) ("the Governor deterministically externalizes free-form content as encrypted Evidence, keeps only safe topology inline").
+- What the persisted version actually does: `metadata.name` is NOT inline in `PersistedGraphVersion`. `PersistedTopology` (`core/protocols/src/projection.rs:621-633`) carries `graphId`, `executionId`, `labels`, entrypoints, nodes, edges, budgets, policies and completion — no name — and the Governor registers `graph.metadata.name` as `ContentFieldKind::DisplayName` for sealing (`core/governor/src/externalize.rs:580-586`). The brief for this amendment assumed the name was already inline there; the check found the opposite, and this record says so rather than citing a precedent that does not exist.
+- The precedent that DOES exist: `GateFinding.claim` and `GateFinding.remediation` (`core/protocols/src/event.rs:1305-1315`; `schemas/event-envelope.schema.json:731-733`, `maxLength: 2000`) are model-written free text carried inline in the journal, bounded to the same 2000 characters and admitted by the same append-time scan. Bounded, scanned prose in the journal is therefore not new with #1063; what is new is that this prose originates in an authoring field ADR-022 §3 names.
+
+**Affected contracts:**
+
+- `ExecutionFormDeclared` in `core/protocols/src/event.rs:711-739`: `name`, `objective` (both `Option<String>`, `skip_serializing_if`, so histories written before the fields existed re-serialize byte-for-byte and no hash chain moves), plus `executor`.
+- `schemas/event-envelope.schema.json:361-376` (`executionFormDeclared`): `name` and `objective`, `minLength: 1`, `maxLength: 2000`, counted in code points as the Rust bound is.
+- Readers: `core/execution/src/briefing.rs:179-180` copies the two fields into the `Briefing`; nothing else reads them.
+
+**Alternatives considered:**
+
+1. **Keep the objective sealed and require a keyring for the briefing.** Honours ADR-022 §3 verbatim, but defeats promise 3 of #302: the second harness is precisely the process that has no key, and a briefing that names the goal only when unsealing succeeds is a briefing that usually says "absent". Rejected.
+2. **Store only a digest** (`contentSha256` of the objective, or the slot reference). Keeps the journal free of prose, but a digest tells a resuming harness nothing about WHAT to continue; it would still have to unseal to read the sentence, which is alternative 1 with an extra hop. Rejected.
+3. **Record the text inline, bounded and scanned, as a label.** Accepted, below.
+
+**Decision:**
+
+1. `ExecutionFormDeclared.name` and `ExecutionFormDeclared.objective` are recorded inline, optional, bounded to 2000 characters (truncated on a char boundary, never refused), and admitted only when `validate_durable_content` accepts them; refused text is omitted, not stored and not fatal to the start.
+2. The declared text is a **label, not evidence**. The sealed content slots of the `PersistedGraphVersion` remain the only place an objective lives AS EVIDENCE: identity (`semanticHash`), materialization and every rule that needs the objective's content keep reading the slot. Nothing reads the declared text as authoritative; a briefing that shows it shows what the operator declared at start, the way a status line shows a mode.
+3. ADR-022 §3 is amended along this one axis: an authoring objective or display name may ALSO appear inline on the execution's declared form under the bound and the scan above. Every other clause of ADR-022, ADR-023 and D-036 stands; in particular, `PersistedGraphVersion` still carries no name, no objective and no free-form content inline.
+4. Any further inline authoring text on a journal event requires its own amendment naming the field, the bound and the scan, following this record's shape.
+
+**Risks:**
+
+- Prose in the journal is exportable: an export of the stream carries the operator's sentence in plaintext, and erasure of the sealed Evidence does not erase this copy. This is the same class of exposure `GateFinding.claim`/`remediation` already carry; it is NOT the same as `PersistedGraphVersion`, which stays prose-free. The bound (2000 chars) and the scan (secret-shaped text refused) limit the surface; they do not remove it.
+- Truncation is silent by design: a 2001-character objective is recorded cut, and the briefing does not flag it. The sealed slot keeps the full text.
+- A harness that treated the label as the objective's identity would be wrong; §2 above is the rule, and `briefing.rs` is the only reader today.
+
+**Relationship:** amends ADR-022 §3 and the inline-content clause of D-036 along one axis (bounded declared text on `ExecutionFormDeclared`); leaves ADR-022 §1, §2 and §4-§10, ADR-023 and the persisted-version contract unchanged; follows ADR-034/ADR-035's precedent for how a decision amendment is recorded.
+
 ## 28. ADR-023 — Authoring paths as typed content positions
 
 **Status:** accepted.

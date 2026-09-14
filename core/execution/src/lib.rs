@@ -6,6 +6,7 @@
 
 pub mod attention;
 mod bounds;
+mod briefing;
 mod customs;
 mod dispatch;
 mod progress;
@@ -21,6 +22,9 @@ pub use attention::{
 pub use bounds::{
     MAX_ACCEPTED_MUTATIONS, MAX_IDENTICAL_OUTCOMES, MAX_NODE_ATTEMPTS, MAX_READY_SET,
     MAX_SIGNALS_PER_EXECUTION,
+};
+pub use briefing::{
+    AnswerRemedy, Briefing, Decision, DecisionKind, NextStep, WorkItem, briefing_view,
 };
 pub use customs::{CustomsView, NodeCustomsView, OpenClaimView, customs_view};
 pub use dispatch::{DispatchError, dispatch_plan, parallel_limit};

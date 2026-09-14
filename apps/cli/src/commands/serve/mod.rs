@@ -448,6 +448,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/health", get(health))
         .route("/v1/executions", get(routes::list_executions))
         .route("/v1/executions/{id}", get(routes::status))
+        .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/events", get(routes::events))
         .route(
             "/v1/executions/{id}/evidence/{evidenceId}",
@@ -1134,6 +1135,16 @@ impl ExecutorWiring {
             Self::Real
         } else {
             Self::FixtureOnly
+        }
+    }
+
+    /// The executor `start` declares on the form (#1063), read off the SAME predicate that
+    /// decides the fixture-only warning above - one answer to "what runs the nodes here", so
+    /// the declaration and the diagnostic cannot disagree.
+    pub(super) const fn declared(self) -> graphhelm_protocols::DeclaredExecutor {
+        match self {
+            Self::Real => graphhelm_protocols::DeclaredExecutor::Gateway,
+            Self::FixtureOnly => graphhelm_protocols::DeclaredExecutor::Fixture,
         }
     }
 }

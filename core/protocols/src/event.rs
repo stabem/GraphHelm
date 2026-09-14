@@ -712,6 +712,62 @@ pub struct ExecutionFormDeclared {
     pub execution_id: OpaqueId,
     pub node_ids: Vec<OpaqueId>,
     pub node_timeout_seconds: BTreeMap<OpaqueId, u64>,
+    /// The graph document's `metadata.name` (#1063): what an authored graph calls itself, and
+    /// where a synthesized graph puts the goal it was compiled from.
+    ///
+    /// Optional and `skip_serializing_if`, for the reason `NodeOutcomeRecorded::reason` gives:
+    /// replay recomputes every stored envelope's hash from its re-serialized bytes, so a field
+    /// that emitted `null` for histories written before it existed would break their chains.
+    /// Absent means "written before the briefing existed", never "unnamed".
+    ///
+    /// Bounded by [`MAX_DECLARED_OBJECTIVE_CHARS`] and truncated at that bound on a char boundary
+    /// rather than refused: a briefing with a truncated name is better than a start refused
+    /// over a long one. See [`bound_declared_text`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The operator's request in their own words (#1063): the `objective` of the FIRST node in
+    /// `spec.entrypoints` order, which is where the Studio's draft puts the words the operator
+    /// typed (its `metadata.name` is a placeholder). Same optionality, same bound, same
+    /// truncation rule as [`ExecutionFormDeclared::name`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    /// Who was going to run the nodes when the operator started this execution (#1063), so a
+    /// harness picking the run up later knows whether the outcomes it reads came from fixtures
+    /// or from a gateway. Optional for the same hash-chain reason as the two fields above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<DeclaredExecutor>,
+}
+
+/// The upper bound, in characters, on [`ExecutionFormDeclared::name`] and
+/// [`ExecutionFormDeclared::objective`]. Mirrored by `maxLength` in
+/// `schemas/event-envelope.schema.json`, which counts code points as this does.
+pub const MAX_DECLARED_OBJECTIVE_CHARS: usize = 2000;
+
+/// Bound a declared name or objective to [`MAX_DECLARED_OBJECTIVE_CHARS`], cutting on a char
+/// boundary so the result is always valid UTF-8 and never a refused start. An empty or
+/// whitespace-only text is `None`: a briefing must not carry a blank where "not recorded" is
+/// the honest answer.
+#[must_use]
+pub fn bound_declared_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.chars().take(MAX_DECLARED_OBJECTIVE_CHARS).collect())
+}
+
+/// Which executor an `execution start` declared it would drive the nodes with (#1063).
+///
+/// Recorded on the declared form rather than inferred later from the outcomes: a
+/// `FixtureScripted` reason on one node says what produced THAT outcome, not what the operator
+/// set the run up with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeclaredExecutor {
+    /// Outcomes come from a fixtures file; no provider is called.
+    Fixture,
+    /// Outcomes come from the gateway's routed providers and tools.
+    Gateway,
 }
 
 /// A bound the operator declared AFTER the run began, valid from its own sequence FORWARD.

@@ -538,11 +538,12 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 27] = [
+const MCP_TOOL_NAMES: [&str; 28] = [
     "start",
     "list",
     "topology",
     "status",
+    "briefing",
     "events",
     "evidence",
     "signal",
@@ -591,7 +592,8 @@ fn tools_list_names_exactly_the_registered_tools_with_closed_schemas() {
          present, compile_context, memory_propose, then accounting, each after the one before \
          it; #288 added sweep after those; #105 added list beside start, the read a caller \
          reaches for before it knows an execution id; #107 added synthesize, the Graph Architect, \
-         last. This pin is a LIST and not a count, so a tool added \
+         last; #1063 added briefing beside status, the read a harness picking a run up makes \
+         first. This pin is a LIST and not a count, so a tool added \
          to TOOLS without a line here fails on the NAME rather than on a number -- which is what \
          happened to present (#357 moved TOOLS and not this list, and the gate that PR chose did \
          not run this file)."
@@ -1374,6 +1376,132 @@ fn two_chat_sessions_coordinate_through_events_alone_and_resolve_a_race() {
 /// never executed — a mutation with no response channel cannot participate in the retry
 /// choreography (its key would be unretryable), so the server refuses to run it at all. The
 /// head not moving is the observable; no reply exists by the notification rule.
+/// #1063, MVP promise 3 - continuity across harnesses. Harness A (`claude-code`) approves and
+/// pauses through MCP; harness B (`codex`), a FRESH stdio process against the same server, reads
+/// `briefing` and gets, byte for byte, what the CLI reads from the store directly - and every
+/// decision in it names the actor that made it.
+#[test]
+fn a_second_harness_reads_the_same_briefing_the_first_one_left_in_the_store() {
+    let harness = wired("exec-two-harness");
+    let graph = root_dir().join("examples/graphs/manual-override-deploy.yaml");
+
+    let claude = harness.session_as(
+        "claude-code",
+        "agent",
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!("claude-approve"),
+                "approve",
+                serde_json::json!({"executionId": "exec-two-harness", "node": "implementation"}),
+            ),
+            tool_call(
+                serde_json::json!("claude-pause"),
+                "pause",
+                serde_json::json!({"executionId": "exec-two-harness"}),
+            ),
+        ],
+    );
+    assert_eq!(claude.replies.len(), 3, "{:?}", claude.replies);
+    for reply in &claude.replies[1..] {
+        let (is_error, envelope) = tool_envelope(reply);
+        assert!(!is_error, "harness A's step must succeed: {envelope}");
+    }
+
+    let codex = harness.session_as(
+        "codex",
+        "agent",
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!("codex-briefing"),
+                "briefing",
+                serde_json::json!({"executionId": "exec-two-harness"}),
+            ),
+        ],
+    );
+    let (is_error, envelope) = tool_envelope(&codex.replies[1]);
+    assert!(!is_error, "{envelope}");
+    assert_eq!(envelope["command"], "execution.briefing", "{envelope}");
+    let over_mcp = envelope["data"].clone();
+
+    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "execution",
+            "briefing",
+            "--events",
+            harness.events.to_str().unwrap(),
+            "--execution",
+            "exec-two-harness",
+        ])
+        .output()
+        .unwrap();
+    let over_cli: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(over_cli["ok"], true, "{over_cli}");
+
+    assert!(MCP_PARITY_EXCEPTIONS.is_empty(), "empty by design");
+    assert_eq!(
+        normalise_instants(over_mcp.clone()),
+        normalise_instants(over_cli["data"].clone()),
+        "the second harness reads exactly what the store holds"
+    );
+
+    // Each section names what harness A did.
+    let decisions = over_mcp["decisions"].as_array().unwrap();
+    assert_eq!(decisions.len(), 2, "{over_mcp}");
+    assert_eq!(decisions[0]["kind"], "approval");
+    assert_eq!(decisions[0]["node"], "implementation");
+    assert_eq!(decisions[1]["kind"], "paused");
+    for decision in decisions {
+        assert_eq!(
+            decision["actor"]["id"], "claude-code",
+            "the actor is the one the envelope recorded: {decision}"
+        );
+        assert_eq!(decision["actor"]["type"], "agent");
+    }
+    assert_eq!(over_mcp["name"], "Deploy com override manual");
+    assert_eq!(over_mcp["objective"], "Produzir build implantável.");
+    assert_eq!(
+        over_mcp["executor"], "fixture",
+        "no --manifest on this serve"
+    );
+    assert_eq!(over_mcp["nextStep"]["kind"], "resume_held", "{over_mcp}");
+    assert!(
+        over_mcp["nextStep"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("exec-two-harness")
+    );
+    assert_eq!(
+        over_mcp["asOfSequence"],
+        serde_json::json!(harness.head_sequence("exec-two-harness"))
+    );
+
+    // The graph hash is the one `resume --file` will be checked against: harness B can verify
+    // the file before it acts, using nothing but the briefing and the topology tool.
+    let topology = harness.session_as(
+        "codex",
+        "agent",
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!("codex-topology"),
+                "topology",
+                serde_json::json!({"file": graph.to_str().unwrap()}),
+            ),
+        ],
+    );
+    let (is_error, topology) = tool_envelope(&topology.replies[1]);
+    assert!(!is_error, "{topology}");
+    assert_eq!(
+        topology["data"]["semanticHash"], over_mcp["graphHash"],
+        "the briefing's graphHash is the file's semantic hash: {topology}"
+    );
+}
+
 #[test]
 fn a_notification_form_tool_call_is_never_executed() {
     let harness = wired("exec-mcp-notify");

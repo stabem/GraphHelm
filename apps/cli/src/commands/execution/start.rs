@@ -3,8 +3,9 @@ use std::{collections::BTreeMap, path::Path};
 use graphhelm_events::PreparedAppend;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionPaused, ExecutionStarted, NewEvent,
-    OpaqueId, PersistedActor, PersistedActorType, Sensitivity, WireHash,
+    DeclaredExecutor, EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionPaused,
+    ExecutionStarted, NewEvent, OpaqueId, PersistedActor, PersistedActorType, Sensitivity,
+    WireHash,
 };
 
 use super::driver::{Release, drive_to_quiescence};
@@ -113,7 +114,12 @@ pub(crate) fn execute(
         fixtures,
         mode,
         execution,
-        Attribution { actor, key },
+        Attribution {
+            actor,
+            key,
+            // This path drives with `FixtureExecutor` below and nothing else.
+            executor: Some(DeclaredExecutor::Fixture),
+        },
         false,
     )?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
@@ -170,7 +176,15 @@ pub(crate) fn execute_held(
         fixtures,
         mode,
         execution,
-        Attribution { actor, key },
+        Attribution {
+            actor,
+            key,
+            // NOTHING drives a held start; what will is decided by whoever resumes it - the CLI
+            // with fixtures, or `serve`'s runtime-backed route with the gateway - and `resume`
+            // re-declares nothing. Declaring `fixture` here would be a claim about the future,
+            // and the briefing would repeat it for work the gateway actually did.
+            executor: None,
+        },
         true,
     )?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
@@ -197,6 +211,12 @@ pub(crate) fn execute_held(
 pub(crate) struct Attribution {
     pub actor: PersistedActor,
     pub key: OpaqueId,
+    /// What the caller is about to drive the nodes with, recorded on the declared form (#1063)
+    /// so a later harness reading the store knows whether the outcomes came from fixtures or
+    /// from a gateway. It rides with the attribution because it is decided at the same door by
+    /// the same caller, and because the alternative was an eighth parameter. `None` for a held
+    /// start, which drives nothing.
+    pub executor: Option<DeclaredExecutor>,
 }
 
 pub(crate) fn execute_prepared(
@@ -208,7 +228,11 @@ pub(crate) fn execute_prepared(
     attribution: Attribution,
     hold: bool,
 ) -> Result<PreparedDrive, Failure> {
-    let Attribution { actor, key } = attribution;
+    let Attribution {
+        actor,
+        key,
+        executor,
+    } = attribution;
     let mode = parse_mode(mode)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
@@ -261,10 +285,24 @@ pub(crate) fn execute_prepared(
         }
         node_ids.push(parsed);
     }
+    // #1063: what the run is FOR, recorded where the shape is. `name` is the document's own
+    // name (the goal, for a synthesized graph); `objective` is the first entrypoint's objective,
+    // which is where the Studio's draft keeps the operator's words verbatim. Both bounded and
+    // truncated, never refused - see `bound_declared_text`.
+    let graph = version.graph();
+    let objective = graph
+        .spec
+        .entrypoints
+        .first()
+        .and_then(|entry| graph.spec.nodes.get(entry))
+        .and_then(|node| declared_text(&node.objective));
     let declared_form = ExecutionFormDeclared {
         execution_id: stream_id.clone(),
         node_ids,
         node_timeout_seconds,
+        name: declared_text(&graph.metadata.name),
+        objective,
+        executor,
     };
     let hold_key = OpaqueId::parse(format!("{}-held", key.as_str())).map_err(|_| {
         execution_state(
@@ -399,6 +437,20 @@ fn parse_mode(mode: &str) -> Result<ExecutionMode, Failure> {
 }
 
 /// The execution identity to drive: `--execution` when given, otherwise the graph's own
+/// A graph's own prose, projected onto the unsealed declaration ONLY when the durable-content
+/// scan admits it (#1063). The scan is the store's own (`validate_durable_content`, the rule
+/// every append is held to), applied at the door so a name or objective that LOOKS like a
+/// secret - a `secret://` reference, a token-shaped run - is left off the declaration rather
+/// than turning the whole start into `GHE009_EXTERNALIZATION_FAILED`. Before this field
+/// existed that graph started; it still does, and the briefing says "absent" for it, which is
+/// the honest reading of text the log must not carry.
+fn declared_text(text: &str) -> Option<String> {
+    let bounded = graphhelm_protocols::bound_declared_text(text)?;
+    graphhelm_graph::validate_durable_content(&serde_json::Value::String(bounded.clone()), &[])
+        .ok()
+        .map(|()| bounded)
+}
+
 /// `metadata.executionId` — the same convention `graph simulate` uses unconditionally. Returns
 /// both the `OpaqueId` (stream identity) and `ExecutionId` (scope identity) parsed from the same
 /// string, matching `simulate.rs`'s own double-parse of `version.graph().metadata.execution_id`.

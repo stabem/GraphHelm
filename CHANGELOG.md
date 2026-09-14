@@ -1,5 +1,50 @@
 # Specification Changelog
 
+## The resume briefing: continuity across harnesses, #1063 - 2026-09-13
+
+- **A second harness picks an execution up from the store alone (MVP promise 3 of #302).**
+  `core/execution::briefing_view(projection, answer, history)` folds ONE typed `Briefing`:
+  `name` and `objective` (declared at start), `executor`, `graphHash`/`graphVersion` (so the
+  file `resume --file` needs can be verified first), `decisions[]` in sequence order with the
+  actor the envelope recorded (approval, waiver, budget_amended, mode_changed, paused, resumed,
+  claim, clearance, rejection, mutation_accepted, cancelled), `workDone[]` (every terminal node
+  with attempts, last outcome and recorded reason), `pending` and `unevaluated` (COPIES of the
+  attention answer, never a second computation), `nextStep` (`finished` > `answer` with the
+  node and the verb, ahead of the resume because `approve` and `claim` are legal under a pause >
+  `resume_held` with the resume template and the held nodes > `diagnose` carrying any remaining
+  reason whole - a SILENT node included, since raising a bound the node already exceeded is
+  purchased calm, not an answer - so a need is never listed beside `nothing` > `dispatch` >
+  `nothing`) and `asOfSequence`. No clock anywhere.
+- **One rendering, three doors.** `graphhelm execution briefing --events --execution`,
+  `GET /v1/executions/{id}/briefing` (same token and read budget as status) and the MCP
+  `briefing` tool all call the same read; the two-harness journey (`claude-code` approves and
+  pauses over MCP, `codex` reads the briefing from a fresh stdio process) asserts byte-for-byte
+  equality with the CLI and that every decision names `claude-code`.
+- **The objective is persisted at start.** `execution_form_declared` gains three optional,
+  bounded (2000 chars, truncated on a char boundary, never refused) fields: `name`
+  (`metadata.name`), `objective` (the first entrypoint's own objective - the operator's words,
+  where the Studio's draft keeps them) and `executor` (`fixture` | `gateway`, read off the same
+  predicate that decides the fixture-only warning). Old journals replay unchanged: the fields
+  are `skip_serializing_if`, so no hash chain moves. `render()` publishes `executor` beside
+  `mode` on every status-shaped reply.
+- **The digest reads the fold, not the event name.** A `completion_cleared` the fold recorded
+  as `Refused` (machine-replay hash mismatch) is a `rejection` with the fold's code;
+  `completion_refused` is a `refusal` with the registry code; a parked node whose claim is
+  already open is answered by `clear` (with `claimSeq`), never a second `claim`; declared nodes
+  the driver never touched are `Draft` by absence and count as work to dispatch (or as held, for
+  a `--held` start); a verb-less hazard is diagnosed BEFORE a resume is offered.
+- **What the log must not carry is left off, not refused.** A `name`/`objective` the store's
+  durable-content scan would reject (a `secret://` reference, a token-shaped run) is omitted
+  from the declaration and the start proceeds; a held start declares no executor, since nothing
+  drives it yet.
+  The inline `name`/`objective` contradict ADR-022 §3 / D-036 on their face; ADR-022 amendment
+  A1 (`docs/reference/REFERENCE_STACK_AND_ADRS.md`) records the decision: a bounded, scanned label
+  in the journal, never evidence - the sealed slots remain the objective's only authoritative home.
+- **An approval is a decision only when it readied a `Blocked` or `Ghost` node.** The driver
+  records the same `Approved` outcome for its own `Draft -> Ready` hop under the system actor;
+  the digest folds each node's prior state and leaves those hops out.
+- Not in this change: `resume` without `--file`; parity beyond CLI, HTTP and MCP.
+
 ## The first compile: the Graph Architect, #107 - 2026-09-11
 
 - **Something in the tree now turns a prompt into a graph.** `core/architect` is a compiler

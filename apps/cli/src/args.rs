@@ -415,6 +415,16 @@ pub enum ExecutionCommand {
         #[arg(long)]
         html: Option<PathBuf>,
     },
+    /// Replays a stream and reports the resume briefing: what the execution is for, every
+    /// decision with its actor in order, the work done, what is pending, and the next step.
+    /// Derived from the store alone; the first thing to read when picking up a run another
+    /// session or harness drove.
+    Briefing {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+    },
     /// Admits a Graph Signal envelope and reports the governance verdict for the mode in
     /// force.
     ///

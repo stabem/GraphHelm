@@ -998,6 +998,9 @@ fn the_wedge_reads_the_declared_form_and_prefers_the_sealed_one() {
             graphhelm_protocols::OpaqueId::parse("ship").unwrap(),
         ],
         node_timeout_seconds: std::collections::BTreeMap::new(),
+        name: None,
+        objective: None,
+        executor: None,
     });
     let seen = graphhelm_execution::attention(&projection, &AttentionInputs::default());
     assert!(
@@ -1245,6 +1248,9 @@ fn a_requeued_node_whose_calm_was_bought_is_still_named() {
         )]
         .into_iter()
         .collect(),
+        name: None,
+        objective: None,
+        executor: None,
     });
     projection.apply_amendment(graphhelm_protocols::ExecutionFormAmended {
         execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),

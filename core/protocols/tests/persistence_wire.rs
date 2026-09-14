@@ -423,6 +423,69 @@ fn lifecycle_event_kinds_round_trip_with_exact_wire_names() {
     }
 }
 
+/// #1063: the declared form's `name`, `objective` and `executor` are OPTIONAL on the wire, and
+/// the two directions of that optionality are separate promises. A declaration written before
+/// the fields existed must re-serialize to the SAME bytes (no `null` keys - replay recomputes
+/// the hash from those bytes); a declaration carrying them must round-trip exactly and validate.
+#[test]
+fn a_declared_form_without_the_briefing_fields_replays_to_the_same_bytes_and_with_them_round_trips()
+{
+    let old = json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{"start":900}}});
+    let kind: EventKind = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&kind).unwrap(),
+        old,
+        "an old declaration must not grow `name: null` / `objective: null` / `executor: null`"
+    );
+    let EventKind::ExecutionFormDeclared(form) = &kind else {
+        panic!("wrong variant");
+    };
+    assert_eq!(form.name, None);
+    assert_eq!(form.objective, None);
+    assert_eq!(form.executor, None);
+
+    let new = json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{"start":900},"name":"Ship the release","objective":"Cut 1.4 and publish the notes","executor":"gateway"}});
+    let kind: EventKind = serde_json::from_value(new.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&kind).unwrap(), new);
+    let EventKind::ExecutionFormDeclared(form) = &kind else {
+        panic!("wrong variant");
+    };
+    assert_eq!(
+        form.executor,
+        Some(graphhelm_protocols::DeclaredExecutor::Gateway)
+    );
+    assert_schema_valid(EVENT_ID, &event_fixture(new, false));
+
+    let unknown_executor = event_fixture(
+        json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{},"executor":"human"}}),
+        false,
+    );
+    assert_schema_invalid(EVENT_ID, &unknown_executor);
+    assert!(serde_json::from_value::<EventEnvelope>(unknown_executor).is_err());
+}
+
+/// #1063: the writer's bound. Truncation on a CHAR boundary, so a multi-byte text cut at the
+/// limit is still valid UTF-8; a blank is `None`, never an empty string on the wire.
+#[test]
+fn a_declared_text_is_bounded_on_a_char_boundary_and_a_blank_is_absent() {
+    use graphhelm_protocols::{MAX_DECLARED_OBJECTIVE_CHARS, bound_declared_text};
+    assert_eq!(bound_declared_text(&" ".repeat(3)), None);
+    assert_eq!(
+        bound_declared_text(&format!("{pad}Ship it{pad}", pad = " ".repeat(2))),
+        Some("Ship it".to_owned()),
+        "surrounding whitespace is not part of the name"
+    );
+    let long: String = "é".repeat(MAX_DECLARED_OBJECTIVE_CHARS + 5);
+    let bounded = bound_declared_text(&long).unwrap();
+    assert_eq!(bounded.chars().count(), MAX_DECLARED_OBJECTIVE_CHARS);
+    assert!(
+        bounded.chars().all(|c| c == 'é'),
+        "cut between chars, never inside one"
+    );
+    let exact: String = "x".repeat(MAX_DECLARED_OBJECTIVE_CHARS);
+    assert_eq!(bound_declared_text(&exact).as_deref(), Some(exact.as_str()));
+}
+
 /// An acceptance that does not say which mode it was accepted under is not evidence of anything.
 #[test]
 fn a_mutation_acceptance_without_a_mode_is_rejected() {

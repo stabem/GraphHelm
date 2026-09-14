@@ -127,6 +127,14 @@ fn allowed_sites() -> BTreeMap<&'static str, usize> {
         // The fold READING a clearance. A match arm is not an append -- naming the kind in order to
         // interpret one already in the journal is the opposite of putting one there.
         ("core/events/src/projection.rs", 1),
+        // The briefing READING a clearance (#1063): the decision digest's match arm names the
+        // kind to fold "claim #N cleared by ..." out of a journal that already holds it -- the
+        // projection.rs shape, one crate over. Nothing in `core/execution` opens a store. The
+        // other two lines are the inline `#[cfg(test)]` block's import of the payload type and
+        // the fixture that builds a clearance the fold REFUSED, to prove the digest reads the
+        // fold's outcome rather than the event name: the walk covers `src/` whole, test blocks
+        // included, so they count here as the serve/mod.rs row's fixture lines do.
+        ("core/execution/src/briefing.rs", 3),
         // MACHINE REPLAY (#159): the customs verb `clear` appends a clearance, and this is the
         // case the module doc says to record rather than to narrow the needle around. One line is
         // the import of the payload type, the other the append itself, and the verifier on that

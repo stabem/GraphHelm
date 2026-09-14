@@ -145,11 +145,13 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 21] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 22] = [
     "start",
     "list",
     "topology",
     "status",
+    // #1063. The resume briefing is a READ over an execution's store, beside status.
+    "briefing",
     "events",
     "evidence",
     "signal",

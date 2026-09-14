@@ -33,6 +33,9 @@ fn projection_with_unbudgeted_node_in_flight() -> graphhelm_events::ExecutionPro
         node_ids: vec![graphhelm_protocols::OpaqueId::parse("judge").unwrap()],
         // Declared with NO timeout: this is the judge's own situation.
         node_timeout_seconds: std::collections::BTreeMap::new(),
+        name: None,
+        objective: None,
+        executor: None,
     });
     projection
 }

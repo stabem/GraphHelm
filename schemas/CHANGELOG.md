@@ -1,5 +1,32 @@
 # Schema Changelog
 
+## event-envelope 1.0.0 - `execution_form_declared` gains `name`, `objective` and `executor`
+
+Three OPTIONAL properties on the declared shape (#1063), so a resume briefing derived from the
+store alone can say what a run is for and who was going to run it:
+
+- **`name`** - the graph document's `metadata.name`: what an authored graph calls itself, and
+  where a synthesized graph puts the goal it was compiled from.
+- **`objective`** - the `objective` of the FIRST node in `spec.entrypoints` order: the operator's
+  request in their own words, which is where the Studio's draft keeps them while its
+  `metadata.name` is a placeholder.
+- **`executor`** - `fixture` or `gateway`: what `execution start` was going to drive the nodes
+  with, recorded at the door rather than inferred later from the outcomes.
+
+Both texts are bounded to 2000 characters (`maxLength`, counting code points as the Rust side
+does) and are TRUNCATED at that bound by the writer, never refused: a briefing with a shortened
+name is better than a start refused over a long one. A blank text is omitted, not written empty,
+and so is a text the durable-content scan would reject (a `secret://` reference, a token-shaped
+run): the start proceeds without it. `executor` is absent for a held start, which drives nothing.
+
+**Old journals replay unchanged.** None of the three is `required` and the Rust side carries
+`skip_serializing_if`, so a declaration written before this entry re-serializes to the same bytes
+and keeps its hash. Absent means "written before the briefing existed", never "unnamed".
+
+**Old-to-new only.** A journal that RECORDED any of the three is refused on read by a pre-#1063
+binary (`additionalProperties: false` here, `deny_unknown_fields` on the Rust payload), as with
+every additive event change under D-037's in-place correction of the pre-release baseline.
+
 ## event-envelope 1.0.0 - `memory_publication_transitioned` and `memory_record_superseded` added
 
 Two durable events for the two lifecycle axes ADR-032 (decision 3) keeps independent: a memory

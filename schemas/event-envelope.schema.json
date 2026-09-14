@@ -367,10 +367,14 @@
         "nodeTimeoutSeconds": {
           "type": "object",
           "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 315576000}
-        }
+        },
+        "name": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "objective": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "executor": {"$ref": "#/$defs/declaredExecutor"}
       },
       "additionalProperties": false
     },
+    "declaredExecutor": {"enum": ["fixture", "gateway"]},
     "executionStarted": {
       "type": "object",
       "required": ["executionId", "graphVersion", "graphHash", "mode"],

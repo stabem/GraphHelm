@@ -1244,6 +1244,11 @@ export function TalkPanel({
   );
 }
 
+/** The words the monitor page prints for the same run (`apps/cli/src/commands/serve/monitor.rs`):
+ * one sentence, plain, on every view of a fixture run. */
+export const DEMONSTRATION_SENTENCE =
+  "Demonstration run — started under the fixture executor: outcomes at start were supplied by a fixture file, not produced by a model or a tool.";
+
 export function RunPanel({
   status,
   events,
@@ -1344,6 +1349,12 @@ export function RunPanel({
                 ? "no record yet"
                 : readable(status.status)}
           </p>
+          {/* A completed fixture run is byte-identical to a real one everywhere but here
+            * (#1064): the executor was declared at start and this is the one sentence that
+            * keeps a demonstration from being read as work a model or a tool did. */}
+          {status.executor === "fixture" && (
+            <p className="demonstration">{DEMONSTRATION_SENTENCE}</p>
+          )}
         </div>
         {/* "Close this run" read as ENDING the run - the scariest possible misread on a header
           * that says "needs you". The verb names what actually happens: the panel hides. */}

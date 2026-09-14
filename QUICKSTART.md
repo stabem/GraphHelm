@@ -7,6 +7,9 @@
 Every command and every output below was executed against this repository. Nothing here is
 illustrative.
 
+The run below needs no provider at all; the full promise — run, monitor, Studio, export, with no
+credentials — is declared in [docs/product/PROVIDER_LESS_MODE.md](docs/product/PROVIDER_LESS_MODE.md).
+
 This exists because a newcomer with no repo access was handed the README and the tool's own
 `--help`, given one goal — *start a run and find out whether anything needs you* — and stopped
 dead at `execution start`. Not on a flag name: **nothing told them what a node does when it

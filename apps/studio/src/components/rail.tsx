@@ -159,7 +159,14 @@ export function ProjectRail({
                     </span>
                     <span className="run-lines">
                       <span className="run-id">{run.executionId}</span>
-                      <span className="run-when">{clock(run.lastEventAt)}</span>
+                      <span className="run-when">
+                        {clock(run.lastEventAt)}
+                        {/* #1064: a run started under the fixture executor says so in the index
+                          * too, not only once opened — the word, never a glyph. */}
+                        {run.executor === "fixture" && (
+                          <span className="run-demo"> · demonstration</span>
+                        )}
+                      </span>
                     </span>
                     {/* The hover word lives on the BUTTON's title; putting it here too made
                         every row utter its state twice ("needs you needs you"). */}

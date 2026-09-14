@@ -391,6 +391,9 @@ fn the_fixture_story_drives_async_and_parity_holds() {
     assert_eq!(status, 200, "{reply}");
     assert_eq!(reply["data"]["status"], "completed", "{reply}");
     assert_eq!(reply["data"]["nodeStateCounts"]["succeeded"], 2, "{reply}");
+    // #1064: a server given no manifest declares the run fixture-driven, and the reply says so
+    // — the field the Studio turns into the demonstration sentence.
+    assert_eq!(reply["data"]["executor"], "fixture", "{reply}");
 
     // The 05d driver's own hops (`node_outcome_recorded`) are attributed to the system actor,
     // matching the sync path's split — proof the async driver reused `PreparedDrive`'s scope

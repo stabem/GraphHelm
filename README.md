@@ -26,6 +26,11 @@ tab — measured, in a probe run against this README.
   cryptographic erasure, and verified restore.
 * **Execution**: start a graph, drive it, pause, resume, approve, cancel — offline via
   fixtures, or against a real model gateway and a brokered tool sandbox.
+* **Provider-less mode as a guarantee**: with no manifest, no keyring, no credentials and no
+  network, a complete run, its monitor page, its Studio view and its export — every fixture run
+  labelled as a demonstration on every view. Declared in
+  [docs/product/PROVIDER_LESS_MODE.md](docs/product/PROVIDER_LESS_MODE.md), held by
+  `apps/cli/tests/providerless_journey.rs`.
 * **The one-glance answer**: `attention` says `needs_you`, `can_sleep`, `unknown` or
   `calmed_by_amendment`, with the reason and the node named, and time on the surface.
 * **A read-only monitor**, an HTTP API, and an **MCP server** exposing the same operations to a

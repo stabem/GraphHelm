@@ -141,13 +141,16 @@ fn summary_of(
     full: &serde_json::Value,
     head_sequence: Option<u64>,
 ) -> serde_json::Value {
-    const CARRIED: [&str; 6] = [
+    const CARRIED: [&str; 7] = [
         "executionId",
         "mode",
         "status",
         "attention",
         "startedAt",
         "lastEventAt",
+        // #1064: the executor declared at start rides the row, so `execution list`, the API's
+        // index and the Studio rail can mark a demonstration run without opening it.
+        "executor",
     ];
     let mut row = serde_json::Map::new();
     for key in CARRIED {
@@ -178,6 +181,7 @@ fn unreadable_row(stream_id: &str, head_sequence: Option<u64>) -> serde_json::Va
         "attention": "unknown",
         "startedAt": serde_json::Value::Null,
         "lastEventAt": serde_json::Value::Null,
+        "executor": serde_json::Value::Null,
         "headSequence": head_sequence.unwrap_or(0),
     })
 }
@@ -206,6 +210,7 @@ mod tests {
             "customs": {"quarantinedNodes": [], "nodes": {}, "clearances": {}},
             "startedAt": "2026-08-27T00:00:00+00:00",
             "lastEventAt": "2026-08-27T00:01:00+00:00",
+            "executor": "fixture",
         })
     }
 
@@ -226,6 +231,8 @@ mod tests {
             );
         }
         assert_eq!(row["headSequence"], serde_json::json!(9));
+        // #1064: the executor is one of the carried keys, so the index can mark a demonstration.
+        assert_eq!(row["executor"], serde_json::json!("fixture"));
     }
 
     /// The row must never carry the heavy detail fields: a client that reads `nodeStateCounts`

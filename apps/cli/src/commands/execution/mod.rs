@@ -850,6 +850,19 @@ pub(in crate::commands) fn reported_status(
     }
 }
 
+/// The executor the run was declared under at start (#1063's `ExecutionFormDeclared.executor`),
+/// read once here for every surface that shows the run: `render()` below publishes it, and the
+/// monitor page turns it into the demonstration sentence (#1064). `None` on a stream recorded
+/// before the field existed — a fact the surfaces report as `null`, never as a guess.
+pub(in crate::commands) fn declared_executor(
+    projection: &ExecutionProjection,
+) -> Option<graphhelm_protocols::DeclaredExecutor> {
+    projection
+        .declared_form
+        .as_ref()
+        .and_then(|form| form.executor)
+}
+
 /// The shared reporting shape every `execution` command that returns a projection view uses
 /// (`start`, `status`, `approve`, `pause`, `resume`, `cancel`): execution id, mode, aggregate
 /// status, per-state node counts, signal/mutation counters, and the untriaged-interruption triage

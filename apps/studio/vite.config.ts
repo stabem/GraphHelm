@@ -205,7 +205,12 @@ export default defineConfig(({ mode }) => {
       // 2026-09-13 (gate runs 1070-20260913T180143 and 1069-20260913T184006: 19 and 20 files,
       // "Failed to start forks worker", no assertion run). Four workers on the same loaded host:
       // 19 files, 306 tests, 44 s. The number is a ceiling on contention, not a tuning knob.
-      maxWorkers: 4,
+      // Second measurement (gate runs 1070-20260913T195350 and 1069-20260913T201316, both WITH the
+      // cap at four): 17 and 18 files passed, and two to four workers still failed to start on the
+      // loaded host. One worker starts once; the files then run in it sequentially. Measured on this
+      // host: 21 files, 343 tests, under three minutes. `npx vitest run --maxWorkers=N` still
+      // overrides it for a developer on an idle machine.
+      maxWorkers: 1,
     },
   };
 });

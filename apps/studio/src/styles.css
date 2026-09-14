@@ -1285,6 +1285,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .panel-head.dead i { background: var(--danger); }
 .panel-head.moving i { background: var(--live); }
 .panel-head h2 { font-size: 16px; overflow-wrap: anywhere; }
+/* The demonstration label (#1064): prose, not a badge - it has to be READ, so it keeps
+   sentence case and the dim ink of a fact rather than the ink of an alarm. */
+.run-demo { color: var(--dim); }
+.panel-head .demonstration { font-size: 11px; color: var(--dim); line-height: 1.5; margin-top: 4px; }
 /* A persona's charter is prose: sentence case, reading rhythm, clamped before it swallows
    the head. The .lbl treatment turned it into tracking caps. */
 .charter {

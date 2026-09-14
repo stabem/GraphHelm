@@ -44,6 +44,9 @@ export interface ExecutionSummary {
   startedAt: string | null;
   lastEventAt: string | null;
   headSequence: number;
+  /** The executor declared at start, carried on the row (#1064) so the rail can mark a
+   * demonstration without opening the run. Absent on streams recorded before the field. */
+  executor?: "fixture" | "gateway" | null;
   [key: string]: unknown;
 }
 
@@ -75,6 +78,11 @@ export interface ExecutionStatus {
   lastEventAt: string | null;
   nodeLastEventAt: Record<string, string>;
   headSequence: number;
+  /** Who produced this run's outcomes, as declared at start (#1064). `"fixture"` means every
+   * outcome came from a fixture file and no model or tool was consulted - a demonstration, and
+   * the panel says so in words. `"gateway"` means a real executor was wired. Absent or `null`
+   * on a stream recorded before the field existed: the Studio then claims nothing either way. */
+  executor?: "fixture" | "gateway" | null;
   [key: string]: unknown;
 }
 

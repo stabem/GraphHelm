@@ -419,6 +419,8 @@ fn start_drives_a_two_node_graph_to_completion_and_status_reports_it_independent
         start_value["data"]["untriagedInterruptions"],
         serde_json::json!([])
     );
+    // #1064: the CLI's `start` is always fixture-driven, and its reply names that executor.
+    assert_eq!(start_value["data"]["executor"], "fixture", "{start_value}");
     // #192: manual-override-deploy.yaml lints clean (zero errors) but with warnings (GHG101 on
     // both nodes' missing timeoutSeconds) — those warnings were silently dropped on this exact
     // success path before the fix, since `diagnostics.extend(report.warnings)` lived only inside

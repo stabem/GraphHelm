@@ -1,5 +1,25 @@
 # Specification Changelog
 
+## Provider-less mode as a declared guarantee, #1064 - 2026-09-13
+
+- **The promise is written down and held.** `docs/product/PROVIDER_LESS_MODE.md` states that a
+  clean installation with no gateway manifest, no keyring, no credentials and no network runs a
+  complete execution, shows it on the monitor and the Studio, and exports it; it lists what
+  works, what refuses and in which words, and the exact commands.
+  `apps/cli/tests/providerless_journey.rs` runs those commands from an empty directory with the
+  process environment scrubbed of every `GRAPHHELM_*` variable, then reads the document back
+  and fails if its fenced commands and the journey's commands are not the same set.
+- **A fixture run says so on every view.** The executor declared at start (#1063's
+  `ExecutionFormDeclared.executor`, published as `data.executor`) now reaches the monitor page,
+  the `execution status --html` snapshot and the Studio's run panel as one sentence at the top
+  of the run: "Demonstration run — started under the fixture executor: outcomes at start were
+  supplied by a fixture file, not produced by a model or a tool." The label reads the executor
+  DECLARED AT START; a resume through a server with real wiring is not recorded on the form
+  today, and the sentence says "at start" for exactly that reason. `execution list` rows carry
+  `executor` too, so the Studio rail marks a demonstration beside its name. A `gateway` run and
+  a stream recorded before the field existed carry nothing.
+- `docs/product/ROADMAP_AND_ACCEPTANCE.md` §3.2.1 row 4 moves from "not declared" to declared
+  and held. README and QUICKSTART link the page.
 ## The resume briefing: continuity across harnesses, #1063 - 2026-09-13
 
 - **A second harness picks an execution up from the store alone (MVP promise 3 of #302).**

@@ -17,6 +17,18 @@ use crate::commands::remediation::{self, RemediationAction};
 const REFRESH_SECONDS: u32 = 2;
 /// The event tail renders at most this many lines, newest last.
 const TAIL_LIMIT: usize = 50;
+/// The label a fixture run carries at the top of every view of it (#1064): plain words, not
+/// a badge, because a completed fixture run is otherwise byte-identical to a real one.
+///
+/// It says "started under" and "at start" on purpose: the fact it reads is the executor the
+/// operator DECLARED when the run began (`ExecutionFormDeclared.executor`). A fixture file that
+/// omits a node makes the fixture executor answer `NeedsInput` for it, and a run resumed through
+/// a server with real wiring is not re-declared on the form today — so the sentence claims the
+/// start-time provenance and nothing beyond it. The
+/// Studio's run panel prints the same sentence (`apps/studio/src/components/panel.tsx`), and
+/// `apps/cli/tests/providerless_journey.rs` asserts the text on the live page, the snapshot
+/// and the document that promises it.
+pub(in crate::commands) const DEMONSTRATION_SENTENCE: &str = "Demonstration run — started under the fixture executor: outcomes at start were supplied by a fixture file, not produced by a model or a tool.";
 
 // The staleness thresholds that used to be documented here are gone with the code they
 // described (M08 Task 2). This page no longer decides when silence matters: the seam does,
@@ -327,8 +339,19 @@ fn render_page(
             at_sequence: None,
         },
     );
+    // #1064: the executor the run was DECLARED under, from the same projection field
+    // `render()` publishes as `executor` — the page cannot call a run a demonstration that the
+    // API calls real, or the reverse. Absent (a stream written before the field existed) or
+    // gateway: nothing is printed, because nothing is known or nothing applies.
+    let demonstration = if crate::commands::execution::declared_executor(projection)
+        == Some(graphhelm_protocols::DeclaredExecutor::Fixture)
+    {
+        format!("<p class=\"demo\">{DEMONSTRATION_SENTENCE}</p>\n")
+    } else {
+        String::new()
+    };
     page.push_str(&format!(
-        "<h1>{id}</h1><p>status: <b>{status}</b> · <b>{verdict}</b> · head: {head} · rendered: {now} · read-only (D-040): this page mutates nothing and offers nothing that does</p>
+        "<h1>{id}</h1>{demonstration}<p>status: <b>{status}</b> · <b>{verdict}</b> · head: {head} · rendered: {now} · read-only (D-040): this page mutates nothing and offers nothing that does</p>
 ",
         id = escape(execution),
         status = escape(status),
@@ -735,6 +758,63 @@ mod tests {
             )) && page.contains("?since=1\">"),
             "the refresh tag carries the rendered head as the next cursor: {page}"
         );
+    }
+
+    /// #1064: a fixture run is labelled a demonstration on the page and on the snapshot, in
+    /// words; a gateway run and an undeclared stream carry nothing of the kind. The label reads
+    /// the projection's declared form — the same fact `render()` publishes as `executor` — so
+    /// the page and the API cannot disagree about which runs were rehearsals.
+    #[test]
+    fn a_fixture_run_is_labelled_a_demonstration_and_a_gateway_run_is_not() {
+        use graphhelm_protocols::{DeclaredExecutor, ExecutionFormDeclared};
+
+        fn with_executor(executor: Option<DeclaredExecutor>) -> ExecutionProjection {
+            let mut projection = projection_fixture("implement");
+            projection.declared_form = Some(ExecutionFormDeclared {
+                execution_id: OpaqueId::parse("exec-monitor").unwrap(),
+                node_ids: vec![],
+                node_timeout_seconds: std::collections::BTreeMap::new(),
+                name: None,
+                objective: None,
+                executor,
+            });
+            projection
+        }
+
+        let events = vec![outcome_event(1, "implement", "agent-scout")];
+        let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 5).unwrap();
+        let dir = Path::new("C:/data/events");
+
+        let fixture = with_executor(Some(DeclaredExecutor::Fixture));
+        let live = render_monitor(&fixture, &events, 0, now, dir);
+        let snapshot = render_snapshot(&fixture, &events, now, dir);
+        for page in [&live, &snapshot] {
+            let label = page
+                .find(DEMONSTRATION_SENTENCE)
+                .unwrap_or_else(|| panic!("the fixture run carries the label: {page}"));
+            let status_line = page.find("status: <b>").expect("the status line");
+            assert!(
+                label < status_line,
+                "the label sits at the top of the run view, above the status line: {page}"
+            );
+        }
+
+        let gateway = with_executor(Some(DeclaredExecutor::Gateway));
+        let page = render_monitor(&gateway, &events, 0, now, dir);
+        assert!(
+            !page.contains(DEMONSTRATION_SENTENCE),
+            "a gateway run is never called a demonstration: {page}"
+        );
+
+        let undeclared = with_executor(None);
+        let page = render_monitor(&undeclared, &events, 0, now, dir);
+        assert!(
+            !page.contains(DEMONSTRATION_SENTENCE),
+            "a stream recorded before the field existed claims nothing: {page}"
+        );
+        let no_form = projection_fixture("implement");
+        let page = render_monitor(&no_form, &events, 0, now, dir);
+        assert!(!page.contains(DEMONSTRATION_SENTENCE), "{page}");
     }
 
     #[test]

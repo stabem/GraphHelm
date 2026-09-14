@@ -123,7 +123,16 @@ export function Composer({
           disabled={busy}
           placeholder="Describe the work in your own words. It becomes the first node's objective, verbatim."
           onChange={(event) => setObjective(event.target.value)}
+          // Enter sends, like every chat box on this page; Shift+Enter breaks the line. The
+          // judge pressed Enter and nothing happened and nothing said why (#1077, MINOR).
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            if (objective.trim().length === 0 || busy) return;
+            onSend(objective, route === "" ? null : route);
+          }}
         />
+        <p className="lbl composer-hint">Enter sends · Shift+Enter for a new line</p>
 
         {error !== "" && (
           <p className="notice bad" role="alert">

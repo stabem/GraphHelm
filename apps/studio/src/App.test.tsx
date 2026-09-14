@@ -131,6 +131,9 @@ function stubClient(overrides: Record<string, unknown> = {}) {
     // through `client.startTask` has to exist on the returned type, and one that appears only
     // when overridden does not.
     listRoutes: vi.fn(async () => ({ configured: true, routes: [] })),
+    // `null` is what an older Runtime without the briefing route yields: the base stub is
+    // the id-only world, and the tests that name a run by its objective override it.
+    getBriefing: vi.fn(async () => null),
     startTask: vi.fn(
       async (
         _executionId: string,
@@ -2814,5 +2817,155 @@ describe("the exchange", () => {
     await userEvent.click(within(panel).getByRole("button", { name: /^send$/i }));
 
     expect(await within(panel).findByText(/could not be confirmed/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1077, from a blind judge's report. After `start this task` the page showed "This board is
+ * empty." (the draft was cleared but nothing was selected: the identity check lived inside a
+ * setState updater React ran too late), and the run it created was `run-<uuid>` everywhere,
+ * the typed sentence shown nowhere. The objective lives in the briefing (#1063), and the
+ * Studio reads it from there.
+ */
+describe("the run it just started", () => {
+  const OBJECTIVE = "Investigate slow login on mobile";
+  const BRIEFING = {
+    name: "New task",
+    objective: OBJECTIVE,
+    executor: "gateway",
+    graphHash: null,
+    graphVersion: 1,
+    decisions: [],
+    workDone: [],
+    pending: [],
+    unevaluated: [],
+    nextStep: { kind: "dispatch", nodes: ["start"] },
+    asOfSequence: 3,
+  };
+  /** A stub whose list grows by the run `startTask` created, the way the real index does. */
+  function withStarted(overrides: Record<string, unknown> = {}) {
+    const started: string[] = [];
+    const base = stubClient();
+    return stubClient({
+      startTask: vi.fn(async (executionId: string) => {
+        started.push(executionId);
+        return { ...PAUSED_EVIDENCE, action: "start" as const, executionId };
+      }),
+      listExecutions: vi.fn(async () => {
+        const page = await base.listExecutions();
+        return {
+          ...page,
+          executions: [
+            ...started.map((executionId) => ({ executionId, mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 })),
+            ...page.executions,
+          ],
+        };
+      }),
+      getEvents: vi.fn(async (id: string) =>
+        id.startsWith("run-")
+          ? {
+              head: 2,
+              events: [
+                { sequence: 2, kind: "execution_form_declared", payload: { executionId: id, nodeIds: ["start"] }, occurredAt: "2026-09-13T12:00:30Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "event-2", evidenceRefs: [] },
+              ],
+            }
+          : base.getEvents(),
+      ),
+      ...overrides,
+    });
+  }
+  async function startOne(client: ReturnType<typeof stubClient>) {
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task/i }));
+    await userEvent.type(await screen.findByLabelText(/what should this task do/i), OBJECTIVE);
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalled());
+    return firstCall(client.startTask)[0] as string;
+  }
+
+  it("selects the new run and opens its overview instead of an empty board", async () => {
+    const client = withStarted();
+    const id = await startOne(client);
+    expect(await screen.findByRole("heading", { name: "Work overview" })).toBeInTheDocument();
+    expect(screen.queryByText("This board is empty.")).not.toBeInTheDocument();
+    expect(screen.queryByText("pick a run, or start one")).not.toBeInTheDocument();
+    const rail = screen.getByLabelText("Projects");
+    await waitFor(() => expect(within(rail).getByRole("button", { current: true })).toHaveAttribute("title", expect.any(String)));
+    expect(within(rail).getByRole("button", { current: true }).textContent).toContain(id.slice(0, 8));
+  });
+
+  /** #1079 review: `select` clears the act-note, and the start path used to set the note BEFORE
+   * selecting the new run - last write won, and "Started — done" never appeared. */
+  it("keeps the start act-note on screen after selecting the run it started", async () => {
+    const client = withStarted();
+    await startOne(client);
+    expect(await screen.findByRole("heading", { name: "Work overview" })).toBeInTheDocument();
+    expect(await screen.findByText(/started — done/i)).toBeInTheDocument();
+  });
+
+  it("names the run by its objective wherever the id stood, and never by 'New task'", async () => {
+    // A real Runtime answers 200 for every id it can replay - a hand-named run simply has no
+    // objective; only a MISSING ROUTE answers 404 (which the client reports as null).
+    const client = withStarted({ getBriefing: vi.fn(async (id: string) => (id.startsWith("run-") ? BRIEFING : { ...BRIEFING, name: null, objective: null })) });
+    const id = await startOne(client);
+    // The rail row: objective as the name, id kept on the row as its address.
+    const rail = screen.getByLabelText("Projects");
+    const row = await within(rail).findByRole("button", { name: new RegExp(OBJECTIVE) });
+    expect(row).toHaveAttribute("aria-current", "true");
+    expect(within(rail).getByTitle(id)).toBeInTheDocument();
+    // The header names it too; the id stays reachable on hover.
+    const strip = document.querySelector(".topstrip") as HTMLElement;
+    expect(await within(strip).findByRole("button", { name: OBJECTIVE })).toHaveAttribute("title", id);
+    // The run panel quotes it verbatim.
+    const panel = screen.getByRole("region", { name: /^Run / });
+    expect(within(panel).getByText(OBJECTIVE)).toBeInTheDocument();
+    // The entry node's card carries it - a one-node roster IS its entry node.
+    const overview = screen.getByRole("main", { name: "Work overview" });
+    expect(within(overview).getByText(OBJECTIVE)).toBeInTheDocument();
+    expect(screen.queryByText("New task")).not.toBeInTheDocument();
+  });
+
+  it("keeps the id and raises no error when the Runtime has no briefing route", async () => {
+    const client = withStarted({ getBriefing: vi.fn(async () => null) });
+    const id = await startOne(client);
+    const strip = document.querySelector(".topstrip") as HTMLElement;
+    expect(await within(strip).findByRole("button", { name: id })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+/** #1079 review (P2): selecting a run whose briefing the rail is ALREADY fetching must await
+ * that read, not conclude "no briefing" because the id was asked - the header, panel and card
+ * stayed nameless until a deselect/reselect. */
+describe("a selection that lands while the rail is prefetching", () => {
+  const GENERATED = "run-9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
+  it("awaits the in-flight briefing and names the run once it arrives", async () => {
+    let settle: (value: unknown) => void = () => {};
+    const inFlight = new Promise((resolve) => { settle = resolve; });
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({
+        executions: [
+          { executionId: "demo-deploy", mode: "supervised", status: "running", attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 13 },
+          { executionId: GENERATED, mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 },
+        ],
+        hasMore: false,
+        nextCursor: null,
+      })),
+      getBriefing: vi.fn((id: string) =>
+        id === GENERATED
+          ? inFlight.then(() => ({ name: "New task", objective: "Investigate slow login on mobile", executor: "gateway", nextStep: { kind: "dispatch", nodes: ["start"] }, asOfSequence: 3 }))
+          : Promise.resolve({ name: null, objective: null, executor: null, nextStep: { kind: "nothing" }, asOfSequence: 13 }),
+      ),
+    });
+    await open(client);
+    // The rail's prefetch is in flight for the generated row; the operator clicks it now.
+    await waitFor(() => expect(client.getBriefing).toHaveBeenCalledWith(GENERATED));
+    await userEvent.click(within(screen.getByLabelText("Projects")).getByTitle(GENERATED).closest("button")!);
+    const strip = document.querySelector(".topstrip") as HTMLElement;
+    expect(await within(strip).findByRole("button", { name: GENERATED })).toBeInTheDocument();
+    settle(undefined);
+    expect(await within(strip).findByRole("button", { name: "Investigate slow login on mobile" })).toHaveAttribute("title", GENERATED);
+    // One read for that run, not one per caller.
+    expect(client.getBriefing.mock.calls.filter((call) => (call as unknown[])[0] === GENERATED)).toHaveLength(1);
   });
 });

@@ -477,3 +477,86 @@ it("pans from a section title without native text selection or moving cards", ()
   expect(document.querySelector(".world")?.getAttribute("style")).not.toBe(initial);
   expect(board.changes).toHaveLength(0);
 });
+
+/**
+ * #1077: the blind judge opened the free canvas and saw 2 of 7 cards - an 80% floor on the
+ * first framing and a one-column stack. First framing and Organize FIT THE CONTENT, and the
+ * default grid uses the width it has (columns = floor(width / card width), at least 2), so a
+ * fit is not a miniature. Positions the operator saved still win (#1056's rule).
+ */
+describe("first framing", () => {
+  const SEVEN: GraphModel = {
+    ...MODEL,
+    nodes: ["a", "b", "c", "d", "e", "f", "g"].map((id) => ({ id, state: "ready" as const, touches: 0, lastEventAt: null, history: [], reopened: null })),
+  };
+  const VIEWPORT = { width: 1200, height: 800 };
+  function mockViewport() {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: VIEWPORT.width, bottom: VIEWPORT.height, width: VIEWPORT.width, height: VIEWPORT.height, toJSON() {} });
+  }
+  /** Every card's screen rectangle, through the world transform. */
+  function cardsOnScreen(container: HTMLElement) {
+    const transform = (container.querySelector(".world") as HTMLElement).style.transform;
+    const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(transform);
+    if (match === null) throw new Error(`unexpected transform ${transform}`);
+    const [, x, y, zoom] = match.map(Number);
+    return {
+      zoom,
+      rects: [...container.querySelectorAll<HTMLElement>("article.node")].map((card) => ({
+        left: parseFloat(card.style.left) * zoom + x,
+        top: parseFloat(card.style.top) * zoom + y,
+        right: (parseFloat(card.style.left) + 320) * zoom + x,
+        bottom: (parseFloat(card.style.top) + 164) * zoom + y,
+        x: parseFloat(card.style.left),
+      })),
+    };
+  }
+  const inside = (rect: { left: number; top: number; right: number; bottom: number }) =>
+    rect.left >= 0 && rect.top >= 0 && rect.right <= VIEWPORT.width && rect.bottom <= VIEWPORT.height;
+
+  it("opens with every card on screen, laid out across the width", () => {
+    const rect = mockViewport();
+    try {
+      const { container } = render(<Board initialLayout="canvas" model={SEVEN} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
+      const { rects, zoom } = cardsOnScreen(container);
+      expect(rects).toHaveLength(7);
+      expect(rects.every(inside)).toBe(true);
+      // floor(1200 / 320) = 3 columns, not one stacked column.
+      expect(new Set(rects.map((card) => card.x)).size).toBe(3);
+      expect(zoom).toBeLessThanOrEqual(1);
+      expect(screen.getByRole("button", { name: /%$/ })).not.toHaveTextContent("80%");
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("re-frames the content after Organize, and Undo layout is still offered", () => {
+    const rect = mockViewport();
+    try {
+      let board: BoardState = { ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } };
+      const view = render(<Board initialLayout="canvas" model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
+      fireEvent.click(screen.getByRole("button", { name: "Organize" }));
+      view.rerender(<Board initialLayout="canvas" model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
+      expect(board.positions).toEqual({});
+      const { rects } = cardsOnScreen(view.container);
+      expect(rects.every(inside)).toBe(true);
+      expect(screen.getByRole("button", { name: "Undo layout" })).toBeInTheDocument();
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("still honours a position the operator saved", () => {
+    const rect = mockViewport();
+    try {
+      const { container } = render(<Board initialLayout="canvas" model={SEVEN} board={{ ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } }} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
+      const moved = [...container.querySelectorAll<HTMLElement>("article.node")].find((card) => card.style.left === "4000px");
+      expect(moved).toBeDefined();
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});

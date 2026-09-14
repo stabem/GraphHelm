@@ -100,3 +100,32 @@ export const LIFECYCLE_STATES = [
 export function isAlarming(state: string): boolean {
   return state === "blocked" || state === "failed" || state === "waiting_input" || state === "waiting_capacity";
 }
+
+/** The id shape `graph/draft.ts` mints for a task the Studio starts: `run-` and a UUID tail.
+ * A hand-named run (`demo-deploy`) is named by its id already; only a generated one needs a
+ * name from somewhere else. */
+export function isGeneratedRunId(id: string): boolean {
+  return /^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+/** How much of an objective a rail row or a header carries before it ellipsises. */
+export const RUN_LABEL_LENGTH = 72;
+
+/**
+ * What to call a run (#1077). A generated `run-<uuid>` is named by its OBJECTIVE - the sentence
+ * the operator typed, read back from the briefing - truncated, with the id kept as the address
+ * wherever the label stands. Anything else is its id: a hand-named run already has a name, and
+ * a run whose briefing carries no objective has nothing truer than its id.
+ *
+ * The graph document's `name` is deliberately NOT a fallback: the draft graph's name is the
+ * placeholder "New task", and two runs called "New task" are the defect this exists to close.
+ */
+export function runLabel(
+  id: string,
+  briefing: { objective: string | null; name?: string | null } | null | undefined,
+): string {
+  const objective = briefing?.objective?.trim() ?? "";
+  if (!isGeneratedRunId(id) || objective.length === 0) return id;
+  const oneLine = objective.replace(/\s+/g, " ");
+  return oneLine.length <= RUN_LABEL_LENGTH ? oneLine : `${oneLine.slice(0, RUN_LABEL_LENGTH - 1).trimEnd()}\u2026`;
+}

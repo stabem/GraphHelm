@@ -24,7 +24,7 @@ import { useEffect, useState } from "react";
 import { Activity, Check, Folder, FolderPlus, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 
 import type { ExecutionSummary } from "../runtime/types";
-import { clock, hueOf, initialOf, readable, verdictOf } from "./format";
+import { clock, hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
 
 export interface Project {
   /** The folder's name. Today: the Runtime's own store. */
@@ -48,6 +48,7 @@ export function ProjectRail({
   removedRuns = [],
   onRemoveRun,
   onRestoreRun,
+  briefings = {},
 }: {
   projects: Project[];
   selected: string;
@@ -66,6 +67,10 @@ export function ProjectRail({
   removedRuns?: string[];
   onRemoveRun?: (id: string) => void;
   onRestoreRun?: (id: string) => void;
+  /** What each run is ABOUT, by id, read from its briefing (#1077). A generated `run-<uuid>`
+   * wears its objective as its name; the id stays on the row as its address. Absent (older
+   * Runtime, not read yet) the row says the id, which is what it always said. */
+  briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(projectName ?? "");
@@ -158,7 +163,9 @@ export function ProjectRail({
                       {initialOf(run.executionId)}
                     </span>
                     <span className="run-lines">
-                      <span className="run-id">{run.executionId}</span>
+                      {/* The objective when there is one, the id otherwise - and the id ALWAYS
+                          on the row as its title, so a name never hides the address. */}
+                      <span className="run-id" title={run.executionId}>{runLabel(run.executionId, briefings[run.executionId])}</span>
                       <span className="run-when">
                         {clock(run.lastEventAt)}
                         {/* #1064: a run started under the fixture executor says so in the index

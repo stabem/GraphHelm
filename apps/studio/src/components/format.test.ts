@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clock } from "./format";
+import { clock, runLabel } from "./format";
 
 /**
  * A time-of-day alone cannot say WHICH day. "needs you · 06:16 PM" read the same whether the
@@ -29,5 +29,29 @@ describe("clock", () => {
   it("keeps the honest dash for nothing", () => {
     expect(clock(null)).toBe("—");
     expect(clock(undefined)).toBe("—");
+  });
+});
+
+/**
+ * #1077: a run the Studio started is `run-<uuid>`, and two of them could not be told apart. The
+ * objective the operator typed is the name; the id stays the address. A hand-named run keeps
+ * its id as the name, and the draft graph's placeholder "New task" is never shown as one.
+ */
+describe("runLabel", () => {
+  const generated = "run-dc7b06e3-6459-440d-9e2e-31efc3b25b18";
+  it("names a generated run by its objective, truncated", () => {
+    expect(runLabel(generated, { objective: "Investigate slow login on mobile", name: "New task" })).toBe("Investigate slow login on mobile");
+    const long = "x".repeat(200);
+    const label = runLabel(generated, { objective: long, name: null });
+    expect(label.length).toBeLessThan(80);
+    expect(label.endsWith("…")).toBe(true);
+  });
+  it("falls back to the id, never to the placeholder name", () => {
+    expect(runLabel(generated, { objective: null, name: "New task" })).toBe(generated);
+    expect(runLabel(generated, null)).toBe(generated);
+    expect(runLabel(generated, { objective: "   ", name: null })).toBe(generated);
+  });
+  it("keeps a hand-named run's id as its name", () => {
+    expect(runLabel("demo-deploy", { objective: "Ship it", name: "Deploy" })).toBe("demo-deploy");
   });
 });

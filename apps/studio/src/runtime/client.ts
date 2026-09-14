@@ -18,6 +18,7 @@ import envelopeSchema from "../../../../schemas/event-envelope.schema.json";
 
 import type {
   Actor,
+  Briefing,
   Diagnostic,
   Envelope,
   EventPage,
@@ -408,6 +409,28 @@ export class RuntimeClient {
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}`,
     });
+  }
+
+  /**
+   * `GET /v1/executions/{id}/briefing` (#1063) - the run's name and objective, and the harness
+   * digest around them. Same bearer as `getStatus`, read-only.
+   *
+   * `null` on a 404 and ONLY a 404: that is what an older Runtime without the route answers
+   * (its fallback is `serve.not_found`), and the page then degrades to naming runs by id with
+   * no banner - a missing optional read is not an error the operator can act on. Every other
+   * failure still throws, so a broken store is not mistaken for an old server.
+   */
+  async getBriefing(executionId: string): Promise<Briefing | null> {
+    const id = checkedId(executionId, "executionId");
+    try {
+      return await this.#request<Briefing>({
+        method: "GET",
+        path: `/v1/executions/${encodeURIComponent(id)}/briefing`,
+      });
+    } catch (reason) {
+      if (reason instanceof RuntimeError && reason.httpStatus === 404) return null;
+      throw reason;
+    }
   }
 
   /** `after` is EXCLUSIVE, matching the API: a caller that pages with the last sequence it saw

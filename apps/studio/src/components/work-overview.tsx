@@ -27,6 +27,27 @@ export interface WorkOverviewProps {
   selectedTalk?: string | null;
   onSelectTalk?: (talkKey: string | null) => void;
   runId?: string;
+  /** The run's objective from its briefing (#1077), shown on the ENTRY node's card - the node
+   * whose objective it is. A node's own text is sealed content the log never carries, so this
+   * is the only line that can say what the first node was asked to do. */
+  objective?: string | null;
+}
+
+/** Whether a node is one of the run's entrypoints. Proven by the verified topology when there
+ * is one; otherwise only the one case that is a fact without it: a declared roster of exactly
+ * one node, which the graph schema requires to be an entrypoint. Never guessed from order. */
+export function isEntryNode(model: GraphModel, nodeId: string): boolean {
+  if (model.entrypoints.length > 0) return model.entrypoints.includes(nodeId);
+  return model.rosterDeclared && model.nodes.length === 1 && model.nodes[0].id === nodeId;
+}
+
+/** Whether a node is the entrypoint the briefing's objective BELONGS to: #1071 records the
+ * objective of the first node in `spec.entrypoints` order (schemas/CHANGELOG.md), and the
+ * verified topology relays that order. A second entrypoint is an entry node and is NOT owed
+ * the first one's request (PR #1079 review, P2). */
+export function isFirstEntryNode(model: GraphModel, nodeId: string): boolean {
+  if (model.entrypoints.length > 0) return model.entrypoints[0] === nodeId;
+  return isEntryNode(model, nodeId);
 }
 
 function latestNodeEvent(node: GraphNode) {
@@ -62,6 +83,7 @@ export function WorkOverview({
   selectedTalk = null,
   onSelectTalk,
   runId,
+  objective = null,
 }: WorkOverviewProps) {
   const activeNodes = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).length;
   const attentionNodes = model.nodes.filter((node) => ["blocked", "failed", "waiting_input", "waiting_capacity"].includes(node.state)).length;
@@ -178,6 +200,9 @@ export function WorkOverview({
                     <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
                       <span className="work-node-topline"><span className={statusClass(node)}>{node.state === "unknown" ? "Awaiting event" : readable(node.state)}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
                       <strong className="work-node-id">{node.id}</strong>
+                      {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
+                        <q className="work-node-objective" title={objective}>{objective}</q>
+                      )}
                       {latest ? (
                         <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorId ? `${latest.actorId} · ` : ""}{ago(latest.occurredAt)}</small></span>
                       ) : <span className="work-node-latest"><span>Latest event</span><strong className="work-muted">Awaiting first event</strong></span>}

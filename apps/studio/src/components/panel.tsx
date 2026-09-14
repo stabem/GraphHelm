@@ -1260,6 +1260,7 @@ export function RunPanel({
   sayFocus = 0,
   sayRecipient = null,
   owed,
+  objective = null,
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1279,8 +1280,15 @@ export function RunPanel({
    * reads. When present these are the reply cards — the banner and the box may never again
    * make opposite claims about who is owed an answer on the same screen. */
   owed?: Array<{ id: string; at: string | null }>;
+  /** The operator's request in their own words, from the briefing (#1077). Quoted VERBATIM
+   * under the heading: it is the one line that says what this run is for. `null` when the
+   * Runtime has no briefing route or the declaration carried none. */
+  objective?: string | null;
 }) {
   const verdict = verdictOf(status.attention);
+  // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
+  // on a completed, failed or cancelled run reads as the wire status, the only true headline.
+  const over = status.status === "completed" || status.status === "cancelled" || status.status === "failed";
   // What the run is owed, in words, derived from the same reasons the block below itemizes. The
   // wire state ("running") under a headline that says "needs you" answered the wrong question.
   const debts: string[] = [];
@@ -1338,9 +1346,11 @@ export function RunPanel({
           <h2>
             {verdict.key === "needs"
               ? "This run needs you"
-              : verdict.key === "calm"
-                ? "Running by itself"
-                : "Nothing to report yet"}
+              : over
+                ? `This run is ${readable(status.status ?? "")}`
+                : verdict.key === "calm"
+                  ? "Running by itself"
+                  : "Nothing to report yet"}
           </h2>
           <p className="lbl">
             {verdict.key === "needs" && debts.length > 0
@@ -1362,6 +1372,13 @@ export function RunPanel({
           <X aria-hidden="true" />
         </button>
       </header>
+
+      {objective !== null && objective.trim().length > 0 && (
+        <p className="run-objective">
+          <span className="lbl">Objective</span>
+          <q>{objective}</q>
+        </p>
+      )}
 
       {/* Only the states that ARE something render, as chips; one muted line asserts every zero
         * collectively. The old sixteen-cell grid stated fifteen zeros a person had to read past

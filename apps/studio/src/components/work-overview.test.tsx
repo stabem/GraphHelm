@@ -1,6 +1,6 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import { WorkOverview } from "./work-overview";
+import { WorkOverview, isFirstEntryNode } from "./work-overview";
 import type { GraphModel } from "../graph/model";
 
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
@@ -35,5 +35,23 @@ describe("organized work overview", () => {
     expect(screen.getByText("No node activity yet")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:/codex \+ helper/}));
     expect(select).toHaveBeenCalledWith("pair");
+  });
+});
+
+/** #1079 review (P2): the briefing's objective is the FIRST entrypoint's, in `spec.entrypoints`
+ * order (#1071). A graph with two entrypoints shows it on one card, never on both. */
+describe("the objective on the entry card", () => {
+  const two: GraphModel = { ...model, entrypoints: ["work", "triage"] };
+  it("is attached to the first entrypoint only", () => {
+    render(<WorkOverview model={two} objective="Investigate slow login on mobile" selectedNode={null} onSelectNode={vi.fn()} />);
+    const quotes = screen.getAllByText("Investigate slow login on mobile");
+    expect(quotes).toHaveLength(1);
+    expect(within(quotes[0].closest("article")!).getByText("work")).toBeInTheDocument();
+    expect(isFirstEntryNode(two, "triage")).toBe(false);
+    expect(isFirstEntryNode(two, "work")).toBe(true);
+  });
+  it("falls back to a declared one-node roster, and to nothing when the entrypoints are unknown", () => {
+    expect(isFirstEntryNode({ ...model, nodes: [node("only")] }, "only")).toBe(true);
+    expect(isFirstEntryNode(model, "triage")).toBe(false);
   });
 });

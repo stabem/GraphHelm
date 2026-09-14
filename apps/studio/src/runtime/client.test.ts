@@ -802,3 +802,43 @@ describe("verified mutations", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+/**
+ * #1077: the briefing is where a run's NAME and OBJECTIVE live. Both are sealed out of the
+ * event payloads (D-036), so `GET /v1/executions/{id}/briefing` (#1063) is the only public
+ * read that can say what a task is about - and an older Runtime without the route must degrade
+ * to today's id-only naming, never to an error banner.
+ */
+describe("the briefing", () => {
+  it("reads it under the same bearer and returns its data", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      {
+        match: (call) => call.url === "/v1/executions/run-1/briefing",
+        reply: ok({ name: "New task", objective: "Investigate slow login on mobile", executor: "gateway", nextStep: { kind: "dispatch", nodes: ["start"] }, asOfSequence: 3 }, "execution.briefing"),
+      },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    const briefing = await client.getBriefing("run-1");
+    expect(briefing?.objective).toBe("Investigate slow login on mobile");
+    expect(briefing?.name).toBe("New task");
+    expect(calls[0].method).toBe("GET");
+    expect(calls[0].headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("degrades to null when the Runtime has no briefing route, and still throws on anything else", async () => {
+    const { fetchImpl } = scriptedFetch([
+      {
+        match: (call) => call.url.endsWith("/briefing"),
+        reply: { status: 404, envelope: { ok: false, command: "serve.not_found", data: null, diagnostics: [{ code: "GHCLI008_SERVE_NOT_FOUND", severity: "error", message: "no route", path: "", source: "serve-cli" }] } },
+      },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.getBriefing("run-1")).resolves.toBeNull();
+
+    const broken = scriptedFetch([
+      { match: (call) => call.url.endsWith("/briefing"), reply: { status: 500, envelope: { ok: false, command: "execution.briefing", data: null, diagnostics: [] } } },
+    ]);
+    const other = new RuntimeClient("tok", { fetch: broken.fetchImpl });
+    await expect(other.getBriefing("run-1")).rejects.toBeInstanceOf(RuntimeError);
+  });
+});

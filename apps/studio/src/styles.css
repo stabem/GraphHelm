@@ -2420,6 +2420,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .free-canvas-content .node { height: 288px; min-height: 288px; }
 .free-canvas-content .node.node-empty { height: 164px; min-height: 164px; }
+/* The card carrying the run's objective (#1077): two clamped lines + margins = the 52px
+   OBJECTIVE_ALLOWANCE in graph/board.ts; the measured box and the drawn box must agree. */
+.free-canvas-content .node.node-with-objective { height: 340px; min-height: 340px; }
+.free-canvas-content .node.node-empty.node-with-objective { height: 216px; min-height: 216px; }
 .node-empty .node-story-status { margin-bottom: 10px; }
 .free-canvas-content .node .hist-chip { font: 11px var(--sans); color: #c6c6d0; }
 .free-canvas-content .node-history { position: absolute; top: 100%; left: 0; width: 100%; max-height: 220px; overflow: auto; padding: 16px; background: #25252a; border: 1px solid #4a4a52; border-radius: 12px; z-index: 8; }
@@ -2510,3 +2514,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .icon-action, .run-remove { align-items: center; justify-content: center; padding: 0; }
 .run-remove { display: inline-flex; min-height: 32px; width: 30px; }
 .run-remove svg, .icon-action svg { display: block; flex: 0 0 auto; width: 14px; height: 14px; }
+
+/* #1077: what a run is about, where its id used to stand alone. */
+.run-objective { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--edge); }
+.run-objective q { quotes: none; font: 14px/1.45 var(--sans); color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.work-node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; quotes: none; margin: 6px 0 0; font: 13px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
+.node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; quotes: none; margin: 4px 0 10px; font: 12px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
+.composer-hint { margin: -4px 0 8px; }

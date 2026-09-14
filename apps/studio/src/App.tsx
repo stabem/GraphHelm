@@ -34,6 +34,7 @@ import {
 } from "./runtime/client";
 import { devSession, type DevSession } from "./runtime/session";
 import type {
+  Briefing,
   EventPage,
   EvidenceContent,
   ExecutionStatus,
@@ -66,7 +67,7 @@ import { Composer, type RouteChoice } from "./components/compose";
 import { AddProject } from "./components/addproject";
 import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
-import { readable, verdictOf } from "./components/format";
+import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/format";
 import { actionLegality } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
 
@@ -179,6 +180,23 @@ export default function App({
   const [status, setStatus] = useState<ExecutionStatus | null>(null);
   const [events, setEvents] = useState<EventPage | null>(null);
   const [evidence, setEvidence] = useState<MutationEvidence | null>(null);
+  /** The selected run's briefing (#1063/#1077): its NAME and OBJECTIVE live here and nowhere
+   * else public - both are sealed out of the event payloads. `null` while unread, when the
+   * Runtime has no briefing route (older server, 404), or when the read failed: the page then
+   * names the run by its id, as it always did, and raises no banner for an optional read. */
+  const [briefing, setBriefing] = useState<Briefing | null>(null);
+  /** Every briefing read this connection, by run id, so the rail can name a generated
+   * `run-<uuid>` by its objective. Read once per row - the objective is declared at start and
+   * never changes - and never re-read on the poll. */
+  const [briefings, setBriefings] = useState<Record<string, Briefing | null>>({});
+  /** Every briefing read this connection, settled or still in flight, keyed by run id. ONE
+   * map for both: a selection that lands while the rail's prefetch of the same run is in
+   * flight AWAITS that read instead of concluding "no briefing" (PR #1079 review, P2) - and a
+   * re-selection is served from what was already read. */
+  const briefingReads = useRef(new Map<string, Promise<Briefing | null>>());
+  /** Set on the first 404: an older Runtime has no route, and asking it twenty more times per
+   * page of the rail would be twenty more ways to learn the same thing. */
+  const briefingRouteMissing = useRef(false);
 
   const [graphFile, setGraphFile] = useState("");
   const [topology, setTopology] = useState<VerifiedTopology | null>(null);
@@ -189,6 +207,13 @@ export default function App({
    * page is showing a real run. Held here rather than in the rail because the board and the panel
    * both render from it. */
   const [draft, setDraft] = useState<{ executionId: string } | null>(null);
+  /** The draft, readable after an await WITHOUT a setState updater: the old sendDraft decided
+   * "is this still my draft" inside `setDraft((current) => ...)`, and React runs that updater
+   * during the next render, not at the call - so the flag it set was read before it was
+   * written, the draft was cleared and NOTHING was selected: "This board is empty." right
+   * after `start this task` (#1077, the judge's third MAJOR). */
+  const draftRef = useRef<{ executionId: string } | null>(null);
+  draftRef.current = draft;
   /** How wide the operator dragged the rail. Read once at mount, written on release. */
   const [railWidth, setRailWidth] = useState(loadRailWidth);
   const [addingProject, setAddingProject] = useState(false);
@@ -261,15 +286,46 @@ export default function App({
    * inside one network round-trip left run A's data under run B's name (round-3 speedrunner). */
   const selectedRef = useRef("");
 
+  /**
+   * One briefing read, remembered. Returns `null` for "nothing to name it by": an older
+   * Runtime (404 - and the route is then marked missing for this connection), a read that
+   * failed, or a briefing with no objective. A failure here is swallowed on purpose: the
+   * name is a nicety over the id, and a banner for it would be louder than the thing it
+   * decorates. The connection guard is the same as every other completion's.
+   */
+  const readBriefing = useCallback((client: RuntimeClient, id: string): Promise<Briefing | null> => {
+    if (briefingRouteMissing.current) return Promise.resolve(null);
+    const pending = briefingReads.current.get(id);
+    if (pending !== undefined) return pending;
+    const read = (async () => {
+      let value: Briefing | null = null;
+      try {
+        value = await client.getBriefing(id);
+        if (value === null) briefingRouteMissing.current = true;
+      } catch {
+        value = null;
+      }
+      if (clientRef.current !== client) return null;
+      setBriefings((previous) => (previous[id] === value ? previous : { ...previous, [id]: value }));
+      return value;
+    })();
+    briefingReads.current.set(id, read);
+    return read;
+  }, []);
+
   const loadExecution = useCallback(
     async (id: string) => {
       const client = clientRef.current;
       if (!client || !id) return;
       setBusy(true);
       try {
-        const [nextStatus, nextEvents] = await Promise.all([
+        // The briefing rides the same round-trip but NOT the same failure path: status and
+        // events failing is "this execution could not be read"; the briefing failing is
+        // nothing the operator can act on, and readBriefing already swallowed it.
+        const [nextStatus, nextEvents, nextBriefing] = await Promise.all([
           client.getStatus(id),
           readEvents(client, id, 0),
+          readBriefing(client, id),
         ]);
         // THE CONNECTION IS A GUARD AXIS TOO (PR #467 review, P1): dispose() cannot cancel a
         // fetch already in flight, and Runtime B can hold the SAME execution id as Runtime A -
@@ -277,6 +333,7 @@ export default function App({
         // call captured IS the connection generation; a disconnect or reconnect changes it.
         if (clientRef.current !== client || selectedRef.current !== id) return;
         setStatus(nextStatus);
+        if (nextBriefing !== null) setBriefing(nextBriefing);
         // KEEP THE OLD IDENTITY WHEN NOTHING CHANGED. Everything derived from the events array
         // (envelopes, personas, bubbles) keys off its identity; a fresh-but-equal array made the
         // poll re-open every sealed envelope each tick, and could cancel the pass forever.
@@ -298,8 +355,29 @@ export default function App({
         if (clientRef.current === client && selectedRef.current === id) setBusy(false);
       }
     },
-    [readEvents],
+    [readEvents, readBriefing],
   );
+
+  /**
+   * THE RAIL'S NAMES (#1077). Every generated `run-<uuid>` on the rail is asked for its
+   * briefing once, in order, one at a time - twenty rows are twenty replays on the Runtime,
+   * and firing them together would stack them on a server that reads under a budget. Rows
+   * the operator named by hand are never asked: their id is their name.
+   */
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!connected || !client) return;
+    const wanted = executions
+      .map((run) => run.executionId)
+      .filter((id) => isGeneratedRunId(id) && !briefingReads.current.has(id));
+    if (wanted.length === 0) return;
+    void (async () => {
+      for (const id of wanted) {
+        if (clientRef.current !== client || briefingRouteMissing.current) return;
+        await readBriefing(client, id);
+      }
+    })();
+  }, [connected, executions, readBriefing]);
 
   /**
    * The live tail: the selected run is re-read on an interval so the conversation MOVES.
@@ -435,6 +513,9 @@ export default function App({
       if (id === "") setBusy(false);
       setStatus(null);
       setEvents(null);
+      // The name arrives with the run, never carried over from the last one: a run's objective
+      // under another run's id would be the one lie this feature could tell.
+      setBriefing(briefings[id] ?? null);
       setFocus({ kind: "none" });
       setTopology(null);
       setTopologyError("");
@@ -464,7 +545,7 @@ export default function App({
         stored.graphFile.trim().length > 0 ? { id, path: stored.graphFile.trim() } : null;
       void loadExecution(id);
     },
-    [loadExecution],
+    [loadExecution, briefings],
   );
 
   /**
@@ -554,16 +635,21 @@ export default function App({
           );
           return;
         }
-        setEvidence(evidenceOfStart);
         // Only the draft this send belongs to is cleared and selected: the completion of a
         // superseded send must not unmount whatever the operator is composing now, nor drag
-        // the page away from it.
-        let stillMine = false;
-        setDraft((current) => {
-          stillMine = current !== null && current.executionId === startedId;
-          return stillMine ? null : current;
-        });
-        if (stillMine) select(startedId);
+        // the page away from it. Decided from the REF, synchronously - see draftRef: deciding
+        // it inside a setState updater left the board empty after every start (#1077).
+        const stillMine = draftRef.current !== null && draftRef.current.executionId === startedId;
+        if (stillMine) {
+          setDraft(null);
+          // The run it just made is the run on screen: selected, its overview open, the rail
+          // row lit - not "pick a run, or start one" over the run that was just started.
+          select(startedId);
+        }
+        // The act-note is set AFTER the selection: `select` clears the previous run's evidence
+        // (a note must never follow the operator across runs), and setting it first meant the
+        // "Started — done" line was wiped by the very selection it announced (#1077 review).
+        setEvidence(evidenceOfStart);
         await loadList();
       } catch (reason) {
         if (clientRef.current !== client) return;
@@ -709,6 +795,12 @@ export default function App({
       // completion belongs to the connection it started, like every other (PR #467 review, P1).
       if (clientRef.current !== client) return;
       restoredOutsidePage.current.clear();
+      // A new connection may be a different Runtime with the same ids: nothing it was told
+      // about the last one's routes or objectives carries over.
+      briefingReads.current.clear();
+      briefingRouteMissing.current = false;
+      setBriefings({});
+      setBriefing(null);
       setExecutions(page.executions);
       setNextCursor(page.hasMore ? page.nextCursor : null);
       setConnected(true);
@@ -771,6 +863,7 @@ export default function App({
         setRemedySeconds({});
         const stored = loadBoard(first.executionId);
         setBoard(stored);
+        setBriefing(null);
         setGraphFile(stored.graphFile);
         autoVerify.current =
           stored.graphFile.trim().length > 0
@@ -892,6 +985,10 @@ export default function App({
     setStatus(null);
     setEvents(null);
     setEvidence(null);
+    setBriefing(null);
+    setBriefings({});
+    briefingReads.current.clear();
+    briefingRouteMissing.current = false;
     // An armed cancel and half-typed budget seconds die with the session (PR #662 review, P1):
     // the next connection - possibly another Runtime - must open with nothing armed.
     setConfirmCancel(false);
@@ -1336,6 +1433,7 @@ export default function App({
         removedRuns={removedRuns}
         onRemoveRun={removeRun}
         onRestoreRun={restoreRun}
+        briefings={briefings}
       />
 
       {/* The grip is a real control, so it is focusable and the keyboard can move it: a pointer
@@ -1384,8 +1482,11 @@ export default function App({
                   setFocus({ kind: "run" });
                   setSayFocusNonce((nonce) => nonce + 1);
                 }}
+                // The objective as the name, the id on hover (#1077): a generated run is what
+                // it was asked to do, and the address is one hover away for anyone who needs it.
+                title={selected}
               >
-                {selected}
+                {runLabel(selected, briefing)}
               </button>
             ) : (
               <span className="meta">pick a run, or start one</span>
@@ -1664,6 +1765,7 @@ export default function App({
                 sayFocus={sayFocusNonce}
                 sayRecipient={sayTo}
                 owed={owedCards}
+                objective={briefing?.objective ?? null}
               />
             </aside>
             )}
@@ -1740,6 +1842,7 @@ export default function App({
               talks={talks}
               selectedTalk={focus.kind === "talk" ? focus.id : null}
               onSelectTalk={(id) => setFocus(id === null ? { kind: "none" } : { kind: "talk", id })}
+              objective={briefing?.objective ?? null}
             />
 
             {/* THE CREW STANDS ON THE BOARD ITSELF - draggable blobs the Board renders, so

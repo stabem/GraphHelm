@@ -30,6 +30,53 @@ export interface BoardBounds {
   h: number;
 }
 
+/**
+ * The node card's own size, needed to anchor an edge to its sides rather than its corner and to
+ * frame the camera by a box the card really fills. Kept beside the CSS that sets it
+ * (`.free-canvas-content .node*` in styles.css); a drift here misses by a few pixels rather than
+ * breaking anything - except overflow, which is why the objective allowance is measured too.
+ */
+export const CARD_WIDTH = 320;
+/** A card with history: chips, crew, the last line. */
+export const CARD_HEIGHT = 288;
+/** A card nothing has touched yet: eyebrow, title, the waiting line. */
+export const EMPTY_CARD_HEIGHT = 164;
+/** The room `.node-objective` takes on the entry node's card: two clamped lines of 12px/1.45
+ * (34.8px) plus its 4px + 10px margins, rounded up so the box is never the shorter one. */
+export const OBJECTIVE_ALLOWANCE = 52;
+
+/** The height the card's CSS box is given, so bounds and edges measure what is drawn. A card
+ * carrying the run's objective (#1077: the first entry node) is taller by the objective's
+ * allowance; without it the entry card of a draft-started run overflowed its 164px box. */
+export function cardHeight(node: { touches: number; reopened: unknown | null }, withObjective: boolean): number {
+  const base = node.touches === 0 && node.reopened === null ? EMPTY_CARD_HEIGHT : CARD_HEIGHT;
+  return withObjective ? base + OBJECTIVE_ALLOWANCE : base;
+}
+
+/** The gap the default grid leaves between two rows of cards. */
+export const GRID_ROW_GAP = 32;
+
+/**
+ * The default grid's row step: the tallest card the layout can hold, plus the gap (#1077).
+ *
+ * The step was `CARD_HEIGHT + 32 = 320` while a first-entry card carrying the objective is
+ * `CARD_HEIGHT + OBJECTIVE_ALLOWANCE = 340`, so the row below overlapped the entry card by 20px and
+ * intercepted its pointer band. Derived from the same constants the card is drawn with, so a
+ * taller card moves the rows with it.
+ */
+export function gridRowStep(withObjective: boolean): number {
+  return (withObjective ? CARD_HEIGHT + OBJECTIVE_ALLOWANCE : CARD_HEIGHT) + GRID_ROW_GAP;
+}
+
+/** Where a card sits on the width-following default grid (board.tsx) before anyone moves it:
+ * `columns` across, then the next row, each row one `gridRowStep` down. */
+export function gridPosition(index: number, columns: number, withObjective: boolean): Point {
+  return {
+    x: 680 + (index % columns) * 380,
+    y: 100 + Math.floor(index / columns) * gridRowStep(withObjective),
+  };
+}
+
 export interface Camera {
   x: number;
   y: number;

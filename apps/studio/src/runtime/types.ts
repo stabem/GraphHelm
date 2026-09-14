@@ -215,3 +215,29 @@ export interface EvidenceContent {
   contentSha256: string;
   content: string;
 }
+
+/**
+ * `GET /v1/executions/{id}/briefing` (#1063): what a harness that was not there needs to pick a
+ * run up. The Studio reads it for the two fields nothing else public carries - `name` and
+ * `objective` are sealed OUT of the event payloads (D-036), and #1071 records them unsealed in
+ * the form declaration and serves them here. Shapes mirror `core/execution/src/briefing.rs`
+ * (camelCase on the wire); the fields the Studio does not render are typed loosely on purpose.
+ */
+export interface Briefing {
+  /** The graph document's `metadata.name` at start; `null` for a history declared before it. */
+  name: string | null;
+  /** The operator's request in their own words - the first entrypoint's objective. */
+  objective: string | null;
+  /** `fixture` | `gateway`, or `null` when the declaration did not carry it. */
+  executor: string | null;
+  graphHash?: string | null;
+  graphVersion?: number | null;
+  decisions?: unknown[];
+  workDone?: unknown[];
+  pending?: AttentionReason[];
+  unevaluated?: unknown[];
+  /** `{ kind, ... }` - `resume_held` | `answer` | `diagnose` | `dispatch` | `finished` | `nothing`. */
+  nextStep: { kind: string; [key: string]: unknown };
+  asOfSequence: number;
+  [key: string]: unknown;
+}

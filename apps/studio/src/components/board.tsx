@@ -22,15 +22,10 @@ import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Han
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf } from "../graph/model";
 import { isAlarming } from "./format";
-import { agentPositionOf, fitCamera, markId, tidyBoard, type BoardBounds, type BoardState, type Point, type Stroke } from "../graph/board";
+import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, fitCamera, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Point, type Stroke } from "../graph/board";
 import { ago, hueOf, initialOf, readable } from "./format";
-import { WorkOverview } from "./work-overview";
+import { WorkOverview, isEntryNode, isFirstEntryNode } from "./work-overview";
 
-/** The node block's own size, needed to anchor an edge to its sides rather than its corner. Kept
- * beside the CSS that sets it; a drift here misses by a few pixels rather than breaking anything. */
-const CARD_WIDTH = 320;
-const CARD_HEIGHT = 288;
-const nodeHeight = (node: GraphNode) => node.touches === 0 && node.reopened === null ? 164 : CARD_HEIGHT;
 
 type Tool = "select" | "pen" | "note" | "hand";
 
@@ -128,6 +123,7 @@ export function Board({
   runId,
   initialLayout = "canvas",
   onCanvasChange,
+  objective = null,
 }: {
   model: GraphModel;
   board: BoardState;
@@ -162,6 +158,8 @@ export function Board({
   runId?: string;
   initialLayout?: "overview" | "canvas";
   onCanvasChange?: (canvas: boolean) => void;
+  /** The run's objective from its briefing (#1077), for the entry node's card. */
+  objective?: string | null;
 }) {
   const [organized, setOrganized] = useState(initialLayout === "overview");
   useEffect(() => { onCanvasChange?.(!organized); }, [organized, onCanvasChange]);
@@ -352,14 +350,25 @@ export function Board({
     };
   }, [pointAt]);
 
-  const layoutRows = model.nodes.length <= 3 ? 2 : 3;
-  const nodePosition = (nodeId: string, index: number): Point => board.positions[nodeId] ?? {
-    x: 680 + Math.floor(index / layoutRows) * 380,
-    y: 100 + model.nodes.slice(Math.floor(index / layoutRows) * layoutRows, index).reduce((height, node) => height + nodeHeight(node) + 32, 0),
-  };
+  /* THE DEFAULT GRID USES THE WIDTH IT HAS (#1077). The judge opened a seven-card run and saw
+     two: cards stacked in a column, so a frame that held them all was a miniature. Columns
+     follow the surface's own width - floor(width / card width), never fewer than two - and the
+     rows follow. Measured, not assumed: the surface is re-read on mount and on every resize.
+     Only DEFAULT positions move with the width; a position the operator saved still wins. */
+  const [surfaceWidth, setSurfaceWidth] = useState(0);
+  const columns = Math.max(2, Math.floor(surfaceWidth / CARD_WIDTH));
+  /** The run carries an objective, so its first entry card is the tallest card on the board
+   * (graph/board.ts): bounds, edges, the camera AND the row step measure that card as drawn.
+   * At the old fixed step the row below overlapped the entry card by 20px (#1077). */
+  const hasObjective = objective !== null && objective.trim().length > 0;
+  const nodePosition = (nodeId: string, index: number): Point =>
+    board.positions[nodeId] ?? gridPosition(index, columns, hasObjective);
   const places = new Map<string, Point>(
     model.nodes.map((node, index) => [node.id, nodePosition(node.id, index)]),
   );
+  /** The card's measured height (graph/board.ts): the first entry node carries the objective
+   * and is taller by its allowance, so bounds, edges and the camera frame what is drawn. */
+  const nodeHeight = (node: GraphNode) => cardHeight(node, hasObjective && isFirstEntryNode(model, node.id));
   const edgeGeometry = model.edges.flatMap((edge) => {
     const from = places.get(edge.from);
     const to = places.get(edge.to);
@@ -481,13 +490,11 @@ export function Board({
     const bounds = selection ?? mobileFocus ?? contentBounds;
     if (!box || box.width <= 0 || box.height <= 0 || !bounds) return;
     focusedBoundsRef.current = selection ?? null;
+    // Automatic framing FITS THE CONTENT (#1077). An 80% floor here left a seven-card run
+    // showing two cards and no hint of the rest; the grid above is what keeps a fit legible,
+    // not a zoom the content overflows. `wholeMap` is kept as the explicit-fit signature.
+    void wholeMap;
     const camera = fitCamera(bounds, { w: box.width, h: box.height }, 24, selection ? 1.25 : 1);
-    // Large live maps remain readable. Explicit Fit is the opt-in whole-map miniature.
-    if (!wholeMap && !selection && !mobileFocus && camera.zoom < 0.8) {
-      camera.zoom = 0.8;
-      camera.x = 24 - bounds.x * camera.zoom;
-      camera.y = 24 - bounds.y * camera.zoom;
-    }
     setView(camera);
   };
   const fitRef = useRef(fit);
@@ -503,21 +510,34 @@ export function Board({
   }, [board.positions, board.agents]);
   const framedRunRef = useRef<string | null>(null);
   useEffect(() => {
-    const frameKey = runId ?? "draft";
+    // Keyed by run AND by column count: a width change re-lays the default grid, and a frame
+    // computed for the old grid would show the new one half off screen.
+    const frameKey = `${runId ?? "draft"}@${columns}`;
     if (framedRunRef.current !== frameKey && contentBounds !== null) {
-      fit();
+      fit(undefined, true);
       framedRunRef.current = frameKey;
     }
-  }, [runId, contentBounds]);
+  }, [runId, contentBounds, columns]);
+  const measure = useCallback(() => {
+    const box = surface.current?.getBoundingClientRect();
+    if (box && box.width > 0) setSurfaceWidth((current) => (current === box.width ? current : box.width));
+  }, []);
   useEffect(() => {
+    measure();
     const element = surface.current;
     if (!element || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
+      measure();
       if (framedRunRef.current !== null) fitRef.current(focusedBoundsRef.current ?? undefined);
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [measure]);
+  // The surface is `hidden` while the overview is up, and a hidden box measures zero: re-read
+  // it when the free canvas is shown, so the grid follows the width the cards actually get.
+  useEffect(() => {
+    if (!organized) measure();
+  }, [organized, measure]);
 
   const onSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -686,7 +706,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} />
+        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>
@@ -761,7 +781,7 @@ export function Board({
           <header><MessageSquare /><strong>Conversations</strong><span>{talks.length}</span></header>
           <p>Who is talking to whom</p>
         </div>
-        <div className="canvas-region work-region" style={{ left: 650, top: 8, width: Math.max(380, Math.ceil(model.nodes.length / layoutRows) * 380), height: Math.max(330, ...model.nodes.map((node, index) => nodePosition(node.id, index).y + nodeHeight(node) + 24)) }}>
+        <div className="canvas-region work-region" style={{ left: 650, top: 8, width: Math.max(380, Math.min(columns, model.nodes.length) * 380), height: Math.max(330, ...model.nodes.map((node, index) => nodePosition(node.id, index).y + nodeHeight(node) + 24)) }}>
           <header><GitBranch /><strong>Work</strong><span>{model.nodes.length}{model.rosterDeclared ? "" : "+"}</span></header>
           <p>{model.edgesKnown ? "Verified dependencies connect these nodes" : "Connections have not been verified"}</p>
           {!model.edgesKnown && <button type="button" onClick={() => setConnectOpen(true)}>Verify connections</button>}
@@ -871,7 +891,8 @@ export function Board({
             key={node.id}
             node={node}
             at={nodePosition(node.id, index)}
-            entry={model.entrypoints.includes(node.id)}
+            entry={isEntryNode(model, node.id)}
+            objective={isFirstEntryNode(model, node.id) ? objective : null}
             selected={node.id === selectedNode}
             multi={picked.has(`node:${node.id}`)}
             onOpen={() => {
@@ -1250,9 +1271,12 @@ function NodeBlock({
   multi = false,
   highlight = null,
   highlightAgent = null,
+  objective = null,
 }: {
   multi?: boolean;
   connections?: number | null;
+  /** The run's objective, on the entry node only (#1077) - the words this node was given. */
+  objective?: string | null;
   node: GraphNode;
   at: Point;
   entry: boolean;
@@ -1287,7 +1311,7 @@ function NodeBlock({
   };
   return (
     <article
-      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
+      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${objective !== null && objective.trim().length > 0 ? "node-with-objective" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
       style={{
         left: at.x,
         top: at.y,
@@ -1308,6 +1332,10 @@ function NodeBlock({
           </span>
         </span>
         <span className="node-title" title={node.id}>{node.id}</span>
+        {/* Clamped: the card is a fixed box the camera frames by (cardHeight, graph/board.ts -
+            taller by the objective's allowance, matched by .node-with-objective), and an
+            objective may run to 2,000 characters. The whole text is one hover away on the title. */}
+        {objective !== null && objective.trim().length > 0 && <q className="node-objective" title={objective}>{objective}</q>}
         {/* THE DISAGREEMENT CHIP - the reference project's best signal ("quietly reopened the
           * part it already called done"), derived here from the log alone: this node settled at
           * one sequence and a later event named it again. Both coordinates cited, author named. */}

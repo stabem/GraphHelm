@@ -12,6 +12,7 @@
 | `docs/DECISION_REGISTER.md` | 6402 | 981 |
 | `docs/GLOSSARY.md` | 3722 | 497 |
 | `docs/INDEX.md` | 1500 | 117 |
+| `docs/acceptance/install-rehearsal-2026-09-13.md` | 29043 | 2905 |
 | `docs/agents/AGENTS_SKILLS_PLUGINS.md` | 10310 | 1458 |
 | `docs/architecture/DATA_AND_PROTOCOLS.md` | 13420 | 1257 |
 | `docs/architecture/SYSTEM_ARCHITECTURE.md` | 10721 | 1473 |
@@ -21,6 +22,7 @@
 | `docs/graph-engineer/GRAPH_DSL_SPEC.md` | 12030 | 1313 |
 | `docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md` | 13890 | 1810 |
 | `docs/harness/HARNESS_SPEC.md` | 20052 | 2708 |
+| `docs/install/GETTING_STARTED.md` | 20358 | 2585 |
 | `docs/models/UNIVERSAL_MODEL_GATEWAY.md` | 10933 | 1475 |
 | `docs/open-source/GOVERNANCE_AND_LICENSING.md` | 9324 | 1304 |
 | `docs/operations/OBSERVABILITY_AND_RECOVERY.md` | 9618 | 1408 |
@@ -50,5 +52,5 @@
 | `schemas/node.schema.json` | 2214 | 176 |
 | `schemas/policy-waiver.schema.json` | 1818 | 129 |
 
-**Total files listed:** 47
-**Total words across counted text files:** 38784
+**Total files listed:** 49
+**Total words across counted text files:** 44274

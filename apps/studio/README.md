@@ -112,11 +112,15 @@ first run, starts the dev server, opens the browser connected:
 powershell -File apps/studio/tools/studio-up.ps1 -Events C:\path\to\.graphhelm\events
 ```
 
-Or by hand: you need a Runtime (`graphhelm serve`) and the Studio dev server.
+Or by hand: you need a Runtime (`graphhelm serve`) and the Studio dev server. `graphhelm init`
+in the project creates every path below and prints these commands with the paths filled in
+(`docs/install/GETTING_STARTED.md`).
 
 ```powershell
-# 1 — start the Runtime on loopback. It writes the bearer token to <events-dir>.token:
-graphhelm serve --events C:\path\to\.graphhelm\events --bind 127.0.0.1:8791
+# 1 — start the Runtime on loopback. It writes the bearer token to <events-dir>.token. The
+#     keyring pair is what lets it seal a message; without it the message box is refused:
+$env:GRAPHHELM_EVENTS_KEY = (Get-Content -Raw C:\path\to\.graphhelm\serve.key).Trim()
+graphhelm serve --events C:\path\to\.graphhelm\events --bind 127.0.0.1:8791 --keyring C:\path\to\.graphhelm\keyring --key-id studio
 
 # 2 — start the Studio with the environment that lets it find both:
 $env:GRAPHHELM_EVENTS = "C:\path\to\.graphhelm\events"

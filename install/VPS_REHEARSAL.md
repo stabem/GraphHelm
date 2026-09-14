@@ -1,5 +1,7 @@
 # Clean Ubuntu VPS Acceptance Rehearsal
 
+Recorded runs: [`docs/acceptance/install-rehearsal-2026-09-13.md`](../docs/acceptance/install-rehearsal-2026-09-13.md) — the Runtime half, in a clean Ubuntu 24.04 container (systemd absent, so section 4's service checks were not exercised there). The single-machine path that precedes any server is [`docs/install/GETTING_STARTED.md`](../docs/install/GETTING_STARTED.md).
+
 This script proves the Docker and systemd installation paths on a new Ubuntu 24.04 VPS. Run every command on the VPS. A failed command, a different HTTP status, or a missing expected field fails the rehearsal.
 
 ## Preconditions

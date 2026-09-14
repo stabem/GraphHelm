@@ -45,6 +45,7 @@ pub const GHCLI023_IDEMPOTENCY_REPLY_INVALID: &str = "GHCLI023_IDEMPOTENCY_REPLY
 pub const GHCLI024_EXTENSION_LIFECYCLE_REFUSED: &str = "GHCLI024_EXTENSION_LIFECYCLE_REFUSED";
 pub const GHCLI025_PAUSE_OUTCOME_UNKNOWN: &str = "GHCLI025_PAUSE_OUTCOME_UNKNOWN";
 pub const GHCLI026_ARCHITECT_REFUSED: &str = "GHCLI026_ARCHITECT_REFUSED";
+pub const GHCLI027_INIT_REFUSED: &str = "GHCLI027_INIT_REFUSED";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -80,6 +81,7 @@ pub const ALL: &[&str] = &[
     GHCLI024_EXTENSION_LIFECYCLE_REFUSED,
     GHCLI025_PAUSE_OUTCOME_UNKNOWN,
     GHCLI026_ARCHITECT_REFUSED,
+    GHCLI027_INIT_REFUSED,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

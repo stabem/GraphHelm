@@ -2,7 +2,8 @@
 
 > **Repository:** https://github.com/stabem/GraphHelm
 > **Licence:** MIT — see [LICENSE](LICENSE)
-> **Start here:** [QUICKSTART.md](QUICKSTART.md) — a real run, offline, no account, no daemon
+> **Start here:** [QUICKSTART.md](QUICKSTART.md) — a real run, offline, no account, no daemon ·
+> [docs/install/GETTING_STARTED.md](docs/install/GETTING_STARTED.md) — clone → `graphhelm init` → Runtime → Studio → a chat harness, one page
 >
 > **Product name:** GraphHelm
 > **Original codename:** Programação 5.0

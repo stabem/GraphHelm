@@ -1125,6 +1125,24 @@ fn unix_owner_only_metadata_is_valid(
     owner_uid == effective_uid && mode & 0o7777 == expected_mode
 }
 
+/// Owner, SYSTEM and Administrators only — applied and then read back. The same protection every
+/// keyring file receives, exported so the CLI's own secret files (`events.token`, `serve.key`)
+/// share this ONE implementation instead of inheriting the directory ACL that any local user can
+/// read (PR #1070 review, measured with `icacls`). `file` must be open with `WRITE_DAC` and
+/// `READ_CONTROL`.
+#[cfg(windows)]
+pub fn protect_owner_only(file: &File) -> Result<(), KeyError> {
+    apply_windows_protected_dacl(file)?;
+    validate_windows_handle_dacl(file)
+}
+
+/// The read-back alone: `Ok` when `file` carries the protected owner-only DACL and is owned by
+/// the calling user. `file` needs `READ_CONTROL`, which a plain `File::open` grants.
+#[cfg(windows)]
+pub fn verify_owner_only(file: &File) -> Result<(), KeyError> {
+    validate_windows_handle_dacl(file)
+}
+
 #[cfg(windows)]
 fn apply_windows_protected_dacl(file: &File) -> Result<(), KeyError> {
     use std::{iter, os::windows::io::AsRawHandle, ptr};

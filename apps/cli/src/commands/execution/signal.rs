@@ -130,7 +130,13 @@ fn run_from_file(
 
 /// Mirrors `commands::events::config`'s provider construction: the 32-byte key never rides a
 /// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters.
-fn open_sealer(keyring: &SignalKeyring) -> Result<EvidenceProtector<SealedKeyProvider>, Failure> {
+///
+/// `pub(crate)` so `serve` can pre-flight the same open at startup when `--keyring` is given
+/// (PR #1070 review): before that, a missing variable or a wrong `--key-id` produced a healthy
+/// `serve.started` and surfaced only on the first message send.
+pub(crate) fn open_sealer(
+    keyring: &SignalKeyring,
+) -> Result<EvidenceProtector<SealedKeyProvider>, Failure> {
     let invalid = || {
         argument(
             "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters",

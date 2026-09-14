@@ -6,12 +6,14 @@ mod execution;
 mod extension;
 mod gateway;
 mod hash;
+mod init;
 mod lint;
 mod mcp;
 mod quality;
 pub(crate) mod remediation;
 mod replay;
 mod schema;
+mod secret_file;
 mod serve;
 mod simulate;
 mod tool;
@@ -373,6 +375,7 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Serve(args) => serve::run(&args),
         TopLevel::Mcp(args) => mcp::run(&args),
         TopLevel::WakeWait(args) => wake_wait::run(&args),
+        TopLevel::Init(args) => init::run(&args),
         TopLevel::Quality(args) => match args.command {
             QualityCommand::Certify {
                 events,

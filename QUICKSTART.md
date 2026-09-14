@@ -1,5 +1,9 @@
 # Quickstart — a real run, start to answer
 
+> For the Studio and a chat harness — `graphhelm init`, `serve`, the Studio, `.mcp.json` — see
+> [docs/install/GETTING_STARTED.md](docs/install/GETTING_STARTED.md). This page stays in-process and
+> needs no daemon.
+
 Every command and every output below was executed against this repository. Nothing here is
 illustrative.
 

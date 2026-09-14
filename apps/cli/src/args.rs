@@ -43,6 +43,40 @@ pub enum TopLevel {
     WakeWait(WakeWaitArgs),
     /// Quality-gate operations: the thymus ritual and the certification stamp.
     Quality(QualityArgs),
+    /// First run in a project (#1062): provisions `<project>/.graphhelm/` — the events
+    /// directory, the bearer token `serve` will read, the sealing key and keyring the Studio's
+    /// message box needs — registers the MCP server with the chat harnesses it detects, ignores
+    /// the directory in git, and prints the exact next commands. Idempotent: an existing token or
+    /// key is kept, never rotated. Neither secret is ever printed.
+    Init(InitArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {
+    /// The project directory to provision. Defaults to the current directory; must exist.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The loopback address the Runtime will bind; written into every harness registration and
+    /// every printed command, so one number is used everywhere (`install.sh` uses 8080 on a VPS).
+    #[arg(long, default_value = "127.0.0.1:8791")]
+    pub bind: String,
+    /// The sealing key's id inside the keyring.
+    #[arg(long = "key-id", default_value = "studio")]
+    pub key_id: String,
+    /// Which chat harnesses to register, repeatable. Absent: every harness detected on this
+    /// machine (`claude-code` when `.claude/` exists in the project or `~/.claude` exists;
+    /// `codex` when `~/.codex` exists).
+    #[arg(long, value_enum)]
+    pub harness: Vec<Harness>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Harness {
+    /// Claude Code: `<project>/.mcp.json`, merged into an existing one.
+    ClaudeCode,
+    /// Codex: a `[mcp_servers.graphhelm]` snippet at `<project>/.graphhelm/codex.config.toml`
+    /// for the operator to append to `~/.codex/config.toml`; the home directory is never written.
+    Codex,
 }
 
 #[derive(Debug, Args)]

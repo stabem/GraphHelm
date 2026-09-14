@@ -220,7 +220,9 @@ pub(super) fn key_from_env(variable: &str) -> Result<SecretBytes, Failure> {
     decode_key(&encoded, variable)
 }
 
-fn decode_key(encoded: &[u8], variable: &str) -> Result<SecretBytes, Failure> {
+/// `pub(super)` so `init` (#1062) can decode the hex it read from `serve.key` without going
+/// through the environment; `variable` then names the FILE the diagnostic should blame.
+pub(super) fn decode_key(encoded: &[u8], variable: &str) -> Result<SecretBytes, Failure> {
     let invalid = || {
         credential_error(
             &format!("{variable} must supply 64 lowercase hexadecimal characters"),

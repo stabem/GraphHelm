@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ use graphhelm_runtime::driver::ImmediateCancelRequest;
 use crate::args::ServeArgs;
 use crate::commands::events::runtime;
 use crate::commands::execution::signal::SignalKeyring;
-use crate::commands::{event_store, execution};
+use crate::commands::{event_store, execution, secret_file};
 use crate::output::{CommandOutput, Outcome};
 use ports::RuntimeWiring;
 
@@ -84,10 +84,6 @@ const STARTED_COMMAND: &str = "serve.started";
 const HEALTH_COMMAND: &str = "serve.health";
 const UNAUTHORIZED_COMMAND: &str = "serve.unauthorized";
 const NOT_FOUND_COMMAND: &str = "serve.not_found";
-
-const TOKEN_SUFFIX: &str = ".token";
-const TOKEN_BYTES: usize = 32;
-const TOKEN_HEX_LEN: usize = TOKEN_BYTES * 2;
 
 fn argument(message: &str, pointer: &str) -> Failure {
     Failure {
@@ -167,8 +163,10 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let address = parse_loopback_bind(&args.bind)?;
     std::fs::create_dir_all(&args.events)
         .map_err(|_| serve_invalid("the events directory could not be created", "/events"))?;
-    let token = ensure_token(&args.events)?;
-    let (runtime_wiring, sealing) = build_wiring(args)?;
+    // One implementation with `init` (#1062): the token `init` minted is the one `serve` reads.
+    let (_, token) = secret_file::ensure_token(&args.events)
+        .map_err(|error| serve_invalid(error.message(), "/token"))?;
+    let (runtime_wiring, sealing, startup_warnings) = build_wiring(args)?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
         events: Arc::from(args.events.as_path()),
@@ -181,7 +179,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
 
     let rt =
         runtime().map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
-    rt.block_on(serve_forever(address, state))
+    rt.block_on(serve_forever(address, state, startup_warnings))
 }
 
 // #583: there is deliberately NO default program allowlist here.
@@ -203,10 +201,21 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
 /// groups present together. A manifest is loaded and validated here (`RouteManifest::from_json`,
 /// fail fast) and the configured `--route` is resolved to a cloned `ModelRoute` — never re-parsed
 /// per drive.
+///
+/// The third element is the startup WARNINGS: conditions that do not stop `serve` but that the
+/// operator should read on the `serve.started` line (today: a keyring the key does not open).
 #[allow(clippy::type_complexity)]
 fn build_wiring(
     args: &ServeArgs,
-) -> Result<(Option<RuntimeWiring>, Option<SignalKeyring>), Failure> {
+) -> Result<
+    (
+        Option<RuntimeWiring>,
+        Option<SignalKeyring>,
+        Vec<Diagnostic>,
+    ),
+    Failure,
+> {
+    let mut warnings = Vec::new();
     let executor_group = [
         args.manifest.is_some(),
         args.broker.is_some(),
@@ -263,10 +272,31 @@ fn build_wiring(
     let sealing = if keyring_all {
         let keyring = args.keyring.clone().expect("keyring_all guarantees Some");
         let key_id = args.key_id.clone().expect("keyring_all guarantees Some");
-        Some(SignalKeyring {
+        let sealing = SignalKeyring {
             directory: keyring,
             key_id,
-        })
+        };
+        // Pre-flight the open ONCE, at startup (PR #1070 review): with `--keyring` given, an
+        // unset `GRAPHHELM_EVENTS_KEY` or a `--key-id` the keyring does not hold used to produce
+        // a silent `serve.started` and surface only on the first message send, as a refused
+        // seal. The same `open_sealer` the send path uses answers here, so the two cannot
+        // disagree; the provider is dropped and re-opened per send exactly as before.
+        //
+        // A WARNING on the `serve.started` reply, not a refusal: a fixture story never seals
+        // (`resume_atomicity.rs` starts `serve` with the keyring flags and no key on purpose),
+        // so startup must succeed; the operator who WILL seal reads the consequence at start.
+        if let Err(failure) = execution::signal::open_sealer(&sealing) {
+            warnings.push(Diagnostic::warning(
+                SERVE_INVALID_CODE,
+                format!(
+                    "the keyring could not be opened with GRAPHHELM_EVENTS_KEY ({}); sealed operations (messages, real executors) will refuse until serve is restarted with the right key",
+                    failure.message
+                ),
+                "/keyring",
+                SOURCE,
+            ));
+        }
+        Some(sealing)
     } else {
         None
     };
@@ -322,10 +352,14 @@ fn build_wiring(
         None
     };
 
-    Ok((runtime, sealing))
+    Ok((runtime, sealing, warnings))
 }
 
-async fn serve_forever(address: SocketAddr, state: ServeState) -> Result<(), Failure> {
+async fn serve_forever(
+    address: SocketAddr,
+    state: ServeState,
+    startup_warnings: Vec<Diagnostic>,
+) -> Result<(), Failure> {
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|_| serve_invalid("the requested address could not be bound", "/bind"))?;
@@ -341,7 +375,8 @@ async fn serve_forever(address: SocketAddr, state: ServeState) -> Result<(), Fai
     let started = Outcome::success(
         STARTED_COMMAND,
         serde_json::json!({ "address": bound.to_string() }),
-    );
+    )
+    .with_warnings(startup_warnings);
     crate::output::print(&started.output, false);
     let _ = std::io::stdout().flush();
 
@@ -1811,154 +1846,6 @@ fn parse_loopback_bind(bind: &str) -> Result<SocketAddr, Failure> {
         ));
     }
     Ok(address)
-}
-
-/// The token's path: a *sibling* of the events directory, never a child of it — named
-/// `<events-directory-name>.token` in the same parent directory. `commands::event_store`'s
-/// `LocalEventRepository::open` treats the events directory as its own exclusively-owned
-/// namespace: `classify_layout` in `core/events/src/local.rs` enumerates the directory's entries
-/// against a closed allowlist (`blobs`, `.tmp`, `active`, `format.json`, `journal.jsonl`,
-/// `repository.lock`) and refuses the *entire* repository with `GHE007_UNSUPPORTED_FORMAT` the
-/// moment it finds anything else — a deliberate integrity guard, not a bug to work around from the
-/// inside. Milestone 05a Task 1 originally wrote the token to `events/token`, which satisfies that
-/// guard only until a real repository also exists there; from that point on, *every* command
-/// against the directory — the CLI's own, not just this server's — starts failing
-/// `GHE007_UNSUPPORTED_FORMAT`. This was caught empirically while building Task 2's first test
-/// (`status_over_http_matches_the_cli_and_the_events_tail_pages`): a `graphhelm execution status`
-/// run by hand against a directory `serve` had already touched reproduced the same failure with no
-/// server involved, confirming the cause sits in the token's location, not in anything Tasks 2/3
-/// added. Keeping the token outside the directory `LocalEventRepository` owns avoids the collision
-/// entirely without weakening that crate's allowlist — the correct fix is on the operator side of
-/// the boundary, not a loosened integrity guard on the store side. The parent directory is
-/// guaranteed to exist by the time this runs: `serve::execute` calls `create_dir_all(events)` first,
-/// which creates every ancestor, including `events`'s own parent.
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(TOKEN_SUFFIX);
-    events.with_file_name(name)
-}
-
-/// Creates the bearer token on first `serve` and validates it thereafter through the same
-/// read-side checks `events/config.rs`'s `read_bounded`/`reject_insecure_permissions` apply to
-/// the operator configuration: not a symlink, a regular file, no group/world access on Unix, and
-/// a bounded size. Those helpers are `pub(super)` to `commands::events` and read-side only —
-/// there is no creation-time counterpart there to widen, and this task's file set does not
-/// include `config.rs` — so this is a local, second copy scoped to `serve`, matching this
-/// codebase's established precedent of keeping such copies local rather than reaching across a
-/// task's declared file set (see `commands::execution::record_outcome`'s doc comment for the
-/// same pattern).
-fn ensure_token(events: &Path) -> Result<String, Failure> {
-    let path = token_path(events);
-    match create_token_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(_) => {
-            return Err(serve_invalid(
-                "the bearer token file could not be created",
-                "/token",
-            ));
-        }
-    }
-    read_validated_token(&path)
-}
-
-/// Writes a fresh 32-byte OS-random token, hex-encoded, refusing to overwrite an existing file
-/// (`create_new`, atomic against a racing second `serve` on the same directory) and restricting
-/// access to the owner alone on Unix (`0o600`) at creation time. The CLI binary may use OS
-/// randomness directly — the purity rules bind the core crates, not the operator binary.
-fn create_token_file(path: &Path) -> std::io::Result<()> {
-    let mut bytes = [0_u8; TOKEN_BYTES];
-    getrandom::fill(&mut bytes)
-        .map_err(|_| std::io::Error::other("the OS random source is unavailable"))?;
-    let hex = encode_hex(&bytes);
-
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(hex.as_bytes())?;
-    file.sync_all()
-}
-
-/// The read-side safety checks, narrowed from `events/config.rs`'s `read_bounded` to what a
-/// fixed 64-character hex token needs.
-fn read_validated_token(path: &Path) -> Result<String, Failure> {
-    let unreadable = || serve_invalid("the bearer token file could not be read", "/token");
-    let metadata = std::fs::symlink_metadata(path).map_err(|_| unreadable())?;
-    if metadata.file_type().is_symlink() {
-        return Err(serve_invalid(
-            "the bearer token file must not be a symbolic link",
-            "/token",
-        ));
-    }
-    if !metadata.is_file() {
-        return Err(serve_invalid(
-            "the bearer token file must be a regular file",
-            "/token",
-        ));
-    }
-    reject_insecure_permissions(&metadata)?;
-    if metadata.len() != TOKEN_HEX_LEN as u64 {
-        return Err(serve_invalid(
-            "the bearer token file is not the expected size",
-            "/token",
-        ));
-    }
-    let raw = std::fs::read(path).map_err(|_| unreadable())?;
-    let token = String::from_utf8(raw)
-        .map_err(|_| serve_invalid("the bearer token file is not valid UTF-8", "/token"))?;
-    if token.len() != TOKEN_HEX_LEN
-        || !token
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return Err(serve_invalid(
-            "the bearer token file is not 64 lowercase hexadecimal characters",
-            "/token",
-        ));
-    }
-    Ok(token)
-}
-
-#[cfg(unix)]
-fn reject_insecure_permissions(metadata: &std::fs::Metadata) -> Result<(), Failure> {
-    use std::os::unix::fs::MetadataExt;
-
-    if metadata.mode() & 0o077 != 0 {
-        return Err(serve_invalid(
-            "the bearer token file must not be group or world accessible",
-            "/token",
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn reject_insecure_permissions(_: &std::fs::Metadata) -> Result<(), Failure> {
-    // Windows ACL evaluation is not attempted; the symlink and regular-file rules still apply —
-    // identical no-op to `events/config.rs`'s own Windows branch.
-    Ok(())
-}
-
-/// Hand-rolled to match `events/config.rs`'s own house style: that file validates and decodes
-/// hexadecimal by hand (`hex_value`, the sha256 pin check) rather than pulling in the `hex`
-/// crate for a few lines of work, even though `hex` is already an approved, pinned workspace
-/// dependency used elsewhere. Encoding here follows the same convention.
-fn encode_hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 /// Appends one JSON line per request: what was asked, and the exact bytes served.

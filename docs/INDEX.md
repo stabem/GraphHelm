@@ -1,5 +1,11 @@
 # Documentation index
 
+## Install
+
+- [Getting started — clone to an execution you can act on](install/GETTING_STARTED.md)
+- [Clean Ubuntu VPS acceptance rehearsal](../install/VPS_REHEARSAL.md)
+- [Clean-host install rehearsal, 2026-09-13](acceptance/install-rehearsal-2026-09-13.md)
+
 ## Current behavior
 
 - [Current-main documentation audit, 2026-08-31](audits/CURRENT_MAIN_DOCUMENTATION_AUDIT_2026-08-31.md)

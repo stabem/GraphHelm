@@ -27,7 +27,7 @@ use crate::output::Outcome;
 const INIT_COMMAND: &str = "gateway.keyring.init";
 
 /// The variable the sealing key is created under. Named once, here, beside the reason.
-const SEALING_KEY_ENVIRONMENT: &str = "GRAPHHELM_EVENTS_KEY";
+pub(in crate::commands) const SEALING_KEY_ENVIRONMENT: &str = "GRAPHHELM_EVENTS_KEY";
 
 pub(in crate::commands) fn init(keyring_dir: &Path, key_id: &str) -> Outcome {
     finish(INIT_COMMAND, execute_init(keyring_dir, key_id), |summary| {
@@ -38,34 +38,68 @@ pub(in crate::commands) fn init(keyring_dir: &Path, key_id: &str) -> Outcome {
 fn execute_init(keyring_dir: &Path, key_id: &str) -> Result<serde_json::Value, Failure> {
     require_keyring_directory(keyring_dir)?;
     let passphrase = key_from_env(SEALING_KEY_ENVIRONMENT)?;
-
-    // Refused rather than overwritten. Overwriting orphans every piece of evidence already sealed
-    // under the old key: the events keep referencing content nothing can open again, and the loss
-    // is silent because an unopenable reference looks exactly like one whose Runtime lacks the key.
-    // A second `init` is far more likely to be a repeated setup step than a deliberate rotation.
-    if SealedKeyProvider::open(keyring_dir, key_id.to_owned(), passphrase_copy(&passphrase)).is_ok()
-    {
+    match create(keyring_dir, key_id, passphrase) {
+        Ok(()) => {}
+        // Refused rather than overwritten. Overwriting orphans every piece of evidence already
+        // sealed under the old key: the events keep referencing content nothing can open again,
+        // and the loss is silent because an unopenable reference looks exactly like one whose
+        // Runtime lacks the key. A second `init` is far more likely to be a repeated setup step
+        // than a deliberate rotation.
+        //
         // The one retry that can succeed is a NEW DIRECTORY. "Choose another --key-id" used to
         // be offered too, and it cannot work: `SealedKeyProvider::create` refuses any directory
         // already holding a keyring whatever the id, so the operator who followed that advice
         // stayed blocked with a generic error (PR #467 review).
-        return Err(credential_error(
-            "this keyring already holds that key, and replacing it would orphan everything already sealed under it; point --keyring at a new directory",
-            "/keyring",
-        ));
+        Err(CreateError::AlreadyHoldsKey) => {
+            return Err(credential_error(
+                "this keyring already holds that key, and replacing it would orphan everything already sealed under it; point --keyring at a new directory",
+                "/keyring",
+            ));
+        }
+        Err(CreateError::Uncreatable) => {
+            return Err(credential_error(
+                "the sealing key could not be created in that keyring",
+                "/keyring",
+            ));
+        }
     }
-
-    SealedKeyProvider::create(keyring_dir, key_id, passphrase).map_err(|_| {
-        credential_error(
-            "the sealing key could not be created in that keyring",
-            "/keyring",
-        )
-    })?;
 
     Ok(json!({
         "keyId": key_id,
         "createdUnder": SEALING_KEY_ENVIRONMENT,
     }))
+}
+
+/// Why [`create`] did not create a key. Typed, not a `Failure`: `gateway keyring init` treats
+/// [`CreateError::AlreadyHoldsKey`] as a refusal (rotation would orphan sealed evidence), while
+/// `init` (#1062) treats the same answer as "already provisioned" and reports `existing` — the
+/// two commands agree on the fact and differ on what it means for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::commands) enum CreateError {
+    /// `passphrase` already opens `key_id` in this directory.
+    AlreadyHoldsKey,
+    /// `SealedKeyProvider::create` refused: the directory is unwritable, or holds a keyring this
+    /// passphrase does not open.
+    Uncreatable,
+}
+
+/// The core of `gateway keyring init` with the passphrase supplied by the caller: the environment
+/// is read by [`init`]'s wrapper, never here, so `init` (#1062) can hand in the passphrase it read
+/// from the project's `serve.key` file. Pre-flights `open` so an existing key is reported as such
+/// rather than clobbered; the passphrase is copied once for that pre-flight (see
+/// [`passphrase_copy`]).
+pub(in crate::commands) fn create(
+    keyring_dir: &Path,
+    key_id: &str,
+    passphrase: SecretBytes,
+) -> Result<(), CreateError> {
+    if SealedKeyProvider::open(keyring_dir, key_id.to_owned(), passphrase_copy(&passphrase)).is_ok()
+    {
+        return Err(CreateError::AlreadyHoldsKey);
+    }
+    SealedKeyProvider::create(keyring_dir, key_id, passphrase)
+        .map(|_| ())
+        .map_err(|_| CreateError::Uncreatable)
 }
 
 /// `SecretBytes` is consumed by both `open` and `create`, and the pre-flight above needs one of

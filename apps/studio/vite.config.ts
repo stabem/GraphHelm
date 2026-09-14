@@ -199,6 +199,13 @@ export default defineConfig(({ mode }) => {
       setupFiles: "./src/test/setup.ts",
       css: true,
       restoreMocks: true,
+      // #1075: without a cap Vitest forks one worker per core minus one (31 on the gate host) and
+      // every worker loads jsdom at once. Under load the simultaneous starts exceed the pool's
+      // startup timeout and the stage ends RED with zero tests executed — measured twice on
+      // 2026-09-13 (gate runs 1070-20260913T180143 and 1069-20260913T184006: 19 and 20 files,
+      // "Failed to start forks worker", no assertion run). Four workers on the same loaded host:
+      // 19 files, 306 tests, 44 s. The number is a ceiling on contention, not a tuning knob.
+      maxWorkers: 4,
     },
   };
 });

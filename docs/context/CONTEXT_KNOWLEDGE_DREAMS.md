@@ -69,6 +69,18 @@ the node runs with an empty capsule. Zero candidates is additionally `zero_resul
 An immediate stop that arrives while a node's context is compiling is observed: the compile is
 raced against the cancel channel and nothing after it is dispatched.
 
+**Declared gap (2026-09-14, #1100): the walk has no wall-time bound, and a node is not `running`
+until it ends.** `SEARCH_BOUNDS` caps entries, files and bytes, never seconds, and the compile runs
+before the `Started` hop. Measured with a debug build on a 32-thread Windows host that other
+sessions already held near 77% CPU, same two objectives (`Do the first thing.` and a ten-term
+one): this repository's clean checkout took 0.24–0.65 s; under 24 extra busy loops, 0.59–2.2 s;
+a freshly extracted copy of the same tree, cold, under the same load took 12.3 s on the first
+walk and 0.76 s after. The main checkout, which also holds other lanes' worktrees under
+`.claude/worktrees`, took 110.5 s on its first walk and 7.4–11.0 s after, and every walk ended
+in `SearchBoundExceeded`, so the node paid the whole walk and shipped an empty capsule. A real
+project with a large tree can therefore hold `running` back for seconds to minutes. No runtime
+change yet; the options are a wall-time bound on the walk or an index, under #302.
+
 **Measured** (`adapters/tool-host/tests/context_quality.rs`, ten objective → expected-file pairs
 written from real files). The floor is asserted over a **frozen corpus**
 (`adapters/tool-host/tests/fixtures/context-quality/tree`: the ten target files and five decoy

@@ -530,9 +530,15 @@ fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, 
 
 #[test]
 fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-
     let directory = tempfile::tempdir().unwrap();
+    // #1100: a small plain project, never `root()`. Since #1078 every cognitive node compiles
+    // context before dispatch, walking the project, and the node only reaches `running` after
+    // it; a walk of the whole checkout on a loaded host outran this cell's deadline. The cell
+    // tests pause semantics, not context, and drives only agent nodes, so it needs no git either.
+    // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
+    // measures the Runtime reaching `running`, not the temporary filesystem.
+    let project = plain_project(directory.path());
+    let deadline = Instant::now() + Duration::from_secs(60);
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -602,7 +608,6 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
     // this test can poll status/pause concurrently, bounded well under `deadline`.
     let start_base = base.clone();
     let start_token = token.clone();
-    let project = root();
     let start_handle = std::thread::spawn(move || {
         let url = format!("{start_base}/v1/executions/{execution}/start");
         let body = serde_json::json!({
@@ -781,9 +786,15 @@ fn last_ledger_event(
 
 #[test]
 fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-
     let directory = tempfile::tempdir().unwrap();
+    // #1100: a small plain project, never `root()`. Since #1078 every cognitive node compiles
+    // context before dispatch, walking the project, and the node only reaches `running` after
+    // it; a walk of the whole checkout on a loaded host outran this cell's deadline. The cell
+    // tests pause semantics, not context, and drives only agent nodes, so it needs no git either.
+    // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
+    // measures the Runtime reaching `running`, not the temporary filesystem.
+    let project = plain_project(directory.path());
+    let deadline = Instant::now() + Duration::from_secs(60);
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -847,7 +858,6 @@ fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry(
 
     let start_base = base.clone();
     let start_token = token.clone();
-    let project = root();
     let start_handle = std::thread::spawn(move || {
         let url = format!("{start_base}/v1/executions/{execution}/start");
         let body = serde_json::json!({
@@ -1071,9 +1081,15 @@ fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry(
 /// logically different requests -- not merely as "this specific attempt happened to fail".
 #[test]
 fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-
     let directory = tempfile::tempdir().unwrap();
+    // #1100: a small plain project, never `root()`. Since #1078 every cognitive node compiles
+    // context before dispatch, walking the project, and the node only reaches `running` after
+    // it; a walk of the whole checkout on a loaded host outran this cell's deadline. The cell
+    // tests pause semantics, not context, and drives only agent nodes, so it needs no git either.
+    // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
+    // measures the Runtime reaching `running`, not the temporary filesystem.
+    let project = plain_project(directory.path());
+    let deadline = Instant::now() + Duration::from_secs(60);
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -1143,7 +1159,6 @@ fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
 
     let start_base = base.clone();
     let start_token = token.clone();
-    let project = root();
     let start_handle = std::thread::spawn(move || {
         let url = format!("{start_base}/v1/executions/{execution}/start");
         let body = serde_json::json!({
@@ -1260,9 +1275,15 @@ fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
 /// interrupted -- immediate's own promise over graceful, kept without a second aggregate event.
 #[test]
 fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_stream() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-
     let directory = tempfile::tempdir().unwrap();
+    // #1100: a small plain project, never `root()`. Since #1078 every cognitive node compiles
+    // context before dispatch, walking the project, and the node only reaches `running` after
+    // it; a walk of the whole checkout on a loaded host outran this cell's deadline. The cell
+    // tests pause semantics, not context, and drives only agent nodes, so it needs no git either.
+    // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
+    // measures the Runtime reaching `running`, not the temporary filesystem.
+    let project = plain_project(directory.path());
+    let deadline = Instant::now() + Duration::from_secs(60);
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -1326,7 +1347,6 @@ fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_str
 
     let start_base = base.clone();
     let start_token = token.clone();
-    let project = root();
     let start_handle = std::thread::spawn(move || {
         let url = format!("{start_base}/v1/executions/{execution}/start");
         let body = serde_json::json!({
@@ -1465,9 +1485,15 @@ fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_str
 /// Reverted before this commit.
 #[test]
 fn a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_granted_success() {
-    let deadline = Instant::now() + Duration::from_secs(60);
-
     let directory = tempfile::tempdir().unwrap();
+    // #1100: a small plain project, never `root()`. Since #1078 every cognitive node compiles
+    // context before dispatch, walking the project, and the node only reaches `running` after
+    // it; a walk of the whole checkout on a loaded host outran this cell's deadline. The cell
+    // tests pause semantics, not context, and drives only agent nodes, so it needs no git either.
+    // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
+    // measures the Runtime reaching `running`, not the temporary filesystem.
+    let project = plain_project(directory.path());
+    let deadline = Instant::now() + Duration::from_secs(60);
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -1537,7 +1563,6 @@ fn a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_gra
 
     let start_base = base.clone();
     let start_token = token.clone();
-    let project = root();
     let start_handle = std::thread::spawn(move || {
         let url = format!("{start_base}/v1/executions/{execution}/start");
         let body = serde_json::json!({
@@ -1664,6 +1689,16 @@ fn replying_anthropic_server() -> String {
         }
     });
     format!("http://127.0.0.1:{}", address.port())
+}
+
+/// A plain project directory with one small text file and no git (#1100): for drives that run
+/// only agent nodes, whose context walk needs a tree but no repository. Nothing here spawns a
+/// process, so it cannot stall a cell whose deadline is already running.
+fn plain_project(directory: &Path) -> PathBuf {
+    let project = directory.join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("src/lib.rs"), "// plain\n").unwrap();
+    project
 }
 
 /// A scratch git repository for the tool node's ephemeral worktree (the 05c pattern).

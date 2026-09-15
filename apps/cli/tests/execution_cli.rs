@@ -2457,6 +2457,87 @@ fn status_html_writes_a_frozen_snapshot_and_keeps_the_envelope() {
     assert_eq!(refusal["ok"], false, "{refusal}");
 }
 
+/// #1083 (Codex on PR #1091): `status --execution <unknown> --html <path>` wrote the snapshot of an
+/// empty fold BEFORE the unknown-id refusal, overwriting whatever incident page already stood at
+/// `<path>`. The refusal now comes first: the existing file is byte-identical afterwards, a
+/// missing file is never created, and the command refuses with `GHCLI028_EXECUTION_NOT_FOUND`.
+/// The control is the same path under an execution that exists: it IS written, so a status that
+/// never wrote anything would fail here too.
+#[test]
+fn status_html_for_an_unknown_execution_refuses_before_touching_the_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "autopilot",
+            "--execution",
+            "exec-known-html",
+        ])
+        .assert()
+        .success();
+
+    let html = directory.path().join("incident.html");
+    let existing = b"<html>the incident page an operator already saved</html>\n".to_vec();
+    std::fs::write(&html, &existing).unwrap();
+
+    let status_html = |execution: &str, target: &std::path::Path| {
+        command()
+            .args([
+                "execution",
+                "status",
+                "--events",
+                events.to_str().unwrap(),
+                "--execution",
+                execution,
+                "--html",
+                target.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap()
+    };
+
+    let refused = status_html("exec-typo-html", &html);
+    assert!(!refused.status.success(), "{refused:?}");
+    let refusal = json(&refused.stdout);
+    assert_eq!(refusal["ok"], false, "{refusal}");
+    assert_eq!(refusal["command"], "execution.status", "{refusal}");
+    assert_eq!(
+        refusal["diagnostics"][0]["code"], "GHCLI028_EXECUTION_NOT_FOUND",
+        "{refusal}"
+    );
+    assert_eq!(
+        std::fs::read(&html).unwrap(),
+        existing,
+        "a refused status must leave the existing snapshot byte-identical"
+    );
+
+    let never = directory.path().join("never.html");
+    assert!(!status_html("exec-typo-html", &never).status.success());
+    assert!(
+        !never.exists(),
+        "a refused status must not create a snapshot file"
+    );
+
+    let written = status_html("exec-known-html", &html);
+    assert!(written.status.success(), "{written:?}");
+    assert_ne!(
+        std::fs::read(&html).unwrap(),
+        existing,
+        "the control: an execution that exists does write its snapshot"
+    );
+}
+
 /// Every event the journal holds, as `(batch index, type, data)`.
 ///
 /// The batch index is the point: the local store writes one line per ATOMIC append, so two

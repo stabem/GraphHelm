@@ -639,6 +639,10 @@ fn respond_failure(command: &'static str, failure: execution::Failure) -> Respon
         crate::error_codes::GHCLI005_EXECUTION_STATE
         | "GHE001_SEQUENCE_CONFLICT"
         | "GHE003_IDEMPOTENCY_CONFLICT" => StatusCode::CONFLICT,
+        // #1083 F1: a well-formed id naming no stream. 404, the same status the router's own
+        // fallback uses, told apart from it by the code (`GHCLI008_SERVE_NOT_FOUND` is "no
+        // route", this is "no execution").
+        crate::error_codes::GHCLI028_EXECUTION_NOT_FOUND => StatusCode::NOT_FOUND,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     respond(status, failure.into_outcome(command).output)

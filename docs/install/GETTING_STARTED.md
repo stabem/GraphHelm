@@ -248,29 +248,55 @@ values; this page moves on to acting on the run.
 Now in the Studio — the operator journey from
 [`docs/ux/STUDIO_MVP.md`](../ux/STUDIO_MVP.md) §1, in order:
 
-1. The page is connected (section 4) — the rail shows the Runtime address and the actor.
-2. The execution list shows `demo` with its attention verdict, `needs_you`.
-3. Click it: the blocking node `implementation` is named in the header.
-4. Read the aggregate state, the sixteen lifecycle counts, and the event log — every event is
-   there, with its sequence and who it is attributed to.
-5. Type the graph path into the `Graph file on the Runtime host…` box (the absolute path of
+1. The page is connected (section 4): the rail's header reads `GraphHelm` with a green `LIVE`
+   mark (`STALE` when background reads keep failing, `OFFLINE` when disconnected). The rail does
+   not print the Runtime address — the dev server proxies to `GRAPHHELM_RUNTIME_URL` — or an actor;
+   every verb you press is attributed to the actor `studio-operator`, and the event lines and cards
+   say so after you act.
+2. Under the project folder (`this runtime`) the rail lists `demo`. A run whose briefing carries
+   an objective is named by it, with the execution id (`demo`) on the line beneath; the next line
+   is the time of its last event and `· demonstration` (a fixture run). The attention verdict is
+   the coloured square at the row's right edge; hover it (or use a screen reader) for the words,
+   `needs you`.
+3. Click it. The top strip names the run (the objective; the id on hover) and a pill with the
+   status and the verdict, `RUNNING · NEEDS YOU`. The blocking node is named in the conversation
+   column's first block, `implementation is blocked`, beside an **approve implementation** button,
+   and in the `Work overview` its card reads `blocked` / `retryable failure`.
+4. Under that block the run panel reads `This run needs you`, the demonstration sentence and the
+   `Objective`, then the lifecycle counts folded into chips — `ready 1`, `blocked 1`,
+   `nothing in the other 14 states` (the sixteen states, the zeros stated together) — and the
+   run's thread, where each event line carries who it is attributed to and when. The raw event
+   log with sequences is `graphhelm execution status`/`GET /v1/executions/demo/events`; the page
+   groups lifecycle events into strips you can open.
+5. Press **Verify connections** (or switch the view to **Free canvas**), type the graph path into
+   the `Graph file on the Runtime host…` box (the absolute path of
    `examples/graphs/manual-override-deploy.yaml` in your clone — it is resolved on the Runtime
    host) and press **connect**: the run's shape is drawn, verified against the hash the run
-   recorded, or refused with the reason.
+   recorded, or refused with the reason. On a demonstration run a second box beside it,
+   `Fixture file for resume (optional)…`, takes a fixture path on the Runtime host for step 7.
 6. Click a node to narrow the thread to it.
-7. Press **pause**, then **approve implementation**, then **resume** (the dock asks for the graph
-   file path from step 5 if it is empty) — in that order. A supervised run accepts `resume` only
-   from `paused`; approving first and resuming would be refused with `resume refused:
-   not_paused` and leave the run reading `wedged_quiescence` (measured, see the CLI block below).
+7. Press **pause · finish in-flight**, then **approve implementation**, then **resume** (the dock
+   walks you to the graph file box from step 5 if it is empty) — in that order. A supervised run
+   accepts `resume` only from `paused`; approving first and resuming would be refused with
+   `resume refused: not_paused` and leave the run reading `wedged_quiescence` (measured, see the
+   CLI block below).
 8. Each verb reports what changed — `Paused`, `Approved`, `Resumed`: head before, head after, the
    re-read status and the events appended, attributed to you. While paused, the verdict reads
    `can_sleep` (nothing is waiting: the node is `ready`, the run is held). On resume the node
-   **runs again**, and what happens next is decided by the fixture, because the fixture stands in
-   for the model: with `implementation: failure` it fails again and the run is back at
-   `needs_you` / `blocked_node: implementation` — the loop a real failing node would produce; with
-   `implementation: success` in the fixture file the node succeeds and the run parks at the
-   next human step, `needs_you` / `waiting_input_node: deploy`. Either way, `needs_you` is the
-   honest answer: this graph is built to need a person.
+   **runs again**, and on a fixture run the fixture stands in for the model, so what happens next
+   depends on whether the resume names one:
+   - **With a fixture** — the CLI's `--fixtures`, or a path in the Studio's
+     `Fixture file for resume (optional)…` box — the fixture decides: with
+     `implementation: failure` the node fails again and the run is back at `needs_you` /
+     `blocked_node: implementation`, the loop a real failing node would produce; with
+     `implementation: success` the node succeeds and the run parks at the next human step,
+     `needs_you` / `waiting_input_node: deploy`.
+   - **Without a fixture** — the Studio's resume with that box left empty — the node has no
+     outcome to take and parks at `needs_you` / `waiting_input_node: implementation`; the dock
+     says `Nothing is blocked. A waiting node wants an answer in the thread, not an approval.`
+     Resume again with a fixture file named to drive it on.
+
+   Either way, `needs_you` is the honest answer: this graph is built to need a person.
 9. Reload the page: the Runtime is untouched and the token is forgotten (it lived in the session
    only).
 

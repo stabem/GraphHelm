@@ -804,6 +804,82 @@ describe("verified mutations", () => {
 });
 
 /**
+ * #1083 F1 and F6, as the client meets them. The Runtime now answers a well-formed unknown id with
+ * 404 `GHCLI028_EXECUTION_NOT_FOUND`; the client must not read that as "this Runtime has no
+ * briefing route", and a START - whose target is supposed not to exist yet - must still go out,
+ * guarded at head 0. A fixture-only Runtime's documented route-listing refusal is read once.
+ */
+describe("an unknown execution id and a fixture-only Runtime", () => {
+  const notFound = (command: string): Reply => ({
+    status: 404,
+    envelope: { ok: false, command, data: null, diagnostics: [{ code: "GHCLI028_EXECUTION_NOT_FOUND", severity: "error", message: "no execution with this id exists in this store", path: "/execution", source: "execution-cli" }] },
+  });
+
+  it("throws the unknown-id refusal from getBriefing instead of degrading to 'no route'", async () => {
+    const { fetchImpl } = scriptedFetch([{ match: (call) => call.url.endsWith("/briefing"), reply: notFound("execution.briefing") }]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.getBriefing("typo")).rejects.toMatchObject({ code: "GHCLI028_EXECUTION_NOT_FOUND", httpStatus: 404 });
+  });
+
+  it("still sends a start whose pre-read says the execution does not exist yet, guarded at head 0", async () => {
+    let statusReads = 0;
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.method === "GET" && call.url === "/v1/executions/run-new", reply: () => (statusReads++ === 0 ? notFound("execution.status") : ok(statusData({ executionId: "run-new", headSequence: 1 }))) },
+      { match: (call) => call.method === "POST" && call.url === "/v1/executions/run-new/start", reply: ok(statusData({ executionId: "run-new", headSequence: 1 }), "execution.start") },
+      { match: (call) => call.url.startsWith("/v1/executions/run-new/events"), reply: ok({ events: [], head: 1 }, "execution.events") },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await client.startTask("run-new", { apiVersion: "p50.dev/v1" }, { idempotencyKey: "k" });
+    const post = calls.find((call) => call.method === "POST");
+    expect(post, "the start reached the wire").toBeDefined();
+    expect(post!.headers["If-Match"]).toBe("0");
+  });
+
+  it("refuses any other verb on an execution the pre-read says does not exist", async () => {
+    const { fetchImpl, calls } = scriptedFetch([{ match: (call) => call.method === "GET", reply: notFound("execution.status") }]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.approve("typo", "implementation", { idempotencyKey: "k" })).rejects.toMatchObject({ code: "GHCLI028_EXECUTION_NOT_FOUND" });
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
+  it("reads a current Runtime's 200 configured:false as 'no routes', once per client", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/gateway/routes", reply: ok({ configured: false, routes: [], reason: "no gateway manifest is configured on this server" }, "gateway.routes") },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.listRoutes()).resolves.toEqual({ configured: false, routes: [] });
+    await expect(client.listRoutes()).resolves.toEqual({ configured: false, routes: [] });
+    expect(calls.filter((call) => call.url === "/v1/gateway/routes")).toHaveLength(1);
+  });
+
+  it("reads an older Runtime's 400 fixture-only refusal as 'no routes' once per connection, silently", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      {
+        match: (call) => call.url === "/v1/gateway/routes",
+        reply: { status: 400, envelope: { ok: false, command: "gateway.routes", data: null, diagnostics: [{ code: "GHCLI001_ARGUMENT_INVALID", severity: "error", message: "this server has no configured manifest: pass the manifest query parameter", path: "/manifest", source: "serve-cli" }] } },
+      },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.listRoutes()).resolves.toEqual({ configured: false, routes: [] });
+    await expect(client.listRoutes()).resolves.toEqual({ configured: false, routes: [] });
+    expect(calls.filter((call) => call.url === "/v1/gateway/routes")).toHaveLength(1);
+  });
+
+  it("keeps re-asking a configured Runtime and rethrows any other refusal", async () => {
+    const configured = scriptedFetch([{ match: () => true, reply: ok({ routes: [] }, "gateway.routes") }]);
+    const client = new RuntimeClient("tok", { fetch: configured.fetchImpl });
+    await client.listRoutes();
+    await client.listRoutes();
+    expect(configured.calls).toHaveLength(2);
+
+    const broken = scriptedFetch([
+      { match: () => true, reply: { status: 400, envelope: { ok: false, command: "gateway.routes", data: null, diagnostics: [{ code: "GHCLI009_GATEWAY_INVALID", severity: "error", message: "bad manifest", path: "/manifest", source: "serve-cli" }] } } },
+    ]);
+    await expect(new RuntimeClient("tok", { fetch: broken.fetchImpl }).listRoutes()).rejects.toBeInstanceOf(RuntimeError);
+  });
+});
+
+/**
  * #1077: the briefing is where a run's NAME and OBJECTIVE live. Both are sealed out of the
  * event payloads (D-036), so `GET /v1/executions/{id}/briefing` (#1063) is the only public
  * read that can say what a task is about - and an older Runtime without the route must degrade

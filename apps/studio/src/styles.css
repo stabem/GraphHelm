@@ -513,6 +513,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   white-space: nowrap;
 }
 .run-when { font-size: 10px; color: var(--faint); }
+/* #1083 F7: the id under a run named by its objective - the address, quieter than the name. */
+.run-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
 
 .show-more {
   color: var(--dim);
@@ -1094,6 +1096,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   left: 16px;
   bottom: 58px;
   display: flex;
+  /* #1083 (Codex on PR #1091): a demonstration run adds a second 300px input. Wrapping by the
+     row's own width - not by a viewport media query - keeps the fixture field reachable when the
+     free canvas is 600-700px wide with the conversation column open (1280x720). */
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 1px;
   background: var(--edge);
@@ -1105,6 +1111,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .graph-file .wrap {
   border-radius: var(--r);
   display: flex;
+  flex: 1 1 280px;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   background: var(--raised);
@@ -1114,7 +1122,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .graph-file input {
   border-radius: var(--r);
-  width: 300px;
+  width: 100%;
+  min-width: 0;
   background: none;
   border: 0;
   color: var(--text);
@@ -2262,7 +2271,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .free-canvas-content .sheet { top: 62px; }
 .free-canvas-content .board-navigator { top: 68px; }
 .free-canvas-content .connection-legend { top: 112px; }
-.work-overview-scroll { position: absolute; inset: 0 0 70px; overflow: auto; padding: 26px 24px; background: #141416; scrollbar-width: thin; }
+/* #1083 F9: the scroll box runs to the scene's bottom and PADS its content by the dock's measured
+   height (App.tsx writes --dock-reserve), so the last card scrolls above the dock instead of
+   sitting behind it; the fallback is the old fixed reserve. */
+.work-overview-scroll { position: absolute; inset: 0; overflow: auto; padding: 26px 24px calc(var(--dock-reserve, 70px) + 24px); background: #141416; scrollbar-width: thin; }
 .work-overview { font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #eeeef2; }
 .work-header { padding-bottom: 24px; border-bottom: 1px solid #303035; margin-bottom: 24px; }
 .work-heading { padding-right: 200px; }
@@ -2278,6 +2290,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-muted { color: #a2a2ae; font-weight: 400; }
 .work-caution { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #705335; background: #30261e; color: #ecc99d; border-radius: 10px; font-size: 12px; }
 .work-caution ul { margin: 8px 0 0; padding-left: 18px; }
+/* #1083 F9: a demonstration run's log findings - the same list, in a neutral voice. */
+.work-note { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #36363d; background: #1c1c20; color: #b9b9c4; border-radius: 10px; font-size: 12px; }
+.work-note p { margin: 8px 0 0; }
+.work-note ul { margin: 8px 0 0; padding-left: 18px; }
 .work-node-heading { min-height: 22px; }
 .work-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .work-section-heading > div { display: flex; align-items: center; gap: 8px; }
@@ -2327,13 +2343,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-verification button { flex-shrink: 0; color: #cbb7ff; border: 0; background: transparent; padding: 8px 0; }
 .work-overview button:focus-visible, .work-view-switch button:focus-visible { outline: 2px solid #c6afff; outline-offset: 3px; }
 @container (max-width: 800px) {
-  .work-overview-scroll { bottom: 112px; padding: 24px 18px; }
+  .work-overview-scroll { padding: 24px 18px calc(var(--dock-reserve, 112px) + 24px); }
   .work-layout { grid-template-columns: minmax(0,1fr); gap: 24px; }
   .work-sidebar { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
   .work-heading { padding-top: 40px; padding-right: 0; }
 }
 @media (max-width: 600px) {
-  .work-overview-scroll { bottom: 164px; padding: 20px 16px; }
+  .work-overview-scroll { padding: 20px 16px calc(var(--dock-reserve, 164px) + 20px); }
   .work-sidebar { grid-template-columns: minmax(0,1fr); }
   .work-main { order: -1; }
   .work-node-grid { grid-template-columns: minmax(0,1fr); }
@@ -2366,6 +2382,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .canvas-lint { position: absolute; top: 104px; left: 16px; z-index: 6; max-width: calc(100% - 32px); border-radius: 8px; background: var(--surface); color: var(--signal); font: 12px var(--sans); }
 .canvas-lint summary { padding: 7px 10px; cursor: pointer; }
 .canvas-lint .lint-strip { max-height: 220px; overflow: auto; }
+/* #1083: a demonstration run's log findings in the overview's neutral voice, not the signal. */
+.canvas-lint.canvas-note { color: var(--dim); }
 @container (max-width: 600px) { .canvas-lint { top: 146px; } }
 
 /* The map reads as people, conversations and reported work, while all objects stay draggable. */
@@ -2521,3 +2539,23 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; quotes: none; margin: 6px 0 0; font: 13px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
 .node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; quotes: none; margin: 4px 0 10px; font: 12px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
 .composer-hint { margin: -4px 0 8px; }
+
+/* #1083 F8, second pass (orchestrator verification at 1280x720): on a scene between 480px and
+   700px wide - a desktop with the conversation column open - the free canvas stacked its header
+   into four rows (headline and sentence, Organize, the finder, the section tabs) and gave the
+   sheet 222px of 624, about 40% lost to chrome, so no card fit whole at a readable zoom. The
+   headline keeps one short line, Organize and the finder share a row, and the tabs follow. Phones
+   (under 480px) keep the stacked layout, where one row cannot hold both controls. Framing still
+   measures whatever chrome covers the sheet (board.tsx `chromeInsets`), so this only gives it
+   room. Placed last so it follows every earlier canvas block at the same width. */
+@container (min-width: 480px) and (max-width: 700px) {
+ .canvas-story { top: 12px; left: 16px; right: 16px; }
+ .canvas-story > span, .canvas-story p { display: none; }
+ .canvas-story h2 { margin: 0; font-size: 16px; }
+ .canvas-arrange { top: 44px; left: 16px; }
+ .free-canvas-content .board-navigator { top: 44px; left: auto; right: 16px; }
+ .free-canvas-content .board-navigator select { width: 200px; }
+ .canvas-sections { top: 90px; }
+ .canvas-lint { top: 132px; }
+ .free-canvas-content .sheet { top: 130px; }
+}

@@ -70,7 +70,8 @@ import { AddProject } from "./components/addproject";
 import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
 import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/format";
-import { actionLegality } from "./components/legality";
+import { dockReserve } from "./dock-reserve";
+import { actionLegality, hasEnded } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
 
 /** Whether a typed budget is one the client (and the envelope schema behind it) will accept. */
@@ -205,6 +206,11 @@ export default function App({
   const briefingRouteMissing = useRef(false);
 
   const [graphFile, setGraphFile] = useState("");
+  /** #1083 F2: a fixture file on the Runtime host for a demonstration run's `resume`. Never
+   * remembered with the board: it is a one-off input to one verb, not a note about the run. */
+  const [fixtureFile, setFixtureFile] = useState("");
+  /** #1083 F9: the height the docks cover at the scene's bottom (see `dockRef`). */
+  const [dockReservePx, setDockReservePx] = useState<number | null>(null);
   const [topology, setTopology] = useState<VerifiedTopology | null>(null);
   const [topologyError, setTopologyError] = useState("");
 
@@ -365,17 +371,19 @@ export default function App({
   );
 
   /**
-   * THE RAIL'S NAMES (#1077). Every generated `run-<uuid>` on the rail is asked for its
-   * briefing once, in order, one at a time - twenty rows are twenty replays on the Runtime,
-   * and firing them together would stack them on a server that reads under a budget. Rows
-   * the operator named by hand are never asked: their id is their name.
+   * THE RAIL'S NAMES (#1077). A generated `run-<uuid>` whose index row carries no objective (an
+   * older Runtime) is asked for its briefing once, in order, one at a time - cached by id, never
+   * re-asked on a render. Since #1083 F7 the index row carries the declared objective itself, so
+   * against a current Runtime this asks for nothing: every row, hand-named or generated, is named
+   * from the one index read.
    */
   useEffect(() => {
     const client = clientRef.current;
     if (!connected || !client) return;
     const wanted = executions
+      .filter((run) => run.objective === undefined && isGeneratedRunId(run.executionId))
       .map((run) => run.executionId)
-      .filter((id) => isGeneratedRunId(id) && !briefingReads.current.has(id));
+      .filter((id) => !briefingReads.current.has(id));
     if (wanted.length === 0) return;
     void (async () => {
       for (const id of wanted) {
@@ -566,6 +574,7 @@ export default function App({
       // HERE, from the REMEMBERED path only — arming it from the live field made the first
       // typed character fire a verify on a one-letter path.
       setGraphFile(stored.graphFile);
+      setFixtureFile("");
       autoVerify.current =
         stored.graphFile.trim().length > 0 ? { id, path: stored.graphFile.trim() } : null;
       void loadExecution(id);
@@ -1023,6 +1032,7 @@ export default function App({
     setTools([]);
     setWebmcp("unavailable");
     setGraphFile("");
+    setFixtureFile("");
     setTopology(null);
     setTopologyError("");
     setFocus({ kind: "none" });
@@ -1057,6 +1067,52 @@ export default function App({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // #1083 F9: THE DOCK'S RESERVE IS MEASURED. The overview's scroll box pads its content by the
+  // height the docks actually cover at the scene's bottom (`--dock-reserve`), because the dock
+  // wraps to as many rows as the width forces and a fixed reserve left cards behind it.
+  //
+  // MEASURED ON RESIZE, NEVER ON RENDER. A stable callback ref on each dock element attaches ONE
+  // ResizeObserver to the docks themselves; the observer fires when a dock's box changes (it
+  // wraps, a remedy row appears) and is disconnected when the last dock unmounts. A render that
+  // changes nothing about the docks measures nothing.
+  const dockElements = useRef(new Set<HTMLElement>());
+  const dockObserver = useRef<ResizeObserver | null>(null);
+  const measureDocks = useCallback(() => {
+    const next = dockReserve(
+      [...dockElements.current].map((dock) => ({
+        height: dock.getBoundingClientRect().height,
+        bottom: Number.parseFloat(getComputedStyle(dock).bottom) || 0,
+      })),
+    );
+    setDockReservePx((current) => (current === next ? current : next));
+  }, []);
+  const dockRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element === null) return;
+      dockElements.current.add(element);
+      if (typeof ResizeObserver !== "undefined") {
+        dockObserver.current ??= new ResizeObserver(measureDocks);
+        dockObserver.current.observe(element);
+      }
+      measureDocks();
+      // THE EXACT ELEMENT LEAVES (Codex on PR #1091). React 19 calls a ref callback's returned
+      // cleanup for the element it attached, instead of calling the callback with `null`. The
+      // earlier `null` branch could not tell which dock detached and skipped docks still
+      // connected - and a remedy dock is still connected while its ref detaches, so it stayed in
+      // the set and `--dock-reserve` kept its 174px-high cover after the remedy was gone.
+      return () => {
+        dockObserver.current?.unobserve(element);
+        dockElements.current.delete(element);
+        if (dockElements.current.size === 0) {
+          dockObserver.current?.disconnect();
+          dockObserver.current = null;
+        }
+        measureDocks();
+      };
+    },
+    [measureDocks],
+  );
 
   const runMutation = useCallback(
     async (perform: (client: RuntimeClient) => Promise<MutationEvidence>) => {
@@ -1318,6 +1374,8 @@ export default function App({
   const verdict = status ? verdictOf(status.attention) : null;
   /** What each dock verb may claim right now, and the reason for each it may not. */
   const legality = actionLegality(status);
+  /** #1083: an ended run's dock drops pause, resume and cancel (see `hasEnded`). */
+  const ended = hasEnded(status);
   /**
    * THE HEAD THE DOCK RENDERED rides as `If-Match` on every verb fired against the run on
    * screen (L's follow-up on #662, App.tsx:1615). The precondition exists so that "an interrupt
@@ -1869,7 +1927,10 @@ export default function App({
               </aside>
             )}
 
-            <div className="scene">
+            <div
+              className="scene"
+              style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
+            >
             <Board
               initialLayout="overview"
               model={model}
@@ -1898,6 +1959,9 @@ export default function App({
               selectedTalk={focus.kind === "talk" ? focus.id : null}
               onSelectTalk={(id) => setFocus(id === null ? { kind: "none" } : { kind: "talk", id })}
               objective={briefing?.objective ?? null}
+              demonstration={status.executor === "fixture"}
+              fixtureFile={fixtureFile}
+              onFixtureFileChange={setFixtureFile}
             />
 
             {/* THE CREW STANDS ON THE BOARD ITSELF - draggable blobs the Board renders, so
@@ -1908,11 +1972,12 @@ export default function App({
               * reason - the reason rides a wrapping span's title, because a disabled button
               * never shows its own (the channel the resume fix below already condemned), and
               * `actionLegality` is the one place that judgement lives. */}
-            <div className="dock">
+            <div className="dock" ref={dockRef}>
               <span className="canvas-execution-state">Execution / {status.status ?? "State unavailable"}</span>
               <details className="execution-actions" open={!canvasMode || runActionsOpen} onToggle={(event) => { if (canvasMode) setRunActionsOpen(event.currentTarget.open); }}>
               <summary>Run actions</summary>
               <div className="execution-menu">
+              {!ended && (<>
               <span title={legality.pause ?? "Nothing new starts; work already in flight finishes and is joined — the run exits by quiescence."}>
                 <button
                   type="button"
@@ -1947,6 +2012,7 @@ export default function App({
                   pause now · interrupt
                 </button>
               </span>
+              </>)}
               <button
                 type="button"
                 className="act"
@@ -1971,6 +2037,7 @@ export default function App({
                   approval.
                 </p>
               )}
+              {!ended && (
               <span title={legality.resume}>
                 <button
                   type="button"
@@ -1987,6 +2054,13 @@ export default function App({
                         actor: OPERATOR_ACTOR,
                         idempotencyKey: newIdempotencyKey(),
                         ...ifMatchRendered,
+                        // #1083 F2: the API's existing `fixtures` field, the same path-on-the-
+                        // Runtime-host trust the graph file already has - sent only for a
+                        // demonstration run and only when the operator named a file. Without it a
+                        // resumed fixture node has no outcome and parks `waiting_input`.
+                        ...(status?.executor === "fixture" && fixtureFile.trim().length > 0
+                          ? { fixtures: fixtureFile.trim() }
+                          : {}),
                       }),
                     );
                   }}
@@ -2000,6 +2074,7 @@ export default function App({
                   resume
                 </button>
               </span>
+              )}
               <span title={legality.sweep ?? "Evaluate this run's customs stages now and journal the result."}>
                 <button
                   type="button"
@@ -2021,7 +2096,12 @@ export default function App({
                 * the first press only ASKS - the verb fires from a second, explicit press, and
                 * "keep running" backs out. No browser confirm(): the question and its answer
                 * belong to the page, where a test can walk them. */}
-              {confirmCancel ? (
+              {ended ? (
+                <p className="hint" role="status">
+                  This run is {status.status}: nothing is left to pause, resume or cancel. Sweep
+                  and messages are still accepted.
+                </p>
+              ) : confirmCancel ? (
                 <span className="confirm-cancel">
                   <span>cancel this run? every unfinished node is recorded Cancelled — no undo.</span>
                   <button
@@ -2067,7 +2147,7 @@ export default function App({
               * declareNodeBudget remedy, and this is its socket. Seconds has NO default -
               * the API refuses to invent one and so does this surface. */}
             {budgetRemedies.length > 0 && (
-              <div className="dock remedies">
+              <div className="dock remedies" ref={dockRef}>
                 {budgetRemedies.map((remedy) => (
                   <span key={remedy.node} className="remedy">
                     <span>

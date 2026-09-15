@@ -104,6 +104,76 @@ export function fitCamera(
   };
 }
 
+/** The smallest zoom automatic framing will choose (#1083 F8): a card's 12px body text reads at
+ * 9px here. Below it the frame is a thumbnail sheet, which is what `fit` produced at 15%. */
+export const READABLE_ZOOM = 0.75;
+
+/** The floor for a band too short to hold the first rank whole at `READABLE_ZOOM` (#1083 F8): a
+ * whole card at 60% beats a card whose lower third sits under the toolbar at 75%. */
+export const MIN_FRAME_ZOOM = 0.6;
+
+/** A screen rectangle, as `getBoundingClientRect` reports it. */
+export interface ScreenRect {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/**
+ * How much of the sheet's top and bottom the floating chrome covers (#1083 F8).
+ *
+ * A piece counts when it overlaps the sheet and is SHORTER than the sheet: it covers the top when
+ * its middle is above the sheet's middle, the bottom otherwise. A piece as tall as the sheet (or
+ * taller) is an overlay no band can frame around and is ignored; so is an unlaid-out (0-size) one.
+ * Chrome that would leave no band at all is ignored too, rather than framing into nothing.
+ */
+export function chromeInsets(sheet: ScreenRect, chrome: ReadonlyArray<ScreenRect>): { top: number; bottom: number } {
+  const height = sheet.bottom - sheet.top;
+  const middle = (sheet.top + sheet.bottom) / 2;
+  let top = 0;
+  let bottom = 0;
+  for (const piece of chrome) {
+    const pieceHeight = piece.bottom - piece.top;
+    if (pieceHeight <= 0 || piece.right - piece.left <= 0 || pieceHeight >= height) continue;
+    if (piece.right <= sheet.left || piece.left >= sheet.right) continue;
+    if (piece.bottom <= sheet.top || piece.top >= sheet.bottom) continue;
+    if ((piece.top + piece.bottom) / 2 < middle) top = Math.max(top, piece.bottom - sheet.top);
+    else bottom = Math.max(bottom, sheet.bottom - piece.top);
+  }
+  if (top + bottom >= height) return { top: 0, bottom: 0 };
+  return { top, bottom };
+}
+
+/**
+ * Frame the work cards (#1083 F8): the whole set when it fits at a readable zoom, otherwise the
+ * first ranks at `READABLE_ZOOM`, anchored at the cards' top (and left, when the columns are
+ * wider than the viewport) so panning reveals the rest.
+ *
+ * `bounds` must be the CARDS' bounds - not lane chrome and not the dock. Framing the People and
+ * Conversations lanes as content is what left a six-card run showing two cards at 60%.
+ */
+export function frameCards(
+  bounds: BoardBounds,
+  viewport: { w: number; h: number },
+  padding = 24,
+  firstRank: number = bounds.h,
+): Camera {
+  const whole = fitCamera(bounds, viewport, padding, 1);
+  if (whole.zoom >= READABLE_ZOOM) return whole;
+  // A band too short to hold the first rank whole at the readable zoom (the toolbar and header
+  // chrome ate it) goes down toward `MIN_FRAME_ZOOM` so no framed card is cut by the chrome.
+  const room = Math.max(1, viewport.h - padding * 2);
+  const zoom = Math.max(MIN_FRAME_ZOOM, Math.min(READABLE_ZOOM, room / Math.max(1, firstRank)));
+  const fitsAcross = bounds.w * zoom <= Math.max(1, viewport.w - padding * 2);
+  const fitsDown = bounds.h * zoom <= Math.max(1, viewport.h - padding * 2);
+  return {
+    x: fitsAcross ? viewport.w / 2 - (bounds.x + bounds.w / 2) * zoom : padding - bounds.x * zoom,
+    y: fitsDown ? viewport.h / 2 - (bounds.y + bounds.h / 2) * zoom : padding - bounds.y * zoom,
+    zoom,
+  };
+}
+
 export interface Stroke {
   id: string;
   /** The pen's colour, chosen from the board's own small set - never free-form input. */

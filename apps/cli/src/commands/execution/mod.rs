@@ -119,6 +119,22 @@ pub(super) fn execution_state(message: &str, pointer: &str) -> Failure {
     }
 }
 
+/// A read of a well-formed execution id that names no stream in this store (#1083 F1).
+///
+/// A stream exists exactly when it holds at least one event, so an id that names no stream is an
+/// empty history under an explicit id. (Worded without the attention tag's literal on purpose:
+/// `attention_tag_domain.rs` holds `verdict_tag` to be the only place this file spells it.) Only the operator-facing READS refuse with this (`status`, `briefing`,
+/// the evidence route): they would otherwise fold nothing into a verdict of `can_sleep` for a run
+/// that was never started. The events tail keeps answering an empty page, which is a different
+/// fact that `gate_http.rs` pins, and the mutations keep their own precondition refusals.
+pub(super) fn not_found() -> Failure {
+    Failure {
+        code: crate::error_codes::GHCLI028_EXECUTION_NOT_FOUND,
+        message: "no execution with this id exists in this store".to_owned(),
+        pointer: "/execution".to_owned(),
+    }
+}
+
 /// Maps a repository error onto its stable code without exposing the underlying path.
 pub(super) fn repository_failure(error: &EventRepositoryError) -> Failure {
     Failure {

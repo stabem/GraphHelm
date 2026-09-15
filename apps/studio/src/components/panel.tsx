@@ -20,6 +20,7 @@ import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
 import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
+import { sendsOnEnter } from "./keys";
 import type { EvidenceContent, ExecutionStatus, RuntimeEvent } from "../runtime/types";
 import { moodOf, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
@@ -950,16 +951,19 @@ function SayBox({
     wasBusy.current = busy;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, error, draftId]);
+  const send = () => {
+    if (message.trim().length === 0 || busy) return;
+    // The words are NOT cleared here: a refused or failed send must hand them back, not
+    // show "could not be sent" beside an emptied box. The effect above clears on the
+    // busy→idle transition only when no error stood.
+    onSay(message, recipient);
+  };
   return (
     <form
       className="saybox"
       onSubmit={(event) => {
         event.preventDefault();
-        if (message.trim().length === 0 || busy) return;
-        // The words are NOT cleared here: a refused or failed send must hand them back, not
-        // show "could not be sent" beside an emptied box. The effect below clears on the
-        // busy→idle transition only when no error stood.
-        onSay(message, recipient);
+        send();
       }}
     >
       {suggestions.length > 0 && recipient === null && (
@@ -1004,6 +1008,13 @@ function SayBox({
           disabled={busy}
           placeholder="Say something to whoever is working on this…"
           onChange={(event) => setMessage(event.target.value)}
+          // #1083 F5: Enter sends here too, exactly as in the new-task composer - one predicate
+          // for both boxes (keys.ts). Shift+Enter breaks the line; an IME's commit never sends.
+          onKeyDown={(event) => {
+            if (!sendsOnEnter(event)) return;
+            event.preventDefault();
+            send();
+          }}
         />
         <button
           type="submit"
@@ -1439,7 +1450,11 @@ export function RunPanel({
       {awaitingReply(events, runEnvelopes) && (
         <p className="turn-wait" role="status">
           <i aria-hidden="true" />
-          delivered — waiting for a reply from whoever is working on this
+          {/* #1083: on an ended run nobody is working, so "waiting for a reply" promised an
+            * answer that cannot come. The message is still recorded (signal accepts it). */}
+          {over
+            ? `delivered — this run is ${status.status}, so nobody is working on it to reply`
+            : "delivered — waiting for a reply from whoever is working on this"}
         </p>
       )}
 

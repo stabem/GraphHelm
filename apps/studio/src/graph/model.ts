@@ -46,6 +46,31 @@ export interface NodeHistoryEntry {
  * project prints its plan lint on the board and that is worth copying, but OURS accuses events,
  * never a plan file, because the log is the only truth this surface has.
  */
+/**
+ * Whether a finding is one a fixture run EXPLAINS (#1083, Codex on PR #1091).
+ *
+ * Only `done-without-evidence`: a fixture executor supplies outcomes from a file, so a settled
+ * node carrying no evidence is exactly what a demonstration run produces. `reopened-after-done`
+ * (a settled node reopened) and `orphan-edge` (a verified graph whose endpoints the roster does not
+ * hold) are real disagreements on any run, and must keep the attention treatment.
+ */
+export function fixtureExplained(finding: LintFinding): boolean {
+  return finding.kind === "done-without-evidence";
+}
+
+/** A run's lint split into what its executor explains and what still needs attention. On a run
+ * that is not a demonstration nothing is explained: every finding is a disagreement. */
+export function splitLint(
+  lint: readonly LintFinding[],
+  demonstration: boolean,
+): { expected: LintFinding[]; disagreements: LintFinding[] } {
+  if (!demonstration) return { expected: [], disagreements: [...lint] };
+  return {
+    expected: lint.filter(fixtureExplained),
+    disagreements: lint.filter((finding) => !fixtureExplained(finding)),
+  };
+}
+
 export interface LintFinding {
   kind: "reopened-after-done" | "done-without-evidence" | "orphan-edge";
   /** One readable sentence naming the node or edge and what is wrong. */

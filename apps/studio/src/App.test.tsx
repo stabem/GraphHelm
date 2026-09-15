@@ -840,9 +840,9 @@ describe("operator actions", () => {
     // Now the run finishes underneath the open question; the next poll tick brings it.
     finished = true;
     await waitFor(() => expect(screen.queryByRole("button", { name: /yes, cancel it/i })).not.toBeInTheDocument());
-    const cancel = screen.getByRole("button", { name: /Cancel execution/i });
-    expect(cancel).toBeDisabled();
-    expect(cancel.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
+    // #1083: an ended run's dock no longer offers cancel at all, and says why in plain text.
+    expect(screen.queryByRole("button", { name: /Cancel execution/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/This run is completed: nothing is left to pause, resume or cancel/)).toBeInTheDocument();
     expect(client.cancel).not.toHaveBeenCalled();
   });
 
@@ -856,17 +856,30 @@ describe("operator actions", () => {
   /** A verb the state makes illegal renders disabled WITH ITS REASON on the wrapping span -
    * a disabled button never shows its own title, and a live button that bounces off the API's
    * refusal would pretend (Phase 2 honesty rule). */
-  it("disables pause and cancel on a finished run, each wearing why", async () => {
-    const client = stubClient({
-      getStatus: vi.fn(async () => ({ ...STATUS, status: "completed", attention: "can_sleep", attentionReasons: [] })),
+  /** #1083 (orchestrator verification): a COMPLETED run's dock still offered both pauses, resume
+   * and cancel. On an ended run they are gone, the reason is plain text, and what the Runtime
+   * still accepts stays: `sweep.rs` refuses no lifecycle state. A running run keeps them all. */
+  for (const terminal of ["completed", "failed", "cancelled"]) {
+    it(`drops pause, resume and cancel on a ${terminal} run, says why, and keeps sweep`, async () => {
+      const client = stubClient({
+        getStatus: vi.fn(async () => ({ ...STATUS, status: terminal, attention: "can_sleep", attentionReasons: [] })),
+      });
+      await open(client);
+      expect(await screen.findByText(new RegExp(`This run is ${terminal}: nothing is left to pause, resume or cancel`))).toBeInTheDocument();
+      for (const gone of [/pause · finish in-flight/i, /pause now · interrupt/i, /^resume$/i, /Cancel execution/i]) {
+        expect(screen.queryByRole("button", { name: gone })).not.toBeInTheDocument();
+      }
+      await userEvent.click(screen.getByRole("button", { name: /^sweep$/i }));
+      await waitFor(() => expect(client.sweep).toHaveBeenCalled());
     });
-    await open(client);
-    const pause = await screen.findByRole("button", { name: /pause · finish in-flight/i });
-    expect(pause).toBeDisabled();
-    expect(pause.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
-    const cancel = screen.getByRole("button", { name: /Cancel execution/i });
-    expect(cancel).toBeDisabled();
-    expect(cancel.closest("span")).toHaveAttribute("title", expect.stringContaining("completed"));
+  }
+
+  it("keeps every verb on a running run", async () => {
+    await open(stubClient());
+    for (const kept of [/pause · finish in-flight/i, /pause now · interrupt/i, /^resume$/i, /Cancel execution/i, /^sweep$/i]) {
+      expect(await screen.findByRole("button", { name: kept })).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/nothing is left to pause, resume or cancel/)).not.toBeInTheDocument();
   });
 
   /** The attention verdict's own remedy, served where it stands: a silence with a
@@ -912,6 +925,55 @@ describe("operator actions", () => {
         expect.anything(),
       ),
     );
+  });
+
+  /** Codex on PR #1091: when the remedies went from non-empty to empty, the shared dock ref got
+   * `null`, could not say which dock left, and kept the still-connected remedy dock measured - so
+   * `--dock-reserve` stayed at the remedy's size. The reserve must return to the value it had
+   * with the main dock alone. Heights are set per dock, so the two values are distinguishable. */
+  it("puts the dock reserve back when the remedy dock goes away", async () => {
+    let remedies = false;
+    const remedy = {
+      scope: "node",
+      node: "judge",
+      reason: "no_declared_budget",
+      remedy: { remedy: "declareNodeBudget", node: "judge", observedSilenceSeconds: 240, computedAtSequence: 13 },
+    };
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, silenceUnevaluated: remedies ? [remedy] : [] })),
+    });
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const height = this.classList.contains("remedies") ? 125 : this.classList.contains("dock") ? 82 : null;
+      if (height === null) return original.call(this);
+      return { x: 0, y: 0, top: 0, left: 0, right: 600, bottom: height, width: 600, height, toJSON() {} } as DOMRect;
+    });
+    try {
+      render(
+        <App
+          createClient={() => client as unknown as RuntimeClient}
+          modelContext={null}
+          session={async () => ({ token: "local-token", project: "dale-api-base" })}
+          pollIntervalMs={40}
+        />,
+      );
+      await screen.findByLabelText("Projects");
+      await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+      const reserve = () =>
+        (document.querySelector(".scene") as HTMLElement | null)?.style.getPropertyValue("--dock-reserve") ?? "";
+      await waitFor(() => expect(reserve()).not.toBe(""));
+      const base = reserve();
+
+      remedies = true;
+      await screen.findByLabelText(/silence budget for judge/i);
+      await waitFor(() => expect(reserve()).not.toBe(base));
+
+      remedies = false;
+      await waitFor(() => expect(screen.queryByLabelText(/silence budget for judge/i)).not.toBeInTheDocument());
+      await waitFor(() => expect(reserve()).toBe(base));
+    } finally {
+      rect.mockRestore();
+    }
   });
 });
 
@@ -1273,6 +1335,20 @@ describe("the conversation moves on its own", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     const panel = await screen.findByLabelText(/^Run /);
     expect(await within(panel).findByText(/waiting for a reply/i)).toBeInTheDocument();
+  });
+
+  /** #1083: nobody replies on an ended run, so the receipt says the run has ended instead of
+   * promising a reply that cannot come. */
+  it("says the run has ended instead of waiting for a reply on a completed run", async () => {
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, status: "completed", attention: "can_sleep", attentionReasons: [] })),
+      getEvents: vi.fn(async () => ({ head: 8, events: conversationEvents(false) })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const panel = await screen.findByLabelText(/^Run /);
+    expect(await within(panel).findByText(/delivered — this run is completed, so nobody is working on it to reply/)).toBeInTheDocument();
+    expect(within(panel).queryByText(/waiting for a reply/i)).not.toBeInTheDocument();
   });
 
   it("drops the waiting line once the reply is in the log", async () => {
@@ -1724,6 +1800,11 @@ describe("the thread's own honesty", () => {
  * tooltip a disabled button never shows.
  */
 describe("controls that act instead of excusing", () => {
+  // The resume cells below type a graph file path, and the page REMEMBERS it with the run's board
+  // in localStorage. Left behind, it opened `demo-deploy` in a later describe with the connect row
+  // already showing and its "Verify graph" toggle gone (#1083: a cross-test leak, not a flake).
+  afterEach(() => localStorage.clear());
+
   it("disconnect asks twice before erasing the session", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
@@ -1746,6 +1827,54 @@ describe("controls that act instead of excusing", () => {
     expect(client.resume).not.toHaveBeenCalled();
     const box = screen.getByLabelText(/graph file path on the runtime host/i);
     await waitFor(() => expect(box).toHaveFocus());
+  });
+
+  /** #1083 F2: the Studio's resume could not name a fixture, so a demonstration run's resumed
+   * node had no outcome and parked `waiting_input` where the CLI's `--fixtures` decides it. The
+   * API's existing `fixtures` field now rides the resume when the operator names a file. */
+  it("sends a named fixture file with a demonstration run's resume, and nothing on a real run", async () => {
+    // PASTED, not typed key by key: every keystroke re-renders the whole App, and ~70 typed
+    // characters made this cell take 4.2s on an idle machine - one busy neighbour from its 5s
+    // timeout (#1083 round 3). A paste still goes through each input's change handler.
+    const fill = async (label: RegExp, text: string) => {
+      await userEvent.click(screen.getByLabelText(label));
+      await userEvent.paste(text);
+    };
+    const demo = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused", executor: "fixture" })) });
+    await open(demo);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
+    await fill(/graph file path on the runtime host/i, "/srv/graphs/deploy.yaml");
+    await fill(/fixture file path on the runtime host/i, "/srv/fixtures/failure.json");
+    await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
+    await waitFor(() => expect(demo.resume).toHaveBeenCalled());
+    const demoCall = demo.resume.mock.calls[0] as unknown[];
+    expect(demoCall[1]).toBe("/srv/graphs/deploy.yaml");
+    expect(demoCall[2]).toMatchObject({ fixtures: "/srv/fixtures/failure.json" });
+    cleanup();
+
+    const real = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused", executor: "gateway" })) });
+    await open(real);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
+    expect(screen.queryByLabelText(/fixture file path on the runtime host/i)).not.toBeInTheDocument();
+    await fill(/graph file path on the runtime host/i, "/srv/graphs/deploy.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
+    await waitFor(() => expect(real.resume).toHaveBeenCalled());
+    expect((real.resume.mock.calls[0] as unknown[])[2]).not.toHaveProperty("fixtures");
+  });
+
+  /** #1083 F5, through the whole page: the composer's printed `Enter sends` starts the task from
+   * the keyboard, with focus where typing left it - not only from the button. */
+  it("starts the composed task when Enter is pressed in the objective box", async () => {
+    const client = stubClient();
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task/i }));
+    await userEvent.type(await screen.findByLabelText(/what should this task do/i), "Summarize the README");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(client.startTask).toHaveBeenCalled());
+    const nodes = (firstCall(client.startTask)[1] as { spec: { nodes: Record<string, { objective: string }> } }).spec.nodes;
+    expect(Object.values(nodes)[0].objective).toBe("Summarize the README");
   });
 });
 

@@ -149,6 +149,13 @@ export function ProjectRail({
               {project.runs.map((run) => {
                 const verdict = verdictOf(run.attention);
                 const on = run.executionId === selected;
+                // #1083 F7: the row's own declared objective first (one index read names every
+                // row), the briefing a selection already read as the fallback for an older
+                // Runtime whose rows do not carry it.
+                const label = runLabel(
+                  run.executionId,
+                  typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId],
+                );
                 return (
                   <div key={run.executionId} className={`run-row ${verdict.key} ${on ? "on" : ""}`}>
                   <button type="button" className={`run ${verdict.key} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} onClick={() => onSelect(run.executionId)} title={readable(run.attention)}>
@@ -165,7 +172,12 @@ export function ProjectRail({
                     <span className="run-lines">
                       {/* The objective when there is one, the id otherwise - and the id ALWAYS
                           on the row as its title, so a name never hides the address. */}
-                      <span className="run-id" title={run.executionId}>{runLabel(run.executionId, briefings[run.executionId])}</span>
+                      <span className="run-id" title={run.executionId}>{label}</span>
+                      {/* #1083 F7: a run named by its objective still shows its address, as
+                          secondary text - never only on hover. */}
+                      {label !== run.executionId && (
+                        <span className="run-address">{run.executionId}</span>
+                      )}
                       <span className="run-when">
                         {clock(run.lastEventAt)}
                         {/* #1064: a run started under the fixture executor says so in the index

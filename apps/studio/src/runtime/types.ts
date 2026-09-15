@@ -47,6 +47,9 @@ export interface ExecutionSummary {
   /** The executor declared at start, carried on the row (#1064) so the rail can mark a
    * demonstration without opening the run. Absent on streams recorded before the field. */
   executor?: "fixture" | "gateway" | null;
+  /** The objective the run declared at start (#1083 F7), so the rail names any run by it from
+   * the index alone. `null` when none was declared; absent from an older Runtime. */
+  objective?: string | null;
   [key: string]: unknown;
 }
 

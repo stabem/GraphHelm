@@ -112,10 +112,12 @@ export function isGeneratedRunId(id: string): boolean {
 export const RUN_LABEL_LENGTH = 72;
 
 /**
- * What to call a run (#1077). A generated `run-<uuid>` is named by its OBJECTIVE - the sentence
- * the operator typed, read back from the briefing - truncated, with the id kept as the address
- * wherever the label stands. Anything else is its id: a hand-named run already has a name, and
- * a run whose briefing carries no objective has nothing truer than its id.
+ * What to call a run (#1077, #1083 F7). ANY run whose briefing carries an objective is named by
+ * it - the sentence it was started for, read back from the store - truncated, with the id kept
+ * as the address wherever the label stands. A run started from the CLI or over HTTP holds an
+ * objective exactly like a composer-started `run-<uuid>`, and naming it by its id alone hid that
+ * sentence until the run was opened (#1083 F7). A run whose briefing carries no objective has
+ * nothing truer than its id, and is named by it.
  *
  * The graph document's `name` is deliberately NOT a fallback: the draft graph's name is the
  * placeholder "New task", and two runs called "New task" are the defect this exists to close.
@@ -125,7 +127,7 @@ export function runLabel(
   briefing: { objective: string | null; name?: string | null } | null | undefined,
 ): string {
   const objective = briefing?.objective?.trim() ?? "";
-  if (!isGeneratedRunId(id) || objective.length === 0) return id;
+  if (objective.length === 0) return id;
   const oneLine = objective.replace(/\s+/g, " ");
   return oneLine.length <= RUN_LABEL_LENGTH ? oneLine : `${oneLine.slice(0, RUN_LABEL_LENGTH - 1).trimEnd()}\u2026`;
 }

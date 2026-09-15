@@ -28,7 +28,7 @@ pub(crate) fn execute_within(
     execution: Option<&str>,
     budget: graphhelm_events::ReadBudget,
 ) -> Result<serde_json::Value, Failure> {
-    let read = super::status::read_within(events, execution, budget)?;
+    let read = super::status::read_known_within(events, execution, budget)?;
     let answer = graphhelm_execution::attention(&read.projection, &read.inputs);
     let briefing = graphhelm_execution::briefing_view(&read.projection, &answer, &read.history);
     Ok(serde_json::to_value(briefing)

@@ -2453,8 +2453,10 @@ const GATEWAY_ROUTES_COMMAND: &str = "gateway.routes";
 const GATEWAY_PROBE_COMMAND: &str = "gateway.probe";
 
 /// The Task 0 reconciled decision: a server launched with `--manifest` serves that manifest
-/// by default and treats the `manifest` query param as an explicit override; a fixture-only
-/// server (no `--manifest`) requires the query param or answers 400 naming it.
+/// by default and treats the `manifest` query param as an explicit override. A fixture-only
+/// server (no `--manifest`) asked for its routes WITHOUT the query param answers 200 with
+/// `configured: false` (#1083 F6) - see `gateway_routes`; `probe`, which needs a route to act on,
+/// still answers 400 naming the parameter.
 fn effective_manifest(state: &ServeState, query_manifest: Option<PathBuf>) -> Option<PathBuf> {
     query_manifest.or_else(|| {
         state
@@ -2489,6 +2491,14 @@ fn respond_outcome(outcome: Outcome) -> Response {
 }
 
 /// `GET /v1/gateway/routes[?manifest=<path>]`: the CLI's `gateway routes` listing over HTTP.
+///
+/// **No manifest anywhere is an answer, not a refusal (#1083 F6).** A server started without
+/// `--manifest`, asked without the `manifest` query param, replies `200` with
+/// `{"configured": false, "routes": [], "reason": ...}`. It used to reply `400`, and every browser
+/// that connected to a fixture-only Runtime logged that 400 as a red console error the page could
+/// not suppress - for a question whose true answer is simply "no routes". A manifest that IS named
+/// (flag or query) but cannot be loaded keeps its refusal: that is a configuration error the
+/// operator can fix, and reading it as "no routes" would hide it.
 pub(super) async fn gateway_routes(
     State(state): State<ServeState>,
     RawQuery(query): RawQuery,
@@ -2498,10 +2508,17 @@ pub(super) async fn gateway_routes(
         .find(|(key, _)| *key == "manifest")
         .map(|(_, value)| PathBuf::from(value));
     let Some(manifest) = effective_manifest(&state, manifest) else {
-        return bad_request(
-            GATEWAY_ROUTES_COMMAND,
-            "this server has no configured manifest: pass the manifest query parameter",
-            "/manifest",
+        return respond(
+            StatusCode::OK,
+            Outcome::success(
+                GATEWAY_ROUTES_COMMAND,
+                serde_json::json!({
+                    "configured": false,
+                    "routes": [],
+                    "reason": "no gateway manifest is configured on this server",
+                }),
+            )
+            .output,
         );
     };
     // The command layer is synchronous file work; `spawn_blocking` keeps it off the
@@ -2866,6 +2883,12 @@ pub(super) async fn evidence(
     let lookup = tokio::task::spawn_blocking(move || {
         let store = event_store(&events).map_err(|error| execution::repository_failure(&error))?;
         let (scope, _, history) = execution::resolve_stream(&store, Some(&execution_id))?;
+        // #1083 F1: an execution that does not exist is a 404, the answer `status` and `briefing`
+        // give for the same id - not "that evidence is not referenced", which reads as a run
+        // that exists and simply never produced it.
+        if history.is_empty() {
+            return Err(execution::not_found());
+        }
         // THE URL'S EXECUTION MUST ITSELF REFERENCE THE ID. `sealed_evidence` gates against the
         // SCOPE-wide reachable set, and every execution here shares one workspace/project scope -
         // so without this check, execution A's confidential content answered under execution B's

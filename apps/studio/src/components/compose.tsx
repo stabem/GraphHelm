@@ -18,6 +18,7 @@ import { Send, TriangleAlert } from "lucide-react";
 
 import { MAX_OBJECTIVE_LENGTH } from "../graph/draft";
 import type { ModelRouteSummary } from "../runtime/types";
+import { sendsOnEnter } from "./keys";
 
 export interface RouteChoice {
   /** `false` when the Runtime was started without a gateway manifest. See `listRoutes`. */
@@ -125,8 +126,9 @@ export function Composer({
           onChange={(event) => setObjective(event.target.value)}
           // Enter sends, like every chat box on this page; Shift+Enter breaks the line. The
           // judge pressed Enter and nothing happened and nothing said why (#1077, MINOR).
+          // #1083 F5: `sendsOnEnter` is shared with the run's message box (keys.ts).
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+            if (!sendsOnEnter(event)) return;
             event.preventDefault();
             if (objective.trim().length === 0 || busy) return;
             onSend(objective, route === "" ? null : route);

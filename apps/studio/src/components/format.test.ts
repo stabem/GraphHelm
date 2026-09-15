@@ -51,7 +51,10 @@ describe("runLabel", () => {
     expect(runLabel(generated, null)).toBe(generated);
     expect(runLabel(generated, { objective: "   ", name: null })).toBe(generated);
   });
-  it("keeps a hand-named run's id as its name", () => {
-    expect(runLabel("demo-deploy", { objective: "Ship it", name: "Deploy" })).toBe("demo-deploy");
+  /** #1083 F7: a run started from the CLI or over HTTP holds an objective too, and was listed by
+   * its id while the store held the sentence. Any run with an objective is named by it. */
+  it("names a hand-named run by its objective too, and by its id when it has none", () => {
+    expect(runLabel("exec_feature", { objective: "Locate related components", name: "Feature" })).toBe("Locate related components");
+    expect(runLabel("demo-deploy", { objective: null, name: "Deploy" })).toBe("demo-deploy");
   });
 });

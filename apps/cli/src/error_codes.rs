@@ -46,6 +46,10 @@ pub const GHCLI024_EXTENSION_LIFECYCLE_REFUSED: &str = "GHCLI024_EXTENSION_LIFEC
 pub const GHCLI025_PAUSE_OUTCOME_UNKNOWN: &str = "GHCLI025_PAUSE_OUTCOME_UNKNOWN";
 pub const GHCLI026_ARCHITECT_REFUSED: &str = "GHCLI026_ARCHITECT_REFUSED";
 pub const GHCLI027_INIT_REFUSED: &str = "GHCLI027_INIT_REFUSED";
+/// A well-formed execution id that names no stream in this store (#1083 F1). Before this code a
+/// read of such an id answered success with every field null and the verdict `can_sleep`: a typo
+/// told the operator the run needed nothing.
+pub const GHCLI028_EXECUTION_NOT_FOUND: &str = "GHCLI028_EXECUTION_NOT_FOUND";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -82,6 +86,7 @@ pub const ALL: &[&str] = &[
     GHCLI025_PAUSE_OUTCOME_UNKNOWN,
     GHCLI026_ARCHITECT_REFUSED,
     GHCLI027_INIT_REFUSED,
+    GHCLI028_EXECUTION_NOT_FOUND,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

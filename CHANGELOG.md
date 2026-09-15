@@ -1,5 +1,66 @@
 # Specification Changelog
 
+## Studio and Runtime findings from the integrated MVP verification, #1083 - 2026-09-14
+
+- **An unknown execution id is a 404, not a calm run (F1).** `GET /v1/executions/{id}` and
+  `GET /v1/executions/{id}/briefing` for a well-formed id that names no stream answer `404` with
+  `GHCLI028_EXECUTION_NOT_FOUND` at `/execution` (new code, registered in
+  `apps/cli/src/error_codes.rs`), where they answered `200` with every field null and
+  `attention: can_sleep`. `graphhelm execution status|briefing --execution <unknown>` refuse with
+  the same diagnostic, and the MCP `status`/`briefing` tools relay it as `isError`. The evidence
+  route refuses an unknown execution with the same code once its sealing check passes. Unchanged
+  on purpose: the events tail (`/events`) still answers an empty page for an unknown id
+  (`gate_http.rs` pins that), and the render a mutation replies with after it commits never
+  refuses. The Studio's start treats this refusal as "the run does not exist yet" and proceeds
+  guarded at head 0; every other verb keeps it as a refusal.
+- **The Studio's resume can name a fixture file (F2).** On a demonstration run the connect row
+  offers `Fixture file for resume (optional)…`, sent as the API's existing `fixtures` field.
+  `GETTING_STARTED.md` §5 step 8 names both outcomes: with a fixture it decides; without one the
+  resumed node parks `waiting_input`.
+- **GETTING_STARTED §5 steps 1–4 describe the current Studio (F3):** `LIVE` mark, runs named by
+  objective with the id beneath, the verdict as a mark, the blocking node in the conversation
+  column's first block, the folded lifecycle chips.
+- **Enter sends in every chat box (F5).** One predicate (`components/keys.ts`) serves the new-task
+  composer and the run's message box, which had no key handler at all: Enter sends, Shift+Enter
+  breaks the line, and nothing sends during an IME composition (`isComposing` or `keyCode 229`);
+  `code` `Enter`/`NumpadEnter` count. In a real browser
+  (the Browser pane, 1280×720) the Enter keydown reached the handler — `key: "Enter"`,
+  `keyCode 0`, `code: ""`, `isComposing: false`, default prevented — and called the send; the
+  failure the record describes was not reproduced there. Cells dispatch native `keydown` events.
+- **A fixture-only Runtime's route listing is an answer (F6).** `GET /v1/gateway/routes` on a
+  server with no `--manifest`, asked without the `manifest` query, answers `200` with
+  `{"configured": false, "routes": [], "reason": "no gateway manifest is configured on this
+  server"}` instead of a `400` that every connecting browser logged as a red console error. A
+  manifest that is named (flag or query) but unusable keeps its refusal; `probe` without a
+  manifest still answers `400`. `docs/milestones/runtime.md` updated. The Studio reads
+  `configured`, keeps the `400` fallback for older Runtimes, and asks once per client.
+- **Runs are named by their objective (F7).** `execution list` / `GET /v1/executions` rows gain
+  an additive `objective` field: the objective the run declared at start (`ExecutionFormDeclared`),
+  bounded by `MAX_DECLARED_OBJECTIVE_CHARS`, `null` when none was declared. It equals the
+  briefing's `objective` for the same execution. The rail names every run from the row, CLI- and
+  HTTP-started runs included, with the id as secondary text, and issues no per-row briefing read
+  (the pre-existing briefing prefetch runs only for generated ids from a Runtime whose rows lack
+  the field). A run with no objective is named by its id.
+- **Free canvas framing (F8).** First framing and `fit` frame the work cards' bounds — not the
+  People and Conversations lanes — inside the band the floating chrome leaves (toolbar, header
+  rows, lint strip, docks, measured at framing time), at 75% when the first rank fits and down to
+  60% so that it fits whole; the rest is a pan away. On a scene 480–700px wide the canvas header
+  shares rows instead of stacking four, giving the sheet the height it lost. A demonstration run's
+  canvas lint reads `Demonstration run · N log notes` in the overview's neutral voice; a real run
+  keeps the amber `N log disagreements`.
+- **Ended runs (completed, failed, cancelled).** The dock drops pause, resume and cancel and says
+  why; sweep and messages stay, because `sweep.rs` and `signal.rs` refuse no terminal state. A
+  message sent into an ended run reads `delivered — this run is <status>, so nobody is working on
+  it to reply` instead of waiting for a reply.
+- **The overview scrolls out from under the dock (F9).** The scroll box runs to the scene's
+  bottom and pads its content by the docks' measured height (`--dock-reserve`, read by a
+  ResizeObserver on the dock elements, never on render). A demonstration
+  run's log findings read as a neutral `Demonstration run · N log notes`; the amber
+  `Evidence needs attention` banner stays for real runs.
+- **Review follow-ups (Codex on PR #1091).**
+  - Only the fixture-explained kind (`done-without-evidence`) reads as a neutral demonstration note. `reopened-after-done` and `orphan-edge` keep the amber attention treatment on any run, in the overview and on the canvas, and each is counted on its own.
+  - The dock reserve drops a detached dock by its React 19 ref cleanup, so `--dock-reserve` returns to its base value when the remedies go away.
+  - `execution status --execution <unknown> --html <path>` refuses with `GHCLI028_EXECUTION_NOT_FOUND` before writing, leaving an existing snapshot byte-identical. Briefing, the evidence route and the MCP tools write nothing before their check.
 ## Studio test startup stays outside peak gate load, #1095 and #1102 - 2026-09-14
 
 - **One reused worker thread runs the Studio suite.** `apps/studio/vite.config.ts` keeps one worker,

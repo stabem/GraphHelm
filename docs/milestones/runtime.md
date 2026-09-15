@@ -152,9 +152,14 @@ surfaces did not drift. The `api_http` suite is a named gate stage, proven able 
   per-request store I/O — measured ≈3 requests/second under eight-thread load, which is why the
   storm is six rounds. Real dispatch concurrency arrives with 05d's async driver; this number is
   recorded so 05d has a baseline to beat, not as an accepted end state.
-- **An unknown execution id reads as empty, not 404** — the store returns an empty stream for a
-  valid-but-absent id and the API mirrors CLI parity exactly. A distinct not-found signal would
-  have to come from the store layer; deferred with a pointer here.
+- **An unknown execution id is a 404 (reversed by #1083, ADR-038).** As shipped in 05a the store
+  returned an empty stream for a valid-but-absent id and status/briefing mirrored that as a calm
+  `200` with every field null and `attention: can_sleep`, which the integrated MVP verification
+  measured as a lie to the operator. Since #1083 `GET /v1/executions/{id}` and `/briefing`, the
+  CLI `status`/`briefing`, and the MCP tools refuse a well-formed id that names no stream with
+  `GHCLI028_EXECUTION_NOT_FOUND` at `/execution`. The events tail still answers an empty page,
+  and the render a mutation replies with never refuses; CLI/HTTP parity is kept because both call
+  the same guard. The distinct signal is produced in the command layer, not the store.
 - **Bearer-on-loopback only.** mTLS and any non-local identity remain §3.1 work, refused rather
   than half-built: the server will not bind a non-loopback address at all.
 
@@ -854,7 +859,12 @@ no reply (the head provably does not move).
 call the same command-layer functions the CLI subcommands call, the envelope is
 byte-identical, and parity is test-pinned. The Task 0-reconciled manifest rule: a server
 launched with `--manifest` serves it by default, the query parameter is an explicit
-override, and a fixture-only server answers 400 naming the parameter. Both endpoints answer
+override. On a fixture-only server (no `--manifest`) asked without the parameter, `routes`
+answers `200` with `{"configured": false, "routes": [], "reason": "no gateway manifest is
+configured on this server"}` (#1083: the earlier `400` surfaced in every connecting browser as a
+console error for the true answer "no routes"), while `probe`, which needs a manifest to act on,
+answers `400` naming the parameter. A manifest that is named but cannot be loaded or validated
+is still refused on both. Both endpoints answer
 401 to a missing or wrong token — asserted explicitly, so a future router refactor cannot
 silently unauthenticate them.
 

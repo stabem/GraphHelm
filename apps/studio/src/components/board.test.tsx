@@ -350,6 +350,51 @@ describe("the lint strip", () => {
     expect(screen.getByTitle("Copy demo#7")).toBeInTheDocument();
   });
 
+  /** #1083: on the same completed demonstration run the canvas said an orange "6 log
+   * disagreements" while the overview said the neutral "Demonstration run · 6 log notes". The
+   * canvas now speaks as the overview does; a real run keeps the amber strip. */
+  it("uses the overview's neutral note on a demonstration run, and amber on a real run", () => {
+    const model: GraphModel = { ...MODEL, lint: [{ kind: "done-without-evidence", detail: "deploy settled with no evidence", sequence: 7 }, { kind: "done-without-evidence", detail: "tests settled with no evidence", sequence: 8 }] };
+    const demo = render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} runId="demo" demonstration {...REST} />);
+    const note = demo.container.querySelector(".canvas-lint") as HTMLElement;
+    expect(note).toHaveClass("canvas-note");
+    expect(note.querySelector("summary")).toHaveTextContent("Demonstration run · 2 log notes");
+    expect(screen.queryByText(/log disagreements/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Log notes on a demonstration run")).toHaveTextContent("deploy settled with no evidence");
+    demo.unmount();
+
+    const real = render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} runId="real" {...REST} />);
+    const strip = real.container.querySelector(".canvas-lint") as HTMLElement;
+    expect(strip).not.toHaveClass("canvas-note");
+    expect(strip.querySelector("summary")).toHaveTextContent("2 log disagreements");
+    expect(screen.getByLabelText("Disagreements the log attests")).toBeInTheDocument();
+  });
+
+  /** Codex on PR #1091: the canvas downgrade applies to the fixture-explained kind only. With one
+   * of each kind on a demonstration run the strip stays amber, counts the two real disagreements,
+   * lists them first, and counts the explained one separately. */
+  it("keeps the amber strip for real disagreements on a demonstration run", () => {
+    const model: GraphModel = {
+      ...MODEL,
+      lint: [
+        { kind: "done-without-evidence", detail: "docs settled as succeeded carrying no evidence", sequence: 8 },
+        { kind: "reopened-after-done", detail: "tests was reopened after it settled by codex", sequence: 11 },
+        { kind: "orphan-edge", detail: "the graph file draws plan → ghost, but ghost is not on this run's roster", sequence: null },
+      ],
+    };
+    const { container } = render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} runId="demo" demonstration {...REST} />);
+    const strip = container.querySelector(".canvas-lint") as HTMLElement;
+    expect(strip).not.toHaveClass("canvas-note");
+    expect(strip.querySelector("summary")).toHaveTextContent("2 log disagreements · 1 demonstration note");
+    const list = screen.getByLabelText("Disagreements the log attests");
+    expect(screen.queryByLabelText("Log notes on a demonstration run")).not.toBeInTheDocument();
+    const items = [...list.querySelectorAll("li")].map((item) => item.textContent ?? "");
+    expect(items).toHaveLength(3);
+    expect(items[0]).toContain("reopened after it settled");
+    expect(items[1]).toContain("ghost is not on this run's roster");
+    expect(items[2]).toContain("carrying no evidence");
+  });
+
   it("stays entirely off a clean board", () => {
     render(
       <Board
@@ -484,6 +529,150 @@ it("pans from a section title without native text selection or moving cards", ()
  * default grid uses the width it has (columns = floor(width / card width), at least 2), so a
  * fit is not a miniature. Positions the operator saved still win (#1056's rule).
  */
+/**
+ * #1083 F8: a six-node run with the People and Conversations lanes opened on the free canvas at
+ * 60% with two of six cards on screen, and `fit` dropped to 15% - the lanes' chrome was being
+ * framed as content. First framing and `fit` frame the CARDS at a readable zoom; when all of them
+ * cannot fit at that zoom, the first ranks are on screen and a pan reveals the rest.
+ */
+describe("framing a run with lanes", () => {
+  const SIX: GraphModel = {
+    ...MODEL,
+    nodes: ["docs", "implement", "map_repository", "plan", "review", "tests"].map((id) => ({ id, state: "succeeded" as const, touches: 0, lastEventAt: null, history: [], reopened: null })),
+  };
+  const CREW = [{ id: "codex", charter: null }, { id: "reviewer", charter: null }];
+  const TALKS = [
+    { key: "room", label: "Everyone", participants: [], count: 3, lastAt: null },
+    { key: "codex+reviewer", label: "codex + reviewer", participants: ["codex", "reviewer"], count: 2, lastAt: null },
+  ];
+  const zoomOf = (container: HTMLElement) => {
+    const match = /scale\(([\d.]+)\)/.exec((container.querySelector(".world") as HTMLElement).style.transform);
+    return Number(match?.[1]);
+  };
+  function onScreen(container: HTMLElement, viewport: { width: number; height: number }) {
+    const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec((container.querySelector(".world") as HTMLElement).style.transform)!;
+    const [, x, y, zoom] = match.map(Number);
+    return [...container.querySelectorAll<HTMLElement>("article.node")].map((card) => {
+      const left = parseFloat(card.style.left) * zoom + x;
+      const top = parseFloat(card.style.top) * zoom + y;
+      return { top, inside: left >= 0 && top >= 0 && left + 320 * zoom <= viewport.width && top + 164 * zoom <= viewport.height };
+    });
+  }
+
+  it("opens at a readable zoom with the first ranks on screen, and fit does not shrink it to thumbnails", () => {
+    const viewport = { width: 900, height: 560 };
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: viewport.width, bottom: viewport.height, width: viewport.width, height: viewport.height, toJSON() {} });
+    try {
+      const { container } = render(<Board initialLayout="canvas" model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} crew={CREW} talks={TALKS} />);
+      expect(container.querySelectorAll(".canvas-region")).toHaveLength(3);
+      const first = zoomOf(container);
+      expect(first).toBeGreaterThanOrEqual(0.75);
+      const cards = onScreen(container, viewport);
+      expect(cards).toHaveLength(6);
+      const firstRank = Math.min(...cards.map((card) => card.top));
+      // Every card of the first two ranks is wholly on screen; nothing is lost to the lanes.
+      const ranked = cards.filter((card) => card.top < firstRank + 1 + 320 * first);
+      expect(ranked.length).toBeGreaterThanOrEqual(4);
+      expect(ranked.every((card) => card.inside)).toBe(true);
+
+      fireEvent.click(screen.getByRole("button", { name: "fit" }));
+      expect(zoomOf(container)).toBeGreaterThanOrEqual(0.75);
+      expect(screen.getByRole("button", { name: /%$/ })).not.toHaveTextContent("15%");
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("frames all six when the viewport can hold them at a readable zoom", () => {
+    const viewport = { width: 1400, height: 1100 };
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: viewport.width, bottom: viewport.height, width: viewport.width, height: viewport.height, toJSON() {} });
+    try {
+      const { container } = render(<Board initialLayout="canvas" model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} crew={CREW} talks={TALKS} />);
+      expect(zoomOf(container)).toBeGreaterThanOrEqual(0.75);
+      expect(onScreen(container, viewport).every((card) => card.inside)).toBe(true);
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+/**
+ * #1083 F8, second pass (orchestrator verification at 1280x720): first framing and `fit` held 75%,
+ * but the cards' lower third sat under the canvas toolbar row and the header chrome ate the top.
+ * Framing now measures the chrome that floats over the sheet and frames inside the band between.
+ * Here the sheet is 683x360; a lint strip covers its top 40px and the toolbar its bottom 60px, as
+ * laid out on the narrow scene. No framed card may cross into either, and the first rank is whole.
+ */
+describe("framing around the canvas chrome", () => {
+  const SIX: GraphModel = {
+    ...MODEL,
+    lint: [{ kind: "done-without-evidence", detail: "no evidence", sequence: 3 }],
+    nodes: ["docs", "implement", "map_repository", "plan", "review", "tests"].map((id) => ({ id, state: "succeeded" as const, touches: 0, lastEventAt: null, history: [], reopened: null })),
+  };
+  const SHEET = { top: 300, bottom: 660, left: 0, right: 683 };
+  const LINT = { top: 300, bottom: 340, left: 16, right: 260 };
+  const TOOLS = { top: 600, bottom: 652, left: 12, right: 640 };
+  const rectOf = (r: { top: number; bottom: number; left: number; right: number }) => ({ ...r, x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top, toJSON() {} });
+  function mockLayout() {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("sheet")) return rectOf(SHEET) as DOMRect;
+      if (this.classList.contains("canvas-lint")) return rectOf(LINT) as DOMRect;
+      if (this.classList.contains("tools")) return rectOf(TOOLS) as DOMRect;
+      return rectOf({ top: 0, bottom: 0, left: 0, right: 0 }) as DOMRect;
+    });
+  }
+  function framed(container: HTMLElement) {
+    const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec((container.querySelector(".world") as HTMLElement).style.transform)!;
+    const [, x, y, zoom] = match.map(Number);
+    const cards = [...container.querySelectorAll<HTMLElement>("article.node")].map((card) => {
+      const top = SHEET.top + parseFloat(card.style.top) * zoom + y;
+      const left = SHEET.left + parseFloat(card.style.left) * zoom + x;
+      return { top, bottom: top + 164 * zoom, left, right: left + 320 * zoom };
+    });
+    return { zoom, cards };
+  }
+  const crosses = (card: { top: number; bottom: number; left: number; right: number }, piece: typeof LINT) =>
+    card.left < piece.right && piece.left < card.right && card.top < piece.bottom && piece.top < card.bottom;
+  const onSheet = (card: { top: number; bottom: number }) => card.bottom > SHEET.top && card.top < SHEET.bottom;
+
+  it("frames the cards inside the band the lint strip and the toolbar leave, on first framing and on fit", () => {
+    const rect = mockLayout();
+    try {
+      const { container } = render(<Board initialLayout="canvas" model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} crew={[{ id: "codex", charter: null }]} talks={[{ key: "room", label: "Everyone", participants: [], count: 1, lastAt: null }]} />);
+      for (const pass of ["first framing", "fit"]) {
+        if (pass === "fit") fireEvent.click(screen.getByRole("button", { name: "fit" }));
+        const { zoom, cards } = framed(container);
+        expect(zoom, pass).toBeGreaterThanOrEqual(0.6);
+        // THE FRAMED RANK: the first rank is what framing promises whole. Every card of it is
+        // on the sheet, inside the band, and crosses neither piece of chrome - the defect was
+        // exactly this rank's lower third under the toolbar.
+        const firstTop = Math.min(...cards.map((card) => card.top));
+        const firstRank = cards.filter((card) => Math.abs(card.top - firstTop) < 1);
+        expect(firstRank.length, pass).toBeGreaterThanOrEqual(2);
+        for (const card of firstRank) {
+          expect(onSheet(card), pass).toBe(true);
+          expect(crosses(card, TOOLS), `${pass}: a framed card sits under the toolbar`).toBe(false);
+          expect(crosses(card, LINT), `${pass}: a framed card sits under the lint strip`).toBe(false);
+          expect(card.top, pass).toBeGreaterThanOrEqual(LINT.bottom);
+          expect(card.bottom, pass).toBeLessThanOrEqual(TOOLS.top);
+        }
+        // Nothing sits under the lint strip at the top: later ranks only continue downward.
+        for (const card of cards.filter(onSheet)) {
+          expect(crosses(card, LINT), `${pass}: a card sits under the lint strip`).toBe(false);
+        }
+      }
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("first framing", () => {
   const SEVEN: GraphModel = {
     ...MODEL,

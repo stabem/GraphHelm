@@ -105,7 +105,11 @@ pub(crate) fn execute(
                     at_sequence: head,
                 };
                 let full = render(&projection, &inputs, &super::Liveness::measured(&history));
-                summary_of(&stream.stream_id, &full, head)
+                let objective = projection
+                    .declared_form
+                    .as_ref()
+                    .and_then(|form| form.objective.as_deref());
+                summary_of(&stream.stream_id, &full, head, objective)
             }
             Err(_) => unreadable_row(&stream.stream_id, head),
         };
@@ -136,10 +140,17 @@ pub(crate) fn execute(
 /// Declared as a list rather than open-coded field by field so the subset claim above is
 /// checkable in one place. `executionId` falls back to the STREAM id when the projection carries
 /// none - an index whose rows cannot be addressed is not an index.
+///
+/// `objective` (#1083 F7) is the ONE key that is not taken from the status reply: it is the
+/// declared form's objective, the same value `execution briefing` publishes, so the Studio rail
+/// can name every run by what it was started for without one briefing read per row. Its content
+/// is the operator's own words, re-bounded here by `MAX_DECLARED_OBJECTIVE_CHARS`; `null` when the
+/// stream declared none (or was recorded before the field existed).
 fn summary_of(
     stream_id: &str,
     full: &serde_json::Value,
     head_sequence: Option<u64>,
+    objective: Option<&str>,
 ) -> serde_json::Value {
     const CARRIED: [&str; 7] = [
         "executionId",
@@ -168,6 +179,10 @@ fn summary_of(
         "headSequence".to_owned(),
         serde_json::json!(head_sequence.unwrap_or(0)),
     );
+    row.insert(
+        "objective".to_owned(),
+        serde_json::json!(objective.and_then(graphhelm_protocols::bound_declared_text)),
+    );
     serde_json::Value::Object(row)
 }
 
@@ -183,6 +198,7 @@ fn unreadable_row(stream_id: &str, head_sequence: Option<u64>) -> serde_json::Va
         "lastEventAt": serde_json::Value::Null,
         "executor": serde_json::Value::Null,
         "headSequence": head_sequence.unwrap_or(0),
+        "objective": serde_json::Value::Null,
     })
 }
 
@@ -219,9 +235,9 @@ mod tests {
     #[test]
     fn every_carried_key_holds_the_status_reply_value() {
         let full = status_like("exec-a", "needs_you");
-        let row = summary_of("exec-a", &full, Some(9));
+        let row = summary_of("exec-a", &full, Some(9), None);
         for (key, value) in row.as_object().expect("the row is an object") {
-            if key == "headSequence" {
+            if key == "headSequence" || key == "objective" {
                 continue;
             }
             assert_eq!(
@@ -240,7 +256,7 @@ mod tests {
     /// index stops replaying it would silently vanish.
     #[test]
     fn the_row_omits_the_detail_fields_status_owns() {
-        let row = summary_of("exec-a", &status_like("exec-a", "can_sleep"), Some(3));
+        let row = summary_of("exec-a", &status_like("exec-a", "can_sleep"), Some(3), None);
         for absent in [
             "attentionReasons",
             "nodeStateCounts",
@@ -264,7 +280,7 @@ mod tests {
     fn a_projection_without_an_execution_id_falls_back_to_the_stream_id() {
         let mut full = status_like("exec-a", "unknown");
         full["executionId"] = serde_json::Value::Null;
-        let row = summary_of("stream-fallback", &full, None);
+        let row = summary_of("stream-fallback", &full, None, None);
         assert_eq!(row["executionId"], serde_json::json!("stream-fallback"));
         assert_eq!(row["headSequence"], serde_json::json!(0));
     }
@@ -273,7 +289,12 @@ mod tests {
     /// branches on `status`, never on which keys exist.
     #[test]
     fn an_unreadable_row_carries_the_same_keys_as_a_readable_one() {
-        let readable = summary_of("exec-a", &status_like("exec-a", "can_sleep"), Some(4));
+        let readable = summary_of(
+            "exec-a",
+            &status_like("exec-a", "can_sleep"),
+            Some(4),
+            Some("Ship it"),
+        );
         let unreadable = unreadable_row("exec-a", Some(4));
         let readable_keys: Vec<_> = readable
             .as_object()
@@ -289,6 +310,37 @@ mod tests {
             .collect();
         assert_eq!(readable_keys, unreadable_keys);
         assert_eq!(unreadable["attention"], serde_json::json!("unknown"));
+    }
+
+    /// #1083 F7: the row carries the declared objective, bounded, and `null` when there is none -
+    /// so the rail names every run from the index alone.
+    #[test]
+    fn the_row_carries_the_declared_objective_bounded() {
+        let full = status_like("exec-a", "can_sleep");
+        let named = summary_of("exec-a", &full, Some(3), Some("  Locate related tests  "));
+        assert_eq!(
+            named["objective"],
+            serde_json::json!("Locate related tests")
+        );
+
+        let long = "é".repeat(graphhelm_protocols::MAX_DECLARED_OBJECTIVE_CHARS + 7);
+        let bounded = summary_of("exec-a", &full, Some(3), Some(&long));
+        assert_eq!(
+            bounded["objective"]
+                .as_str()
+                .map(|text| text.chars().count()),
+            Some(graphhelm_protocols::MAX_DECLARED_OBJECTIVE_CHARS)
+        );
+
+        // Built, not spelled: a whitespace-run literal trips `source_invariants.rs`'s
+        // operator-string guard, which reads every literal in this crate.
+        let blank = " ".repeat(3);
+        for none in [None, Some(blank.as_str())] {
+            assert_eq!(
+                summary_of("exec-a", &full, Some(3), none)["objective"],
+                serde_json::Value::Null
+            );
+        }
     }
 
     /// A stream written under a DIFFERENT workspace is not offered as a row (#560).

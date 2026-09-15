@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionLegality } from "./legality";
+import { actionLegality, hasEnded } from "./legality";
 import type { ExecutionStatus } from "../runtime/types";
 
 /**
@@ -123,6 +123,14 @@ describe("what each verb is allowed to claim", () => {
       expect(legality.resume).toMatch(/untriagedInterruptions/);
       expect(legality.resume).not.toMatch(/unknown state/i);
     }
+  });
+
+  /** #1083: the dock hides what an ended run cannot do. Exactly the three terminal states end a
+   * run; paused, blocked, running, "none", an absent run and an unknown state do not. */
+  it("names exactly the three terminal states as ended", () => {
+    for (const terminal of ["completed", "failed", "cancelled"]) expect(hasEnded(statusOf(terminal))).toBe(true);
+    for (const live of ["running", "paused", "blocked", "none", "hibernating", null]) expect(hasEnded(statusOf(live))).toBe(false);
+    expect(hasEnded(null)).toBe(false);
   });
 
   it("says why everything is off when no run is loaded", () => {

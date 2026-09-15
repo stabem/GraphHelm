@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { Composer } from "./compose";
 
@@ -25,5 +26,56 @@ describe("the composer under a pending start", () => {
   it("frees discard the moment nothing is pending", () => {
     mount(false);
     expect(screen.getByRole("button", { name: "Discard this task" })).toBeEnabled();
+  });
+});
+
+/**
+ * #1083 F5: the hint says `Enter sends`, and a real browser's Enter did not send. These cells
+ * dispatch the keydown the way a browser does - a native `KeyboardEvent` on the focused textarea,
+ * bubbling to React's root listener - rather than React's synthetic helper, and check that the
+ * send happened and the newline was suppressed.
+ */
+describe("Enter in the composer", () => {
+  function typed(text: string) {
+    const onSend = vi.fn();
+    render(<Composer choice={{ configured: false, routes: [] }} busy={false} error="" onSend={onSend} onCancel={vi.fn()} />);
+    const box = screen.getByLabelText("What should this task do?") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: text } });
+    box.focus();
+    return { box, onSend };
+  }
+  const press = (target: HTMLElement, init: KeyboardEventInit & { keyCode?: number }) => {
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    if (init.keyCode !== undefined) Object.defineProperty(event, "keyCode", { value: init.keyCode });
+    target.dispatchEvent(event);
+    return event;
+  };
+
+  it("sends on a native Enter keydown and keeps the newline out of the text", () => {
+    const { box, onSend } = typed("Summarize the README");
+    const event = press(box, { key: "Enter", code: "Enter", keyCode: 13 });
+    expect(onSend).toHaveBeenCalledWith("Summarize the README", null);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("sends on an automation driver's Enter (keyCode 0, empty code) and on the keypad's", () => {
+    const { box, onSend } = typed("Draft release notes");
+    press(box, { key: "Enter", code: "", keyCode: 0 });
+    press(box, { key: "Enter", code: "NumpadEnter", keyCode: 13 });
+    expect(onSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends through the keyboard path a user-event Enter takes", async () => {
+    const { onSend } = typed("Map the repository");
+    await userEvent.keyboard("{Enter}");
+    expect(onSend).toHaveBeenCalledWith("Map the repository", null);
+  });
+
+  it("never sends on Shift+Enter or on an IME's committing Enter", () => {
+    const { box, onSend } = typed("日本語");
+    press(box, { key: "Enter", code: "Enter", shiftKey: true, keyCode: 13 });
+    press(box, { key: "Enter", code: "Enter", isComposing: true, keyCode: 13 });
+    press(box, { key: "Process", code: "Enter", keyCode: 229 });
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

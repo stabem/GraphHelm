@@ -3652,16 +3652,27 @@ fn gateway_routes_over_http_matches_the_cli_report_for_the_same_manifest() {
         "manifest bytes must never leak: {body}"
     );
 
-    // A fixture-only server (no --manifest) with no query param: 400 NAMING the parameter —
-    // the Task 0 reconciled decision's fail-closed half.
-    let bare = get_json(&format!("{base}/v1/gateway/routes"), Some(&token));
+    // A fixture-only server (no --manifest) with no query param (#1083 F6): 200, `configured`
+    // false, an empty list and the reason. It used to be a 400 that every connecting browser
+    // logged as a red console error for the true answer "no routes". The poisoned manifest above
+    // is the control: a manifest that IS named and cannot be used still refuses with 400.
     assert_eq!(
         get_status(&format!("{base}/v1/gateway/routes"), Some(&token)),
-        400
+        200
     );
-    assert!(
-        bare.to_string().contains("manifest"),
-        "the refusal names the missing parameter: {bare}"
+    let bare = get_json(&format!("{base}/v1/gateway/routes"), Some(&token));
+    assert_eq!(bare["ok"], true, "{bare}");
+    assert_eq!(bare["command"], "gateway.routes", "{bare}");
+    assert_eq!(bare["data"]["configured"], false, "{bare}");
+    assert_eq!(bare["data"]["routes"], serde_json::json!([]), "{bare}");
+    assert_eq!(
+        bare["data"]["reason"], "no gateway manifest is configured on this server",
+        "{bare}"
+    );
+    assert_eq!(
+        bare["diagnostics"],
+        serde_json::json!([]),
+        "an answer, not a refusal: {bare}"
     );
 }
 
@@ -4845,7 +4856,21 @@ fn every_index_row_field_equals_the_status_reply_for_the_same_execution() {
         let id = row["executionId"].as_str().unwrap();
         let status = get_json(&format!("{base}/v1/executions/{id}"), Some(&token));
         let detail = &status["data"];
+        // #1083 F7: `objective` is the one row key the status reply does not carry; it is the
+        // declared objective, so it must equal the BRIEFING's for the same execution.
+        let briefing = get_json(&format!("{base}/v1/executions/{id}/briefing"), Some(&token));
+        assert!(
+            row["objective"].is_string(),
+            "the seeded run declares an objective and the row carries it: {row}"
+        );
+        assert_eq!(
+            row["objective"], briefing["data"]["objective"],
+            "index row objective for {id} disagrees with the briefing"
+        );
         for (key, value) in row.as_object().unwrap() {
+            if key == "objective" {
+                continue;
+            }
             assert_eq!(
                 value, &detail[key],
                 "index row field {key} for {id} disagrees with the status reply: {row} vs {detail}"
@@ -6395,4 +6420,99 @@ fn the_architect_route_refuses_with_the_cli_codes_and_names_both_model_doors() {
     assert_eq!(status, 400, "{reply}");
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
     assert_eq!(reply["diagnostics"][0]["path"], "/maxNode");
+}
+
+/// #1083 F1: a well-formed execution id that names no stream is a 404 with a structured
+/// refusal on every operator-facing read, and the CLI refuses the same id with the same code.
+///
+/// Before this, `GET /v1/executions/nope` answered `200 execution.status` with every field null
+/// and `attention: can_sleep`: an operator who typed an id wrong was told the run needed nothing.
+/// The control is the SAME store answering 200 for a run that exists, so a server that refused
+/// every read would fail here too. The events tail is deliberately NOT in this list: an unknown
+/// id there is an empty page, which `gate_http.rs` pins as a different fact.
+#[test]
+fn an_unknown_execution_id_is_a_404_on_every_read_and_the_cli_refuses_it_the_same_way() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/graphs/manual-override-deploy.yaml");
+    let fixtures = write_json(
+        directory.path(),
+        "fixtures.json",
+        &serde_json::json!({"nodeOutcomes": {"implementation": "success", "deploy": "success"}}),
+    );
+    let started = cli_envelope(&[
+        "execution",
+        "start",
+        "--file",
+        graph.to_str().unwrap(),
+        "--events",
+        events.to_str().unwrap(),
+        "--fixtures",
+        fixtures.to_str().unwrap(),
+        "--mode",
+        "supervised",
+        "--execution",
+        "exec-known-1083",
+    ]);
+    assert_eq!(started["ok"], true, "the control run starts: {started}");
+
+    for (suffix, command) in [
+        ("", "execution.status"),
+        ("/briefing", "execution.briefing"),
+    ] {
+        let known = format!("{base}/v1/executions/exec-known-1083{suffix}");
+        assert_eq!(
+            get_status(&known, Some(&token)),
+            200,
+            "the control: an execution that exists still answers {command}"
+        );
+
+        let unknown = format!("{base}/v1/executions/exec-typo-1083{suffix}");
+        assert_eq!(
+            get_status(&unknown, Some(&token)),
+            404,
+            "an unknown id is not a calm run ({command})"
+        );
+        let body = get_json(&unknown, Some(&token));
+        assert_eq!(body["ok"], false, "{body}");
+        assert_eq!(body["command"], command, "{body}");
+        assert_eq!(
+            body["diagnostics"][0]["code"], "GHCLI028_EXECUTION_NOT_FOUND",
+            "told apart from the router's own 404 by the code: {body}"
+        );
+        assert_eq!(body["diagnostics"][0]["path"], "/execution", "{body}");
+        assert!(
+            body["data"].is_null(),
+            "no fabricated status rides a refusal: {body}"
+        );
+
+        let verb = command.trim_start_matches("execution.");
+        let cli = cli_envelope(&[
+            "execution",
+            verb,
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec-typo-1083",
+        ]);
+        assert_eq!(cli["ok"], false, "the CLI refuses the same id: {cli}");
+        assert_eq!(
+            cli["diagnostics"], body["diagnostics"],
+            "the CLI and HTTP refusals are the same diagnostic"
+        );
+    }
+
+    // The evidence route is reached and refuses. On this server (no sealing key) the refusal that
+    // speaks first is the configuration one; the unknown-execution branch behind it is the same
+    // `GHCLI028` refusal the two reads above prove end to end.
+    let evidence = format!("{base}/v1/executions/exec-typo-1083/evidence/ev-anything");
+    let body = get_json(&evidence, Some(&token));
+    let code = body["diagnostics"][0]["code"].as_str().unwrap_or_default();
+    assert_ne!(
+        code, "GHCLI008_SERVE_NOT_FOUND",
+        "the route matched: {body}"
+    );
+    assert_eq!(body["ok"], false, "{body}");
 }

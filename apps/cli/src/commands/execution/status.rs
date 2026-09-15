@@ -21,7 +21,10 @@ pub(crate) fn execute(
     events: &Path,
     execution: Option<&str>,
 ) -> Result<serde_json::Value, Failure> {
-    execute_within(events, execution, graphhelm_events::ReadBudget::unbounded())
+    // The unbounded render describes work a mutation ALREADY committed (see `budgeted`), so it
+    // reads without the unknown-id refusal: the operator-facing read is the one that owes it.
+    let read = read_within(events, execution, graphhelm_events::ReadBudget::unbounded())?;
+    Ok(render_read(&read))
 }
 
 /// [`execute`] under the wall-clock budget an OPERATOR-FACING read declares (#750).
@@ -64,7 +67,11 @@ pub(crate) fn execute_within(
     execution: Option<&str>,
     budget: graphhelm_events::ReadBudget,
 ) -> Result<serde_json::Value, Failure> {
-    let read = read_within(events, execution, budget)?;
+    let read = read_known_within(events, execution, budget)?;
+    Ok(render_read(&read))
+}
+
+fn render_read(read: &Read) -> serde_json::Value {
     let mut value = render(
         &read.projection,
         &read.inputs,
@@ -75,7 +82,23 @@ pub(crate) fn execute_within(
     // yet", and widening it to null is a wire change that needs its own justification. The
     // flattening is left here DECLARED rather than silently carried into the seam.
     value["headSequence"] = serde_json::json!(read.at_sequence.unwrap_or(0));
-    Ok(value)
+    value
+}
+
+/// [`read_within`] for a read an operator is WAITING on: an explicit id whose stream holds no
+/// event refuses with `GHCLI028_EXECUTION_NOT_FOUND` (#1083 F1) instead of folding nothing into a
+/// calm verdict. Shared by `status` and `briefing`, so the CLI, `GET /v1/executions/{id}`, its
+/// `/briefing` and the MCP tools (which call those routes) refuse one unknown id identically.
+pub(crate) fn read_known_within(
+    events: &Path,
+    execution: Option<&str>,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<Read, Failure> {
+    let read = read_within(events, execution, budget)?;
+    if execution.is_some() && read.history.is_empty() {
+        return Err(super::not_found());
+    }
+    Ok(read)
 }
 
 /// The read half of [`execute_within`], shared with `briefing::execute_within`.
@@ -141,6 +164,14 @@ pub fn run(events: &Path, execution: Option<&str>, html: Option<&Path>) -> Outco
 fn write_snapshot(events: &Path, execution: Option<&str>, html: &Path) -> Result<(), Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, history) = resolve_stream(&store, execution)?;
+    // #1083 (Codex on PR #1091): the unknown-id refusal must come BEFORE the write. `run` calls
+    // this ahead of `budgeted`, so without this check a refused `status --execution <typo>
+    // --html <path>` folded nothing, rendered it, and overwrote whatever snapshot already stood
+    // at `<path>` - a refused command with a destructive side effect. Same rule, same refusal as
+    // `read_known_within`.
+    if execution.is_some() && history.is_empty() {
+        return Err(super::not_found());
+    }
     let projection = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
     let page = crate::commands::serve::monitor::render_snapshot(

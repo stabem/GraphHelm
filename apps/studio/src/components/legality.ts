@@ -90,6 +90,20 @@ export function actionLegality(status: ExecutionStatus | null): ActionLegality {
 }
 
 /**
+ * Whether the run has ended - completed, failed or cancelled (#1083).
+ *
+ * On an ended run the dock HIDES pause, resume and cancel rather than offering them disabled: the
+ * orchestrator's verification found a completed run still presenting all three as its actions.
+ * What an ended run still accepts is read from the Runtime's own gates, not guessed: `sweep.rs`
+ * refuses no lifecycle state (its journal entry is a reading), `signal.rs` refuses no terminal
+ * state (a message is still recorded), and `approve.rs` gates on the NODE being ghost or blocked,
+ * not on the run - so sweep, messages and a real approve target stay.
+ */
+export function hasEnded(status: ExecutionStatus | null): boolean {
+  return status?.status === "completed" || status?.status === "failed" || status?.status === "cancelled";
+}
+
+/**
  * The SECOND input resume's legality reads (PR #662 review, legality.ts:66): the Runtime's
  * own triage list. An immediate pause that interrupted work in flight leaves each such node
  * `Blocked` with last outcome `Interrupted`, and `resume_preconditions` refuses with

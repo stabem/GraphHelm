@@ -875,6 +875,53 @@ fn the_evidence_tool_reaches_the_evidence_route_and_not_the_router() {
     );
 }
 
+/// #1083 F1, the third door: the MCP `status` and `briefing` tools refuse a well-formed id that
+/// names no execution exactly as HTTP and the CLI do - `isError` with
+/// `GHCLI028_EXECUTION_NOT_FOUND` - and the same session still reads the run that exists, so a
+/// tool that refused everything would fail here too.
+#[test]
+fn the_status_and_briefing_tools_refuse_an_unknown_execution_id() {
+    let harness = wired("exec-mcp-known");
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!(2),
+            "status",
+            serde_json::json!({"executionId": "exec-mcp-typo"}),
+        ),
+        tool_call(
+            serde_json::json!(3),
+            "briefing",
+            serde_json::json!({"executionId": "exec-mcp-typo"}),
+        ),
+        tool_call(
+            serde_json::json!(4),
+            "status",
+            serde_json::json!({"executionId": "exec-mcp-known"}),
+        ),
+    ]);
+    for (index, command) in [(1, "execution.status"), (2, "execution.briefing")] {
+        let (is_error, envelope) = tool_envelope(&session.replies[index]);
+        assert!(
+            is_error,
+            "an unknown id is a refusal, not a calm run: {envelope}"
+        );
+        assert_eq!(envelope["command"], command, "{envelope}");
+        assert_eq!(
+            envelope["diagnostics"][0]["code"], "GHCLI028_EXECUTION_NOT_FOUND",
+            "{envelope}"
+        );
+    }
+    let (is_error, envelope) = tool_envelope(&session.replies[3]);
+    assert!(
+        !is_error,
+        "the control: the run that exists still reads: {envelope}"
+    );
+    assert_eq!(envelope["data"]["executionId"], "exec-mcp-known");
+}
+
 #[test]
 fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
     let harness = wired("exec-mcp-map");

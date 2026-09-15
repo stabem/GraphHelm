@@ -62,6 +62,8 @@ export const MAX_MESSAGE_LENGTH = 4000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
+/** The Runtime's refusal for a well-formed id that names no execution (#1083 F1). */
+const EXECUTION_NOT_FOUND = "GHCLI028_EXECUTION_NOT_FOUND";
 
 /**
  * The largest silence budget the persisted envelope admits, READ FROM THE SCHEMA rather than
@@ -296,6 +298,8 @@ export class RuntimeClient {
   #token: string | null;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
+  /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
+  #fixtureOnly = false;
 
   constructor(token: string, options: { baseUrl?: string; fetch?: typeof fetch } = {}) {
     this.#token = token;
@@ -428,7 +432,16 @@ export class RuntimeClient {
         path: `/v1/executions/${encodeURIComponent(id)}/briefing`,
       });
     } catch (reason) {
-      if (reason instanceof RuntimeError && reason.httpStatus === 404) return null;
+      // A 404 CARRYING `GHCLI028_EXECUTION_NOT_FOUND` is a Runtime that HAS the route telling us
+      // this id names no execution (#1083 F1) - rethrown, so the page never concludes the whole
+      // server lacks briefings from one unknown id.
+      if (
+        reason instanceof RuntimeError &&
+        reason.httpStatus === 404 &&
+        !reason.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)
+      ) {
+        return null;
+      }
       throw reason;
     }
   }
@@ -507,8 +520,26 @@ export class RuntimeClient {
 
     let headBefore = options.ifMatch ?? -1;
     if (headBefore < 0) {
-      const before = await this.getStatus(id);
-      headBefore = before.headSequence;
+      try {
+        const before = await this.getStatus(id);
+        headBefore = before.headSequence;
+      } catch (error) {
+        // A START is the one verb whose target is SUPPOSED not to exist yet. Since #1083 F1 the
+        // Runtime answers a well-formed unknown id with 404 `GHCLI028_EXECUTION_NOT_FOUND` where
+        // it used to answer 200 with `headSequence: 0`; both say "an empty stream", so the start
+        // proceeds guarded at 0 exactly as before. Every other verb keeps the refusal: acting on a
+        // run that does not exist is the caller's mistake, and the read already said so.
+        if (
+          action === "start" &&
+          error instanceof RuntimeError &&
+          error.httpStatus === 404 &&
+          error.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)
+        ) {
+          headBefore = 0;
+        } else {
+          throw error;
+        }
+      }
     }
 
     const headers: Record<string, string> = {
@@ -1196,12 +1227,22 @@ export class RuntimeClient {
    * that is merely unwired.
    */
   async listRoutes(): Promise<{ configured: boolean; routes: ModelRouteSummary[] }> {
+    // #1083 F6: a fixture-only Runtime's answer cannot change while this connection lives (the
+    // manifest is a `serve` start flag), so its documented refusal is read ONCE per client. The
+    // page asked at connect and again at every new task, and each ask put the same 400 in the
+    // browser's network log. A configured Runtime is re-asked: its manifest can be edited.
+    if (this.#fixtureOnly) return { configured: false, routes: [] };
     try {
-      const reply = await this.#request<{ routes: ModelRouteSummary[] }>({
+      const reply = await this.#request<{ routes?: ModelRouteSummary[]; configured?: boolean }>({
         method: "GET",
         path: "/v1/gateway/routes",
       });
-      return { configured: true, routes: reply.routes };
+      // #1083 F6: a current Runtime ANSWERS a fixture-only listing with 200 `configured: false`
+      // (no 400 in the browser's console at all). A reply without the field is a configured
+      // manifest's listing, exactly as before.
+      const configured = reply.configured !== false;
+      if (!configured) this.#fixtureOnly = true;
+      return { configured, routes: reply.routes ?? [] };
     } catch (error) {
       if (
         error instanceof RuntimeError &&
@@ -1215,6 +1256,7 @@ export class RuntimeClient {
             diagnostic.path === "/manifest" && diagnostic.code === "GHCLI001_ARGUMENT_INVALID",
         )
       ) {
+        this.#fixtureOnly = true;
         return { configured: false, routes: [] };
       }
       throw error;

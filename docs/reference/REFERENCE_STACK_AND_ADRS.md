@@ -1265,3 +1265,22 @@ So today D-002 is true of the tree; it stops being true at the merge of #595, an
 
 **Relationship:** amends D-002 along the install/update axis; records the decision behind #595, #330 and #786; closes #663 as the governance record it asked for.
 
+## 43. ADR-038 — Two Runtime read contracts reversed by the integrated MVP verification: an unknown execution id is a 404, and a fixture-only route listing is a 200
+
+**Status:** accepted with PR #1091 (issue #1083). Recorded because two lower-precedence records — the 05a milestone note in `docs/milestones/runtime.md` ("an unknown execution id reads as empty, not 404") and the reconciled Task 0 decision in `docs/superpowers/plans/2026-08-14-chat-surface.md` ("a fixture-only server requires the query param or answers 400") — described the opposite of what #1091 ships, and `AGENTS.md` refuses a silent resolution.
+
+**Context, measured by the blind integrated verification of the MVP (#1082, #1083):**
+
+- F1: `GET /v1/executions/{id}` and `/briefing` for a well-formed id that names no stream answered `200` with every field null and `attention: can_sleep`. The Studio rendered a calm, empty run for a typo. The CLI `status`/`briefing` did the same. A read that cannot distinguish "nothing happened" from "this run does not exist" is not an answer an operator can act on.
+- F6: `GET /v1/gateway/routes` on a fixture-only Runtime (no `--manifest`), asked without the `manifest` query, answered `400`. Every Studio session logged that as a red console error, for the true answer "no routes are configured".
+
+**Decision:**
+
+1. A well-formed execution id that names no stream is `GHCLI028_EXECUTION_NOT_FOUND` at `/execution`: HTTP `404` on status and briefing, the same diagnostic from the CLI, `isError` from the MCP `status`/`briefing` tools, and the evidence route once its sealing check passes. The guard lives in the command layer (`apps/cli/src/commands/execution/status.rs`, `briefing.rs`), which both surfaces call, so CLI/HTTP parity is kept by construction. Unchanged: the events tail (`/events`) answers an empty page for an unknown id, and the render a mutation replies with after it commits never refuses. `execution status --html` applies the same check before writing a snapshot, so a refused command has no file side effect.
+2. `routes` on a fixture-only Runtime without the query answers `200` with `{"configured": false, "routes": [], "reason": "no gateway manifest is configured on this server"}`. `probe`, which needs a manifest to act on, keeps the `400` naming the parameter. A manifest that is named (flag or query) but cannot be loaded or validated is still refused on both.
+
+**Affected contracts:** `docs/milestones/runtime.md` (05a and 05d notes, updated in the same PR), `docs/superpowers/plans/2026-08-14-chat-surface.md` Step 2 (annotated), `apps/cli/src/error_codes.rs` (new code), `apps/cli/tests/api_http.rs`, `execution_cli.rs`, `mcp_stdio.rs` (pinned). Studio: reads `configured`, keeps the `400` fallback for older Runtimes, and treats the 404 on start as "the run does not exist yet".
+
+**Alternatives rejected:** a store-layer not-found signal (deferred in 05a) — it would change the event store contract for a distinction the command layer already has all the facts for; keeping `400` on the listing and silencing the browser console — hides the true answer behind client code.
+
+**Precedence note:** no entry in `docs/DECISION_REGISTER.md`, no accepted ADR and no schema under `schemas/` states either old behaviour; both records were milestone and plan notes. This ADR is the record `AGENTS.md` asks for so the reversal is not silent.

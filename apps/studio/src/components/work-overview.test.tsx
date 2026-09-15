@@ -38,6 +38,52 @@ describe("organized work overview", () => {
   });
 });
 
+/** #1083 F9: a completed demonstration run carried `Evidence needs attention · 6 findings` in
+ * amber - an alarm on a run that needs nothing. A demonstration run gets a neutral note with the
+ * same findings readable; a real run with the same findings keeps the alarm. */
+describe("log findings on a demonstration run", () => {
+  const findings: GraphModel = { ...model, lint: [{ kind: "done-without-evidence", detail: "Completion has no evidence", sequence: 8 }, { kind: "done-without-evidence", detail: "Completion has no evidence", sequence: 9 }] };
+  it("reads as a neutral note, never as the attention banner", () => {
+    render(<WorkOverview model={findings} demonstration selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.queryByRole("region", { name: "Disagreements in the event log" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/needs attention/i)).not.toBeInTheDocument();
+    const note = screen.getByRole("region", { name: "Log notes on a demonstration run" });
+    expect(note).toHaveClass("work-note");
+    expect(note).toHaveTextContent("Demonstration run · 2 log notes");
+    expect(note).toHaveTextContent("Completion has no evidence · event #8");
+  });
+  /** Codex on PR #1091: only the fixture-explained kind is downgraded. A reopened settled node and
+   * an orphan edge are real disagreements on a demonstration run too - they keep the attention
+   * banner, and each section counts only its own findings. */
+  it("keeps real disagreements amber on a demonstration run and counts only the explained note", () => {
+    const mixed: GraphModel = {
+      ...model,
+      lint: [
+        { kind: "done-without-evidence", detail: "docs settled as succeeded carrying no evidence", sequence: 8 },
+        { kind: "reopened-after-done", detail: "tests was reopened after it settled by codex", sequence: 11 },
+        { kind: "orphan-edge", detail: "the graph file draws plan → ghost, but ghost is not on this run's roster", sequence: null },
+      ],
+    };
+    render(<WorkOverview model={mixed} demonstration selectedNode={null} onSelectNode={vi.fn()} />);
+    const note = screen.getByRole("region", { name: "Log notes on a demonstration run" });
+    expect(note).toHaveTextContent("Demonstration run · 1 log note");
+    expect(note).toHaveTextContent("docs settled as succeeded carrying no evidence");
+    expect(note).not.toHaveTextContent("reopened");
+    expect(note).not.toHaveTextContent("ghost");
+    const alarm = screen.getByRole("region", { name: "Disagreements in the event log" });
+    expect(alarm).toHaveClass("work-caution");
+    expect(alarm).toHaveTextContent("Evidence needs attention · 2 findings");
+    expect(alarm).toHaveTextContent("tests was reopened after it settled by codex · event #11");
+    expect(alarm).toHaveTextContent("ghost is not on this run's roster");
+    expect(alarm).not.toHaveTextContent("carrying no evidence");
+  });
+  it("keeps the alarm for a real run with real findings", () => {
+    render(<WorkOverview model={findings} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Disagreements in the event log" })).toHaveTextContent("Evidence needs attention · 2 findings");
+    expect(screen.queryByRole("region", { name: "Log notes on a demonstration run" })).not.toBeInTheDocument();
+  });
+});
+
 /** #1079 review (P2): the briefing's objective is the FIRST entrypoint's, in `spec.entrypoints`
  * order (#1071). A graph with two entrypoints shows it on one card, never on both. */
 describe("the objective on the entry card", () => {

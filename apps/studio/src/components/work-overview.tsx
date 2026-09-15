@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf } from "../graph/model";
+import { moodOf, splitLint } from "../graph/model";
 import { ago, hueOf, initialOf, readable } from "./format";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
@@ -31,6 +31,9 @@ export interface WorkOverviewProps {
    * whose objective it is. A node's own text is sealed content the log never carries, so this
    * is the only line that can say what the first node was asked to do. */
   objective?: string | null;
+  /** The run was started under the fixture executor (#1064): its log findings are expected and
+   * read as a neutral note, not as an alarm (#1083 F9). */
+  demonstration?: boolean;
 }
 
 /** Whether a node is one of the run's entrypoints. Proven by the verified topology when there
@@ -84,10 +87,12 @@ export function WorkOverview({
   onSelectTalk,
   runId,
   objective = null,
+  demonstration = false,
 }: WorkOverviewProps) {
   const activeNodes = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).length;
   const attentionNodes = model.nodes.filter((node) => ["blocked", "failed", "waiting_input", "waiting_capacity"].includes(node.state)).length;
   const nodeIds = new Set(model.nodes.map((node) => node.id));
+  const lint = splitLint(model.lint, demonstration);
 
   return (
     <main className="work-overview" aria-label="Work overview">
@@ -107,7 +112,13 @@ export function WorkOverview({
       </header>
 
       {!model.rosterDeclared && <p className="work-caution">The complete node roster has not been read yet.</p>}
-      {model.lint.length > 0 && <section className="work-caution" aria-label="Disagreements in the event log"><details><summary>Evidence needs attention · {model.lint.length} finding{model.lint.length === 1 ? "" : "s"}</summary><ul>{model.lint.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
+      {/* #1083 F9: on a DEMONSTRATION run (fixture executor) a settled node with no evidence is
+        * expected - outcomes came from a fixture file - and an amber "needs attention" banner for
+        * it was an alarm on a run that needs nothing. ONLY that kind is downgraded (Codex on PR
+        * #1091): a reopened settled node or an orphan edge is a real disagreement on any run and
+        * keeps the attention banner, counted on its own. */}
+      {lint.expected.length > 0 && <section className="work-note" aria-label="Log notes on a demonstration run"><details><summary>Demonstration run · {lint.expected.length} log note{lint.expected.length === 1 ? "" : "s"}</summary><p>Outcomes on this run were supplied by a fixture file, not produced by a model or a tool, so the log holds no evidence for them. These notes are expected here.</p><ul>{lint.expected.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
+      {lint.disagreements.length > 0 && <section className="work-caution" aria-label="Disagreements in the event log"><details><summary>Evidence needs attention · {lint.disagreements.length} finding{lint.disagreements.length === 1 ? "" : "s"}</summary><ul>{lint.disagreements.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
 
       <div className="work-layout">
         <aside className="work-sidebar" aria-label="Collaboration">

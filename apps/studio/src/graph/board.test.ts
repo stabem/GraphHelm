@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { MIN_FRAME_ZOOM, READABLE_ZOOM, chromeInsets, frameCards } from "./board";
 
 import {
   CARD_HEIGHT,
@@ -183,6 +184,47 @@ describe("the card's measured height", () => {
   });
   it("counts a reopened card as a full card even with no touches", () => {
     expect(cardHeight({ touches: 0, reopened: { settledAt: 1, reopenedAt: 2, by: null } }, false)).toBe(CARD_HEIGHT);
+  });
+});
+
+/** #1083 F8: the chrome that floats over the sheet, and the zoom floor a short band gets. */
+describe("framing inside the chrome's band", () => {
+  const SHEET = { top: 100, bottom: 500, left: 0, right: 700 };
+
+  it("counts a top strip and a bottom toolbar, and ignores what does not cover the sheet", () => {
+    expect(
+      chromeInsets(SHEET, [
+        { top: 100, bottom: 130, left: 16, right: 260 }, // lint strip over the top
+        { top: 440, bottom: 492, left: 12, right: 640 }, // toolbar over the bottom
+        { top: 20, bottom: 60, left: 0, right: 700 }, // header above the sheet: not over it
+        { top: 520, bottom: 560, left: 0, right: 700 }, // dock below the sheet: not over it
+        { top: 200, bottom: 240, left: 720, right: 900 }, // beside the sheet
+        { top: 0, bottom: 0, left: 0, right: 0 }, // not laid out
+      ]),
+    ).toEqual({ top: 30, bottom: 60 });
+  });
+
+  it("ignores an overlay as tall as the sheet, and chrome that would leave no band", () => {
+    expect(chromeInsets(SHEET, [{ top: 90, bottom: 510, left: 0, right: 700 }])).toEqual({ top: 0, bottom: 0 });
+    expect(
+      chromeInsets(SHEET, [
+        { top: 100, bottom: 290, left: 0, right: 700 },
+        { top: 280, bottom: 500, left: 0, right: 700 },
+      ]),
+    ).toEqual({ top: 0, bottom: 0 });
+  });
+
+  it("keeps the readable zoom when the first rank fits, and goes no lower than the floor to fit it whole", () => {
+    const bounds = { x: 680, y: 100, w: 700, h: 900 };
+    expect(frameCards(bounds, { w: 700, h: 400 }, 24, 288).zoom).toBe(READABLE_ZOOM);
+    // A 260px band holds 212px of card: 288px at 0.736 fits, so the rank is framed whole.
+    const tight = frameCards(bounds, { w: 700, h: 260 }, 24, 288);
+    expect(tight.zoom).toBeCloseTo(212 / 288, 5);
+    expect(288 * tight.zoom).toBeLessThanOrEqual(212 + 1e-9);
+    // Anchored at the cards' top, so the first rank starts at the padding.
+    expect(tight.y + bounds.y * tight.zoom).toBeCloseTo(24, 5);
+    // A band that cannot hold it even at the floor stops at the floor.
+    expect(frameCards(bounds, { w: 700, h: 120 }, 24, 288).zoom).toBe(MIN_FRAME_ZOOM);
   });
 });
 

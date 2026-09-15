@@ -37,6 +37,7 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  */
 const SET_ELSEWHERE: Record<string, string> = {
   "--rail": "App.tsx writes it inline from the operator's dragged width; the CSS reads it with a fallback",
+  "--dock-reserve": "App.tsx writes it inline on .scene from the docks' measured height (#1083 F9); the CSS reads it with a fallback",
 };
 
 /** Classes the components render that intentionally have no rule of their own. Empty today, and
@@ -106,6 +107,23 @@ describe("every token is real", () => {
   it("reads every custom property it defines", () => {
     const unused = [...defined].filter((token) => !used.has(token));
     expect(unused, "these are defined and never read; use them or drop them with their claim").toEqual([]);
+  });
+});
+
+/**
+ * #1083 F9: the overview's cards sat behind the fixed action dock at 1280x720, and a wheel scroll
+ * could not bring them out, because the scroll box STOPPED a fixed 70px above the scene's bottom
+ * while the dock was taller. Every `.work-overview-scroll` rule now runs the box to the bottom
+ * (no `bottom:` offset) and pads its content by the measured `--dock-reserve`.
+ */
+describe("the overview scrolls out from under the dock", () => {
+  const rules = [...CODE.matchAll(/\.work-overview-scroll\s*\{([^}]*)\}/g)].map((match) => match[1] as string);
+  it("reserves the dock's measured height in every overview scroll rule", () => {
+    expect(rules.length).toBeGreaterThanOrEqual(3);
+    for (const body of rules) {
+      expect(body, "a fixed bottom offset leaves the dock covering unscrollable content").not.toMatch(/(^|;|\s)bottom\s*:/);
+      expect(body).toMatch(/padding:[^;]*var\(--dock-reserve/);
+    }
   });
 });
 

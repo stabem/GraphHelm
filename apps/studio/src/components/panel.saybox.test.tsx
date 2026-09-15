@@ -28,6 +28,55 @@ const statusOf = (executionId: string): ExecutionStatus =>
     nodeStateCounts: {},
   }) as never;
 
+/**
+ * #1083 F5, the second box (orchestrator verification of PR #1091): the run's message box had no
+ * key handler, so Enter left the text in the box and sent nothing. It now reads the same
+ * `sendsOnEnter` the composer does. Native `keydown` events, dispatched on the focused textarea
+ * the way a browser delivers them.
+ */
+describe("Enter in the run's message box", () => {
+  beforeEach(() => resetPanelCaches());
+  const press = (target: HTMLElement, init: KeyboardEventInit & { keyCode?: number }) => {
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    if (init.keyCode !== undefined) Object.defineProperty(event, "keyCode", { value: init.keyCode });
+    target.dispatchEvent(event);
+    return event;
+  };
+  async function typed(text: string) {
+    const onSay = vi.fn();
+    render(<RunPanel status={statusOf("run-a")} events={[]} onClose={vi.fn()} onSay={onSay} />);
+    const box = screen.getByLabelText("Say something into this run");
+    await userEvent.type(box, text);
+    return { box, onSay };
+  }
+
+  it("sends on a native Enter and on an automation driver's Enter, keeping the newline out", async () => {
+    const { box, onSay } = await typed("is the deploy safe?");
+    const event = press(box, { key: "Enter", code: "Enter", keyCode: 13 });
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSay).toHaveBeenCalledWith("is the deploy safe?", null);
+    press(box, { key: "Enter", code: "", keyCode: 0 });
+    expect(onSay).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends through the keyboard path a user-event Enter takes", async () => {
+    const { onSay } = await typed("status please");
+    await userEvent.keyboard("{Enter}");
+    expect(onSay).toHaveBeenCalledWith("status please", null);
+  });
+
+  it("never sends on Shift+Enter, on an IME's committing Enter, or with nothing typed", async () => {
+    const { box, onSay } = await typed("日本語");
+    press(box, { key: "Enter", code: "Enter", shiftKey: true, keyCode: 13 });
+    press(box, { key: "Enter", code: "Enter", isComposing: true, keyCode: 13 });
+    press(box, { key: "Process", code: "Enter", keyCode: 229 });
+    expect(onSay).not.toHaveBeenCalled();
+    await userEvent.clear(box);
+    press(box, { key: "Enter", code: "Enter", keyCode: 13 });
+    expect(onSay).not.toHaveBeenCalled();
+  });
+});
+
 describe("the message box across run switches", () => {
   beforeEach(() => resetPanelCaches());
 

@@ -20,9 +20,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote, Waypoints } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf } from "../graph/model";
+import { moodOf, splitLint } from "../graph/model";
 import { isAlarming } from "./format";
-import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, fitCamera, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Point, type Stroke } from "../graph/board";
+import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point, type Stroke } from "../graph/board";
+
+/** The pieces of page chrome that float over the canvas sheet (#1083 F8): the toolbar, the
+ * header rows, the lint strip, the notes and connect row, the HUD capsule, and the scene's docks.
+ * Measured at framing time, so whatever the container queries laid out is what is framed around. */
+const CANVAS_CHROME = ".tools, .canvas-story, .canvas-arrange, .board-navigator, .canvas-sections, .canvas-lint, .edge-note, .graph-file, .connection-legend, .canvas-hints, .work-view-switch";
+function chromeRectsAround(sheet: HTMLElement | null): DOMRect[] {
+  if (sheet === null) return [];
+  const pieces = new Set<Element>();
+  sheet.parentElement?.querySelectorAll(CANVAS_CHROME).forEach((piece) => pieces.add(piece));
+  sheet.querySelectorAll(".run-capsule").forEach((piece) => pieces.add(piece));
+  sheet.closest(".scene")?.querySelectorAll(":scope > .dock, :scope > .work-view-switch").forEach((piece) => pieces.add(piece));
+  pieces.delete(sheet);
+  return [...pieces].map((piece) => piece.getBoundingClientRect());
+}
 import { ago, hueOf, initialOf, readable } from "./format";
 import { WorkOverview, isEntryNode, isFirstEntryNode } from "./work-overview";
 
@@ -124,6 +138,9 @@ export function Board({
   initialLayout = "canvas",
   onCanvasChange,
   objective = null,
+  demonstration = false,
+  fixtureFile = "",
+  onFixtureFileChange,
 }: {
   model: GraphModel;
   board: BoardState;
@@ -160,6 +177,13 @@ export function Board({
   onCanvasChange?: (canvas: boolean) => void;
   /** The run's objective from its briefing (#1077), for the entry node's card. */
   objective?: string | null;
+  /** The run was started under the fixture executor (#1064). */
+  demonstration?: boolean;
+  /** #1083 F2: a fixture file path on the RUNTIME's host, sent with `resume` as the API's
+   * existing `fixtures` field. Offered only on a demonstration run - the fixture stands in for
+   * the model there, and without it a resumed node has no outcome and parks `waiting_input`. */
+  fixtureFile?: string;
+  onFixtureFileChange?: (value: string) => void;
 }) {
   const [organized, setOrganized] = useState(initialLayout === "overview");
   useEffect(() => { onCanvasChange?.(!organized); }, [organized, onCanvasChange]);
@@ -482,20 +506,51 @@ export function Board({
     const bottom = Math.max(...items.map((item) => item.y + item.h));
     return { x: left, y: top, w: right - left, h: bottom - top };
   })();
+  /** The work cards' own bounds (#1083 F8) - what first framing and `fit` frame. The lanes'
+   * chrome, the agents and the conversations are not the work: counting them made a six-card
+   * run open at 60% with two cards on screen, and `fit` drop to 15%. */
+  const cardBounds = (() => {
+    if (model.nodes.length === 0) return null;
+    const cards = model.nodes.map((node, index) => ({ ...nodePosition(node.id, index), w: CARD_WIDTH, h: nodeHeight(node) }));
+    const left = Math.min(...cards.map((card) => card.x));
+    const top = Math.min(...cards.map((card) => card.y));
+    const right = Math.max(...cards.map((card) => card.x + card.w));
+    const bottom = Math.max(...cards.map((card) => card.y + card.h));
+    // The first rank's tallest card: the least a short band must hold whole (#1083 F8).
+    const rank = Math.max(...cards.filter((card) => card.y === top).map((card) => card.h));
+    return { x: left, y: top, w: right - left, h: bottom - top, rank };
+  })();
   const focusedBoundsRef = useRef<BoardBounds | null>(null);
   const fit = (selection?: BoardBounds, wholeMap = false) => {
     const box = surface.current?.getBoundingClientRect();
     const first = model.nodes[0];
-    const mobileFocus = !wholeMap && !selection && box && box.width < 700 && first ? { ...nodePosition(first.id, 0), w: CARD_WIDTH, h: nodeHeight(first) } : null;
-    const bounds = selection ?? mobileFocus ?? contentBounds;
+    // THE PHONE RULE READS THE WINDOW, NOT THE SHEET (#1083 F8). Keyed on the sheet's width, it
+    // fired on a 1280px desktop whenever the conversation column left the canvas under 700px
+    // (measured: 683px), framed ONE card at 60% and showed two of six - the finding itself - and
+    // the resize observer put it back after every `fit`.
+    const phone = typeof window !== "undefined" && window.innerWidth < 700;
+    const mobileFocus = !wholeMap && !selection && box && phone && first ? { ...nodePosition(first.id, 0), w: CARD_WIDTH, h: nodeHeight(first) } : null;
+    const bounds = selection ?? mobileFocus ?? cardBounds ?? contentBounds;
     if (!box || box.width <= 0 || box.height <= 0 || !bounds) return;
     focusedBoundsRef.current = selection ?? null;
-    // Automatic framing FITS THE CONTENT (#1077). An 80% floor here left a seven-card run
-    // showing two cards and no hint of the rest; the grid above is what keeps a fit legible,
-    // not a zoom the content overflows. `wholeMap` is kept as the explicit-fit signature.
+    // FRAME INSIDE WHAT IS NOT COVERED (#1083 F8, orchestrator verification at 1280x720). The
+    // canvas toolbar, the header chrome, the lint strip and the docks float over the sheet, and a
+    // frame computed for the whole sheet put the cards' lower third under the toolbar row. The
+    // band left between the chrome above and below is the viewport; the camera is shifted down
+    // by what covers the top.
+    const insets = chromeInsets(box, chromeRectsAround(surface.current));
+    const viewport = { w: box.width, h: Math.max(1, box.height - insets.top - insets.bottom) };
+    const below = (camera: Camera): Camera => ({ ...camera, y: camera.y + insets.top });
+    // A selection or the mobile single-card focus fits exactly what was asked for.
+    if (selection || mobileFocus || cardBounds === null) {
+      setView(below(fitCamera(bounds, viewport, 24, selection ? 1.25 : 1)));
+      return;
+    }
+    // Automatic framing and `fit` frame THE CARDS at a readable zoom (#1077, #1083 F8): all of
+    // them when they fit at `READABLE_ZOOM` or better, otherwise the first rank whole, and a pan
+    // reveals the rest. `wholeMap` is kept as the explicit-fit signature.
     void wholeMap;
-    const camera = fitCamera(bounds, { w: box.width, h: box.height }, 24, selection ? 1.25 : 1);
-    setView(camera);
+    setView(below(frameCards(bounds, viewport, 24, cardBounds.rank)));
   };
   const fitRef = useRef(fit);
   fitRef.current = fit;
@@ -691,6 +746,9 @@ export function Board({
     });
   };
 
+  /** What the lint strip says, by kind (#1083): see `splitLint`. */
+  const lintSplit = splitLint(model.lint, demonstration);
+
   const undo = () => {
     if (board.strokes.length > 0) {
       onChange({ ...board, strokes: board.strokes.slice(0, -1) });
@@ -706,7 +764,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} />
+        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>
@@ -1104,9 +1162,12 @@ export function Board({
         * project lints a PLAN file; ours lints the LOG - each line names the disagreement and,
         * when an event is accused, cites its #sequence click-to-copy, same as the thread's. */}
       {model.lint.length > 0 && (
-        <details className="canvas-lint"><summary>{model.lint.length} log disagreements</summary>
-        <ul className="lint-strip" aria-label="Disagreements the log attests">
-          {model.lint.map((finding, index) => (
+        // #1083: the overview's rule, on the canvas. Only a demonstration run's fixture-explained
+        // findings read as neutral notes; any real disagreement (a reopened settled node, an
+        // orphan edge) keeps the amber strip and is listed first (Codex on PR #1091).
+        <details className={`canvas-lint ${lintSplit.disagreements.length === 0 ? "canvas-note" : ""}`}><summary>{lintSplit.disagreements.length === 0 ? `Demonstration run · ${lintSplit.expected.length} log note${lintSplit.expected.length === 1 ? "" : "s"}` : `${lintSplit.disagreements.length} log disagreement${lintSplit.disagreements.length === 1 ? "" : "s"}${lintSplit.expected.length > 0 ? ` · ${lintSplit.expected.length} demonstration note${lintSplit.expected.length === 1 ? "" : "s"}` : ""}`}</summary>
+        <ul className="lint-strip" aria-label={lintSplit.disagreements.length === 0 ? "Log notes on a demonstration run" : "Disagreements the log attests"}>
+          {[...lintSplit.disagreements, ...lintSplit.expected].map((finding, index) => (
             <li key={`${finding.kind}-${finding.sequence ?? index}`}>
               <span>{finding.detail}</span>
               {finding.sequence !== null && runId !== undefined && (
@@ -1148,6 +1209,20 @@ export function Board({
           <Waypoints aria-hidden="true" />
           connect
         </button>
+        {demonstration && onFixtureFileChange && (
+          <span className="wrap">
+            <FileCode2 aria-hidden="true" />
+            <label>
+              <span className="sr-only">Fixture file path on the Runtime host, sent with resume</span>
+              <input
+                value={fixtureFile}
+                onChange={(event) => onFixtureFileChange(event.target.value)}
+                placeholder="Fixture file for resume (optional)…"
+                title="A demonstration run's outcomes come from a fixture file. Name one here and resume sends it; leave it empty and the resumed node waits for input."
+              />
+            </label>
+          </span>
+        )}
       </div>
       )}
 
@@ -1222,7 +1297,7 @@ export function Board({
           undo
         </button>
         <span className="zoomer">
-          <button type="button" onClick={() => fit(undefined, true)} title="Frame nodes, agents and conversations">
+          <button type="button" onClick={() => fit(undefined, true)} title="Frame the work nodes at a readable size">
             fit
           </button>
           <button

@@ -1349,4 +1349,16 @@ export class RuntimeClient {
       path: `/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}`,
     });
   }
+
+  async readDocument(executionId: string, document: { evidenceId: string; index: number }): Promise<{content: string; contentSha256: string}> {
+    const id = checkedId(executionId, "executionId");
+    return this.#request({method: "POST", path: `/v1/executions/${encodeURIComponent(id)}/documents/read`, body: {evidenceId: document.evidenceId, index: document.index}});
+  }
+
+  async saveDocument(executionId: string, document: { evidenceId: string; index: number }, edit: {content: string; expectedSha256: string; reason: string; idempotencyKey: string}): Promise<{contentSha256: string; notification: {status: "recorded" | "pending"; notifiedRuns: string[]; pendingRuns: string[]}}> {
+    const id = checkedId(executionId, "executionId");
+    return this.#request({method: "POST", path: `/v1/executions/${encodeURIComponent(id)}/documents/save`,
+      body: {document: {evidenceId: document.evidenceId, index: document.index}, ...edit},
+      headers: {"Idempotency-Key": edit.idempotencyKey, "X-GraphHelm-Actor": OPERATOR_ACTOR.id, "X-GraphHelm-Actor-Type": "owner"}});
+  }
 }

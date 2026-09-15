@@ -198,6 +198,12 @@ describe("the node thread", () => {
 });
 
 describe("reading a voice and a mood", () => {
+  it("associates node-sourced delivery signals without borrowing other sources", () => {
+    const entries = [event(1, "signal_recorded", {sourceKind: "node", sourceId: "docs", kind: "node_delivery"}),
+      event(2, "signal_recorded", {sourceKind: "user", sourceId: "docs"}),
+      event(3, "signal_recorded", {sourceKind: "node", sourceId: "tests"})];
+    expect(conversationFor(entries, "docs").map((entry) => entry.sequence)).toEqual([1]);
+  });
   it("maps the three actor types and treats anything else as the runtime", () => {
     expect(voiceOf("owner")).toBe("owner");
     expect(voiceOf("agent")).toBe("agent");

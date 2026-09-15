@@ -179,6 +179,24 @@ const NON_DEVELOPMENT_TOOLS: [&str; 22] = [
     "synthesize",
 ];
 
+/// Execution operations that share the same MCP/HTTP/CLI contract but do not belong to the
+/// development namespace. Keeping these as families makes their three-surface wiring explicit
+/// rather than hiding them in the non-development exception list.
+const EXECUTION_OPERATION_FAMILIES: &[FamilySurfaces] = &[
+    FamilySurfaces {
+        cli: "document-read",
+        mcp: "document_read",
+        http_method: "POST",
+        http_probe_path: "/v1/executions/run-1/documents/read",
+    },
+    FamilySurfaces {
+        cli: "document-save",
+        mcp: "document_save",
+        http_method: "POST",
+        http_probe_path: "/v1/executions/run-1/documents/save",
+    },
+];
+
 /// Where one operation family lives on each of the three surfaces.
 ///
 /// **These were derived from the family's own name until this struct existed, and that stopped
@@ -274,6 +292,14 @@ fn real_cli_development_leaves() -> Vec<String> {
         .args(["development", "--help"])
         .output()
         .expect("the built binary runs `development --help`");
+    parse_help_subcommand_names(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn real_cli_execution_leaves() -> Vec<String> {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["execution", "--help"])
+        .output()
+        .expect("the built binary runs `execution --help`");
     parse_help_subcommand_names(&String::from_utf8_lossy(&output.stdout))
 }
 
@@ -522,6 +548,34 @@ fn every_declared_development_operation_family_exists_on_all_three_surfaces() {
     }
 }
 
+#[test]
+fn every_declared_execution_operation_family_exists_on_all_three_surfaces() {
+    let cli_leaves = real_cli_execution_leaves();
+    let mcp_tools = real_mcp_tool_names();
+    assert!(
+        !cli_leaves.is_empty(),
+        "execution --help listed no subcommands"
+    );
+    assert!(!mcp_tools.is_empty(), "tools/list returned no tools");
+
+    for family in EXECUTION_OPERATION_FAMILIES {
+        assert!(
+            cli_leaves.contains(&family.cli.to_owned()),
+            "{} missing from execution CLI: {cli_leaves:?}",
+            family.cli
+        );
+        assert!(
+            mcp_tools.contains(&family.mcp.to_owned()),
+            "{} missing from MCP tools/list: {mcp_tools:?}",
+            family.mcp
+        );
+        probe_http_route_exists(&format!(
+            "{} {}",
+            family.http_method, family.http_probe_path
+        ));
+    }
+}
+
 /// THE OTHER DIRECTION — J's review of #351. The test above walks `DEVELOPMENT_OPERATION_FAMILIES`
 /// and checks each name is real; nothing in it notices a real CLI leaf that was never added to
 /// that list. A second family wired into the CLI and MCP dispatch and forgotten on BOTH the HTTP
@@ -592,10 +646,13 @@ fn every_real_mcp_tool_is_classified() {
         let claimed_by_family = DEVELOPMENT_OPERATION_FAMILIES
             .iter()
             .any(|family| family.mcp == tool.as_str());
+        let claimed_by_execution_family = EXECUTION_OPERATION_FAMILIES
+            .iter()
+            .any(|family| family.mcp == tool.as_str());
         let claimed_as_exception = NON_DEVELOPMENT_TOOLS.contains(&tool.as_str());
 
         assert!(
-            claimed_by_family || claimed_as_exception,
+            claimed_by_family || claimed_by_execution_family || claimed_as_exception,
             "{tool:?} is a real MCP tool that nothing classifies. Does it belong to a \
              development operation family? If YES, add it to DEVELOPMENT_OPERATION_FAMILIES -- \
              that also puts it under the three-surface parity check, which is the point. \
@@ -604,7 +661,7 @@ fn every_real_mcp_tool_is_classified() {
              and nothing downstream will notice."
         );
         assert!(
-            !(claimed_by_family && claimed_as_exception),
+            !((claimed_by_family || claimed_by_execution_family) && claimed_as_exception),
             "{tool:?} is claimed BOTH by a development operation family and by \
              NON_DEVELOPMENT_TOOLS. Those are opposite claims about the same tool, and the \
              permissive reading -- that something covers it -- is the one a reader reaches for. \

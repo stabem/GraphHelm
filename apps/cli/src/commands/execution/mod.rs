@@ -4,6 +4,8 @@ pub(super) mod briefing;
 pub(super) mod cancel;
 pub(super) mod claim;
 pub(super) mod clear;
+pub(crate) mod delivery;
+pub(super) mod documents;
 mod driver;
 pub(super) mod list;
 pub(super) mod pause;

@@ -2361,6 +2361,21 @@ async fn drive(
         None => fixtures(),
     };
 
+    let executor: Arc<dyn AsyncNodeExecutor> = if state.sealing.is_some()
+        && state
+            .runtime
+            .as_ref()
+            .is_some_and(|wiring| wiring.model.is_some())
+    {
+        Arc::new(super::notices::OwnerNoticeExecutor::new(
+            executor,
+            state.events.to_path_buf(),
+            state.sealing.clone(),
+        ))
+    } else {
+        executor
+    };
+
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     state
         .cancels

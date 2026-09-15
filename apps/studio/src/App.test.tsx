@@ -148,6 +148,11 @@ function stubClient(overrides: Record<string, unknown> = {}) {
       contentSha256: "sha256:whatever",
       content: "{\"text\":\"the model did the thing\"}",
     })),
+    readDocument: vi.fn(async () => ({ content: "Original rule", contentSha256: "old" })),
+    saveDocument: vi.fn(async () => ({
+      contentSha256: "new",
+      notification: { status: "recorded" as const, notifiedRuns: [], pendingRuns: [] },
+    })),
     signal: vi.fn(
       async (_executionId: string, _message: string, _options?: Record<string, unknown>) => ({
         ...PAUSED_EVIDENCE,
@@ -552,6 +557,133 @@ describe("the window", () => {
     await userEvent.click(within(nodePanel).getByRole("button", { name: /close this node/i }));
     await waitFor(() => expect(screen.queryByLabelText(/^Node /)).not.toBeInTheDocument());
     expect(screen.getByLabelText("Execution board")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a new task", /new task in/i],
+    ["the add-project flow", /add project folder/i],
+  ])("keeps a document draft open when the operator declines %s", async (_label, action) => {
+    const record = JSON.stringify({
+      version: 1,
+      projectId: "a".repeat(64),
+      summary: "Updated project rule",
+      reason: "The journey changed.",
+      documents: [{ path: "docs/rule.md", title: "Project rule", kind: "business_rule", action: "updated" }],
+    });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({
+        head: 14,
+        events: [
+          { sequence: 2, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: "2026-08-27T12:00:30Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "event-2", evidenceRefs: [] },
+          { sequence: 14, kind: "signal_recorded", payload: { kind: "node_delivery", sourceKind: "node", sourceId: "implementation" }, occurredAt: "2026-08-27T12:02:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k14", eventId: "event-14", evidenceRefs: ["delivery"] },
+        ],
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "delivery", mediaType: "application/json", sensitivity: "internal", contentSha256: "hash", content: record })),
+    });
+    await open(client);
+    const board = await screen.findByLabelText("Execution board");
+    await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Project rule/ }));
+    const content = await screen.findByLabelText("File content");
+    await userEvent.type(content, " changed");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /Project rule/ }));
+    expect(confirm).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: action }));
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Project document editor")).toBeInTheDocument();
+    expect(screen.getByLabelText("File content")).toHaveValue("Original rule changed");
+    expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add project folder")).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("blocks run selection, new task, and Add Project while a document save is in flight", async () => {
+    const record = JSON.stringify({
+      version: 1,
+      projectId: "a".repeat(64),
+      summary: "Updated project rule",
+      reason: "The journey changed.",
+      documents: [{ path: "docs/rule.md", title: "Project rule", kind: "business_rule", action: "updated" }],
+    });
+    let resolveSave!: (value: { contentSha256: string; notification: { status: "recorded"; notifiedRuns: string[]; pendingRuns: string[] } }) => void;
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({
+        head: 14,
+        events: [
+          { sequence: 2, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: "2026-08-27T12:00:30Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "event-2", evidenceRefs: [] },
+          { sequence: 14, kind: "signal_recorded", payload: { kind: "node_delivery", sourceKind: "node", sourceId: "implementation" }, occurredAt: "2026-08-27T12:02:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k14", eventId: "event-14", evidenceRefs: ["delivery"] },
+        ],
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "delivery", mediaType: "application/json", sensitivity: "internal", contentSha256: "hash", content: record })),
+      saveDocument: vi.fn(() => new Promise((resolve) => { resolveSave = resolve; })),
+    });
+    await open(client);
+    const board = await screen.findByLabelText("Execution board");
+    await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Project rule/ }));
+    await userEvent.type(await screen.findByLabelText("File content"), " changed");
+    await userEvent.type(screen.getByLabelText("Why are you changing this?"), " reason");
+    const confirm = vi.spyOn(window, "confirm");
+    fireEvent.click(screen.getByRole("button", { name: "Save project file" }));
+    // These clicks happen immediately after Save, before a React effect could publish saving.
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByTitle("can sleep"));
+    fireEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add project folder/i }));
+    expect(screen.getByLabelText("Project document editor")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add project folder")).not.toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+
+    resolveSave({ contentSha256: "new", notification: { status: "recorded", notifiedRuns: [], pendingRuns: [] } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).not.toBeInTheDocument());
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByTitle("can sleep"));
+    expect(screen.queryByLabelText("Project document editor")).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("warns that an uncertain save may have committed before external navigation", async () => {
+    const record = JSON.stringify({
+      version: 1,
+      projectId: "a".repeat(64),
+      summary: "Updated project rule",
+      reason: "The journey changed.",
+      documents: [{ path: "docs/rule.md", title: "Project rule", kind: "business_rule", action: "updated" }],
+    });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({
+        head: 14,
+        events: [
+          { sequence: 2, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: "2026-08-27T12:00:30Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "event-2", evidenceRefs: [] },
+          { sequence: 14, kind: "signal_recorded", payload: { kind: "node_delivery", sourceKind: "node", sourceId: "implementation" }, occurredAt: "2026-08-27T12:02:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k14", eventId: "event-14", evidenceRefs: ["delivery"] },
+        ],
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "delivery", mediaType: "application/json", sensitivity: "internal", contentSha256: "hash", content: record })),
+      saveDocument: vi.fn(async () => { throw new Error("network"); }),
+    });
+    await open(client);
+    const board = await screen.findByLabelText("Execution board");
+    await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Project rule/ }));
+    await userEvent.type(await screen.findByLabelText("File content"), " changed");
+    await userEvent.type(screen.getByLabelText("Why are you changing this?"), " reason");
+    await userEvent.click(screen.getByRole("button", { name: "Save project file" }));
+    await screen.findByRole("alert");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/may have committed.*retry key.*pending run notifications/i));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/unsaved text.*discarded/i));
+    expect(screen.getByLabelText("Project document editor")).toBeInTheDocument();
+
+    confirm.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/may have committed.*retry key.*pending run notifications/i));
+    expect(screen.getByLabelText("Project document editor")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/bearer token/i)).not.toBeInTheDocument();
+    confirm.mockRestore();
   });
 });
 

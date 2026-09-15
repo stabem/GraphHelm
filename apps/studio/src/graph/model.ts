@@ -311,7 +311,11 @@ function orderForLayout(nodes: GraphNode[], edges: GraphEdge[], entrypoints: str
 
 /** The events that name one node, for its conversation panel. */
 export function conversationFor(events: RuntimeEvent[], nodeId: string): RuntimeEvent[] {
-  return events.filter((event) => nodeIdOf(event) === nodeId);
+  return events.filter((event) => {
+    if (nodeIdOf(event) === nodeId) return true;
+    const payload = event.payload as { sourceKind?: unknown; sourceId?: unknown } | null;
+    return event.kind === "signal_recorded" && payload?.sourceKind === "node" && payload.sourceId === nodeId;
+  });
 }
 
 /**

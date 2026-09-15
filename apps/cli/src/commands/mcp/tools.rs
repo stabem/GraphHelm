@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 28] = [
+const TOOLS: [ToolSpec; 30] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -92,6 +92,16 @@ const TOOLS: [ToolSpec; 28] = [
         name: "signal",
         description: "Record a signal envelope (POST /v1/executions/{executionId}/signal).",
         schema: signal_schema,
+    },
+    ToolSpec {
+        name: "document_read",
+        description: "Read registered project text (POST /v1/executions/{executionId}/documents/read). Uses a delivery evidence reference; no arbitrary path or project root is accepted.",
+        schema: document_read_schema,
+    },
+    ToolSpec {
+        name: "document_save",
+        description: "Save an owner edit (POST /v1/executions/{executionId}/documents/save). Requires an owner-configured MCP session and expectedSha256; preserves session actor headers. Retry the same RPC id for the same edit. Notifications report recording, not agent acknowledgment.",
+        schema: document_save_schema,
     },
     ToolSpec {
         name: "approve",
@@ -425,6 +435,102 @@ fn signal_schema() -> serde_json::Value {
         }),
         &["executionId", "signal"],
     )
+}
+
+fn document_reference_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "evidenceId": {"type":"string","minLength":1},
+            "index": {"type":"integer","minimum":0,"maximum":31}
+        }),
+        &["evidenceId", "index"],
+    )
+}
+
+fn document_read_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "executionId":{"type":"string","minLength":1},
+            "document":document_reference_schema()
+        }),
+        &["executionId", "document"],
+    )
+}
+
+fn document_save_schema() -> serde_json::Value {
+    // File revisions replace stream-head concurrency here. Neither If-Match nor caller-supplied
+    // idempotency headers are accepted: the same logical MCP act derives both key copies.
+    object_schema(
+        serde_json::json!({
+            "executionId":{"type":"string","minLength":1},
+            "document":document_reference_schema(),
+            "content":{"type":"string","maxLength":131072},
+            "expectedSha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},
+            "reason":{"type":"string","minLength":1,"maxLength":2048}
+        }),
+        &[
+            "executionId",
+            "document",
+            "content",
+            "expectedSha256",
+            "reason",
+        ],
+    )
+}
+
+fn document_request(
+    name: &str,
+    arguments: &serde_json::Value,
+    key: &str,
+) -> Result<(String, serde_json::Value), HandlerOutcome> {
+    let invalid = || {
+        HandlerOutcome::Error { code: INVALID_PARAMS, message: "document tools require a bounded registered reference and edit; If-Match and caller-supplied idempotency keys are not accepted".to_owned() }
+    };
+    let fields: &[&str] = if name == "document_read" {
+        &["executionId", "document"]
+    } else {
+        &[
+            "executionId",
+            "document",
+            "content",
+            "expectedSha256",
+            "reason",
+        ]
+    };
+    let object = arguments.as_object().ok_or_else(invalid)?;
+    if object.keys().any(|field| !fields.contains(&field.as_str())) {
+        return Err(invalid());
+    }
+    let execution = require(arguments, "executionId")?;
+    graphhelm_protocols::OpaqueId::parse(execution).map_err(|_| invalid())?;
+    let reference = arguments.get("document").ok_or_else(invalid)?;
+    let document: crate::commands::execution::documents::DocumentReference =
+        serde_json::from_value(reference.clone()).map_err(|_| invalid())?;
+    if document.index >= 32
+        || graphhelm_protocols::EvidenceId::parse(&document.evidence_id).is_err()
+    {
+        return Err(invalid());
+    }
+    if name == "document_read" {
+        return Ok((execution.to_owned(), reference.clone()));
+    }
+    let content = require(arguments, "content")?;
+    let reason = require(arguments, "reason")?;
+    let hash = require(arguments, "expectedSha256")?;
+    if content.len() > graphhelm_tool_host::documents::MAX_DOCUMENT_BYTES
+        || reason.trim().is_empty()
+        || reason.len() > 2048
+        || hash.len() != 64
+        || !hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(invalid());
+    }
+    Ok((
+        execution.to_owned(),
+        serde_json::json!({"document":reference,"content":content,"expectedSha256":hash,"reason":reason,"idempotencyKey":key}),
+    ))
 }
 
 fn approve_schema() -> serde_json::Value {
@@ -803,6 +909,24 @@ pub(crate) fn call(
     let key = derive_key(nonce, rpc_id);
     let if_match = arguments.get("ifMatch").and_then(serde_json::Value::as_u64);
     let outcome = match name {
+        "document_read" | "document_save" => {
+            document_request(name, arguments, &key).map(|(id, body)| {
+                let save = name == "document_save";
+                api.request(
+                    "POST",
+                    &url::segment_path(&[
+                        "v1",
+                        "executions",
+                        &id,
+                        "documents",
+                        if save { "save" } else { "read" },
+                    ]),
+                    Some(&body),
+                    save.then_some(key.as_str()),
+                    None,
+                )
+            })
+        }
         "topology" => require(arguments, "file").map(|file| {
             api.request(
                 "POST",

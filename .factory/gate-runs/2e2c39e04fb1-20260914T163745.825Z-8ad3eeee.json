@@ -1,0 +1,72 @@
+{
+  "status": "HARNESS-BROKE",
+  "runClass": "UNCLASSIFIED",
+  "runClassOrigin": "automatic",
+  "relatedToDiff": null,
+  "headSha": "2e2c39e04fb11b3763e5e173215f7ec31d1cbbb0",
+  "pullRequest": null,
+  "pullRequestReason": "1 open pull request(s) use this branch name and none of them names 2e2c39e04fb11b3763e5e173215f7ec31d1cbbb0, so none of them is the pull request this run gated",
+  "pushed": null,
+  "pushedReason": "the tip of issue-1093-node-deliveries on origin is 24188cfcd1db9b55b39d72157e146e1347aa43cd, not this commit, and a commit that is not a tip is not thereby absent from the server",
+  "upstreamSha": "24188cfcd1db9b55b39d72157e146e1347aa43cd",
+  "dirtyDiffHash": null,
+  "untrackedPaths": [],
+  "coverage": {
+    "postgres": "included",
+    "complete": true
+  },
+  "requiredFeaturesExcluded": null,
+  "headMovedDuringRun": false,
+  "cargoTargetDir": "D:/_agent-scratch/graphhelm/issue-1093/target",
+  "queuedUtc": "2026-09-14T16:37:40.1695390Z",
+  "runStartUtc": "2026-09-14T16:37:40.6629267Z",
+  "slotWaitSecs": 0.493,
+  "runEndUtc": "2026-09-14T16:37:45.7686507Z",
+  "canaryPassed": false,
+  "psSuitesStartedEarly": false,
+  "psSuitesOverlapped": false,
+  "studioScopeIncluded": true,
+  "studioNodePresent": false,
+  "studioStartedEarly": false,
+  "studioOverlapped": false,
+  "pgMatricesStartedEarly": false,
+  "pgMatricesOverlapped": false,
+  "stages": [],
+  "artifactBuildExit": null,
+  "testArtifacts": [],
+  "staleArtifactCount": 0,
+  "postgresExecution": {},
+  "staleArtifacts": [],
+  "slotLockAtStart": {
+    "schemaVersion": 2,
+    "status": "present",
+    "path": "D:/graphhelm-slot\\SLOT.lock",
+    "content": "HELD by gate | 2026-09-14T16:37:40Z | gate cwd=D:\\codex\\worktrees\\240f\\GraphHelm head=2e2c39e04fb11b3763e5e173215f7ec31d1cbbb0 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=74824 start=2026-09-14T16:37:37.6452586Z\n",
+    "holderVerdict": "live",
+    "observedAtUtc": "2026-09-14T16:37:40.7304775Z"
+  },
+  "slotLockAtEnd": {
+    "schemaVersion": 2,
+    "status": "present",
+    "path": "D:/graphhelm-slot\\SLOT.lock",
+    "content": "HELD by gate | 2026-09-14T16:37:40Z | gate cwd=D:\\codex\\worktrees\\240f\\GraphHelm head=2e2c39e04fb11b3763e5e173215f7ec31d1cbbb0 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=74824 start=2026-09-14T16:37:37.6452586Z\n",
+    "holderVerdict": "live",
+    "observedAtUtc": "2026-09-14T16:37:40.7408488Z"
+  },
+  "slotLockStartEndIdentical": true,
+  "scope": {
+    "full": true,
+    "reason": "FULL: no scope selection was given",
+    "crates": [],
+    "matrix": true,
+    "matrixReason": "the PostgreSQL matrix runs: this is a FULL run"
+  },
+  "instrumentSuspect": true,
+  "targetBuildState": {
+    "contaminated": true,
+    "suspect": true,
+    "state": "interrupted",
+    "reason": "the build owned by process 77088 never finished and that process is gone, so cargo's fingerprints may claim freshness for binaries whose source has moved"
+  },
+  "overallPassed": false
+}

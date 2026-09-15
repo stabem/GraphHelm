@@ -23,6 +23,11 @@ function signal(
 
 const OPERATOR = "studio-operator";
 
+it("shows delivery reasons and owner edits as inert prose without inventing links", () => {
+  expect(readable_content(JSON.stringify({type:"node_delivery", description:JSON.stringify({summary:"Created a rule",reason:"Purchase recovery"})}), "application/json")).toBe("Created a rule\n\nPurchase recovery");
+  expect(readable_content(JSON.stringify({type:"owner_document_changed", description:JSON.stringify({path:"docs/rule.md",reason:"<script>inert</script>"})}), "application/json")).toContain("<script>inert</script>");
+});
+
 describe("the shared ledger of unanswered questions", () => {
   it("owes a question an agent addressed to the operator, with the signalId an answer must cite", () => {
     const events = [signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" })];

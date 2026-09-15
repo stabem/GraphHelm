@@ -10,7 +10,7 @@
 # Criterion this suite exists to meet (#464 item 3): prove the Studio stage can actually go RED,
 # not merely that it runs. Cells 11-13 are that proof: a fixture whose `test` script exits 1 turns
 # ci/studio-stage.ps1 red, names which step failed, and the step after it never runs.
-$ExpectedAssertionCount = 28
+$ExpectedAssertionCount = 30
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -253,6 +253,19 @@ Assert-True ($gateText -like '*studioScopeIncluded*') 'the manifest schema carri
 Assert-True (
     $gateText.IndexOf('if ($script:studioScopeIncluded -and $script:studioNodePresent) {', [System.StringComparison]::Ordinal) -gt 0
 ) 'the stage entry is conditioned on scope AND node together, never created unconditionally'
+
+# #1102: a single reused Vitest thread still missed its fixed 60-second startup wait while the
+# early Studio child competed with Rust and both PostgreSQL matrices. The gate must keep the same
+# fail-closed Studio stage, but start it only after the last competing matrix has been joined.
+$studioStageIndex = $gateText.LastIndexOf("Invoke-Stage 'apps/studio (npm)'", [System.StringComparison]::Ordinal)
+$lastPostgresJoinIndex = $gateText.LastIndexOf(
+    "Complete-PostgresStage -Name 'PostgreSQL matrix under a non-C collation'",
+    [System.StringComparison]::Ordinal
+)
+Assert-True ($studioStageIndex -gt $lastPostgresJoinIndex) `
+    'the Studio stage starts after both PostgreSQL matrices have been joined, outside peak gate load'
+Assert-True (-not $gateText.Contains("Start-BackgroundStage -Name 'apps/studio (npm)'")) `
+    'the Studio stage has no early background start that can race the loaded gate host'
 
 # The regression guard for M's finding on #1003: a `2>&1` reappearing on the npm call is exactly
 # how the stderr hazard above would come back, silently, the next time someone "simplifies" this

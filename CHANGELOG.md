@@ -1,5 +1,14 @@
 # Specification Changelog
 
+## Studio test startup stays outside peak gate load, #1095 and #1102 - 2026-09-14
+
+- **One reused worker thread runs the Studio suite.** `apps/studio/vite.config.ts` keeps one worker,
+  selects the threads pool, and disables per-file worker isolation. Vitest 4.1.11 has a fixed
+  60-second startup wait; this reduces one run from one worker start per file to one start total.
+- **The gate starts Studio after competing work.** A gate for #1097 proved that one thread could
+  still miss the same wait while Rust and both PostgreSQL matrices ran beside it. `ci/gate.ps1`
+  now starts the same fail-closed Studio stage after those jobs join. It does not retry failures.
+
 ## Context reaches the node, #1065 - 2026-09-13
 
 - **A capsule reaches every plain cognitive node.** Before assembly the driver derives query

@@ -57,7 +57,10 @@ $env:GRAPHHELM_SLOT_DIR = $sandbox
 
 function New-Manifest {
     param([Parameter(Mandatory)] [hashtable] $Properties)
-    $path = Join-Path $sandbox ((New-Guid).ToString('N').Substring(0, 12) + "-20260828T000000Z.json")
+    # Use the framework type directly. The full gate runs this suite in a fresh background
+    # PowerShell process; one loaded run could not auto-load the module that exports New-Guid and
+    # stopped before any assertion. Guid.NewGuid has no command-discovery or module dependency.
+    $path = Join-Path $sandbox ([Guid]::NewGuid().ToString('N').Substring(0, 12) + "-20260828T000000Z.json")
     # Overrides, not a hashtable sum: `@{} + @{}` throws on a duplicate key, and a fixture that
     # cannot restate a default cannot express the case where the default is the DEFECT.
     $body = @{ headSha = 'a' * 40; status = 'GREEN'; overallPassed = $true }
@@ -449,7 +452,7 @@ try {
     # agreement, and this cell could not exist before the decoder fix: reading the twin with the
     # ANSI code page turned U+FE00 into three characters, so the disagreement fired for the wrong
     # reason and the comparison underneath looked sound.
-    $twinName = (New-Guid).ToString('N').Substring(0, 12) + "-20260828T000000Z.json"
+    $twinName = [Guid]::NewGuid().ToString('N').Substring(0, 12) + "-20260828T000000Z.json"
     $twinDir = Join-Path $sandbox 'gate-runs'
     [System.IO.Directory]::CreateDirectory($twinDir) | Out-Null
     $utf8NoBomTwin = New-Object System.Text.UTF8Encoding($false)

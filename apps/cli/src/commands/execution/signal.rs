@@ -211,6 +211,43 @@ pub(crate) fn execute(
     let raw = signal;
     let envelope: serde_json::Value = serde_json::from_slice(raw)
         .map_err(|_| signal_invalid("the signal envelope is not valid JSON", "/signal"))?;
+    super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
+
+    // This reserved signal is a typed, sealed ledger record, not arbitrary prose. Validate before
+    // any evidence file write or append so the generic signal command cannot bypass its contract.
+    if envelope.get("type").and_then(serde_json::Value::as_str) == Some("node_delivery") {
+        if sealing.is_none() {
+            return Err(signal_invalid(
+                "node deliveries require a sealed keyring",
+                "/keyring",
+            ));
+        }
+        let source = &envelope["source"];
+        let node = source["id"].as_str().ok_or_else(|| {
+            signal_invalid("a delivery must name its source node", "/signal/source")
+        })?;
+        // A held run has a declared graph but no lifecycle outcomes yet. Both the declared
+        // shape and later event-derived nodes establish membership; arbitrary IDs do not.
+        let belongs = projection.node_states.contains_key(node)
+            || projection.declared_form.as_ref().is_some_and(|form| {
+                form.node_ids
+                    .iter()
+                    .any(|declared| declared.as_str() == node)
+            });
+        if source["type"].as_str() != Some("node") || !belongs {
+            return Err(signal_invalid(
+                "the delivery source must be a node in this execution",
+                "/signal/source",
+            ));
+        }
+        let description = envelope["description"].as_str().ok_or_else(|| {
+            signal_invalid(
+                "a delivery must carry its structured record",
+                "/signal/description",
+            )
+        })?;
+        super::delivery::parse_record(description.as_bytes())?;
+    }
 
     let admitted = match admit_signal(&projection, &envelope) {
         Ok(admitted) => admitted,

@@ -33,6 +33,21 @@ export function readable_content(text: string, mediaType: string): string {
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object") return text;
     const description = (parsed as { description?: unknown }).description;
+    const type = (parsed as { type?: unknown }).type;
+    if (typeof description === "string" && type === "node_delivery") {
+      const delivery: unknown = JSON.parse(description);
+      if (delivery && typeof delivery === "object" && "summary" in delivery && "reason" in delivery
+          && typeof delivery.summary === "string" && typeof delivery.reason === "string") {
+        return `${delivery.summary}\n\n${delivery.reason}`;
+      }
+    }
+    if (typeof description === "string" && ["owner_document_changed", "owner_document_edit_saved", "owner_document_edit_intent"].includes(String(type))) {
+      const record = JSON.parse(description) as {path?: unknown; reason?: unknown; edit?: {path?: unknown; reason?: unknown}};
+      const edit = record.edit ?? record;
+      if (typeof edit.path === "string" && typeof edit.reason === "string") {
+        return `${type === "owner_document_edit_intent" ? "Owner requested a project edit" : "Owner changed a project document"}: ${edit.path}\n\n${edit.reason}`;
+      }
+    }
     return typeof description === "string" && description.length > 0 ? description : text;
   } catch {
     // Sealed content that claims to be JSON and is not still has to reach the reader.

@@ -19,11 +19,13 @@
 
 import { describe, expect, it } from "vitest";
 
-// Vite's own raw import rather than `node:fs`. The filesystem version needed `@types/node`, which
-// this package does not carry - so it ran green under vitest and broke `tsc`, and a test that only
-// half-compiles is a test that gets deleted the first time someone hits it. This also removes the
-// path handling entirely: the earlier attempt failed on Windows drive letters in a file URL.
-import CSS from "./styles.css?raw";
+// Components may import their own stylesheet. Discover those beside the global stylesheet using
+// Vite's raw imports, just as componentSource discovers components. Keep structural checks per
+// file: an extra opening brace in one stylesheet cannot cancel a closing brace in another.
+const STYLESHEETS = import.meta.glob<string>("./**/*.css", {
+  query: "?raw", import: "default", eager: true,
+});
+const CSS = Object.values(STYLESHEETS).join("\n");
 
 /** Comments are stripped before any structural count: prose legitimately contains braces, and a
  * sentence about `{` must not read as a rule. */
@@ -53,12 +55,13 @@ function componentSource(): string {
   return Object.values(modules).join("\n");
 }
 
-describe("the stylesheet parses at all", () => {
+describe.each(Object.entries(STYLESHEETS))("stylesheet %s parses at all", (_path, source) => {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
   /** The one that shipped. An unbalanced brace is not a style opinion - it is a file the browser
    * reads differently from how it was written. */
   it("balances its braces", () => {
-    const open = (CODE.match(/\{/g) ?? []).length;
-    const close = (CODE.match(/\}/g) ?? []).length;
+    const open = (code.match(/\{/g) ?? []).length;
+    const close = (code.match(/\}/g) ?? []).length;
     expect(
       { open, close },
       "a stray brace closes a rule early and the parser silently drops everything after it",
@@ -69,7 +72,7 @@ describe("the stylesheet parses at all", () => {
   it("never closes a rule that was not open", () => {
     let depth = 0;
     const offenders: string[] = [];
-    CODE.split("\n").forEach((line, index) => {
+    code.split("\n").forEach((line, index) => {
       for (const character of line) {
         if (character === "{") depth += 1;
         else if (character === "}") {

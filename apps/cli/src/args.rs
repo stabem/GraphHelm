@@ -503,6 +503,62 @@ pub enum ExecutionCommand {
         #[arg(long = "key-id")]
         key_id: Option<String>,
     },
+    /// Record what a node delivered and why, with project-relative file and journey references.
+    /// Claims are agent-reported; this command does not verify filesystem changes.
+    Delivery {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: String,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        delivery: PathBuf,
+        /// Main project filesystem directory; execution stream scope remains fixed.
+        #[arg(long = "project-directory")]
+        project: PathBuf,
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
+        /// Record the calling agent's identity. Omit for an owner-entered report.
+        #[arg(long = "actor-id")]
+        actor_id: Option<String>,
+    },
+    /// Read a delivery's referenced text document from the explicitly selected main project.
+    DocumentRead {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: String,
+        /// Main project filesystem directory; execution stream scope remains fixed.
+        #[arg(long = "project-directory")]
+        project: PathBuf,
+        #[arg(long = "evidence-id")]
+        evidence_id: String,
+        #[arg(long)]
+        index: usize,
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
+    },
+    /// Save an owner edit to the main project and record the change notice.
+    DocumentSave {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: String,
+        /// Main project filesystem directory; execution stream scope remains fixed.
+        #[arg(long = "project-directory")]
+        project: PathBuf,
+        #[arg(long)]
+        edit: PathBuf,
+        #[arg(long)]
+        keyring: PathBuf,
+        #[arg(long = "key-id")]
+        key_id: String,
+    },
     /// The owner approves a `Ghost` or `Blocked` node, readying it. Does not auto-drive: nothing
     /// auto-starts out of a manual intervention (D-020); run `resume` to continue.
     Approve {

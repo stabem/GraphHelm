@@ -538,7 +538,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 28] = [
+const MCP_TOOL_NAMES: [&str; 30] = [
     "start",
     "list",
     "topology",
@@ -547,6 +547,8 @@ const MCP_TOOL_NAMES: [&str; 28] = [
     "events",
     "evidence",
     "signal",
+    "document_read",
+    "document_save",
     "approve",
     "pause",
     "resume",
@@ -568,6 +570,172 @@ const MCP_TOOL_NAMES: [&str; 28] = [
     "clear",
     "synthesize",
 ];
+
+#[test]
+fn document_tools_forward_exact_bodies_actor_and_file_concurrency() {
+    use std::collections::BTreeMap;
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let observer = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut captured = Vec::new();
+        for _ in 0..4 {
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "expected four document requests");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("listener failed: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let mut headers = BTreeMap::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                let (name, value) = line.split_once(':').expect("a request header");
+                headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
+            }
+            let length: usize = headers["content-length"].parse().unwrap();
+            assert!(length <= 800_000);
+            let mut bytes = vec![0; length];
+            reader.read_exact(&mut bytes).unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let denied = headers
+                .get("x-graphhelm-actor-type")
+                .is_some_and(|kind| kind == "agent");
+            let command = if request_line.contains("/documents/read ") {
+                "execution.document_read"
+            } else {
+                "execution.document_save"
+            };
+            let response = serde_json::json!({"ok":!denied,"command":command,"data":{"notification":{"status":"recorded"}},"diagnostics":if denied {serde_json::json!([{"code":"OWNER_REQUIRED"}])}else{serde_json::json!([])}}).to_string();
+            let status = if denied { "403 Forbidden" } else { "200 OK" };
+            write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+            captured.push((request_line, headers, body));
+        }
+        captured
+    });
+    let document = serde_json::json!({"evidenceId":"evidence-docs-1","index":0});
+    let edit = serde_json::json!({"executionId":"run-1","document":document,"content":"Updated rule","expectedSha256":"a".repeat(64),"reason":"Owner clarified the rule"});
+    let owner = mcp_session_with(
+        &[
+            "--url",
+            &base,
+            "--actor",
+            "owner-editor",
+            "--actor-type",
+            "owner",
+        ],
+        &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!(2),
+                "document_read",
+                serde_json::json!({"executionId":"run-1","document":document}),
+            ),
+            tool_call(serde_json::json!(3), "document_save", edit.clone()),
+            tool_call(serde_json::json!(3), "document_save", edit.clone()),
+        ],
+    );
+    assert!(owner.output.status.success());
+    assert_eq!(owner.replies.len(), 4);
+    for reply in &owner.replies[1..] {
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert!(reply["result"].is_object(), "{reply}");
+        assert!(!tool_envelope(reply).0, "{reply}");
+    }
+    let agent = mcp_session_with(
+        &[
+            "--url",
+            &base,
+            "--actor",
+            "agent-editor",
+            "--actor-type",
+            "agent",
+        ],
+        &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(serde_json::json!(2), "document_save", edit),
+        ],
+    );
+    assert_eq!(agent.replies.len(), 2);
+    assert!(
+        agent.replies[1].get("error").is_none(),
+        "{:?}",
+        agent.replies
+    );
+    assert!(agent.replies[1]["result"].is_object());
+    let (is_error, denied) = tool_envelope(&agent.replies[1]);
+    assert!(is_error);
+    assert_eq!(denied["diagnostics"][0]["code"], "OWNER_REQUIRED");
+    let captured = observer.join().unwrap();
+    assert!(
+        captured[0]
+            .0
+            .starts_with("POST /v1/executions/run-1/documents/read ")
+    );
+    assert_eq!(captured[0].2, document);
+    assert!(!captured[0].1.contains_key("idempotency-key"));
+    for (line, headers, body) in &captured[1..] {
+        assert!(line.starts_with("POST /v1/executions/run-1/documents/save "));
+        assert_eq!(body["idempotencyKey"], headers["idempotency-key"]);
+        assert!(!headers.contains_key("if-match"));
+        assert_eq!(body["expectedSha256"], "a".repeat(64));
+        assert!(body.get("executionId").is_none());
+    }
+    assert_eq!(captured[1].1["x-graphhelm-actor"], "owner-editor");
+    assert_eq!(captured[1].1["x-graphhelm-actor-type"], "owner");
+    assert_eq!(
+        captured[1].1["idempotency-key"],
+        captured[2].1["idempotency-key"]
+    );
+    assert_eq!(captured[1].2, captured[2].2);
+    assert_eq!(captured[3].1["x-graphhelm-actor"], "agent-editor");
+    assert_eq!(captured[3].1["x-graphhelm-actor-type"], "agent");
+}
+
+#[test]
+fn document_tools_reject_head_pins_key_overrides_and_oversized_arguments() {
+    let valid = serde_json::json!({"executionId":"run-1","document":{"evidenceId":"evidence-docs-1","index":0},"content":"Rule","expectedSha256":"a".repeat(64),"reason":"Owner revision"});
+    for (field, value) in [
+        ("ifMatch", serde_json::json!(1)),
+        ("idempotencyKey", serde_json::json!("override")),
+        ("reason", serde_json::json!("x".repeat(2049))),
+        ("content", serde_json::json!("x".repeat(131073))),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = value;
+        let session = mcp_session(&[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(serde_json::json!(2), "document_save", invalid),
+        ]);
+        assert_eq!(session.replies.len(), 2);
+        assert!(session.replies[1].get("result").is_none());
+        assert_eq!(session.replies[1]["error"]["code"], -32602, "{field}");
+    }
+}
 
 #[test]
 fn tools_list_names_exactly_the_registered_tools_with_closed_schemas() {

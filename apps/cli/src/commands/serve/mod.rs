@@ -1,4 +1,6 @@
+mod documents;
 pub(super) mod monitor;
+mod notices;
 pub(super) mod ports;
 mod routes;
 mod wake;
@@ -107,6 +109,8 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 #[derive(Clone)]
 struct ServeState {
     token: Arc<[u8]>,
+    /// Explicit document root, independent of model/tool executor wiring.
+    project: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
     /// `commands::event_store` — exactly the call every CLI command makes — does its one command's
     /// work, and lets the handle drop before the response is sent. `ServeState` deliberately does
@@ -170,6 +174,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let (runtime_wiring, sealing, startup_warnings) = build_wiring(args)?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
+        project: args.project.as_deref().map(Arc::from),
         events: Arc::from(args.events.as_path()),
         runtime: runtime_wiring.map(Arc::new),
         sealing: sealing.map(Arc::new),
@@ -487,6 +492,8 @@ fn build_router(state: ServeState) -> Router {
         )
         .route("/v1/executions/{id}/start", post(routes::start))
         .route("/v1/executions/{id}/signal", post(routes::signal))
+        .route("/v1/executions/{id}/documents/read", post(documents::read))
+        .route("/v1/executions/{id}/documents/save", post(documents::save))
         .route("/v1/executions/{id}/approve", post(routes::approve))
         .route(
             "/v1/executions/{id}/amend-budget",

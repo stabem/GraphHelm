@@ -62,6 +62,8 @@ import {
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
 import { AgentPanel, NodePanel, RunPanel, TalkPanel, actorsInRoom, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
+import type { DocumentReference } from "./components/deliveries";
+import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
 import { AddProject } from "./components/addproject";
@@ -130,6 +132,10 @@ export default function App({
   const removedRunsRef = useRef<string[]>([]);
   removedRunsRef.current = removedRuns;
   const [projectPreferenceNotice, setProjectPreferenceNotice] = useState("");
+  const [openDocument, setOpenDocument] = useState<{executionId: string; reference: DocumentReference} | null>(null);
+  const documentAttention = useRef<"clean" | "draft" | "pending_notice" | "uncertain_save">("clean");
+  const documentDraftDirty = useRef(false);
+  const documentSaving = useRef(false);
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -502,11 +508,30 @@ export default function App({
     [],
   );
 
+  const closeProjectDocument = useCallback(() => {
+    if (documentSaving.current) return false;
+    const draftWarning = documentDraftDirty.current ? " Any unsaved text will also be discarded." : "";
+    const warning = documentAttention.current === "uncertain_save"
+      ? `This save may have committed. Closing abandons its retry key and any pending run notifications.${draftWarning} Close this project document?`
+      : documentAttention.current === "pending_notice"
+        ? `Run notices are still pending. Closing abandons their retry key.${draftWarning} Close this project document?`
+        : documentAttention.current === "draft"
+          ? "Close this project document? Unsaved text will be discarded."
+          : "";
+    if (warning && !window.confirm(warning)) return false;
+    setOpenDocument(null);
+    documentAttention.current = "clean";
+    documentDraftDirty.current = false;
+    documentSaving.current = false;
+    return true;
+  }, []);
+
   /** Selecting a run swaps the board and drops the proof with it. A verified topology is a claim
    * about ONE run; carrying it across would draw the previous run's shape over this one's nodes,
    * with its proof still showing. */
   const select = useCallback(
     (id: string) => {
+      if (!closeProjectDocument()) return;
       selectedRef.current = id;
       setSelected(id);
       // A deselection starts no replacement read whose finally could release this flag.
@@ -545,7 +570,7 @@ export default function App({
         stored.graphFile.trim().length > 0 ? { id, path: stored.graphFile.trim() } : null;
       void loadExecution(id);
     },
-    [loadExecution, briefings],
+    [loadExecution, briefings, closeProjectDocument],
   );
 
   /**
@@ -557,7 +582,7 @@ export default function App({
    */
   const startDraft = useCallback(() => {
     const client = clientRef.current;
-    if (!client) return;
+    if (!client || !closeProjectDocument()) return;
     const executionId = newExecutionId();
     setDraft({ executionId });
     setTalkOpen(true);
@@ -585,7 +610,7 @@ export default function App({
         setComposeError(messageOf(reason, "The model list could not be read."));
       }
     })();
-  }, []);
+  }, [closeProjectDocument]);
 
   const discardDraft = useCallback(() => {
     setDraft(null);
@@ -961,6 +986,7 @@ export default function App({
   }, [session]);
 
   const disconnect = useCallback(() => {
+    if (!closeProjectDocument()) return;
     connectionGeneration.current += 1;
     setConnecting(false);
     toolsRef.current?.unregister();
@@ -1001,8 +1027,12 @@ export default function App({
     setTopologyError("");
     setFocus({ kind: "none" });
     setBoard(emptyBoard());
+    setOpenDocument(null);
+    documentAttention.current = "clean";
+    documentDraftDirty.current = false;
+    documentSaving.current = false;
     setError("");
-  }, []);
+  }, [closeProjectDocument]);
 
   useEffect(
     () => () => {
@@ -1071,6 +1101,30 @@ export default function App({
     },
     [],
   );
+
+  const readProjectDocument = useCallback(async (reference: DocumentReference) => {
+    const client = clientRef.current;
+    if (!client || !openDocument) throw new Error("The project document session is closed.");
+    return client.readDocument(openDocument.executionId, reference);
+  }, [openDocument]);
+  const saveProjectDocument = useCallback(async (reference: DocumentReference, edit: DocumentSaveRequest) => {
+    const client = clientRef.current;
+    if (!client || !openDocument) throw new Error("The project document session is closed.");
+    return client.saveDocument(openDocument.executionId, reference, edit);
+  }, [openDocument]);
+  const openProjectDocument = useCallback((reference: DocumentReference) => {
+    if (openDocument?.executionId === selectedRef.current &&
+        openDocument.reference.projectId === reference.projectId &&
+        openDocument.reference.evidenceId === reference.evidenceId &&
+        openDocument.reference.index === reference.index) return;
+    if (!closeProjectDocument()) return;
+    setOpenDocument({executionId: selectedRef.current, reference});
+  }, [closeProjectDocument, openDocument]);
+  const documentAttentionChanged = useCallback((attention: "clean" | "draft" | "pending_notice" | "uncertain_save", draftDirty: boolean) => {
+    documentAttention.current = attention;
+    documentDraftDirty.current = draftDirty;
+  }, []);
+  const documentSavingChanged = useCallback((saving: boolean) => { documentSaving.current = saving; }, []);
 
   /** Says something into the selected run. Its own busy/error pair rather than the shared ones —
    * and TAGGED BY SURFACE: with the run panel and a chat column open side by side, one shared
@@ -1413,7 +1467,7 @@ export default function App({
   };
 
   return (
-    <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
+    <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
         projects={[{ name: project ?? "this runtime", runs: visibleExecutions }]}
         selected={selected}
@@ -1425,6 +1479,7 @@ export default function App({
         onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
         onNewTask={startDraft}
         onAddProject={() => {
+          if (!closeProjectDocument()) return;
           setAddingProject(true);
           setFocus({ kind: "none" });
         }}
@@ -2092,10 +2147,22 @@ export default function App({
                   onClose={() => setFocus({ kind: "none" })}
                   executionId={selected === "" ? undefined : selected}
                   openEvidence={openEvidence}
+                  onOpenDocument={openProjectDocument}
                 />
               )}
               </aside>
             )}
+            {openDocument && <DocumentEditor document={openDocument.reference}
+              readDocument={readProjectDocument} saveDocument={saveProjectDocument}
+              onAttentionChange={documentAttentionChanged}
+              onSavingChange={documentSavingChanged}
+              onClose={() => {
+                if (documentSaving.current) return;
+                setOpenDocument(null);
+                documentAttention.current = "clean";
+                documentDraftDirty.current = false;
+                documentSaving.current = false;
+              }} />}
           </div>
         )}
       </div>

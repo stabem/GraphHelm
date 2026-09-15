@@ -3469,23 +3469,18 @@ try {
         -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')) `
         -WorkingDirectory $repositoryRoot
 
-    # #464: the Studio suite, same shape as the PowerShell suites just above -- npm touches no
-    # cargo, holds no target-directory lock, so it runs BESIDE the Rust stages rather than after
-    # them. Started only when the scope says `apps/studio` changed, so a Rust-only PR never pays
-    # npm at all. Node's presence is checked HERE, once, rather than inside the child script on
-    # every run: a machine without Node gets a console note now and no process is spawned, which
-    # is simpler to read than a child that starts and immediately exits.
+    # #464: Studio still runs only when its scope changed. Node's presence is checked once here so
+    # a machine without Node records that fact without spawning a child. #1102 deliberately does
+    # NOT start the stage here: even one reused Vitest thread missed its fixed 60-second startup
+    # wait while this part of the gate was compiling Rust and running both PostgreSQL matrices.
+    # The same fail-closed Studio command runs in line after those competing stages have joined.
     $script:studioNodePresent = $false
     $script:studioStarted = $null
     if ($script:studioScopeIncluded) {
         $studioNode = Get-Command -Name 'node' -ErrorAction SilentlyContinue
         $studioNpm = Get-Command -Name 'npm' -ErrorAction SilentlyContinue
         $script:studioNodePresent = ($null -ne $studioNode -and $null -ne $studioNpm)
-        if ($script:studioNodePresent) {
-            $script:studioStarted = Start-BackgroundStage -Name 'apps/studio (npm)' -FilePath 'powershell' `
-                -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot 'ci/studio-stage.ps1')) `
-                -WorkingDirectory $repositoryRoot
-        } else {
+        if (-not $script:studioNodePresent) {
             # NEVER a warning that could read as green: no stage entry exists for this run, so
             # nothing in `stages[]` could be mistaken for the Studio suite having passed. The
             # manifest's `studioNodePresent: false` is the only record, and it is unambiguous.
@@ -3673,33 +3668,6 @@ try {
         # No else: `Complete-BackgroundStage` sets both instants itself, from the child's own times.
     } | Out-Null
 
-    # #464: the stage exists ONLY when scope included Studio AND Node was present -- the same two
-    # conditions the early-start block above checked. `$script:studioNodePresent -eq $false` (scope
-    # included it, Node was not found) already printed its NOTE up there and creates no entry here:
-    # a stage this block did not run must not appear as though it did.
-    if ($script:studioScopeIncluded -and $script:studioNodePresent) {
-        Invoke-Stage 'apps/studio (npm)' {
-            # NOT `$joined = Complete-BackgroundStage ...` (Codex, review of #1003). The assignment
-            # captures every line `Complete-BackgroundStage` emits -- the joined child's own stdout
-            # and stderr, `STAGE_FAILED_AT` included -- into `$joined` instead of letting it flow
-            # through this scriptblock's own output, which is what `Invoke-Stage`'s
-            # `& $Body 2>&1 6>&1 | ForEach-Object {...}` captures into `$capturedLines` /
-            # `outputTail`. The null-check moves to BEFORE the call, on `$script:studioStarted`
-            # itself -- `Complete-BackgroundStage` returns `$null` for exactly the same reason (the
-            # early start never happened), so this is the identical branch, just checked on the
-            # value that is already known rather than on a return value that would have to be
-            # captured to read.
-            if ($null -eq $script:studioStarted) {
-                # The early start itself failed to launch (not: Node is absent -- that path never
-                # reaches here). Same command, in line, exactly as long as it would have been
-                # without the overlap optimisation.
-                & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/studio-stage.ps1')
-            } else {
-                Complete-BackgroundStage -Started $script:studioStarted
-            }
-        } | Out-Null
-    }
-
     if ($script:matrixSkipped) {
         Write-Host ''
         if ($SkipPostgres) {
@@ -3727,6 +3695,16 @@ try {
             $env:GRAPHHELM_PG_LOCALE = $previousLocale
         }
     }
+
+    # #1102: start Node only after the Rust work and both PostgreSQL children are finished. The
+    # previous overlap made Vitest's startup timeout a test of host contention rather than of this
+    # tree. This remains an ordinary fail-closed stage: no retry, no special exit-code handling.
+    if ($script:studioScopeIncluded -and $script:studioNodePresent) {
+        Invoke-Stage 'apps/studio (npm)' {
+            & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/studio-stage.ps1')
+        } | Out-Null
+    }
+
     # #207: THE TARGETS A MANIFEST HIDES BEHIND A FEATURE EITHER BUILT, OR THIS RUN SAYS SO.
     #
     # `adapters/postgres-event-store/Cargo.toml` gates `concurrency` and `repository_conformance`

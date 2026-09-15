@@ -38,10 +38,10 @@
 #   1  ARRANGEMENT: the child is alive before the reap runs
 #   1  the reap ends the wrapper process
 #   1  and the wrapper's own child too -- the whole tree
-#   1  the studio-stage join branch is locatable in gate.ps1
-#   1  and it still calls Complete-BackgroundStage, not a deleted stand-in
-#   1  the joined child's STAGE_FAILED_AT line reaches Invoke-Stage's own capture
-#   1  and so does an ordinary diagnostic line from the same join
+#   1  the in-line Studio stage is locatable in gate.ps1
+#   1  and it still invokes the fail-closed Studio script
+#   1  it no longer joins a background Studio process
+#   1  no early Studio process can survive into abort cleanup
 #   1  the manifest's requiredFeaturesExcluded expression is locatable
 #   1  ARRANGEMENT: gate.ps1's early init lines for both fields are found, extracted not retyped
 #   1  on the CANARY-ABORT PATH -- only the early inits set -- it does not throw under StrictMode
@@ -299,38 +299,21 @@ Start-Sleep -Seconds 120
 }
 
 Write-Host ''
-Write-Host '-- the joined studio child''s own output reaches the manifest, not just its exit code (Codex, review of #1003) --' -ForegroundColor Cyan
+Write-Host '-- the Studio stage remains fail-closed after leaving the background (#1102) --' -ForegroundColor Cyan
 
-# `$joined = Complete-BackgroundStage -Started ...` would capture EVERY line the join emits -- the
-# child's stdout and stderr, `STAGE_FAILED_AT` included -- into `$joined` instead of letting it flow
-# through this scriptblock's own output stream, which is what `Invoke-Stage`'s own
-# `& $Body 2>&1 6>&1 | ForEach-Object {...}` captures into `$capturedLines` / `outputTail`. A failed
-# Studio stage would then record an empty tail and nothing else. Extracted by text, driven with a
-# stand-in `Complete-BackgroundStage` that emits known lines, so this proves the lines actually leave
-# the block rather than trusting a read of the shape.
-$joinBlock = Get-Block -Opening 'if ($null -eq $script:studioStarted) {'
-Assert-True -Condition ($null -ne $joinBlock) `
-    'the studio-stage join branch is locatable in gate.ps1'
-Assert-True -Condition ($joinBlock -and $joinBlock.Contains('Complete-BackgroundStage')) `
-    'and it still calls Complete-BackgroundStage, not a deleted stand-in'
-
-if ($joinBlock) {
-    function Complete-BackgroundStage {
-        param([Parameter(Mandatory)] [AllowNull()] $Started)
-        Write-Output 'STAGE_FAILED_AT=typecheck'
-        Write-Output 'npm ERR! synthetic diagnostic line for this test'
-        return 1
-    }
-    $script:studioStarted = [pscustomobject]@{ Name = 'synthetic stage' }
-
-    $joinedOutput = New-Object System.Collections.Generic.List[string]
-    . ([scriptblock]::Create($joinBlock)) | ForEach-Object { $joinedOutput.Add([string]$_) }
-
-    Assert-True -Condition ($joinedOutput -contains 'STAGE_FAILED_AT=typecheck') `
-        "the joined child's STAGE_FAILED_AT line reaches Invoke-Stage's own capture (got: $($joinedOutput -join ' | '))"
-    Assert-True -Condition ($joinedOutput -contains 'npm ERR! synthetic diagnostic line for this test') `
-        'and so does an ordinary diagnostic line from the same join'
-}
+# #1102 removed only the early process. The same child script still runs inside Invoke-Stage, so
+# its stdout, stderr and native exit code take the ordinary capture path. Four source assertions
+# replace the four join assertions above: the old join no longer exists by design.
+$studioBlock = Get-Block -Opening "Invoke-Stage 'apps/studio (npm)' {"
+$gateText = $gateLines -join "`n"
+Assert-True -Condition ($null -ne $studioBlock) `
+    'the in-line Studio stage is locatable in gate.ps1'
+Assert-True -Condition ($studioBlock -and $studioBlock.Contains("-File (Join-Path `$repositoryRoot 'ci/studio-stage.ps1')")) `
+    'and it still invokes the fail-closed Studio script'
+Assert-True -Condition ($studioBlock -and -not $studioBlock.Contains('Complete-BackgroundStage')) `
+    'the Studio stage no longer joins a background process'
+Assert-True -Condition (-not $gateText.Contains("Start-BackgroundStage -Name 'apps/studio (npm)'")) `
+    'no early Studio process can survive into abort cleanup'
 
 Write-Host ''
 Write-Host '-- #1019 review (B): the manifest field must not throw before the stage that fills it runs --' -ForegroundColor Cyan

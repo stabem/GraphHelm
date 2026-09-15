@@ -16,6 +16,7 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
+import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
 import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
@@ -1030,15 +1031,23 @@ export function NodePanel({
   onClose,
   executionId,
   openEvidence,
+  onOpenDocument,
 }: {
   node: GraphNode;
   events: RuntimeEvent[];
   onClose: () => void;
   executionId?: string;
   openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
+  onOpenDocument?: (document: DocumentReference) => void;
 }) {
   const mood = moodOf(node.state);
   const attempts = node.history.filter((entry) => entry.outcome === "started").length;
+  const deliveryView = Boolean(executionId && openEvidence && onOpenDocument);
+  const historyEvents = deliveryView ? events.filter((event) => {
+    const payload = event.payload as Record<string, unknown> | null;
+    return !(event.kind === "signal_recorded" && payload?.kind === "node_delivery" &&
+      payload.sourceKind === "node" && payload.sourceId === node.id);
+  }) : events;
   return (
     <section className="panel" aria-label={`Node ${node.id}`}>
       <header className={`panel-head ${mood}`}>
@@ -1067,7 +1076,8 @@ export function NodePanel({
         </div>
       </div>
 
-      <Thread events={events} executionId={executionId} openEvidence={openEvidence} />
+      {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}
+      {(!deliveryView || historyEvents.length > 0) && <Thread events={historyEvents} executionId={executionId} openEvidence={openEvidence} />}
 
     </section>
   );

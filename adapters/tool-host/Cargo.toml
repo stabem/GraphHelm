@@ -27,19 +27,26 @@ thiserror.workspace = true
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-# #726: PeekNamedPipe, to poll a reader's pipe for readiness without blocking on it. Production
-# code never calls CreatePipe, so Win32_Security (its SECURITY_ATTRIBUTES parameter type) is not
-# needed here -- see the dev-dependency below.
+# #726: PeekNamedPipe polls a reader's pipe without blocking. Project document replacement also
+# needs filesystem publication and security APIs to preserve owner/group/DACL before writing.
 windows-sys = { workspace = true, features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+    "Win32_System_IO",
+    "Win32_System_WindowsProgramming",
 ] }
 
 [dev-dependencies]
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
-# #726: Win32_Security is CreatePipe's SECURITY_ATTRIBUTES parameter type, needed only by the
+# #726: CreatePipe's SECURITY_ATTRIBUTES is also used by the
 # synthetic-pipe test fixture in process.rs's own `mod tests` -- a test-controlled pipe standing in
 # for a real escaped descendant, which Windows has no way to stage (CREATE_BREAKAWAY_FROM_JOB is
 # never granted by this job).

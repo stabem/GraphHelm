@@ -4,6 +4,7 @@
 //! the real machine (scrubbed environment, deadlines, output caps, physical containment).
 
 pub mod cache;
+pub mod documents;
 pub mod host;
 pub mod process;
 pub mod session;

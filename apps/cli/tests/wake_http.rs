@@ -117,6 +117,405 @@ fn post_json(
     (status, value)
 }
 
+const SEQUENCE_CONFLICT_RETRY_LIMIT: usize = 4;
+const SEQUENCE_POST_DEADLINE: Duration = Duration::from_secs(20);
+const SEQUENCE_POST_IO_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_SEQUENCE_POST_RESPONSE_BYTES: u64 = 64 * 1024;
+
+#[derive(Clone, Copy)]
+struct SequencePostRequest<'a> {
+    address: &'a str,
+    token: &'a str,
+    path: &'a str,
+    key: &'a str,
+    body: &'a serde_json::Value,
+    if_match: Option<u64>,
+    deadline: Instant,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SequencePostTrace {
+    status: u16,
+    code: Option<String>,
+    path: Option<String>,
+    current_head: Option<u64>,
+}
+
+#[derive(Debug)]
+struct SequenceRetryError {
+    message: String,
+    trace: Vec<SequencePostTrace>,
+    phase: &'static str,
+    byte_count: usize,
+}
+
+#[derive(Debug)]
+struct SequencePostOutcome {
+    status: u16,
+    reply: serde_json::Value,
+    retries: usize,
+    trace: Vec<SequencePostTrace>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SequencePostDecision {
+    Accepted,
+    Retry { current_head: u64 },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SequenceReadFailure {
+    byte_count: usize,
+    message: String,
+}
+
+impl SequenceReadFailure {
+    fn new(byte_count: usize, message: impl Into<String>) -> Self {
+        Self {
+            byte_count,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SequenceTransportError {
+    phase: &'static str,
+    byte_count: usize,
+    message: String,
+}
+
+impl SequenceTransportError {
+    fn new(phase: &'static str, byte_count: usize, message: impl Into<String>) -> Self {
+        Self {
+            phase,
+            byte_count,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<String> for SequenceTransportError {
+    fn from(message: String) -> Self {
+        Self::new("transport", 0, message)
+    }
+}
+
+fn sequence_io_timeout_at(deadline: Instant, now: Instant) -> Result<Duration, String> {
+    if now >= deadline {
+        return Err("the sequence-conflict request deadline expired".to_owned());
+    }
+    Ok((deadline - now).min(SEQUENCE_POST_IO_TIMEOUT))
+}
+
+fn sequence_io_timeout(deadline: Instant) -> Result<Duration, String> {
+    sequence_io_timeout_at(deadline, Instant::now())
+}
+
+fn write_until_sequence_deadline(
+    stream: &mut std::net::TcpStream,
+    bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), String> {
+    use std::io::Write;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let timeout = sequence_io_timeout(deadline)?;
+        stream
+            .set_write_timeout(Some(timeout))
+            .map_err(|error| format!("cannot set bounded write timeout: {error}"))?;
+        let written = stream
+            .write(&bytes[offset..])
+            .map_err(|error| format!("bounded HTTP write failed: {error}"))?;
+        if written == 0 {
+            return Err("bounded HTTP write made no progress".to_owned());
+        }
+        offset += written;
+    }
+    Ok(())
+}
+
+fn read_response_until_sequence_deadline<F, N>(
+    deadline: Instant,
+    mut read: F,
+    mut now: N,
+) -> Result<Vec<u8>, SequenceReadFailure>
+where
+    F: FnMut(Duration, &mut [u8]) -> std::io::Result<usize>,
+    N: FnMut() -> Instant,
+{
+    // The two-second socket timeout is only a retryable wait slice. The one absolute request
+    // deadline remains authoritative across every TimedOut/WouldBlock result.
+    let mut reply = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let timeout = sequence_io_timeout_at(deadline, now())
+            .map_err(|error| SequenceReadFailure::new(reply.len(), error))?;
+        let read = match read(timeout, &mut chunk) {
+            Ok(read) => {
+                if now() >= deadline {
+                    return Err(SequenceReadFailure::new(
+                        reply.len(),
+                        "the sequence-conflict request deadline expired",
+                    ));
+                }
+                read
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => {
+                return Err(SequenceReadFailure::new(
+                    reply.len(),
+                    format!("bounded HTTP read failed: {error}"),
+                ));
+            }
+        };
+        if read > chunk.len() {
+            return Err(SequenceReadFailure::new(
+                reply.len(),
+                "bounded HTTP reader reported more bytes than its buffer",
+            ));
+        }
+        if read == 0 {
+            break;
+        }
+        if reply.len() as u64 + read as u64 > MAX_SEQUENCE_POST_RESPONSE_BYTES {
+            return Err(SequenceReadFailure::new(
+                reply.len().saturating_add(read),
+                format!("HTTP response exceeded {MAX_SEQUENCE_POST_RESPONSE_BYTES} bytes"),
+            ));
+        }
+        reply.extend_from_slice(&chunk[..read]);
+    }
+    Ok(reply)
+}
+
+fn parse_bounded_http_response(reply: &[u8]) -> Result<(u16, serde_json::Value), String> {
+    let separator = reply
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| "HTTP response had no header/body separator".to_owned())?;
+    let header = std::str::from_utf8(&reply[..separator])
+        .map_err(|error| format!("HTTP response headers were not UTF-8: {error}"))?;
+    let status = header
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or_else(|| "HTTP response had no valid status".to_owned())?;
+    let body = std::str::from_utf8(&reply[separator + 4..])
+        .map_err(|error| format!("HTTP response body was not UTF-8: {error}"))?;
+    let value = serde_json::from_str(body.trim())
+        .map_err(|error| format!("HTTP response body was not JSON: {error}"))?;
+    Ok((status, value))
+}
+
+/// The race fixture's only retry client. Every connect, write, and read is bounded by the
+/// one deadline; the ordinary `post_json` above remains the deliberately small client used by
+/// the other conformance tests.
+fn post_json_bounded(
+    request: SequencePostRequest<'_>,
+) -> Result<(u16, serde_json::Value), SequenceTransportError> {
+    use std::io::Read;
+    let payload = serde_json::to_vec(request.body)
+        .map_err(|error| SequenceTransportError::new("request-encode", 0, error.to_string()))?;
+    let socket = request
+        .address
+        .parse::<std::net::SocketAddr>()
+        .map_err(|error| {
+            SequenceTransportError::new(
+                "connect",
+                0,
+                format!("invalid serve address {}: {error}", request.address),
+            )
+        })?;
+    let connect_timeout = sequence_io_timeout(request.deadline)
+        .map_err(|error| SequenceTransportError::new("connect", 0, error))?;
+    let mut stream = std::net::TcpStream::connect_timeout(&socket, connect_timeout)
+        .map_err(|error| SequenceTransportError::new("connect", 0, error.to_string()))?;
+    let if_match_header = request
+        .if_match
+        .map_or_else(String::new, |head| format!("If-Match: {head}\r\n"));
+    let header = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAuthorization: Bearer {}\r\nIdempotency-Key: {}\r\nX-GraphHelm-Actor: agent-wake-test\r\nX-GraphHelm-Actor-Type: agent\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        request.path,
+        request.address,
+        request.token,
+        request.key,
+        if_match_header,
+        payload.len()
+    );
+    write_until_sequence_deadline(&mut stream, header.as_bytes(), request.deadline)
+        .map_err(|error| SequenceTransportError::new("request-write", 0, error))?;
+    write_until_sequence_deadline(&mut stream, &payload, request.deadline)
+        .map_err(|error| SequenceTransportError::new("request-write", 0, error))?;
+
+    let reply = read_response_until_sequence_deadline(
+        request.deadline,
+        |timeout, chunk| {
+            stream.set_read_timeout(Some(timeout))?;
+            stream.read(chunk)
+        },
+        Instant::now,
+    )
+    .map_err(|error| {
+        SequenceTransportError::new("response-read", error.byte_count, error.message)
+    })?;
+    parse_bounded_http_response(&reply)
+        .map_err(|error| SequenceTransportError::new("response-parse", reply.len(), error))
+}
+
+fn sequence_post_trace(status: u16, reply: &serde_json::Value) -> SequencePostTrace {
+    let diagnostic = reply
+        .get("diagnostics")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| items.first());
+    SequencePostTrace {
+        status,
+        code: diagnostic
+            .and_then(|item| item.get("code"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        path: diagnostic
+            .and_then(|item| item.get("path"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        current_head: reply
+            .get("data")
+            .and_then(|data| data.get("currentHead"))
+            .and_then(serde_json::Value::as_u64),
+    }
+}
+
+fn classify_sequence_post(
+    status: u16,
+    reply: &serde_json::Value,
+) -> Result<SequencePostDecision, String> {
+    if status == 200 {
+        return if reply["ok"].as_bool() == Some(true) {
+            Ok(SequencePostDecision::Accepted)
+        } else {
+            Err("200 response was not an accepted signal mutation".to_owned())
+        };
+    }
+    if status != 409 {
+        return Err(format!(
+            "signal mutation returned unexpected HTTP status {status}"
+        ));
+    }
+    let diagnostic = reply["diagnostics"]
+        .as_array()
+        .and_then(|items| items.first());
+    if reply["ok"].as_bool() != Some(false)
+        || diagnostic.and_then(|item| item["code"].as_str()) != Some("GHE001_SEQUENCE_CONFLICT")
+        || diagnostic.and_then(|item| item["path"].as_str()) != Some("/")
+    {
+        return Err(
+            "409 response was not the append-time GHE001_SEQUENCE_CONFLICT at /".to_owned(),
+        );
+    }
+    let current_head = reply["data"]["currentHead"]
+        .as_u64()
+        .ok_or_else(|| "append-time sequence conflict omitted numeric currentHead".to_owned())?;
+    Ok(SequencePostDecision::Retry { current_head })
+}
+
+/// One retry state machine drives both the live socket and the deterministic tests. The
+/// transport receives the complete request identity on every pass, making key/body/If-Match
+/// preservation observable without duplicating this loop in a test-only script.
+fn run_sequence_retry<'a, F, E>(
+    address: &'a str,
+    token: &'a str,
+    path: &'a str,
+    key: &'a str,
+    body: &'a serde_json::Value,
+    mut transport: F,
+) -> Result<SequencePostOutcome, SequenceRetryError>
+where
+    F: FnMut(SequencePostRequest<'a>) -> Result<(u16, serde_json::Value), E>,
+    E: Into<SequenceTransportError>,
+{
+    let started = Instant::now();
+    let deadline = started + SEQUENCE_POST_DEADLINE;
+    let mut if_match = None;
+    let mut trace = Vec::new();
+    for attempt in 0..=SEQUENCE_CONFLICT_RETRY_LIMIT {
+        let request = SequencePostRequest {
+            address,
+            token,
+            path,
+            key,
+            body,
+            if_match,
+            deadline,
+        };
+        let (status, reply) = match transport(request) {
+            Ok(response) => response,
+            Err(error) => {
+                let SequenceTransportError {
+                    phase,
+                    byte_count,
+                    message,
+                } = error.into();
+                return Err(SequenceRetryError {
+                    message: format!("transport failed on attempt {}: {}", attempt + 1, message),
+                    trace,
+                    phase,
+                    byte_count,
+                });
+            }
+        };
+        trace.push(sequence_post_trace(status, &reply));
+        match classify_sequence_post(status, &reply) {
+            Ok(SequencePostDecision::Accepted) => {
+                return Ok(SequencePostOutcome {
+                    status,
+                    reply,
+                    retries: attempt,
+                    trace,
+                });
+            }
+            Ok(SequencePostDecision::Retry { current_head }) => {
+                if attempt == SEQUENCE_CONFLICT_RETRY_LIMIT {
+                    return Err(SequenceRetryError {
+                        message: format!(
+                            "sequence retry budget exhausted after {SEQUENCE_CONFLICT_RETRY_LIMIT} retries"
+                        ),
+                        trace,
+                        phase: "sequence-retry",
+                        byte_count: 0,
+                    });
+                }
+                if_match = Some(current_head);
+            }
+            Err(error) => {
+                return Err(SequenceRetryError {
+                    message: format!("attempt {} was refused: {error}", attempt + 1),
+                    trace,
+                    phase: "response-classify",
+                    byte_count: 0,
+                });
+            }
+        }
+    }
+    unreachable!("the bounded sequence retry loop always returns or reports an error")
+}
+
+fn post_signal_with_sequence_retry(
+    address: &str,
+    token: &str,
+    path: &str,
+    key: &str,
+    body: &serde_json::Value,
+) -> Result<SequencePostOutcome, SequenceRetryError> {
+    run_sequence_retry(address, token, path, key, body, post_json_bounded)
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -140,6 +539,424 @@ fn signal_body(id: &str, evidence_out: &Path) -> serde_json::Value {
         },
         "evidenceOut": evidence_out.to_str().unwrap(),
     })
+}
+
+fn sequence_conflict_reply(current_head: u64, code: &str, path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ok": false,
+        "command": "execution.signal",
+        "data": {"currentHead": current_head},
+        "diagnostics": [{
+            "code": code,
+            "path": path,
+            "severity": "error",
+            "message": "test conflict"
+        }]
+    })
+}
+
+fn accepted_signal_reply() -> serde_json::Value {
+    serde_json::json!({"ok": true, "command": "execution.signal"})
+}
+
+#[test]
+fn bounded_response_reader_preserves_partial_bytes_across_retryable_socket_reads() {
+    use std::collections::VecDeque;
+    use std::io::ErrorKind;
+
+    enum Step {
+        Timeout,
+        WouldBlock,
+        Bytes(&'static [u8]),
+        Eof,
+    }
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(20);
+    let mut steps = VecDeque::from([
+        Step::Timeout,
+        Step::Bytes(b"he"),
+        Step::WouldBlock,
+        Step::Bytes(b"llo"),
+        Step::Eof,
+    ]);
+    let mut clocks = VecDeque::from([
+        start,
+        start + Duration::from_secs(1),
+        start + Duration::from_secs(1),
+        start + Duration::from_secs(2),
+        start + Duration::from_secs(3),
+        start + Duration::from_secs(3),
+        start + Duration::from_secs(4),
+        start + Duration::from_secs(4),
+    ]);
+    let mut observed_timeouts = Vec::new();
+    let reply = read_response_until_sequence_deadline(
+        deadline,
+        |timeout, buffer| {
+            observed_timeouts.push(timeout);
+            match steps.pop_front().expect("the scripted reader has a step") {
+                Step::Timeout => Err(std::io::Error::new(ErrorKind::TimedOut, "scripted timeout")),
+                Step::WouldBlock => Err(std::io::Error::new(
+                    ErrorKind::WouldBlock,
+                    "scripted would-block",
+                )),
+                Step::Bytes(bytes) => {
+                    buffer[..bytes.len()].copy_from_slice(bytes);
+                    Ok(bytes.len())
+                }
+                Step::Eof => Ok(0),
+            }
+        },
+        || clocks.pop_front().expect("the scripted clock has a value"),
+    )
+    .expect("retryable socket reads preserve the response");
+
+    assert_eq!(reply, b"hello");
+    assert_eq!(observed_timeouts, vec![Duration::from_secs(2); 5]);
+}
+
+#[test]
+fn bounded_response_reader_keeps_one_absolute_deadline_after_partial_retries() {
+    use std::collections::VecDeque;
+    use std::io::ErrorKind;
+
+    enum Step {
+        Timeout,
+        WouldBlock,
+        Bytes(&'static [u8]),
+    }
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(20);
+    let mut steps = VecDeque::from([
+        Step::Timeout,
+        Step::Bytes(b"ab"),
+        Step::WouldBlock,
+        Step::Bytes(b"cd"),
+        Step::Timeout,
+        Step::Timeout,
+        Step::Timeout,
+        Step::Timeout,
+        Step::Timeout,
+        Step::Timeout,
+    ]);
+    let mut clocks = VecDeque::from([
+        start,
+        start + Duration::from_secs(2),
+        start + Duration::from_secs(2),
+        start + Duration::from_secs(4),
+        start + Duration::from_secs(6),
+        start + Duration::from_secs(6),
+        start + Duration::from_secs(8),
+        start + Duration::from_secs(10),
+        start + Duration::from_secs(12),
+        start + Duration::from_secs(14),
+        start + Duration::from_secs(16),
+        start + Duration::from_secs(18),
+        deadline,
+    ]);
+    let mut observed_timeouts = Vec::new();
+    let failure = read_response_until_sequence_deadline(
+        deadline,
+        |timeout, buffer| {
+            observed_timeouts.push(timeout);
+            match steps.pop_front().expect("the scripted reader has a step") {
+                Step::Timeout => Err(std::io::Error::new(ErrorKind::TimedOut, "scripted timeout")),
+                Step::WouldBlock => Err(std::io::Error::new(
+                    ErrorKind::WouldBlock,
+                    "scripted would-block",
+                )),
+                Step::Bytes(bytes) => {
+                    buffer[..bytes.len()].copy_from_slice(bytes);
+                    Ok(bytes.len())
+                }
+            }
+        },
+        || clocks.pop_front().expect("the scripted clock has a value"),
+    )
+    .expect_err("the absolute deadline eventually expires");
+
+    assert_eq!(failure.byte_count, 4);
+    assert!(failure.message.contains("deadline expired"));
+    assert_eq!(observed_timeouts.len(), 10);
+    assert!(
+        observed_timeouts
+            .iter()
+            .all(|timeout| *timeout == Duration::from_secs(2))
+    );
+}
+
+#[test]
+fn bounded_response_reader_rejects_hard_errors_with_the_partial_byte_count() {
+    use std::collections::VecDeque;
+
+    let mut steps = VecDeque::from([true, false]);
+    let start = Instant::now();
+    let failure = read_response_until_sequence_deadline(
+        start + Duration::from_secs(20),
+        |_timeout, buffer| {
+            if steps.pop_front().expect("the scripted reader has a step") {
+                buffer[..4].copy_from_slice(b"part");
+                Ok(4)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "scripted hard error",
+                ))
+            }
+        },
+        || start,
+    )
+    .expect_err("a hard socket error is terminal");
+
+    assert_eq!(failure.byte_count, 4);
+    assert!(failure.message.contains("bounded HTTP read failed"));
+}
+
+#[test]
+fn bounded_response_reader_rejects_an_oversize_response() {
+    let start = Instant::now();
+    let failure = read_response_until_sequence_deadline(
+        start + Duration::from_secs(20),
+        |_timeout, buffer| {
+            buffer.fill(b'x');
+            Ok(buffer.len())
+        },
+        || start,
+    )
+    .expect_err("the response byte cap is enforced before append");
+
+    assert_eq!(
+        failure.byte_count,
+        MAX_SEQUENCE_POST_RESPONSE_BYTES as usize + 8192
+    );
+    assert!(failure.message.contains("response exceeded"));
+}
+
+#[test]
+fn bounded_response_reader_rejects_a_successful_read_after_the_deadline() {
+    use std::collections::VecDeque;
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(20);
+    let mut clocks = VecDeque::from([start, deadline]);
+    let failure = read_response_until_sequence_deadline(
+        deadline,
+        |_timeout, buffer| {
+            buffer[..4].copy_from_slice(b"late");
+            Ok(4)
+        },
+        || clocks.pop_front().expect("the scripted clock has a value"),
+    )
+    .expect_err("a read completing at the deadline is not a successful response");
+
+    assert_eq!(failure.byte_count, 0);
+    assert!(failure.message.contains("deadline expired"));
+}
+
+#[test]
+fn bounded_response_reader_caps_the_final_retry_slice_to_remaining_deadline() {
+    use std::collections::VecDeque;
+    use std::io::ErrorKind;
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(20);
+    let mut clocks = VecDeque::from([start, start + Duration::from_millis(19_500), deadline]);
+    let mut observed_timeouts = Vec::new();
+    let mut read_calls = 0;
+    let failure = read_response_until_sequence_deadline(
+        deadline,
+        |timeout, _buffer| {
+            observed_timeouts.push(timeout);
+            read_calls += 1;
+            Err(std::io::Error::new(ErrorKind::TimedOut, "scripted timeout"))
+        },
+        || clocks.pop_front().expect("the scripted clock has a value"),
+    )
+    .expect_err("the original absolute deadline remains terminal");
+
+    assert_eq!(failure.byte_count, 0);
+    assert!(failure.message.contains("deadline expired"));
+    assert_eq!(read_calls, 2);
+    assert_eq!(
+        observed_timeouts,
+        vec![Duration::from_secs(2), Duration::from_millis(500)]
+    );
+}
+
+#[test]
+fn bounded_http_response_parser_rejects_an_incomplete_eof() {
+    let error =
+        parse_bounded_http_response(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"ok\":true")
+            .expect_err("EOF before the JSON body is complete");
+
+    assert!(error.contains("body was not JSON"));
+}
+
+#[test]
+fn sequence_transport_error_is_terminal_without_resending_the_post() {
+    let body = serde_json::json!({"private": "request-body"});
+    let mut calls = 0;
+    let error = run_sequence_retry(
+        "127.0.0.1:40000",
+        "bearer-secret",
+        "/v1/executions/exec-wake-race/signal",
+        "same-request-key",
+        &body,
+        |_request| {
+            calls += 1;
+            Err(SequenceTransportError::new(
+                "response-read",
+                4,
+                "connection reset",
+            ))
+        },
+    )
+    .expect_err("a transport failure must not be retried as a sequence conflict");
+
+    assert_eq!(calls, 1);
+    assert_eq!(error.phase, "response-read");
+    assert_eq!(error.byte_count, 4);
+    assert!(error.message.contains("transport failed on attempt 1"));
+}
+
+#[test]
+fn sequence_conflict_retry_requires_exact_conflict_then_success_and_preserves_request() {
+    use std::collections::VecDeque;
+
+    let body = serde_json::json!({
+        "signal": {
+            "id": "signal-race-script",
+            "source": {"type": "node", "id": "implementation"},
+            "type": "no_progress",
+            "severity": "high",
+            "description": "private body",
+            "evidence": ["exec-1"]
+        },
+        "evidenceOut": "private-evidence-path"
+    });
+    let mut replies = VecDeque::from([
+        (
+            409,
+            sequence_conflict_reply(12, "GHE001_SEQUENCE_CONFLICT", "/"),
+        ),
+        (200, accepted_signal_reply()),
+    ]);
+    let mut requests = Vec::new();
+    let outcome = run_sequence_retry(
+        "127.0.0.1:40000",
+        "bearer-secret",
+        "/v1/executions/exec-wake-race/signal",
+        "same-request-key",
+        &body,
+        |request| {
+            requests.push((
+                request.path.to_owned(),
+                request.key.to_owned(),
+                request.token.to_owned(),
+                request.body.clone(),
+                request.if_match,
+                request.deadline,
+            ));
+            replies
+                .pop_front()
+                .ok_or_else(|| "script ran out of responses".to_owned())
+        },
+    )
+    .expect("an exact sequence conflict is retryable");
+
+    assert_eq!(outcome.status, 200);
+    assert_eq!(outcome.retries, 1);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].0, requests[1].0);
+    assert_eq!(requests[0].1, "same-request-key");
+    assert_eq!(requests[1].1, "same-request-key");
+    assert_eq!(requests[0].2, "bearer-secret");
+    assert_eq!(requests[1].2, "bearer-secret");
+    assert_eq!(requests[0].3, body);
+    assert_eq!(requests[1].3, body);
+    assert_eq!(requests[0].4, None);
+    assert_eq!(requests[1].4, Some(12));
+    assert_eq!(
+        requests[0].5, requests[1].5,
+        "a 409 retry keeps the original absolute deadline"
+    );
+    assert_eq!(outcome.trace.len(), 2);
+    assert_eq!(outcome.trace[0].status, 409);
+    assert_eq!(
+        outcome.trace[0].code.as_deref(),
+        Some("GHE001_SEQUENCE_CONFLICT")
+    );
+    assert_eq!(outcome.trace[0].path.as_deref(), Some("/"));
+    assert_eq!(outcome.trace[0].current_head, Some(12));
+    assert_eq!(outcome.trace[1].status, 200);
+    assert_eq!(outcome.trace[1].code, None);
+    assert_eq!(outcome.trace[1].path, None);
+    assert_eq!(outcome.trace[1].current_head, None);
+    let trace_debug = format!("{:?}", outcome.trace);
+    assert!(!trace_debug.contains("bearer-secret"));
+    assert!(!trace_debug.contains("private-evidence-path"));
+}
+
+#[test]
+fn sequence_conflict_retry_rejects_wrong_code_500_and_repeated_conflicts() {
+    use std::collections::VecDeque;
+
+    let body = serde_json::json!({"private": "request-body"});
+    let run = |script: Vec<(u16, serde_json::Value)>| {
+        let mut replies = VecDeque::from(script);
+        run_sequence_retry(
+            "127.0.0.1:40000",
+            "bearer-secret",
+            "/v1/executions/exec-wake-race/signal",
+            "same-request-key",
+            &body,
+            |request| {
+                assert_eq!(request.key, "same-request-key");
+                assert_eq!(request.body, &body);
+                replies
+                    .pop_front()
+                    .ok_or_else(|| "script ran out of responses".to_owned())
+            },
+        )
+    };
+
+    let wrong_code = run(vec![(
+        409,
+        sequence_conflict_reply(12, "GHE003_IDEMPOTENCY_CONFLICT", "/"),
+    )])
+    .expect_err("a different 409 diagnostic is not retryable");
+    assert_eq!(wrong_code.trace.len(), 1);
+    assert_eq!(wrong_code.trace[0].status, 409);
+    assert_eq!(
+        wrong_code.trace[0].code.as_deref(),
+        Some("GHE003_IDEMPOTENCY_CONFLICT")
+    );
+
+    let server_error =
+        run(vec![(500, accepted_signal_reply())]).expect_err("500 is never an accepted mutation");
+    assert_eq!(server_error.trace.len(), 1);
+    assert_eq!(server_error.trace[0].status, 500);
+
+    let repeated = (0..=SEQUENCE_CONFLICT_RETRY_LIMIT)
+        .map(|head| {
+            (
+                409,
+                sequence_conflict_reply(head as u64, "GHE001_SEQUENCE_CONFLICT", "/"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let exhausted = run(repeated).expect_err("repeated conflicts must fail closed");
+    assert_eq!(exhausted.trace.len(), SEQUENCE_CONFLICT_RETRY_LIMIT + 1);
+    assert!(exhausted.message.contains("retry budget"));
+    assert!(
+        exhausted
+            .trace
+            .iter()
+            .enumerate()
+            .all(|(head, trace)| trace.status == 409 && trace.current_head == Some(head as u64))
+    );
 }
 
 fn start_execution(events: &Path, directory: &Path, execution: &str) {
@@ -1651,21 +2468,144 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
                 let evidence = directory
                     .path()
                     .join(format!("race-evidence-{round}-{lane}.json"));
+                let path = format!("/v1/executions/{execution}/signal");
+                let key = format!("race-{round}-{lane}");
+                let body = signal_body(&format!("signal-race-{round}-{lane}"), &evidence);
                 std::thread::spawn(move || {
+                    let started = Instant::now();
                     barrier.wait();
-                    post_json(
-                        &base,
-                        &token,
-                        &format!("/v1/executions/{execution}/signal"),
-                        &format!("race-{round}-{lane}"),
-                        &signal_body(&format!("signal-race-{round}-{lane}"), &evidence),
-                    )
+                    let result = post_signal_with_sequence_retry(&base, &token, &path, &key, &body);
+                    (started.elapsed(), result)
                 })
             })
             .collect();
-        for post in posts {
-            let (status, reply) = post.join().unwrap();
-            assert_eq!(status, 200, "the mutation itself always lands: {reply}");
+        let joined: Vec<_> = posts
+            .into_iter()
+            .enumerate()
+            .map(|(lane, post)| match post.join() {
+                Ok((elapsed, result)) => (lane, Some(elapsed), result),
+                Err(_) => (
+                    lane,
+                    None,
+                    Err(SequenceRetryError {
+                        message: "request thread panicked before returning a result".to_owned(),
+                        trace: Vec::new(),
+                        phase: "thread-join",
+                        byte_count: 0,
+                    }),
+                ),
+            })
+            .collect();
+        for (lane, elapsed, result) in joined {
+            let outcome = match result {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let elapsed_ms = elapsed.map_or_else(
+                        || "unknown".to_owned(),
+                        |elapsed| elapsed.as_millis().to_string(),
+                    );
+                    panic!(
+                        "round {round} lane {lane} phase={} elapsed_ms={} byte_count={} signal request failed: {}",
+                        error.phase, elapsed_ms, error.byte_count, error.message
+                    );
+                }
+            };
+            assert_eq!(
+                outcome.status, 200,
+                "round {round} lane {lane} mutation status after bounded sequence retries"
+            );
+            assert_eq!(
+                outcome.reply["ok"], true,
+                "round {round} lane {lane} final response did not certify the signal append"
+            );
+            assert!(
+                outcome.retries <= SEQUENCE_CONFLICT_RETRY_LIMIT,
+                "the retry count is bounded"
+            );
+            assert!(
+                outcome.trace.len() <= SEQUENCE_CONFLICT_RETRY_LIMIT + 1,
+                "the attempt trace is bounded"
+            );
+        }
+
+        // Both request identities must remain durable. This catches a fixture that treats the
+        // first 409 as success, retries with a changed key/body, or overwrites the first signal.
+        let store = open_store(&events);
+        let (_stream, history) = store.read_unique_replay_stream().unwrap();
+        let expected_ids = [
+            format!("signal-race-{round}-0"),
+            format!("signal-race-{round}-1"),
+        ];
+        let records: Vec<_> = history
+            .iter()
+            .filter_map(|envelope| match &envelope.kind {
+                graphhelm_protocols::EventKind::SignalRecorded(record)
+                    if record.execution_id.as_str() == execution
+                        && expected_ids
+                            .iter()
+                            .any(|id| id.as_str() == record.signal_id.as_str()) =>
+                {
+                    Some((envelope, record))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            records.len(),
+            2,
+            "both concurrent signal writes are retained"
+        );
+        for lane in 0..2 {
+            let signal_id = format!("signal-race-{round}-{lane}");
+            let (envelope, record) = records
+                .iter()
+                .copied()
+                .find(|(_, record)| record.signal_id.as_str() == signal_id)
+                .unwrap_or_else(|| panic!("missing durable signal {signal_id}"));
+            assert_eq!(
+                envelope.actor.actor_type(),
+                graphhelm_protocols::PersistedActorType::Agent
+            );
+            assert_eq!(envelope.actor.id().as_str(), "agent-wake-test");
+            assert!(
+                envelope
+                    .idempotency_key
+                    .as_str()
+                    .starts_with(&format!("race-{round}-{lane}-record-")),
+                "the derived key preserves the same request key: {}",
+                envelope.idempotency_key.as_str()
+            );
+            assert_eq!(
+                record.source_kind,
+                graphhelm_protocols::SignalSourceKind::Node
+            );
+            assert_eq!(record.source_id.as_str(), "implementation");
+            assert_eq!(record.kind, "no_progress");
+            assert_eq!(record.severity, graphhelm_protocols::SignalSeverity::High);
+            assert!(
+                envelope.evidence_refs.is_empty(),
+                "the unsealed HTTP fixture keeps evidence in its operator file"
+            );
+            let evidence = directory
+                .path()
+                .join(format!("race-evidence-{round}-{lane}.json"));
+            assert!(
+                evidence.exists(),
+                "the request's evidence output is retained"
+            );
+            let evidence_bytes = std::fs::read(&evidence).unwrap();
+            let evidence_value: serde_json::Value =
+                serde_json::from_slice(&evidence_bytes).unwrap();
+            assert_eq!(
+                evidence_value,
+                signal_body(&signal_id, &evidence)["signal"],
+                "each retry preserves the exact signal body in its evidence file"
+            );
+            let evidence_hash = graphhelm_graph::raw_content_sha256(&evidence_bytes).unwrap();
+            assert!(
+                evidence_hash.as_str() == record.envelope_sha256.as_str(),
+                "the durable signal remains bound to its exact operator evidence"
+            );
         }
 
         // #118: wait for the CONDITION — this round's arming consumed — not the schedule.

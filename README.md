@@ -31,6 +31,14 @@ tab — measured, in a probe run against this README.
   labelled as a demonstration on every view. Declared in
   [docs/product/PROVIDER_LESS_MODE.md](docs/product/PROVIDER_LESS_MODE.md), held by
   `apps/cli/tests/providerless_journey.rs`.
+* **A resume briefing from the store alone**: `execution briefing`, `GET /v1/executions/{id}/briefing`
+  and the MCP `briefing` tool fold the objective, the decisions with their actors, the work done,
+  what is pending and the next step from the event stream — a second harness picks an execution
+  up without anyone narrating it (#1071).
+* **Tools without a model credential**: `serve --staging --allow-program` with a keyring runs real
+  tool nodes (apply a patch, run the tests, commit) while cognitive nodes stay on fixtures; the
+  commit lands as `refs/graphhelm/executions/<id>` in the project, never on the operator's branch.
+  See [docs/operations/TOOLS_ONLY_RUNTIME.md](docs/operations/TOOLS_ONLY_RUNTIME.md) (#1073).
 * **The one-glance answer**: `attention` says `needs_you`, `can_sleep`, `unknown` or
   `calmed_by_amendment`, with the reason and the node named, and time on the surface.
 * **A read-only monitor**, an HTTP API, and an **MCP server** exposing the same operations to a

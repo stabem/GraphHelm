@@ -18,7 +18,9 @@ prompt is assembled:
    than 64 and a fixed 40-word English stop-list; dedupe preserving first occurrence; cap at
    12. The split rule is what makes an objective unable to name a path: `../` and `/` are
    separators. A declared `context.budgetBytes` must be an integer in `1..=1 MiB`; anything
-   else refuses the node (`Unassemblable`) rather than silently applying the default.
+   else refuses the execution before it starts (`GHG016_CONTEXT_BUDGET_INVALID` at
+   `/spec/nodes/<node>/context`, the retry-policy preflight) rather than silently applying the
+   default.
 2. `BoundedSourceSearch::search` — the workspace channel of #622 (`WorkspaceSourceChannel`),
    ranked by (distinct terms matched, path), text suffixes only, `.factory/` and the other
    working-notes prefixes excluded — within `context::SEARCH_BOUNDS`: 50,000 entries visited,

@@ -379,6 +379,12 @@ The tools are the ones in [`apps/studio/README.md`](../../apps/studio/README.md)
   including the one thing a plain container cannot prove (systemd).
 - [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) — what GraphHelm does
   with no model provider at all, and what a provider adds.
+- [`docs/operations/TOOLS_ONLY_RUNTIME.md`](../operations/TOOLS_ONLY_RUNTIME.md) — the next step
+  after this page: a Runtime that runs real tool nodes (patch, tests, commit) with no model
+  credential, landing the change as a ref in your project.
+- `graphhelm execution briefing --events <events> --execution <id>` — when you come back later, or
+  from another harness: the objective, the decisions, the work done, what is pending and the next
+  step, read from the store alone.
 - [`apps/studio/README.md`](../../apps/studio/README.md) — the Studio in detail: the WebMCP site
   tools, the production build, and the troubleshooting table.
 - [`docs/ux/CHAT_SURFACE_SPEC.md`](../ux/CHAT_SURFACE_SPEC.md) and

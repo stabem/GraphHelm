@@ -1,5 +1,22 @@
 # Specification Changelog
 
+## MVP closing record and links, #1082 - 2026-09-14
+
+- **`docs/acceptance/mvp-integrated-2026-09-14.md`**: promises 1, 3 and 4 of #302 and the main
+  journey re-run by a stranger over the integrated `main` (`533df7b3`), documents only; findings
+  F1-F13, of which F4 (the keyring directory must exist before `keyring init`) is fixed in
+  `docs/operations/TOOLS_ONLY_RUNTIME.md` and `docs/acceptance/useful-change-2026-09-13.md`, and the Studio/Runtime ones are tracked in #1083.
+- `README.md`, `docs/install/GETTING_STARTED.md`, `docs/product/PROVIDER_LESS_MODE.md` and
+  `docs/INDEX.md` link the resume briefing (#1071) and the tools-only Runtime (#1073);
+  `docs/product/ROADMAP_AND_ACCEPTANCE.md` §3.2.1 rows 1 and 2 state what `main` holds.
+- Corrections from the passes on #1078: `docs/context/CONTEXT_KNOWLEDGE_DREAMS.md` says an invalid
+  `context.budgetBytes` refuses the execution before start (`GHG016`), not the node; ADR-029 says
+  where `compiled_input_tokens` is produced since #1065; the #1065 entry below names the
+  rank-order skip in `compile-context` and the scope of the protected-project refusal.
+- **D-053: the MVP install bar is a clean local machine** (owner order 2026-09-14 on #302). GraphHelm runs
+  locally and publishes to a VPS (#114). Roadmap §3.2.1 row 1 measures GETTING_STARTED on a clean machine,
+  Studio included, and stays partial until #1094 records that run. D-001, D-002, FR-001 and the §3.4
+  scenario are unchanged.
 ## Studio and Runtime findings from the integrated MVP verification, #1083 - 2026-09-14
 
 - **An unknown execution id is a 404, not a calm run (F1).** `GET /v1/executions/{id}` and
@@ -92,7 +109,7 @@
   `GraphValidationFailed`, then `ExecutionCompleted(Failed)` — never a node skipped in silence
   with the execution left `running`. An immediate stop during a node's compile dispatches
   nothing after it. `development compile-context` bounds the RENDERED capsule the same way the
-  node path does: trailing optional items are dropped and counted until the framing fits, and a
+  node path does: optional items that would overflow the framing are skipped and counted in rank order, and a
   required-only capsule still over budget is refused with the rendered size as the budget that
   would fit.
 - **Secrets never enter a capsule.** Credential locations (`.env*`, `*.key`, `*.token`, a
@@ -115,7 +132,7 @@
   generated directories by name at any depth (`node_modules`, `target`, `.venv`, `venv`,
   `vendor`, `dist`, `build`, `__pycache__`, `.next`, `.cache`): they are the bulk of a tree by
   entry count and no answer can cite them, so they no longer spend the traversal ceiling; the
-  directory entry itself is still counted. A model-only `serve` refuses a `project` that is, or
+  directory entry itself is still counted. Every `serve` drive that builds context ports refuses a `project` that is, or
   lies inside, the keyring or broker directory (setup failure, nothing committed) — the
   keyring's own files carry no `keyring` segment in their relative names and match no shape;
   the keyring inside the project (the default layout) stays allowed. The reverse is decided

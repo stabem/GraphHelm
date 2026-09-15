@@ -38,7 +38,12 @@ exit: 1
 
 ## 1. The key — `gateway keyring init`, exit 0
 
+The keyring directory must exist first: `keyring init` refuses with `GHCLI010_GATEWAY_CREDENTIAL:
+the keyring directory does not exist` rather than create it (finding F4 of
+`mvp-integrated-2026-09-14.md`; in this run `<tmp>/keyring` had been created by the setup step).
+
 ```text
+$ mkdir <tmp>/keyring
 $ graphhelm gateway keyring init --keyring <tmp>/keyring --key-id useful-change
 {"ok":true,"command":"gateway.keyring.init","data":{"createdUnder":"GRAPHHELM_EVENTS_KEY","keyId":"useful-change"},"diagnostics":[]}
 ```

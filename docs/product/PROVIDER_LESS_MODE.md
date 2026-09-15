@@ -277,9 +277,12 @@ That document enters the system through `execution start --file` exactly as an a
 
 ## What this page does not promise
 
-A run whose outcomes a model or a tool actually produced. That road exists — `serve` with
-`--manifest --broker --route --staging --keyring --key-id --allow-program` — and it needs a
-gateway manifest and credentials. The per-graph portability manifest of #116 and a `graphhelm
+A run whose outcomes a model actually produced. That road exists — `serve` with
+`--manifest --broker --route --keyring --key-id` — and it needs a gateway manifest and
+credentials. Real TOOL nodes need no model credential: `serve --staging --allow-program` with a
+keyring runs them while cognitive nodes stay on fixtures, and the commit lands as
+`refs/graphhelm/executions/<id>` — see
+[`docs/operations/TOOLS_ONLY_RUNTIME.md`](../operations/TOOLS_ONLY_RUNTIME.md). The per-graph portability manifest of #116 and a `graphhelm
 export` verb are separate surfaces and are not built. The Studio's demonstration label is held
 only by the component tests beside `panel.tsx` and `rail.tsx`, which run under jsdom
 (`apps/studio/vite.config.ts`), not in a browser: they prove the sentence is rendered from the

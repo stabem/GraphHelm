@@ -37,7 +37,10 @@ A tools-only server:
 
 ```sh
 # GRAPHHELM_EVENTS_KEY (64 hex) is required by `keyring init` and by `serve`: it is the
-# passphrase the sealing key is wrapped under.
+# passphrase the sealing key is wrapped under. The keyring DIRECTORY must exist before
+# `keyring init`: the command refuses with `GHCLI010_GATEWAY_CREDENTIAL: the keyring
+# directory does not exist` rather than create one (integrated verification, F4).
+mkdir -p <keyring>
 GRAPHHELM_EVENTS_KEY=<64 hex> graphhelm gateway keyring init --keyring <keyring> --key-id runtime-key   # once
 GRAPHHELM_EVENTS_KEY=<64 hex> graphhelm serve \
   --events <events> --bind 127.0.0.1:0 \

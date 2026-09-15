@@ -601,7 +601,10 @@ an ID remain distinct. The receipt never accepts a generic `ArtifactBinding` and
 
 `provider_reported_input_tokens` and `output_tokens` are measured only when `WorkSummary` reports
 them. `provider_total_input_tokens` and `compiled_input_tokens` remain explicitly unavailable until
-their complete producers exist, including prompt-cache components. Every token value is limited to
+their complete producers exist, including prompt-cache components. Since #1065 `compiled_input_tokens`,
+`eligible_candidate_tokens` and `tokens_saved` are produced per accounted attempt, `derived` under
+`bytes-div-4/v1`, in the sealed `context-provenance@1` record beside each reply; the receipt's own
+lines stay `unavailable` until the next frozen baseline admits the change. Every token value is limited to
 9,007,199,254,740,991 before serialization and after deserialization, matching interoperable JSON
 integer semantics. The registered schema is closed, fixes field order and provenance/value shapes,
 and rejects the wrong binding kind, schema domain, digest shape, actor identity, extra data, and

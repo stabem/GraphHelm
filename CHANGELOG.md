@@ -1,5 +1,21 @@
 # Specification Changelog
 
+## Getting started on a clean machine, Studio included, #1094 - 2026-09-14
+
+- **A clean-machine run of `docs/install/GETTING_STARTED.md` is recorded, PARTIAL (`OBSERVER_MISSING` for the reordered page as published and for an authenticated clone)**
+  (`docs/acceptance/clean-machine-2026-09-14.md`): a fresh `ubuntu:24.04` Podman container at
+  `34208846`, through build, `init`, `serve`, the first fixture execution, `npm ci` and the Studio
+  dev server, the browser half (connect, pause, approve, resume) from the Windows host,
+  `events verify` and a byte-identical double replay.
+- **The page now says what that run needed.** The repository is private: cloning needs a GitHub
+  invitation and an authenticated git (`gh auth login` + `gh repo clone`, or a token over HTTPS).
+  The bare-Ubuntu apt block (with `apt-get update` first, and no `sudo` in a root container) now
+  comes before the rustup line, which needs the `curl` it installs. Node 22 has
+  install commands (the checksum-verified nodejs.org tarball on Linux, `winget` on Windows). A
+  container or VM starts the Studio dev server with `-- --host`; the Runtime stays on loopback.
+- **§6 names the real MCP tools.** `graphhelm mcp` exposes `list`, `status`, `approve`, … and
+  refuses `graphhelm_list_executions`, which is a Studio WebMCP page tool; the page told a chat
+  harness to call the refused name.
 ## MVP closing record and links, #1082 - 2026-09-14
 
 - **`docs/acceptance/mvp-integrated-2026-09-14.md`**: promises 1, 3 and 4 of #302 and the main

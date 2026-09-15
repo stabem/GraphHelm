@@ -5,12 +5,13 @@ a project provisioned by `graphhelm init`, a first execution running against it,
 showing that run, and — if you want one — a chat harness that can operate it through MCP.
 
 Every command here was executed as written. Windows commands are PowerShell; Linux/macOS commands
-are bash. The clean-host transcript this page was checked against is
-[`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md).
+are bash. The clean-host transcripts this page was checked against are
+[`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md)
+and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
-**What needs credentials and what does not.** Nothing on this page needs an account, an API key,
-a model provider, a database, or the network after the clone (the Studio's `npm ci` fetches
-packages once). Every execution below runs on fixtures. A run that calls a real model needs a
+**What needs credentials and what does not.** The clone needs a GitHub account with access to
+the private repository (section 1). Nothing after the clone needs an account, an API key, a model
+provider, a database, or the network (the Studio's `npm ci` fetches packages once). Every execution below runs on fixtures. A run that calls a real model needs a
 gateway manifest and credentials and is not covered here — see
 [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) for what works without a
 provider and what changes when you add one.
@@ -28,6 +29,16 @@ follow that path, substitute the port. Nothing GraphHelm serves is ever bound be
 | Node 22+ and npm | **only** the Studio (sections 4 and 5) | `node --version` |
 | PowerShell (Windows) or bash (Linux/macOS) | running the commands | — |
 
+On a bare Ubuntu, install the system packages **first**: the rustup line below needs `curl`, and
+the build needs `build-essential ca-certificates git pkg-config`. A fresh image has no package
+index, so fetch it before installing (a root shell in a container has no `sudo`; drop the word
+there):
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes --no-install-recommends build-essential ca-certificates curl git pkg-config
+```
+
 Install the toolchain when missing:
 
 ```powershell
@@ -43,10 +54,34 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 . "$HOME/.cargo/env"
 ```
 
-On a bare Ubuntu the build also needs `build-essential ca-certificates curl git pkg-config`
-(`sudo apt-get install --yes --no-install-recommends build-essential ca-certificates curl git pkg-config`).
+Node 22+ for the Studio, when missing. Linux (x64), the official tarball, checksum-verified, as
+the clean-machine run installed it:
+
+```bash
+cd /tmp
+curl -sSfO https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt
+F=$(grep -oE 'node-v22\.[0-9.]+-linux-x64\.tar\.gz' SHASUMS256.txt | head -1)
+curl -sSfO "https://nodejs.org/dist/latest-v22.x/$F"
+grep " $F\$" SHASUMS256.txt | sha256sum -c - && mkdir -p ~/.local/node && tar -xzf "$F" -C ~/.local/node --strip-components=1   # extracts only after the digest matched
+export PATH="$HOME/.local/node/bin:$PATH"
+echo 'export PATH="$HOME/.local/node/bin:$PATH"' >> ~/.profile   # section 4 runs in a second terminal
+```
+
+Windows (not exercised by the clean-machine run; any Node 22 or later works):
+
+```powershell
+winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-agreements --accept-package-agreements
+```
 
 ## 1. Build or install the binary
+
+**The repository is private.** Cloning needs access to `stabem/GraphHelm` — a GitHub invitation
+to your account — and an authenticated git. Either sign in with the GitHub CLI and clone through
+it (`gh auth login`, then `gh repo clone stabem/GraphHelm` in place of the `git clone` line
+below), or let `git clone` prompt and give your GitHub username with a personal access token as
+the password. Without access the clone stops at `fatal: could not read Username for
+'https://github.com'` (measured). The clean-machine run used a source archive of the commit
+instead of a clone and says so.
 
 ```powershell
 git clone https://github.com/stabem/GraphHelm.git
@@ -212,6 +247,12 @@ Expected, among the dev server's output:
   Studio auto-connect: http://127.0.0.1:4173/?session=<nonce>
 ```
 
+**In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
+port (measured: the connection is reset). Start it with `npm --prefix apps/studio run dev -- --host`
+inside the container instead, publish port `4173`, and open the printed URL with the host's
+published port in place of `4173`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
+`/health` to it from inside the container, so the Runtime never needs a wider bind.
+
 **Open that exact URL.** The page auto-connects only through the printed `?session=` link: the
 dev server reads the token beside `GRAPHHELM_EVENTS` and hands it to the page under that one-time
 session, so nobody pastes a token. Opening `http://127.0.0.1:4173/` without the query shows the
@@ -347,7 +388,7 @@ Start Claude Code in the project directory; it reads `.mcp.json` from the projec
 session was already open, restart it. Then, in the chat:
 
 ```
-use graphhelm_list_executions
+use the graphhelm MCP tool list
 ```
 
 Expected: one row, `demo`, with its attention verdict — the same answer the Studio shows.
@@ -363,9 +404,13 @@ cat /path/to/your-project/.graphhelm/codex.config.toml >> ~/.codex/config.toml
 Get-Content "C:\path\to\your-project\.graphhelm\codex.config.toml" | Add-Content "$env:USERPROFILE\.codex\config.toml"
 ```
 
-The tools are the ones in [`apps/studio/README.md`](../../apps/studio/README.md)'s table
-(`graphhelm_list_executions`, `graphhelm_get_attention`, `graphhelm_approve_node`,
-`graphhelm_resume_execution`, `graphhelm_send_message`, …). If `init` detected neither harness
+The server `graphhelm mcp` exposes a closed list of 28 tools named after the Runtime verbs —
+`list`, `status`, `briefing`, `events`, `evidence`, `approve`, `pause`, `resume`, `signal`,
+`cancel`, `sweep`, … (`apps/cli/src/commands/mcp/tools.rs`); a harness shows them under the
+server name, e.g. `mcp__graphhelm__list` in Claude Code. The `graphhelm_*` names in
+[`apps/studio/README.md`](../../apps/studio/README.md)'s table are the Studio's WebMCP page tools,
+a different surface: `graphhelm mcp` refuses them (`-32602 no tool named
+"graphhelm_list_executions" is part of this server`, measured). If `init` detected neither harness
 (`"harnesses": []`), pass `--harness claude-code` or `--harness codex` explicitly.
 
 ## 7. Where to go next

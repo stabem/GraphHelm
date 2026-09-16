@@ -424,10 +424,12 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
             "context-provenance",
             "event-envelope",
             "execution-accounting-receipt",
-            "graph-signal"
+            "graph-signal",
+            "node"
         ],
-        "the deliberate divergences from 1.0.0 are exactly these four (#1065 added \
-         context-provenance whole, #1054 added agent_presence_declared)"
+        "the deliberate divergences from 1.0.0 are exactly these five (#1065 added \
+         context-provenance whole, #1054 added agent_presence_declared, #1049 added the \
+         node crew)"
     );
     for change in &report.changes {
         assert_ne!(

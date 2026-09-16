@@ -5994,3 +5994,137 @@ fn direct_externalizer_serializes_only_the_explicit_safe_predecessor_hash() {
             .as_str()
     );
 }
+
+// #1049: a node is the TASK, so more than one agent may work it. The crew must cross the
+// documented Graph DSL -> GraphVersion journey, or the shape is only representable on paper.
+fn crew_record(primary: bool, crew: serde_json::Value) -> GraphVersionRecord {
+    let mut record = version("software-feature.yaml").to_record();
+    let node = record.graph.spec.nodes.get_mut("map_repository").unwrap();
+    if primary {
+        node.properties.insert(
+            "agent".into(),
+            serde_json::json!({"ref": "project/security-reviewer@3"}),
+        );
+    } else {
+        node.properties.remove("agent");
+    }
+    node.properties.insert("agents".into(), crew);
+    refresh_record(&mut record);
+    record
+}
+
+#[test]
+fn a_crew_beside_the_primary_is_recorded_as_its_own_control() {
+    let record = crew_record(
+        true,
+        serde_json::json!([
+            {"ref": "project/reviewer@1"},
+            {"ref": "project/scribe@2"}
+        ]),
+    );
+    let prepared =
+        block_on(externalizer().prepare(scope(&record.graph.metadata.execution_id), &record))
+            .unwrap();
+
+    let primary = control(&prepared, "map_repository", "agent_configuration");
+    assert_eq!(identifier(primary, "mode"), "ref");
+    assert_eq!(
+        decode_reference(identifier(primary, "agentRef")),
+        "project/security-reviewer@3"
+    );
+    let crew = control(&prepared, "map_repository", "node_agents");
+    assert_eq!(integer(crew, "agentRefCount"), 2);
+    assert_eq!(
+        decode_reference(identifier(crew, "agentRef.000")),
+        "project/reviewer@1"
+    );
+    assert_eq!(
+        decode_reference(identifier(crew, "agentRef.001")),
+        "project/scribe@2"
+    );
+    assert!(flag(crew, "present"));
+}
+
+// The crew never invents a primary, and never stands in for one. `type == "agent"` still
+// requires `agent` - that rule lives in the node schema's `allOf`, which this change leaves
+// byte-for-byte as it was, and the Governor validates the authored graph against that schema
+// before it projects anything. So a primary-less agent node is refused for the reason it was
+// refused at 1.0.0, and the crew control is never fabricated from the singular.
+#[test]
+fn a_crew_does_not_stand_in_for_the_primary() {
+    let record = crew_record(false, serde_json::json!([{"ref": "project/reviewer@1"}]));
+    assert_eq!(
+        block_on(externalizer().prepare(scope(&record.graph.metadata.execution_id), &record))
+            .unwrap_err(),
+        graphhelm_governor::GovernorError::InvalidAuthoring,
+        "an agent node with no primary worker crossed publication"
+    );
+
+    let primary_only = version("software-feature.yaml").to_record();
+    let prepared = block_on(externalizer().prepare(
+        scope(&primary_only.graph.metadata.execution_id),
+        &primary_only,
+    ))
+    .unwrap();
+    assert!(
+        prepared
+            .version()
+            .topology()
+            .nodes()
+            .iter()
+            .all(|(_, node)| node
+                .controls()
+                .iter()
+                .all(|control| control.control_type().as_str() != "node_agents")),
+        "a graph that authors no crew must carry no crew control"
+    );
+}
+
+// Every refusal the authored crew carries, refused BEFORE sealing and without echoing input.
+#[test]
+fn a_malformed_or_foreign_crew_fails_before_sealing() {
+    for (case, primary, crew) in [
+        ("empty", true, serde_json::json!([])),
+        ("scalar", true, serde_json::json!("project/reviewer@1")),
+        (
+            "scalar member",
+            true,
+            serde_json::json!(["project/reviewer@1"]),
+        ),
+        (
+            "member without a ref",
+            true,
+            serde_json::json!([{"ephemeral": {"purpose": "help"}}]),
+        ),
+        (
+            "member with a stray key",
+            true,
+            serde_json::json!([{"ref": "project/reviewer@1", "mode": "ref"}]),
+        ),
+    ] {
+        let record = crew_record(primary, crew);
+        let error =
+            block_on(externalizer().prepare(scope(&record.graph.metadata.execution_id), &record))
+                .unwrap_err();
+        assert_eq!(
+            error,
+            graphhelm_governor::GovernorError::InvalidAuthoring,
+            "{case} was accepted"
+        );
+    }
+
+    let mut record = crew_record(true, serde_json::json!([{"ref": "project/reviewer@1"}]));
+    let node = record.graph.spec.nodes.get_mut("tests").unwrap();
+    assert_eq!(node.node_type.as_str(), "tool");
+    node.properties.insert(
+        "agents".into(),
+        serde_json::json!([{"ref": "project/reviewer@1"}]),
+    );
+    refresh_record(&mut record);
+    assert_eq!(
+        block_on(externalizer().prepare(scope(&record.graph.metadata.execution_id), &record))
+            .unwrap_err(),
+        graphhelm_governor::GovernorError::InvalidAuthoring,
+        "a crew on a tool node was accepted"
+    );
+}

@@ -666,6 +666,7 @@ fn collect_node_properties(
                 collect_completion_content(ContentOwnerKind::Node, node_id, value, collector)?
             }
             "agent" => collect_agent_content(node_id, value, collector)?,
+            "agents" => collect_crew_references(value).map(drop)?,
             "input" | "output" => validate_schema_container(value)?,
             "prompt" => {
                 validate_string(value)?;
@@ -1098,6 +1099,9 @@ fn build_node_controls(
     if let Some(agent) = node.properties.get("agent") {
         controls.extend(build_agent_controls(agent)?);
     }
+    if let Some(crew) = node.properties.get("agents") {
+        controls.push(build_crew_control(crew)?);
+    }
     for key in ["input", "output"] {
         if let Some(value) = node.properties.get(key) {
             controls.push(build_contract_control(key, value)?);
@@ -1184,6 +1188,7 @@ fn build_loop_control(value: &Value) -> Result<PersistedControl, GovernorError> 
 fn validate_node_kind_property_ownership(node: &GraphNode) -> Result<(), GovernorError> {
     const KIND_FIELDS: &[&str] = &[
         "agent",
+        "agents",
         "tool",
         "classifier",
         "gate",
@@ -1204,7 +1209,7 @@ fn validate_node_kind_property_ownership(node: &GraphNode) -> Result<(), Governo
         "targetRef",
     ];
     let allowed = match node.node_type.as_str() {
-        "agent" => &["agent"][..],
+        "agent" => &["agent", "agents"][..],
         "tool" => &["tool"][..],
         "classifier" => &["classifier"][..],
         "gate" => &["gate", "onFail", "override"][..],
@@ -1904,6 +1909,41 @@ fn encode_safe_binding(value: &str) -> Result<SafeValue, GovernorError> {
     }
     let encoded = encode_safe_reference(value)?;
     parse_persisted_binding(encoded.as_str()).map_err(|_| GovernorError::InvalidAuthoring)
+}
+
+/// The other agents working one task, each NAMED by a reference.
+///
+/// A crew member is never defined inline: an `ephemeral` definition externalizes into an
+/// `agent_configuration` control, and a persisted node carries at most one control of each type,
+/// so a second inline definition on the same node has nowhere to be recorded. The node schema
+/// admits exactly this shape; this is the same contract, enforced where the projection is built.
+fn collect_crew_references(value: &Value) -> Result<Vec<Value>, GovernorError> {
+    let members = value.as_array().ok_or(GovernorError::InvalidAuthoring)?;
+    if members.is_empty() {
+        return Err(GovernorError::InvalidAuthoring);
+    }
+    if members.len() > 64 {
+        return Err(GovernorError::LimitExceeded);
+    }
+    members
+        .iter()
+        .map(|member| {
+            let member = member.as_object().ok_or(GovernorError::InvalidAuthoring)?;
+            if member.len() != 1 {
+                return Err(GovernorError::InvalidAuthoring);
+            }
+            let reference = member.get("ref").ok_or(GovernorError::InvalidAuthoring)?;
+            validate_string(reference)?;
+            Ok(reference.clone())
+        })
+        .collect()
+}
+
+fn build_crew_control(value: &Value) -> Result<PersistedControl, GovernorError> {
+    let references = Value::Array(collect_crew_references(value)?);
+    let mut builder = ControlBuilder::default();
+    builder.reference_array("agentRef", &references)?;
+    builder.finish("node_agents")
 }
 
 fn build_agent_controls(value: &Value) -> Result<Vec<PersistedControl>, GovernorError> {

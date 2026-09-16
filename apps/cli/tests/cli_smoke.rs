@@ -405,3 +405,55 @@ fn draft_apply_rejects_legacy_event_file_before_key_provider_diagnostic() {
     );
     assert_eq!(std::fs::read(&legacy).unwrap(), b"{\"legacy\":true}\n");
 }
+
+/// #1049: a node is the TASK, so more than one agent may work it. The crew has to survive the
+/// whole authored journey and not merely the schema: `graph validate` -> `graph lint` ->
+/// `graph hash` -> `graph simulate`. The example is derived from the canonical one rather than
+/// checked in beside it, so the crew is proven on a real graph without moving any committed
+/// semantic hash.
+#[test]
+fn a_node_worked_by_a_crew_crosses_the_authored_journey() {
+    let directory = tempfile::tempdir().unwrap();
+    let graph = graphhelm_schema::load_graph(&root().join("examples/graphs/software-feature.yaml"))
+        .unwrap()
+        .graph;
+    let mut document = serde_json::to_value(graph).unwrap();
+    document["spec"]["nodes"]["map_repository"]["agents"] = serde_json::json!([
+        {"ref": "project/security-reviewer@3"},
+        {"ref": "project/scribe@2"}
+    ]);
+    let graph_path = directory.path().join("crew.json");
+    std::fs::write(&graph_path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let path = graph_path.to_str().unwrap();
+
+    for subcommand in ["validate", "lint", "hash"] {
+        let output = command()
+            .args(["graph", subcommand, path])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "graph {subcommand}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(json(&output.stdout)["ok"], true);
+    }
+
+    let events = directory.path().join("events.jsonl");
+    let simulated = command()
+        .args([
+            "graph",
+            "simulate",
+            path,
+            "--events",
+            events.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        simulated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&simulated.stdout)
+    );
+    assert_eq!(json(&simulated.stdout)["data"]["status"], "completed");
+}

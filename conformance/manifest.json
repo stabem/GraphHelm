@@ -57,6 +57,7 @@
     {"id":"schema.graph.invalid.kind","kind":"schema","schema":"graph","input":"conformance/schemas/invalid/graph.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/kind"]}},
     {"id":"schema.graph.valid.minimum","kind":"schema","schema":"graph","input":"conformance/schemas/valid/graph.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.node.invalid.optionality","kind":"schema","schema":"node","input":"conformance/schemas/invalid/node.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/optionality"]}},
+    {"id":"schema.node.valid.agents","kind":"schema","schema":"node","input":"conformance/schemas/valid/node-agents.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.node.valid.minimum","kind":"schema","schema":"node","input":"conformance/schemas/valid/node.json","expect":{"ok":true,"codes":[]}},
     {"id":"schema.persisted-graph-version.invalid.authoring-plaintext","kind":"schema","schema":"persisted-graph-version","input":"conformance/schemas/invalid/persisted-graph-version.json","expect":{"ok":false,"codes":["GHS002_SCHEMA"],"paths":["/topology/nodes/start"]}},
     {"id":"schema.persisted-graph-version.valid.minimum","kind":"schema","schema":"persisted-graph-version","input":"conformance/schemas/valid/persisted-graph-version.json","expect":{"ok":true,"codes":[]}},

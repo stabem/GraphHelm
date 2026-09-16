@@ -452,10 +452,11 @@ fn on_disk_public_resources(root: &Path) -> BTreeSet<String> {
 
 fn exact_public_fixture_inventory(manifest: &Value, inventory: &BTreeSet<String>) -> bool {
     let declared = declared_public_resources(manifest);
-    // 60 = the 54 resources after main's accounting cases, plus the two graph-signal-reply
+    // 61 = the 54 resources after main's accounting cases, plus the two graph-signal-reply
     // fixtures the 1.1.0 evolution shipped, plus the three context-provenance fixtures (#1065:
-    // valid, measured-estimate, traversal-source), plus the `root` refusal (#1086).
-    declared.len() == 60 && &declared == inventory
+    // valid, measured-estimate, traversal-source), plus the `root` refusal (#1086), plus the node
+    // crew acceptance (#1049).
+    declared.len() == 61 && &declared == inventory
 }
 
 fn public_suite_and_resources() -> (Value, ConformanceSuite, ConformanceResources) {
@@ -493,8 +494,8 @@ fn checked_in_public_fixture_inventory_is_exact_and_rejects_an_unreferenced_extr
     let manifest: Value =
         serde_json::from_slice(&fs::read(root.join("conformance/manifest.json")).unwrap()).unwrap();
     let inventory = on_disk_public_resources(&root);
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 58);
-    assert_eq!(declared_public_resources(&manifest).len(), 60);
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 59);
+    assert_eq!(declared_public_resources(&manifest).len(), 61);
     assert!(exact_public_fixture_inventory(&manifest, &inventory));
 
     let mut with_extra = inventory;
@@ -1465,7 +1466,7 @@ fn public_validation(
 #[test]
 fn checked_in_public_manifest_is_complete_and_reports_are_byte_deterministic() {
     let (_, suite, resources) = public_suite_and_resources();
-    assert_eq!(suite.cases.len(), 58);
+    assert_eq!(suite.cases.len(), 59);
     let schema_set = public_schema_set(&suite);
     let validate =
         |schema: &str, document: &Value| public_validation(&schema_set, schema, document);
@@ -1484,7 +1485,7 @@ fn checked_in_public_manifest_is_complete_and_reports_are_byte_deterministic() {
     reordered_suite.cases.reverse();
     let reordered = run_conformance(&reordered_suite, &resources, validate);
     assert!(forward.ok, "{:?} {:?}", forward.diagnostics, forward.cases);
-    assert_eq!((forward.total, forward.passed, forward.failed), (58, 58, 0));
+    assert_eq!((forward.total, forward.passed, forward.failed), (59, 59, 0));
     assert_eq!(
         serde_json::to_vec(&forward).unwrap(),
         serde_json::to_vec(&backward).unwrap()
@@ -1515,7 +1516,7 @@ fn public_fixture_gate_enforces_every_current_schema_constraint() {
         public_validation(&schema_set, schema, document)
     });
     assert!(!report.ok);
-    assert_eq!((report.passed, report.failed), (57, 1));
+    assert_eq!((report.passed, report.failed), (58, 1));
     let failed = report.cases.iter().find(|case| !case.passed).unwrap();
     assert_eq!(failed.id, "schema.agent.valid.minimum");
     assert!(
@@ -1537,7 +1538,7 @@ fn wrong_expected_code_fails_only_its_sorted_case() {
         public_validation(&schema_set, schema, document)
     });
     assert!(!report.ok);
-    assert_eq!((report.total, report.passed, report.failed), (58, 57, 1));
+    assert_eq!((report.total, report.passed, report.failed), (59, 58, 1));
     assert!(!report.cases[0].passed);
     assert!(report.cases.iter().skip(1).all(|case| case.passed));
     assert_eq!(report.diagnostics.len(), 1);

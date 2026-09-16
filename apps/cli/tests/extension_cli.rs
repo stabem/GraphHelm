@@ -269,6 +269,21 @@ fn set_graph_agent_reference(fixture: &mut PackageFixture, reference: &str) {
     fixture.write_manifest();
 }
 
+fn set_graph_agent_crew(fixture: &mut PackageFixture, crew: Value) {
+    let graph_path = fixture.root.join("graphs/dogfood.yaml");
+    let mut graph: Value = serde_yaml_ng::from_slice(&fs::read(&graph_path).unwrap()).unwrap();
+    graph
+        .pointer_mut("/spec/nodes/map_repository")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert("agents".into(), crew);
+    let bytes = serde_yaml_ng::to_string(&graph).unwrap().into_bytes();
+    fs::write(&graph_path, &bytes).unwrap();
+    fixture.manifest["spec"]["contracts"]["contributions"][0]["sha256"] = json!(digest(&bytes));
+    fixture.write_manifest();
+}
+
 fn set_graph_policies(fixture: &mut PackageFixture, policies: Value) {
     let graph_path = fixture.root.join("graphs/dogfood.yaml");
     let mut graph: Value = serde_yaml_ng::from_slice(&fs::read(&graph_path).unwrap()).unwrap();
@@ -875,6 +890,56 @@ fn requires_canonical_package_local_graph_extension_references() {
         let mut fixture = valid_package();
         set_graph_agent_reference(&mut fixture, reference);
         assert_domain_code(&fixture.run(), "GHEX020_EXTENSION_REF");
+    }
+}
+
+// #1049: a crew member's reference is the same reference the singular form carries, and an
+// extension package must not be able to smuggle a dangling one in by writing it in the plural.
+#[test]
+fn requires_canonical_package_local_references_for_every_crew_member() {
+    let mut fixture = valid_package();
+    set_graph_agent_reference(&mut fixture, "extension://graphhelm-jpd-test/defect-hunter");
+    set_graph_agent_crew(
+        &mut fixture,
+        json!([{"ref": "extension://graphhelm-jpd-test/defect-hunter"}]),
+    );
+    let output = fixture.run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    for reference in [
+        "defect-hunter",
+        "extension://another-package/defect-hunter",
+        "extension://graphhelm-jpd-test/agents/defect-hunter",
+        "extension://graphhelm-jpd-test/defect-hunter@1.0.0",
+    ] {
+        let mut fixture = valid_package();
+        set_graph_agent_reference(&mut fixture, "extension://graphhelm-jpd-test/defect-hunter");
+        set_graph_agent_crew(
+            &mut fixture,
+            json!([
+                {"ref": "extension://graphhelm-jpd-test/defect-hunter"},
+                {"ref": reference}
+            ]),
+        );
+        let value = assert_domain_code(&fixture.run(), "GHEX020_EXTENSION_REF");
+        assert!(
+            value["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|diagnostic| {
+                    diagnostic["code"] == "GHEX020_EXTENSION_REF"
+                        && diagnostic["path"]
+                            .as_str()
+                            .unwrap()
+                            .ends_with("/spec/nodes/map_repository/agents/1/ref")
+                }),
+            "the refused crew member must be named by its own index: {value}"
+        );
     }
 }
 

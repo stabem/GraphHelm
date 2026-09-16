@@ -1238,7 +1238,8 @@ fn control_allowed_for_node(control_type: &str, node_type: &str) -> bool {
         | "agent_model_requirements"
         | "agent_context_strategy"
         | "agent_evidence_requirements"
-        | "agent_memory_policy" => node_type == "agent",
+        | "agent_memory_policy"
+        | "node_agents" => node_type == "agent",
         "tool_configuration" => node_type == "tool",
         "classifier_configuration" => node_type == "classifier",
         "gate_configuration" => node_type == "gate",
@@ -1264,6 +1265,7 @@ pub fn persisted_node_control_order(control_type: &str) -> Option<u8> {
         "agent_evidence_requirements" => 2,
         "agent_memory_policy" => 3,
         "agent_model_requirements" => 4,
+        "node_agents" => 5,
         "input_contract" => 10,
         "output_contract" => 11,
         "node_model" => 20,
@@ -1662,6 +1664,7 @@ fn identifier_key_allowed(control_type: &str, key: &str) -> bool {
                 "mode" | "agentRef" | "inputSchema" | "resultSchema" | "directiveRef" | "isolation"
             ) || indexed_any(key, &["capability.", "allowedTool.", "prohibitedAction."])
         }
+        "node_agents" => indexed_key(key, "agentRef."),
         "agent_model_requirements" | "node_model" => {
             matches!(key, "profile" | "routePolicy") || indexed_key(key, "independent.")
         }
@@ -1776,6 +1779,7 @@ fn integer_key_allowed(control_type: &str, key: &str) -> bool {
             key,
             "capabilityCount" | "allowedToolCount" | "prohibitedActionCount"
         ),
+        "node_agents" => key == "agentRefCount",
         "agent_model_requirements" | "node_model" => key == "independentCount",
         "agent_context_strategy" => matches!(key, "includeScopeCount" | "maxUnits"),
         "agent_evidence_requirements" => key == "requirementCount" || indexed_key(key, "min."),
@@ -2138,6 +2142,7 @@ fn validate_control_counts(control: &PersistedControl) -> Result<(), GraphError>
             ("allowedToolCount", &["allowedTool."]),
             ("prohibitedActionCount", &["prohibitedAction."]),
         ],
+        "node_agents" => &[("agentRefCount", &["agentRef."])],
         "agent_model_requirements" | "node_model" => &[("independentCount", &["independent."])],
         "agent_context_strategy" => &[("includeScopeCount", &["includeScope."])],
         "agent_evidence_requirements" => &[(
@@ -3313,6 +3318,7 @@ pub fn persisted_reference_domain(
             "directiveRef" => Some(Domain::Directive),
             _ => None,
         },
+        "node_agents" if indexed_reference_key(key, "agentRef.") => Some(Domain::Agent),
         "agent_evidence_requirements" if indexed_reference_key(key, "ref.") => {
             Some(Domain::Artifact)
         }

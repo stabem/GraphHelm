@@ -76,9 +76,9 @@
     },
     "node": {
       "id": "https://p50.dev/schemas/node.schema.json",
-      "documentVersion": "1.0.0",
+      "documentVersion": "1.1.0",
       "path": "schemas/node.schema.json",
-      "sha256": "sha256:5b40c693ddbf36aafe24980bf1ae4d508052bc0708b3720713cf6caac9651917"
+      "sha256": "sha256:eb319fb55e651429e7e1e7ccf83baadbb1c0320b612d7e9d6214e221a56d42fb"
     },
     "persisted-graph-version": {
       "id": "https://p50.dev/schemas/persisted-graph-version.schema.json",

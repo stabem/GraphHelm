@@ -3009,6 +3009,34 @@ fn validate_graph_extension_refs(
                     diagnostics,
                 );
             }
+            // #1049: the crew is the same binding in the plural, and every member carries the
+            // same reference obligation as the primary - named by its own index, so a package
+            // with several members is told WHICH one is dangling.
+            if let Some(crew) = node
+                .pointer("/agents")
+                .and_then(serde_json::Value::as_array)
+            {
+                for (index, member) in crew.iter().enumerate() {
+                    if diagnostics.should_stop() {
+                        return;
+                    }
+                    if let Some(reference) =
+                        member.pointer("/ref").and_then(serde_json::Value::as_str)
+                    {
+                        validate_graph_extension_ref(
+                            reference,
+                            "agent",
+                            extension_id,
+                            contribution_kinds,
+                            format!(
+                                "{base_path}/resource/spec/nodes/{}/agents/{index}/ref",
+                                escape_json_pointer_token(node_id)
+                            ),
+                            diagnostics,
+                        );
+                    }
+                }
+            }
         }
     }
     if let Some(policies) = graph

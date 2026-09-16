@@ -1,5 +1,74 @@
 # Schema Changelog
 
+## node 1.1.0 - `agents` carries the other workers on one task
+
+A node is the TASK: `required` is `type`, `name`, `objective`, `optionality`. `agent` names the
+worker, singular, so a task worked by more than one agent was not representable -- only unwritten.
+`agents` is an OPTIONAL array of reference bindings naming the other agents working beside the
+primary one. `minItems: 1`, because an absent list and an empty one must not mean the same thing;
+`maxItems: 64`, the same bound this repository already puts on every other authored list a graph
+carries.
+
+**`agent` keeps its meaning and its rule.** A `type == "agent"` node still requires `agent`: it is
+the PRIMARY worker, and `agents` names the others beside it. An earlier draft made the two
+alternatives (`anyOf`) and refused them together (`not`). `core/schema-evolution` classified that
+`GHC003_BREAKING_CHANGE` at `/allOf` (Breaking, Major) and was right: any edit to an existing
+`allOf` branch leaves the baseline and candidate branch sets incomparable. `allOf` is byte-for-byte
+main's here, and composition -- a primary with a crew -- is the better model anyway.
+
+**A crew member is named by `ref`, never defined inline.** `items` is a closed object requiring a
+non-empty `ref`, and not the singular binding's whole `oneOf`. An inline `ephemeral` agent is
+externalized by the Graph Governor into an `agent_configuration` control plus up to four sibling
+controls, and a persisted node carries AT MOST ONE control of each type
+(`core/graph/src/persistence.rs`, the `seen.insert(control_type)` guard). A second inline definition
+on the same node therefore has nowhere to be persisted, and a shape that validates but cannot be
+published is exactly the half-working surface `AGENTS.md` forbids. Naming the crew by reference is
+fully publishable today, and the singular form keeps the inline option it has always had.
+
+**Why this is a Minor and not a Major -- the narrowing argument, answered with the boundary rather
+than with rhetoric.** `node` sets `additionalProperties: true`, so a 1.0.0 document could carry a
+stray `agents` key of any shape and pass `graph validate`; constraining the key now refuses those
+bytes, and a reviewer read that as narrowing the 1.0 acceptance set. Two measured facts decide it:
+
+- **No such document could ever be published.** `collect_node_properties` in
+  `core/governor/src/externalize.rs` is an ALLOWLIST -- every node property it does not recognise
+  returns `InvalidAuthoring` (`GHE009_EXTERNALIZATION_FAILED`). `agents` was not on that list before
+  this change, so every node carrying it was already refused at Graph DSL -> GraphVersion. The set
+  of documents that could reach a GraphVersion is not narrowed by one document; only the moment of
+  refusal moves earlier, from publication to validation, which is where a diagnostic is more useful.
+- **The alternative makes `node` unevolvable.** If a key that a permissive document COULD have
+  squatted made an addition breaking, then no property could ever be added to this schema at any
+  version, and `completion.customs` (node 1.0.0) and `context-provenance.root` would both have had
+  to be majors. The comparator states the house rule directly: a new optional property is
+  `GHC102_OPTIONAL_PROPERTY_ADDED`, Compatible, Minor.
+
+`graphhelm schema check --baseline schemas/releases/1.0.0/catalog.json --candidate
+schemas/catalog.json` reports exactly one change for `node` --
+`GHC102_OPTIONAL_PROPERTY_ADDED` at `/properties/agents`, class `compatible`, impact `minor` -- and
+the release gate reports `ok`. That is the version this document declares. `node` joins the declared
+divergence ledger in `core/schema-evolution/tests/baseline_origin.rs`, and
+`conformance/manifest.json` gains `schema.node.valid.agents`.
+
+**Where the refusals are proven, and why not there.** The public fixture manifest is validated
+against BOTH the live schemas and the frozen 1.0.0 snapshot, and
+`current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts` forbids exactly one
+quadrant: the live validator refusing a document the release accepted. Because 1.0.0 accepts any
+`agents` key at all, every refusal this change adds sits in that quadrant, and that guard would be
+right to fail. So the acceptance case ships in the shared manifest, where both validators agree,
+and the refusals -- empty crew, scalar crew, scalar member, a member with no `ref`, an empty
+`ref`, a stray key beside `ref`, and a crew of 65 -- are proven against the LIVE validator alone,
+in `core/schema/tests/node_agents.rs`. Two of those tests are red against the previous shape of
+this branch, where a member's `ref` was unbounded and the list was unbounded.
+
+**Wired, and only as far as #1049 goes.** Graph Governor publication validates the crew and
+records it as one persisted control, `node_agents` (`agentRefCount` plus `agentRef.NNN` in the
+Agent reference domain), and extension validation checks every member's reference at
+`/spec/nodes/<id>/agents/<i>/ref`. Multi-agent DISPATCH is NOT part of this change: the runtime
+still dispatches the primary `agent`. The crew is now representable, publishable and replayable;
+acting on it is separate work.
+
+`schemas/releases/1.0.0/**` is untouched.
+
 ## event-envelope 1.1.0 - `agentPresenceDeclared` gains `session`, and `model` stops being required
 
 Two changes to the same unreleased `$defs/agentPresenceDeclared`, both inside the one legal 1.1.0

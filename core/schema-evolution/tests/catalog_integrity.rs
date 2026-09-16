@@ -165,9 +165,10 @@ fn repository_has_one_safe_initial_release() {
     assert_eq!(catalog.schemas.len(), 17);
     assert!(!root.join("schemas/releases/1.1.0").exists());
     assert!(!root.join("schemas/releases/1.2.0").exists());
-    // 58 cases / 60 resources: #1086 added the context-provenance `root` refusal.
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 58);
-    assert_eq!(declared_resources.len(), 60);
+    // 59 cases / 61 resources: #1086 added the context-provenance `root` refusal, #1049 the
+    // node crew acceptance.
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 59);
+    assert_eq!(declared_resources.len(), 61);
 }
 
 #[test]
@@ -828,10 +829,18 @@ fn current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts() 
         .filter(|case| case["kind"] == "schema")
         .collect::<Vec<_>>();
 
-    // 38 = main's 32, plus the two graph-signal-reply cases the 1.1.0 evolution shipped, plus
+    // 39 = main's 32, plus the two graph-signal-reply cases the 1.1.0 evolution shipped, plus
     // the three context-provenance cases (#1065: valid, measured-estimate, traversal-source),
-    // plus the `root` refusal (#1086).
-    assert_eq!(schema_cases.len(), 38);
+    // plus the `root` refusal (#1086), plus the node crew acceptance (#1049).
+    //
+    // #1049 ships ONE node case here and not the usual valid/invalid pair, and the asymmetry
+    // rule below is the reason. `node` carries `additionalProperties: true`, so the frozen 1.0.0
+    // validator ACCEPTS a node whose `agents` key holds anything at all, an empty list included.
+    // A refusal fixture for the new constraints would therefore land in the forbidden quadrant --
+    // live refusing what the release accepted -- and this test would be right to fail. The crew
+    // refusals are proven against the live validator alone, where they belong, in
+    // `core/schema/tests/node_agents.rs`.
+    assert_eq!(schema_cases.len(), 39);
     let current_catalog = load_repo_catalog(RepositoryPackage::Current).catalog;
     let release_catalog = load_repo_catalog(RepositoryPackage::Release1_0_0).catalog;
     for case in schema_cases {

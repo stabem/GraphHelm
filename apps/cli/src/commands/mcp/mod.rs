@@ -59,8 +59,29 @@ fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
     if token.is_empty() {
         return Err(refuse("the token is empty", "/tokenFile"));
     }
-    if graphhelm_protocols::ActorId::parse(args.actor.clone()).is_err() {
-        return Err(refuse("--actor is not a wire-safe actor id", "/actor"));
+    let (actor, actor_from_env) = match &args.actor {
+        Some(name) => (name.clone(), false),
+        None => (
+            std::env::var("GRAPHHELM_ACTOR").map_err(|_| {
+                refuse(
+                    "no actor: supply --actor <id> or the GRAPHHELM_ACTOR environment variable \
+                     (one .mcp.json is shared by every session, so a literal there makes them all \
+                     one actor)",
+                    "/actor",
+                )
+            })?,
+            true,
+        ),
+    };
+    if graphhelm_protocols::ActorId::parse(actor.clone()).is_err() {
+        return Err(refuse(
+            if actor_from_env {
+                "GRAPHHELM_ACTOR is not a wire-safe actor id"
+            } else {
+                "--actor is not a wire-safe actor id"
+            },
+            "/actor",
+        ));
     }
     if !matches!(args.actor_type.as_str(), "agent" | "owner") {
         return Err(refuse(
@@ -85,7 +106,7 @@ fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
     Ok(client::ApiClient::new(
         args.url.clone(),
         token,
-        args.actor.clone(),
+        actor,
         args.actor_type.clone(),
     ))
 }

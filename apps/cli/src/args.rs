@@ -190,8 +190,11 @@ pub struct McpArgs {
     #[arg(long = "token-file")]
     pub token_file: Option<PathBuf>,
     /// The actor every mutation is attributed to (the serve layer's actor id rules).
+    /// OPTIONAL because one `.mcp.json` is shared by every session in a repository, so a
+    /// literal here makes every session the same actor (#1058). Falls back to
+    /// `GRAPHHELM_ACTOR`; absent from both doors is a refusal, never a default.
     #[arg(long)]
-    pub actor: String,
+    pub actor: Option<String>,
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
     #[arg(long = "actor-type", default_value = "agent")]
     pub actor_type: String,

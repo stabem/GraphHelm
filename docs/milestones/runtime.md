@@ -832,7 +832,10 @@ redaction-safe by the API's own contract.
 
 ### Config, auth, and the loopback wall
 
-`graphhelm mcp --url --token-file --actor [--actor-type]`: the URL is loopback-only
+`graphhelm mcp --url --token-file [--actor] [--actor-type]`: `--actor` is optional since #1058
+(one `.mcp.json` is shared by every session of a repository, so a literal there made every
+session the same actor); the id comes from `--actor` or, failing that, `GRAPHHELM_ACTOR`, and a
+session that has neither is refused (`GHCLI015_MCP_INVALID`), never defaulted; the URL is loopback-only
 fail-closed under the post-#36 rule (userinfo stripped before host inspection —
 `[::1]@evil.com` and `localhost:tok@attacker.example` shapes are pinned refused); the token
 arrives via file or `GRAPHHELM_API_TOKEN`, never argv, and a full session's stdout and
